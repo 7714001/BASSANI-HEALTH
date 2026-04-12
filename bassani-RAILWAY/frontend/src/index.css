@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ── Safe area for notched iPhones ─────────────────────────────── */
+.safe-top    { padding-top:    env(safe-area-inset-top);    }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+/* ── Scrollbars ─────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 2px; }
+
+/* ── Touch targets — minimum 44px for mobile ───────────────────── */
+button, [role="button"], a { min-height: 36px; }
+@media (max-width: 640px) {
+  button, [role="button"] { min-height: 44px; }
+}
+
+/* ── Mobile layout overrides ────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Sidebar collapses to bottom tab bar on mobile */
+  .sidebar-desktop { display: none !important; }
+  .tab-bar-mobile  { display: flex !important; }
+
+  /* Full-width cards on mobile */
+  .grid-cols-4, .grid-cols-3 {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .grid-cols-2 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Larger touch targets for table rows */
+  td, th { padding: 10px 8px !important; }
+
+  /* Stack topbar actions below title on small screens */
+  .topbar-actions { flex-direction: column; align-items: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .grid-cols-4, .grid-cols-3, .grid-cols-2 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ── Bottom tab bar (mobile only, hidden on desktop) ───────────── */
+.tab-bar-mobile {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: #0f172a;
+  border-top: 1px solid #1e293b;
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 100;
+}
+.tab-bar-mobile a {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px 6px;
+  font-size: 10px;
+  color: #64748b;
+  text-decoration: none;
+  gap: 3px;
+}
+.tab-bar-mobile a.active { color: #0f6e56; }
+.tab-bar-mobile a svg { width: 22px; height: 22px; }
+
+/* ── PWA install prompt ─────────────────────────────────────────── */
+.install-banner {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom) + 8px);
+  left: 12px; right: 12px;
+  background: #0f172a;
+  border: 1px solid #0f6e56;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.install-banner.hidden { display: none; }
+
+/* ── Tablet sidebar adjustments ────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .sidebar-desktop { width: 52px !important; }
+  .sidebar-desktop .nav-label { display: none; }
+  .sidebar-desktop .nav-item  { justify-content: center; padding: 10px; }
+  .main-content    { margin-left: 52px; }
+}

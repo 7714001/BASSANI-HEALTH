@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Bassani · Supervisor</title>
+<style>
+  :root {
+    --green:  #0f6e56;
+    --green-l:#E1F5EE;
+    --amber:  #d97706;
+    --amber-l:#FAEEDA;
+    --red:    #dc2626;
+    --red-l:  #FCEBEB;
+    --bg:     #0a0f1e;
+    --card:   #0f172a;
+    --border: #1e293b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--bg);
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding-bottom: 24px;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: var(--card);
+    border-bottom: 2px solid var(--green);
+    padding: 16px 16px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header h1 { font-size: 18px; font-weight: 700; }
+  .header p  { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #4ade80;
+    background: rgba(74,222,128,0.1);
+    border-radius: 99px;
+    padding: 3px 10px;
+    margin-top: 6px;
+  }
+  .live-pill span { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Stats row ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 12px 12px 0;
+  }
+  .stat-pill {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .stat-n { font-size: 24px; font-weight: 800; }
+  .stat-l { font-size: 10px; color: #64748b; margin-top: 1px; text-transform: uppercase; letter-spacing: .06em; }
+
+  /* ── Section label ── */
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: #475569;
+    padding: 14px 12px 6px;
+    font-weight: 600;
+  }
+
+  /* ── Order card ── */
+  .order-card {
+    background: var(--card);
+    border-radius: 12px;
+    margin: 0 12px 10px;
+    border: 1.5px solid var(--border);
+    overflow: hidden;
+    transition: border-color .2s;
+  }
+  .order-card.packing { border-color: var(--amber); }
+  .order-card.ready   { border-color: var(--green); }
+
+  .oc-head {
+    padding: 12px 14px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .oc-id    { font-size: 14px; font-weight: 800; font-family: monospace; color: #94a3b8; }
+  .oc-id.packing { color: var(--amber); }
+  .oc-id.ready   { color: #4ade80; }
+  .oc-cust  { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .oc-units { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .status-badge {
+    font-size: 11px; font-weight: 700; padding: 4px 10px;
+    border-radius: 99px; text-transform: uppercase; flex-shrink: 0;
+  }
+  .status-badge.queued    { background: #1e293b; color: #94a3b8; }
+  .status-badge.packing   { background: rgba(217,119,6,.2); color: #fbbf24; }
+  .status-badge.ready     { background: rgba(74,222,128,.15); color: #4ade80; }
+  .status-badge.collected { background: #1e293b; color: #475569; }
+
+  /* ── Packer row ── */
+  .packer-row {
+    padding: 10px 14px;
+    background: rgba(255,255,255,.03);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .packer-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing:.08em; }
+  .packer-val   { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: var(--amber); }
+  .packer-val.none { font-size: 13px; font-weight: 400; color: #334155; letter-spacing: 0; }
+
+  /* ── Items ── */
+  .items-wrap { padding: 8px 14px 2px; }
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .item-row:last-child { border-bottom: none; }
+  .tick-btn {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    border: 2px solid #334155;
+    background: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: all .15s;
+  }
+  .tick-btn.done { background: var(--green); border-color: var(--green); }
+  .tick-btn.done::after { content:'✓'; color:#fff; font-size:15px; font-weight:900; }
+  .item-name { flex:1; font-size:13px; font-weight:500; }
+  .item-name.done { text-decoration: line-through; color: #475569; }
+  .item-loc  { font-size: 11px; font-family: monospace; color: #be185d; background: rgba(190,24,93,.1); border-radius:4px; padding:2px 7px; }
+  .item-qty  { font-size: 18px; font-weight: 900; min-width: 26px; text-align: right; }
+  .item-qty.done { color: #334155; }
+
+  /* ── Action buttons ── */
+  .actions {
+    padding: 10px 14px 12px;
+    display: flex;
+    gap: 8px;
+  }
+  .btn-assign {
+    flex: 1; padding: 10px; border-radius: 10px;
+    background: var(--amber); color: #fff;
+    border: none; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .btn-assign:active { opacity: .8; }
+  .btn-ready {
+    flex: 1; padding: 10px; border-radius: 10px;
+    background: var(--green); color: #fff;
+    border: none; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .btn-ready:active { opacity: .8; }
+  .btn-collect {
+    flex: 1; padding: 10px; border-radius: 10px;
+    background: #1e293b; color: #94a3b8;
+    border: 1px solid #334155; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+
+  /* ── Packer picker modal ── */
+  .modal-ov {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 50;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .modal-ov.show { display: flex; }
+  .modal-sheet {
+    background: var(--card);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px 36px;
+    width: 100%;
+    max-width: 480px;
+    animation: slideUp .25s ease;
+  }
+  @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+  .modal-subtitle { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+  .packer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .packer-btn {
+    padding: 16px 10px; border-radius: 12px;
+    background: #1e293b; border: 1.5px solid #334155;
+    color: #fff; font-size: 16px; font-weight: 800;
+    letter-spacing: 1px; cursor: pointer; text-align: center;
+    transition: all .15s;
+  }
+  .packer-btn:active { background: var(--amber); border-color: var(--amber); }
+  .packer-btn.selected { background: var(--amber); border-color: var(--amber); }
+  .modal-cancel {
+    width: 100%; padding: 14px; border-radius: 12px;
+    background: #1e293b; border: none; color: #64748b;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ── Progress bar ── */
+  .prog-wrap { height: 4px; background: #1e293b; }
+  .prog-fill { height: 100%; background: var(--amber); transition: width .4s; }
+  .prog-fill.ready { background: var(--green); }
+
+  /* ── Notes ── */
+  .notes-strip {
+    padding: 7px 14px; background: rgba(220,38,38,.08);
+    border-top: 1px solid rgba(220,38,38,.2);
+    font-size: 12px; color: #f87171;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Bassani Health · Supervisor</h1>
+  <p>Assign packers · tick items · mark ready</p>
+  <div class="live-pill"><span></span> Live · <span id="conn-status">Connecting…</span></div>
+</div>
+
+<div class="stats" id="stats-row">
+  <div class="stat-pill"><div class="stat-n" id="s-queued"  style="color:#94a3b8">0</div><div class="stat-l">Queued</div></div>
+  <div class="stat-pill"><div class="stat-n" id="s-packing" style="color:#fbbf24">0</div><div class="stat-l">Packing</div></div>
+  <div class="stat-pill"><div class="stat-n" id="s-ready"   style="color:#4ade80">0</div><div class="stat-l">Ready</div></div>
+</div>
+
+<div id="board-wrap"></div>
+
+<!-- Packer picker modal -->
+<div class="modal-ov" id="packer-modal">
+  <div class="modal-sheet">
+    <div class="modal-title">Assign packer</div>
+    <div class="modal-subtitle" id="modal-order-label">Order —</div>
+    <div class="packer-grid" id="packer-grid"></div>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>
+</div>
+
+<script>
+let orders = {};
+let ws = null;
+let pendingOrderId = null;
+
+const PACKERS = ['THEMBI','SIPHO','PRIYA','RUAN','ANELE','LERATO'];
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/supervisor`);
+
+  ws.onopen = () => {
+    document.getElementById('conn-status').textContent = 'Connected';
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'full_state') {
+      orders = {};
+      msg.data.forEach(o => orders[o.order_id] = o);
+    } else if (msg.type === 'entry_update') {
+      orders[msg.data.order_id] = msg.data;
+    }
+    render();
+  };
+
+  ws.onclose = () => {
+    document.getElementById('conn-status').textContent = 'Reconnecting…';
+    setTimeout(connect, 3000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function openPackerModal(orderId) {
+  pendingOrderId = orderId;
+  const o = orders[orderId];
+  document.getElementById('modal-order-label').textContent = `${orderId} · ${o?.customer_name || ''}`;
+  const grid = document.getElementById('packer-grid');
+  grid.innerHTML = PACKERS.map(p => `
+    <button class="packer-btn ${o?.packer_name === p ? 'selected' : ''}" onclick="assignPacker('${p}')">
+      ${p}
+    </button>`).join('');
+  document.getElementById('packer-modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('packer-modal').classList.remove('show');
+  pendingOrderId = null;
+}
+
+function assignPacker(name) {
+  if (!pendingOrderId) return;
+  send({ action: 'assign_packer', order_id: pendingOrderId, packer_name: name });
+  closeModal();
+}
+
+function tickItem(orderId, sku, current) {
+  send({ action: 'tick_item', order_id: orderId, sku, ticked: !current });
+}
+
+function markReady(orderId) {
+  send({ action: 'update_status', order_id: orderId, status: 'ready' });
+}
+
+function markCollected(orderId) {
+  send({ action: 'update_status', order_id: orderId, status: 'collected' });
+}
+
+function render() {
+  const list = Object.values(orders)
+    .filter(o => o.status !== 'cleared')
+    .sort((a, b) => {
+      const p = {packing:0, queued:1, ready:2, collected:3};
+      return (p[a.status]??9) - (p[b.status]??9);
+    });
+
+  document.getElementById('s-queued').textContent  = list.filter(o=>o.status==='queued').length;
+  document.getElementById('s-packing').textContent = list.filter(o=>o.status==='packing').length;
+  document.getElementById('s-ready').textContent   = list.filter(o=>o.status==='ready').length;
+
+  const wrap = document.getElementById('board-wrap');
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div style="text-align:center;padding:60px 20px;color:#334155;"><div style="font-size:40px;margin-bottom:12px;">✅</div><div style="font-size:18px;font-weight:600;">All clear</div><div style="font-size:14px;margin-top:6px;">No active orders</div></div>`;
+    return;
+  }
+
+  // Group by status
+  const sections = [
+    { key: 'packing',   label: '🔵 Currently Packing' },
+    { key: 'queued',    label: '⬜ Queued — assign a packer' },
+    { key: 'ready',     label: '✅ Ready for Collection' },
+    { key: 'collected', label: '🏁 Collected Today' },
+  ];
+
+  wrap.innerHTML = sections.map(sec => {
+    const items = list.filter(o => o.status === sec.key);
+    if (!items.length) return '';
+    return `<div class="section-label">${sec.label} (${items.length})</div>` +
+      items.map(o => renderCard(o)).join('');
+  }).join('');
+}
+
+function renderCard(o) {
+  const ticks = o.item_ticks || {};
+  const done  = Object.values(ticks).filter(Boolean).length;
+  const total = Object.values(ticks).length;
+  const pct   = total > 0 ? Math.round(done/total*100) : 0;
+  const st    = o.status;
+
+  return `<div class="order-card ${st}">
+    <div class="prog-wrap"><div class="prog-fill ${st==='ready'?'ready':''}" style="width:${st==='ready'?100:pct}%"></div></div>
+    <div class="oc-head">
+      <div>
+        <div class="oc-id ${st}">${o.order_id}</div>
+        <div class="oc-cust">${o.customer_name}</div>
+        <div class="oc-units">${o.total_units} units · ${o.customer_city}${o.is_reseller?' · via '+o.reseller_name:''}</div>
+      </div>
+      <div class="status-badge ${st}">${st.toUpperCase()}</div>
+    </div>
+
+    <div class="packer-row">
+      <div>
+        <div class="packer-label">Packer</div>
+        <div class="packer-val ${o.packer_name?'':'none'}">${o.packer_name || 'Not assigned'}</div>
+      </div>
+      <div style="font-size:13px;color:#64748b;">${done}/${total} picked</div>
+    </div>
+
+    <div class="items-wrap">
+      ${o.items.map(item => {
+        const isDone = ticks[item.sku] === true;
+        return `<div class="item-row">
+          <button class="tick-btn ${isDone?'done':''}" onclick="tickItem('${o.order_id}','${item.sku}',${isDone})"></button>
+          <div class="item-name ${isDone?'done':''}">${item.name}</div>
+          <div class="item-loc">${item.location}</div>
+          <div class="item-qty ${isDone?'done':''}">${item.qty}</div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    ${o.notes ? `<div class="notes-strip">⚠ ${o.notes}</div>` : ''}
+
+    <div class="actions">
+      ${st === 'queued'  ? `<button class="btn-assign" onclick="openPackerModal('${o.order_id}')">Assign Packer</button>` : ''}
+      ${st === 'packing' ? `<button class="btn-assign" onclick="openPackerModal('${o.order_id}')">Change: ${o.packer_name}</button>` : ''}
+      ${st === 'packing' && done === total ? `<button class="btn-ready" onclick="markReady('${o.order_id}')">✓ Mark Ready</button>` : ''}
+      ${st === 'ready'   ? `<button class="btn-collect" onclick="markCollected('${o.order_id}')">Mark Collected</button>` : ''}
+    </div>
+  </div>`;
+}
+
+// Mock data for demo (no server)
+function loadMock() {
+  orders = {
+    'ORD-2026-127': {
+      order_id:'ORD-2026-127', customer_name:'Wellness Pharmacy', customer_city:'Johannesburg',
+      status:'packing', packer_name:'THEMBI', total_units:5, inv_num:'INV-34685',
+      notes:'Rush — customer waiting', is_reseller:true, reseller_name:"Joe's Distribution",
+      items:[{name:'Tincture 20ml THC',sku:'THC-TINC-20',qty:3,location:'Shelf A-3'},{name:'CBD Balm 50ml',sku:'TOP-BALM-50',qty:2,location:'Shelf E-2'}],
+      item_ticks:{'THC-TINC-20':true,'TOP-BALM-50':false},
+    },
+    'ORD-2026-128': {
+      order_id:'ORD-2026-128', customer_name:'Cape Med Dispensary', customer_city:'Cape Town',
+      status:'queued', packer_name:null, total_units:5, inv_num:'INV-34687',
+      notes:'', is_reseller:false, reseller_name:null,
+      items:[{name:'Vape Pen 500mg',sku:'VP-500-MNT',qty:5,location:'Shelf C-2'}],
+      item_ticks:{'VP-500-MNT':false},
+    },
+    'ORD-2026-129': {
+      order_id:'ORD-2026-129', customer_name:'Pretoria Health Hub', customer_city:'Pretoria',
+      status:'ready', packer_name:'SIPHO', total_units:8, inv_num:'INV-34688',
+      notes:'', is_reseller:false, reseller_name:null,
+      items:[{name:'Tincture 30ml CBD',sku:'CBD-TINC-30',qty:5,location:'Shelf A-4'},{name:'CBD Gummies x20',sku:'ED-GUMMY-10',qty:3,location:'Shelf D-1'}],
+      item_ticks:{'CBD-TINC-30':true,'ED-GUMMY-10':true},
+    },
+  };
+  document.getElementById('conn-status').textContent = 'Demo mode';
+  render();
+}
+
+try {
+  connect();
+  setTimeout(() => { if (Object.keys(orders).length === 0) loadMock(); }, 2000);
+} catch(e) { loadMock(); }
+</script>
+</body>
+</html>

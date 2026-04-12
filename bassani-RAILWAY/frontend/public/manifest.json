@@ -1,0 +1,22 @@
+{
+  "name": "Bassani Health Internal",
+  "short_name": "Bassani",
+  "description": "Bassani Health internal stock control and order processing system",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f6e56",
+  "categories": ["business", "productivity"],
+  "lang": "en-ZA",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ],
+  "shortcuts": [
+    { "name": "New Order", "short_name": "Order", "url": "/orders?new=1", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Packing Board", "short_name": "Packing", "url": "/packing-board.html", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Supervisor", "short_name": "Supervisor", "url": "/supervisor.html", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

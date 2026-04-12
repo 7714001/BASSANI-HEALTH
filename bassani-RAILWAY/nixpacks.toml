@@ -1,0 +1,19 @@
+[phases.setup]
+nixPkgs = ["python311", "nodejs_20"]
+
+[phases.install]
+cmds = [
+  "cd frontend && npm install",
+  "cd frontend && npm run build || true",
+  "pip install -r backend/requirements.txt"
+]
+
+[phases.build]
+cmds = [
+  "mkdir -p backend/static",
+  "cp -r frontend/build/* backend/static/ 2>/dev/null || true",
+  "cp -r frontend/public/* backend/static/ 2>/dev/null || true"
+]
+
+[start]
+cmd = "cd backend && uvicorn server:app --host 0.0.0.0 --port $PORT"
