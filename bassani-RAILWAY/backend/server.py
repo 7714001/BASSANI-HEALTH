@@ -21,26 +21,25 @@ app.add_middleware(
 async def seed_default_users():
     from database import col
     from passlib.context import CryptContext
-    pwd = CryptContext(schemes=["bcrypt"])
-    existing = await col("users").find_one({"username": "admin"})
-    if not existing:
-        await col("users").insert_many([
-            {
-                "username": "admin",
-                "password": pwd.hash("admin123"),
-                "role": "admin",
-                "name": "Administrator",
-                "active": True,
-            },
-            {
-                "username": "joe2025",
-                "password": pwd.hash("reseller123"),
-                "role": "reseller",
-                "name": "Joe Reseller",
-                "active": True,
-            },
-        ])
-        print("✅ Default users seeded")
+    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    await col("users").delete_many({})
+    await col("users").insert_many([
+        {
+            "username": "admin",
+            "password": pwd.hash("admin123"),
+            "role": "admin",
+            "name": "Administrator",
+            "active": True,
+        },
+        {
+            "username": "joe2025",
+            "password": pwd.hash("reseller123"),
+            "role": "reseller",
+            "name": "Joe Reseller",
+            "active": True,
+        },
+    ])
+    print("✅ Default users seeded")
 
 @app.get("/health")
 def health():
