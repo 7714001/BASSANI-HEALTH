@@ -1,12 +1,12 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     mongo_url:  str = "mongodb://localhost:27017"
     db_name:    str = "bassani_internal"
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 480
+    jwt_algorithm: str = "HS256"
     odoo_url:      str = ""
     odoo_db:       str = ""
     odoo_username: str = ""
@@ -41,7 +41,6 @@ class Settings(BaseSettings):
 
     def cors_origins_list(self):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
-
 
 @lru_cache
 def get_settings() -> Settings:
