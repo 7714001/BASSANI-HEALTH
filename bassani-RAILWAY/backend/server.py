@@ -19,21 +19,20 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def seed_default_users():
+    import bcrypt
     from database import col
-    from passlib.context import CryptContext
-    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
     await col("users").delete_many({})
     await col("users").insert_many([
         {
             "username": "admin",
-            "password": pwd.hash("admin123"),
+            "password": bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode(),
             "role": "admin",
             "name": "Administrator",
             "active": True,
         },
         {
             "username": "joe2025",
-            "password": pwd.hash("reseller123"),
+            "password": bcrypt.hashpw("reseller123".encode(), bcrypt.gensalt()).decode(),
             "role": "reseller",
             "name": "Joe Reseller",
             "active": True,
