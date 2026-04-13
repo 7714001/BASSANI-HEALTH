@@ -7,16 +7,11 @@ from config import get_settings
 
 settings = get_settings()
 
-app = FastAPI(
-    title="Bassani Health Internal ERP",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url=None,
-)
+app = FastAPI(title="Bassani Health Internal ERP", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list(),
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,7 +19,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return JSONResponse({"status": "ok", "version": "2.0.0", "service": "Bassani Health ERP"})
+    return JSONResponse({"status": "ok", "version": "2.0.0"})
 
 from routes.auth_routes          import router as auth_router
 from routes.product_routes       import router as product_router
@@ -77,6 +72,8 @@ if os.path.exists(static_dir):
     @app.get("/manifest.json")
     async def manifest():
         return FileResponse(os.path.join(static_dir, "manifest.json"))
+
+    app.mount("/static", StaticFiles(directory=os.path.join(static_dir, "static")), name="static")
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
