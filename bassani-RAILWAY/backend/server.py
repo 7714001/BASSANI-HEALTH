@@ -21,6 +21,17 @@ app.add_middleware(
 def health():
     return JSONResponse({"status": "ok", "version": "2.0.0"})
 
+@app.get("/debug-static")
+def debug_static():
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    result = {"static_dir": static_dir, "exists": os.path.exists(static_dir), "files": {}}
+    if os.path.exists(static_dir):
+        for root, dirs, files in os.walk(static_dir):
+            for f in files:
+                full = os.path.join(root, f)
+                result["files"][full.replace(static_dir, "")] = os.path.getsize(full)
+    return result
+
 from routes.auth_routes          import router as auth_router
 from routes.product_routes       import router as product_router
 from routes.customer_routes      import router as customer_router
