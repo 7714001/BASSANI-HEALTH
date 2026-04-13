@@ -56,10 +56,6 @@ for router in [
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.exists(static_dir):
-    react_static = os.path.join(static_dir, "static")
-    if os.path.exists(react_static):
-        app.mount("/static", StaticFiles(directory=react_static), name="static-assets")
-
     @app.get("/packing-board.html")
     async def packing_board_page():
         return FileResponse(os.path.join(static_dir, "packing-board.html"))
@@ -77,9 +73,4 @@ if os.path.exists(static_dir):
     async def manifest():
         return FileResponse(os.path.join(static_dir, "manifest.json"))
 
-    @app.get("/{full_path:path}")
-    async def spa_fallback(full_path: str):
-        index = os.path.join(static_dir, "index.html")
-        if os.path.exists(index):
-            return FileResponse(index)
-        return JSONResponse({"error": "Frontend not built yet"})
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
