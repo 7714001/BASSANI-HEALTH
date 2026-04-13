@@ -73,11 +73,4 @@ if os.path.exists(static_dir):
     async def manifest():
         return FileResponse(os.path.join(static_dir, "manifest.json"))
 
-    app.mount("/static", StaticFiles(directory=os.path.join(static_dir, "static")), name="static")
-
-    @app.get("/{full_path:path}")
-    async def spa_fallback(full_path: str):
-        index = os.path.join(static_dir, "index.html")
-        if os.path.exists(index):
-            return FileResponse(index)
-        return JSONResponse({"error": "Frontend not built yet"})
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
