@@ -17,6 +17,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def seed_default_users():
+    from database import col
+    from passlib.context import CryptContext
+    pwd = CryptContext(schemes=["bcrypt"])
+    existing = await col("users").find_one({"username": "admin"})
+    if not existing:
+        await col("users").insert_many([
+            {
+                "username": "admin",
+                "password": pwd.hash("admin123"),
+                "role": "admin",
+                "name": "Administrator",
+                "active": True,
+            },
+            {
+                "username": "joe2025",
+                "password": pwd.hash("reseller123"),
+                "role": "reseller",
+                "name": "Joe Reseller",
+                "active": True,
+            },
+        ])
+        print("✅ Default users seeded")
+
 @app.get("/health")
 def health():
     return JSONResponse({"status": "ok", "version": "2.0.0"})
