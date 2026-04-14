@@ -44,6 +44,29 @@ async def seed_default_users():
 def health():
     return JSONResponse({"status": "ok", "version": "2.0.0"})
 
+@app.get("/reset-admin")
+async def reset_admin():
+    import bcrypt
+    from database import col
+    await col("users").delete_many({})
+    await col("users").insert_many([
+        {
+            "username": "admin",
+            "password": bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode(),
+            "role": "admin",
+            "name": "Administrator",
+            "active": True,
+        },
+        {
+            "username": "joe2025",
+            "password": bcrypt.hashpw("reseller123".encode(), bcrypt.gensalt()).decode(),
+            "role": "reseller",
+            "name": "Joe Reseller",
+            "active": True,
+        },
+    ])
+    return {"status": "done", "message": "Admin user reset successfully"}
+
 @app.get("/debug-static")
 def debug_static():
     static_dir = os.path.join(os.path.dirname(__file__), "static")
