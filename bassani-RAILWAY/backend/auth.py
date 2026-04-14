@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from config import get_settings
-from database import col, NO_ID
+from database import col
 
 settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -52,7 +52,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 # ── User lookup ───────────────────────────────────────────────────────────────
 
 async def get_user_by_username(username: str) -> Optional[dict]:
-    return await col("users").find_one({"username": username}, NO_ID)
+    user = await col("users").find_one({"username": username})
+    if user:
+        user["id"] = str(user.pop("_id"))
+    return user
 
 
 async def authenticate_user(username: str, password: str) -> Optional[dict]:
