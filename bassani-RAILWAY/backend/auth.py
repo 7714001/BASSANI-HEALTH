@@ -23,9 +23,6 @@ class Token(BaseModel):
 class UserOut(BaseModel):
     id: str
     username: str
-    email: str
-    role: str
-    active: bool = True
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
