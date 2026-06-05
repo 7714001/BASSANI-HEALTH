@@ -99,7 +99,7 @@ def low_stock_products(current_user: dict = Depends(get_current_user)):
             ],
             fields=["id", "name", "default_code", "qty_available", "categ_id", "uom_id"],
             limit=50,
-            order="qty_available asc",
+            order="name asc",
         )
         return {"products": products, "total": len(products)}
     except Exception as e:

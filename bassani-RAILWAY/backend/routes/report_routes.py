@@ -100,7 +100,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             domain=[("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
             fields=["id", "name", "qty_available", "uom_id", "categ_id"],
             limit=5,
-            order="qty_available asc",
+            order="name asc",
         )
 
         # Commission due this month from MongoDB
