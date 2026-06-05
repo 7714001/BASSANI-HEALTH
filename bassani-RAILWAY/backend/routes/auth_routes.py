@@ -28,6 +28,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         "user": {
             "id": user["id"],
             "username": user["username"],
+            "role": user.get("role", "reseller"),
+            "name": user.get("name", ""),
         },
     }
 
@@ -38,4 +40,6 @@ async def me(current_user: dict = Depends(get_current_user)):
     return {
         "id": current_user["id"],
         "username": current_user["username"],
+        "role": current_user.get("role", "reseller"),
+        "name": current_user.get("name", ""),
     }
