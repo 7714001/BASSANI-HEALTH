@@ -72,6 +72,12 @@ def list_customers(
             offset=offset,
             order="name asc",
         )
+        # Odoo returns False for unset relation/text fields; normalize to None
+        # so JavaScript optional chaining (?.) works correctly
+        for c in customers:
+            for k, v in c.items():
+                if v is False and k != "active":
+                    c[k] = None
         total = odoo.count("res.partner", domain)
         return {"customers": customers, "total": total}
     except Exception as e:
