@@ -47,7 +47,7 @@ export default function Login() {
             ))}
           </div>
         </div>
-        <p className="text-slate-600 text-xs">Authorised users only</p>
+        <p className="text-slate-600 text-xs">Authorised personnel only · v2.0</p>
       </div>
 
       {/* Right panel */}
