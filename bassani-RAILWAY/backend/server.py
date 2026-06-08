@@ -1,9 +1,10 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from config import get_settings
+from auth import require_admin
 
 settings = get_settings()
 
@@ -21,7 +22,10 @@ app.add_middleware(
 async def seed_default_users():
     import bcrypt
     from database import col
-    await col("users").delete_many({})
+    count = await col("users").count_documents({})
+    if count > 0:
+        print(f"Users collection has {count} records — skipping seed")
+        return
     await col("users").insert_many([
         {
             "username": "admin",
@@ -30,42 +34,28 @@ async def seed_default_users():
             "name": "Administrator",
             "active": True,
         },
-        {
-            "username": "joe2025",
-            "password": bcrypt.hashpw("reseller123".encode(), bcrypt.gensalt()).decode(),
-            "role": "reseller",
-            "name": "Joe Reseller",
-            "active": True,
-        },
     ])
-    print("✅ Default users seeded")
+    print("Default users seeded — change the admin password immediately")
 
 @app.get("/health")
 def health():
     return JSONResponse({"status": "ok", "version": "2.0.0"})
 
 @app.get("/reset-admin")
-async def reset_admin():
+async def reset_admin(current_user: dict = Depends(require_admin)):
     import bcrypt
     from database import col
-    await col("users").delete_many({})
-    await col("users").insert_many([
-        {
-            "username": "admin",
+    await col("users").update_one(
+        {"username": "admin"},
+        {"$set": {
             "password": bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode(),
             "role": "admin",
             "name": "Administrator",
             "active": True,
-        },
-        {
-            "username": "joe2025",
-            "password": bcrypt.hashpw("reseller123".encode(), bcrypt.gensalt()).decode(),
-            "role": "reseller",
-            "name": "Joe Reseller",
-            "active": True,
-        },
-    ])
-    return {"status": "done", "message": "Admin user reset successfully"}
+        }},
+        upsert=True,
+    )
+    return {"status": "done", "message": "Admin user reset — change the password immediately"}
 
 @app.get("/debug-static")
 def debug_static():

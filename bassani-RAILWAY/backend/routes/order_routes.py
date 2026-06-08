@@ -253,7 +253,7 @@ def confirm_order(order_id: int, current_user: dict = Depends(require_admin)):
     """Confirm a quotation into a sales order in Odoo."""
     odoo = get_odoo_client()
     try:
-        odoo.call("sale.order", "action_confirm", [order_id])
+        odoo.execute("sale.order", "action_confirm", [order_id])
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -264,7 +264,7 @@ def cancel_order(order_id: int, current_user: dict = Depends(require_admin)):
     """Cancel a sales order in Odoo."""
     odoo = get_odoo_client()
     try:
-        odoo.call("sale.order", "action_cancel", [order_id])
+        odoo.execute("sale.order", "action_cancel", [order_id])
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

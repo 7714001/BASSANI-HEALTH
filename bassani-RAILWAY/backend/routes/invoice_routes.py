@@ -164,7 +164,7 @@ def post_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
     """Post/validate an invoice in Odoo."""
     odoo = get_odoo_client()
     try:
-        odoo.call("account.move", "action_post", [invoice_id])
+        odoo.execute("account.move", "action_post", [invoice_id])
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -175,7 +175,7 @@ def reset_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
     """Reset a posted invoice back to draft."""
     odoo = get_odoo_client()
     try:
-        odoo.call("account.move", "button_draft", [invoice_id])
+        odoo.execute("account.move", "button_draft", [invoice_id])
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

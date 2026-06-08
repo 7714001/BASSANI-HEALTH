@@ -10,11 +10,6 @@ export default function Login() {
   const [form, setForm]       = useState({ username: "", password: "" });
   const [loading, setLoading] = useState(false);
 
-  const quickFill = (role) => {
-    if (role === "admin")    setForm({ username: "admin",   password: "admin123"    });
-    if (role === "reseller") setForm({ username: "joe2025", password: "reseller123" });
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -60,17 +55,6 @@ export default function Login() {
         <div className="w-full max-w-sm">
           <h2 className="text-2xl font-semibold text-gray-900 mb-1">Welcome back</h2>
           <p className="text-gray-500 text-sm mb-8">Sign in to your account</p>
-
-          {/* Quick fill */}
-          <div className="flex gap-2 mb-6">
-            <span className="text-xs text-gray-400 self-center">Quick fill:</span>
-            {["admin","reseller"].map((r) => (
-              <button key={r} onClick={() => quickFill(r)}
-                className="px-3 py-1 text-xs border border-gray-200 rounded-lg text-gray-500 hover:border-bassani-600 hover:text-bassani-700 hover:bg-bassani-50 transition-all capitalize">
-                {r}
-              </button>
-            ))}
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
