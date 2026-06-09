@@ -7,7 +7,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, ChevronDown } from "lucide-react";
 import {
-  TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select, Textarea,
+  TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
   LoadingState, EmptyState, Badge, fmtR, fmtDate,
 } from "../components/UI";
@@ -25,6 +25,8 @@ export function Products() {
   const [modal,      setModal     ] = useState(false);
   const [editing,    setEditing   ] = useState(null);
   const [form,       setForm      ] = useState({ name:"", default_code:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
   useEffect(() => {
     api.get("/api/products/categories")
@@ -35,14 +37,16 @@ export function Products() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { limit:50, offset:0 };
+      const sort = sorting[0];
+      const params = { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
+      if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search = search;
       if (cat !== "all") params.category = cat;
       const r = await api.get("/api/products/", { params });
       setProducts(r.data.products); setTotal(r.data.total);
     } catch { toast.error("Failed to load products"); }
     finally { setLoading(false); }
-  }, [search, cat]);
+  }, [search, cat, pagination, sorting]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -72,36 +76,30 @@ export function Products() {
         actions={!isReseller && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search products, SKU…" />
+          <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
           <ChipRow>
-            {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+            {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setPagination(p => ({...p, pageIndex:0})); }} />)}
           </ChipRow>
         </div>
-        <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted",...(!isReseller?["Actions"]:[])]} loading={loading}>
-          {products.length === 0 && !loading && <tr><td colSpan={7}><EmptyState /></td></tr>}
-          {products.map(p => (
-            <Tr key={p.id}>
-              <Td><p className="font-medium text-gray-900">{p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></Td>
-              <Td><span className="text-xs text-gray-500">{p.categ_id?.[1]||"—"}</span></Td>
-              <Td className="font-semibold">{fmtR(p.list_price)}</Td>
-              <Td className="text-gray-500">{fmtR(p.standard_price)}</Td>
-              <Td><span className={stockColor(p.qty_available||0)}>{p.qty_available??0}</span></Td>
-              <Td className="text-gray-500">{p.virtual_available??0}</Td>
-              {!isReseller && (
-                <Td>
-                  <div className="flex gap-1.5">
-                    <BtnSecondary size="sm" onClick={()=>openEdit(p)}><Edit2 size={11}/></BtnSecondary>
-                    <BtnDanger onClick={()=>archive(p.id)}><Archive size={11}/></BtnDanger>
-                  </div>
-                </Td>
-              )}
-            </Tr>
-          ))}
-        </Table>
+        <DataTable
+          columns={[
+            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
+            { id:"category", header:"Category", enableSorting:false, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
+            { accessorKey:"list_price", header:"Sale Price", cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
+            { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
+            { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
+            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=><span className="text-gray-500">{p.virtual_available??0}</span> },
+            ...(!isReseller ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}}><Archive size={11}/></BtnDanger></div> }] : []),
+          ]}
+          data={products} loading={loading} total={total}
+          pagination={pagination} onPaginationChange={setPagination}
+          sorting={sorting} onSortingChange={u=>{ setSorting(typeof u==="function"?u(sorting):u); setPagination(p=>({...p,pageIndex:0})); }}
+          manualPagination manualSorting
+        />
       </main>
       {modal && (
         <Modal title={editing?"Edit Product":"New Product"} onClose={()=>setModal(false)}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormGroup label="Product Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Tincture 20ml THC" /></FormGroup>
             <FormGroup label="SKU / Reference"><Input value={form.default_code} onChange={e=>setForm({...form,default_code:e.target.value})} placeholder="THC-TINC-20" /></FormGroup>
             <FormGroup label="Sale Price (ZAR)"><Input type="number" value={form.list_price} onChange={e=>setForm({...form,list_price:e.target.value})} placeholder="450.00" /></FormGroup>
@@ -128,15 +126,21 @@ export function Customers() {
   const [modal,     setModal    ] = useState(false);
   const [detail,    setDetail   ] = useState(null);
   const [form,      setForm     ] = useState({ name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false });
+  const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
+  const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/api/customers/", { params: { limit:50, search: search||undefined } });
+      const sort = custSort[0];
+      const params = { limit: custPag.pageSize, offset: custPag.pageIndex * custPag.pageSize };
+      if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
+      if (search) params.search = search;
+      const r = await api.get("/api/customers/", { params });
       setCustomers(r.data.customers); setTotal(r.data.total);
     } catch { toast.error("Failed to load customers"); }
     finally { setLoading(false); }
-  }, [search]);
+  }, [search, custPag, custSort]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -156,26 +160,28 @@ export function Customers() {
       <TopBar title="Customers" subtitle={`${total} active accounts`} onRefresh={load}
         actions={!isReseller && <BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={setSearch} placeholder="Search customers, city…" /></div>
-        <Table headers={["Customer","Type","Contact","City","Section 21","Balance","Terms","Actions"]} loading={loading}>
-          {customers.length===0&&!loading&&<tr><td colSpan={8}><EmptyState /></td></tr>}
-          {customers.map(c=>(
-            <Tr key={c.id} onClick={()=>setDetail(c)}>
-              <Td><p className="font-medium">{c.name}</p></Td>
-              <Td><Badge status={c.comment?.match(/Type: (\w+)/)?.[1]?.toLowerCase()||"pharmacy"} label={c.comment?.match(/Type: (\w+)/)?.[1]||"—"} /></Td>
-              <Td className="text-xs text-gray-500">{c.email||"—"}</Td>
-              <Td className="text-gray-500 text-sm">{c.city||"—"}</Td>
-              <Td>{c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span>}</Td>
-              <Td><span className={balanceColor(0, c.credit_limit)}>{fmtR(c.credit_limit)}</span></Td>
-              <Td className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</Td>
-              <Td onClick={e=>e.stopPropagation()}><BtnSecondary size="sm" onClick={()=>setDetail(c)}>View</BtnSecondary></Td>
-            </Tr>
-          ))}
-        </Table>
+        <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
+        <DataTable
+          columns={[
+            { accessorKey:"name", header:"Customer", cell:({row:{original:c}})=><p className="font-medium">{c.name}</p> },
+            { id:"type", header:"Type", enableSorting:false, accessorFn:r=>r.comment?.match(/Type: (\w+)/)?.[1]||"—", cell:({row:{original:c}})=><Badge status={c.comment?.match(/Type: (\w+)/)?.[1]?.toLowerCase()||"pharmacy"} label={c.comment?.match(/Type: (\w+)/)?.[1]||"—"} /> },
+            { accessorKey:"email", header:"Contact", cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
+            { accessorKey:"city", header:"City", cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
+            { id:"s21", header:"Section 21", enableSorting:false, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
+            { accessorKey:"credit_limit", header:"Credit Limit", cell:({row:{original:c}})=><span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span> },
+            { id:"terms", header:"Terms", enableSorting:false, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
+            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();setDetail(c);}}>View</BtnSecondary> }]:[]),
+          ]}
+          data={customers} loading={loading} total={total}
+          pagination={custPag} onPaginationChange={setCustPag}
+          sorting={custSort} onSortingChange={u=>{ setCustSort(typeof u==="function"?u(custSort):u); setCustPag(p=>({...p,pageIndex:0})); }}
+          onRowClick={setDetail}
+          manualPagination manualSorting
+        />
       </main>
       {modal && (
         <Modal title="Add Customer" onClose={()=>setModal(false)}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Wellness Pharmacy" /></FormGroup>
             <FormGroup label="Type"><Select value={form.customer_type} onChange={e=>setForm({...form,customer_type:e.target.value})}>{TYPES.map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
             <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="orders@example.co.za" /></FormGroup>
@@ -217,6 +223,8 @@ export function Orders() {
   const [search,      setSearch     ] = useState("");
   const [status,      setStatus     ] = useState("all");
   const [detail,      setDetail     ] = useState(null);
+  const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
+  const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
   // ── Cart view state ───────────────────────────────────────────────────────
   const [products,     setProducts    ] = useState([]);
@@ -237,11 +245,16 @@ export function Orders() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/api/orders/", { params: { limit:20, search:search||undefined, status:status==="all"?undefined:status } });
+      const sort = orderSort[0];
+      const params = { limit: orderPag.pageSize, offset: orderPag.pageIndex * orderPag.pageSize };
+      if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
+      if (search) params.search = search;
+      if (status !== "all") params.status = status;
+      const r = await api.get("/api/orders/", { params });
       setOrders(r.data.orders); setOrderTotal(r.data.total);
     } catch { toast.error("Failed to load orders"); }
     finally { setLoading(false); }
-  }, [search, status]);
+  }, [search, status, orderPag, orderSort]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -380,10 +393,10 @@ export function Orders() {
           subtitle={isReseller ? "Ordering under your linked account" : "Select a customer and add products"}
           actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
 
           {/* ── Left panel: product browser ────────────────────────────── */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {/* Search + category filters */}
             <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100 space-y-3">
               <input
@@ -456,7 +469,7 @@ export function Orders() {
           </div>
 
           {/* ── Right panel: cart ──────────────────────────────────────── */}
-          <div className="w-80 xl:w-96 flex flex-col bg-white border-l border-gray-100 shrink-0">
+          <div className="h-72 lg:h-auto w-full lg:w-80 xl:w-96 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-gray-100 shrink-0">
             {/* Header */}
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
               <div>
@@ -581,30 +594,29 @@ export function Orders() {
         actions={<BtnPrimary onClick={openCart}><Plus size={14}/>Place Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search order, customer…" />
+          <SearchBar value={search} onChange={v=>{ setSearch(v); setOrderPag(p=>({...p,pageIndex:0})); }} placeholder="Search order, customer…" />
           <ChipRow>
-            {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s==="sale"?"Confirmed":s==="draft"?"Quotation":s.charAt(0).toUpperCase()+s.slice(1)} active={status===s} onClick={()=>setStatus(s)} />)}
+            {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s==="sale"?"Confirmed":s==="draft"?"Quotation":s.charAt(0).toUpperCase()+s.slice(1)} active={status===s} onClick={()=>{ setStatus(s); setOrderPag(p=>({...p,pageIndex:0})); }} />)}
           </ChipRow>
         </div>
-        <Table headers={["Order #","Customer","Date","Amount","VAT","Total","Commission","Status","Payment","Actions"]} loading={loading}>
-          {orders.length===0&&!loading&&<tr><td colSpan={10}><EmptyState /></td></tr>}
-          {orders.map(o=>(
-            <Tr key={o.id} onClick={()=>setDetail(o)}>
-              <Td><span className="font-mono text-xs text-bassani-700">{o.name}</span></Td>
-              <Td><p className="font-medium text-sm">{o.partner_id?.[1]||"—"}</p>{o.reseller_name&&<span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full">{o.reseller_name}</span>}</Td>
-              <Td className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</Td>
-              <Td>{fmtR(o.amount_untaxed)}</Td>
-              <Td className="text-gray-500">{fmtR(o.amount_tax)}</Td>
-              <Td className="font-semibold">{fmtR(o.amount_total)}</Td>
-              <Td className={o.commission_total>0?"text-bassani-700 font-medium":"text-gray-300"}>{o.commission_total>0?fmtR(o.commission_total):"—"}</Td>
-              <Td><Badge status={o.state} /></Td>
-              <Td><Badge status={o.invoice_status} /></Td>
-              <Td onClick={e=>e.stopPropagation()}>
-                {!isReseller && o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)}>Confirm</BtnPrimary>}
-              </Td>
-            </Tr>
-          ))}
-        </Table>
+        <DataTable
+          columns={[
+            { accessorKey:"name", header:"Order #", cell:({row:{original:o}})=><span className="font-mono text-xs text-bassani-700">{o.name}</span> },
+            { id:"customer", header:"Customer", enableSorting:false, cell:({row:{original:o}})=><div><p className="font-medium text-sm">{o.partner_id?.[1]||"—"}</p>{o.reseller_name&&<span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full">{o.reseller_name}</span>}</div> },
+            { accessorKey:"date_order", header:"Date", cell:({row:{original:o}})=><span className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</span> },
+            { accessorKey:"amount_untaxed", header:"Amount", cell:({row:{original:o}})=>fmtR(o.amount_untaxed) },
+            { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
+            { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:o}})=><span className={o.commission_total>0?"text-bassani-700 font-medium":"text-gray-300"}>{o.commission_total>0?fmtR(o.commission_total):"—"}</span> },
+            { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
+            { id:"invoice", header:"Payment", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
+            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>o.state==="draft"?<BtnPrimary size="sm" onClick={e=>{e.stopPropagation();confirm(o.id);}}>Confirm</BtnPrimary>:null }]:[]),
+          ]}
+          data={orders} loading={loading} total={orderTotal}
+          pagination={orderPag} onPaginationChange={setOrderPag}
+          sorting={orderSort} onSortingChange={u=>{ setOrderSort(typeof u==="function"?u(orderSort):u); setOrderPag(p=>({...p,pageIndex:0})); }}
+          onRowClick={setDetail}
+          manualPagination manualSorting
+        />
       </main>
       {detail && (
         <Modal title={detail.name} onClose={()=>setDetail(null)} width="max-w-xl">
@@ -748,31 +760,16 @@ export function Resellers() {
       <TopBar title="Resellers" subtitle="Distributors, agents and brokers" onRefresh={load}
         actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        <Table headers={["Name / Code","Type","Default Rate","Contact","Actions"]} loading={loading}>
-          {resellers.length === 0 && !loading && <tr><td colSpan={5}><EmptyState /></td></tr>}
-          {resellers.map(r=>(
-            <Tr key={r.id}>
-              <Td>
-                <p className="font-semibold text-gray-900">{r.name}</p>
-                <p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p>
-              </Td>
-              <Td><span className="text-xs text-gray-500">{r.type}</span></Td>
-              <Td>
-                <span className="font-semibold text-bassani-700">{r.default_commission ?? 10}%</span>
-                {Object.keys(r.commission_rates||{}).length > 0 && (
-                  <span className="text-[10px] text-gray-400 ml-1.5">+{Object.keys(r.commission_rates).length} cat.</span>
-                )}
-              </Td>
-              <Td>
-                <p className="text-gray-700">{r.contact_person||"—"}</p>
-                {r.email && <p className="text-[10px] text-gray-400">{r.email}</p>}
-              </Td>
-              <Td>
-                <BtnSecondary size="sm" onClick={()=>openEdit(r)}><Edit2 size={11}/>Edit</BtnSecondary>
-              </Td>
-            </Tr>
-          ))}
-        </Table>
+        <DataTable
+          columns={[
+            { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
+            { accessorKey:"type", header:"Type", cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
+            { accessorKey:"default_commission", header:"Default Rate", cell:({row:{original:r}})=><div><span className="font-semibold text-bassani-700">{r.default_commission??10}%</span>{Object.keys(r.commission_rates||{}).length>0&&<span className="text-[10px] text-gray-400 ml-1.5">+{Object.keys(r.commission_rates).length} cat.</span>}</div> },
+            { id:"contact", header:"Contact", enableSorting:false, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
+            { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary> },
+          ]}
+          data={resellers} loading={loading}
+        />
       </main>
 
       {modal && (
@@ -834,7 +831,7 @@ export function Resellers() {
 
           {/* Section 2 — Business details */}
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
-          <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></FormGroup>
             <FormGroup label="Type"><Select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
             <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
@@ -845,7 +842,7 @@ export function Resellers() {
 
           {/* Section 3 — Portal login */}
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Portal Login Credentials</p>
-          <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Username" required><Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" /></FormGroup>
             <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
           </div>
@@ -853,7 +850,7 @@ export function Resellers() {
           {/* Section 4 — Commission */}
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
           <div className="mb-4">
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <FormGroup label="Default Rate (fallback for all categories)">
                 <Input type="number" min={10} max={12.5} step={0.5}
                   value={form.default_commission}
@@ -887,7 +884,7 @@ export function Resellers() {
       {editModal && (
         <Modal title="Edit Reseller" onClose={()=>setEditModal(false)} width="max-w-2xl">
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
-          <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></FormGroup>
             <FormGroup label="Type"><Select value={editForm.type} onChange={e=>setEditForm({...editForm,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
             <FormGroup label="Contact Person"><Input value={editForm.contact_person} onChange={e=>setEditForm({...editForm,contact_person:e.target.value})} /></FormGroup>
@@ -897,7 +894,7 @@ export function Resellers() {
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
           <div className="mb-4">
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <FormGroup label="Default Rate (fallback for all categories)">
                 <Input type="number" min={10} max={12.5} step={0.5}
                   value={editForm.default_commission}
@@ -963,7 +960,7 @@ function ResellerCommissionView() {
           <h3 className="text-sm font-semibold text-gray-800">Your Commission Rates</h3>
           <p className="text-xs text-gray-400 mt-0.5">Set by Bassani Health — applied to your orders at checkout</p>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[280px]">
           <thead>
             <tr className="bg-gray-50">
               <th className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">Category</th>
@@ -982,7 +979,7 @@ function ResellerCommissionView() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
@@ -990,7 +987,7 @@ function ResellerCommissionView() {
           <h3 className="text-sm font-semibold text-gray-800">Commission History</h3>
           <p className="text-xs text-gray-400 mt-0.5">Commission earned per order</p>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[320px]">
           <thead>
             <tr className="bg-gray-50">
               {["Order #","Date","Commission Earned"].map(h=>(
@@ -1010,7 +1007,7 @@ function ResellerCommissionView() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );
@@ -1108,44 +1105,17 @@ export function Commission() {
         </div>
 
         {/* Matrix table */}
-        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                {["Product / SKU","Category","Commission Rate","Source","Effective Rate","Block/Unblock"].map(h=>(
-                  <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3 border-b border-gray-100">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={6} className="py-12 text-center"><LoadingState /></td></tr>}
-              {!loading && matrix.map(m=>(
-                <tr key={m.product_id} className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${m.is_blocked?"opacity-60":""}`}>
-                  <Td><p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p><p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p></Td>
-                  <Td><span className="text-xs text-gray-500">{m.category}</span></Td>
-                  <Td>
-                    {!m.is_blocked ? (
-                      <div className="flex items-center gap-1.5">
-                        <input type="number" min={10} max={50} step={0.5} defaultValue={m.commission_rate}
-                          className={`w-16 text-center border rounded-lg px-2 py-1 text-xs font-semibold focus:outline-none focus:border-bassani-600 ${m.is_custom?"border-bassani-300 bg-bassani-50 text-bassani-700":"border-gray-200 bg-gray-50 text-gray-600"}`}
-                          onBlur={e=>{ if(parseFloat(e.target.value)!==m.commission_rate) updateRate(m.product_id, e.target.value); }} />
-                        <span className="text-xs text-gray-400">%</span>
-                      </div>
-                    ) : <span className="text-xs text-red-400">Blocked</span>}
-                  </Td>
-                  <Td><span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sourceStyle[m.source]||"bg-gray-100 text-gray-500"}`}>{m.source.replace(/_/g," ")}</span></Td>
-                  <Td><span className={`font-semibold text-sm ${m.is_blocked?"text-red-500":m.is_custom?"text-bassani-700":"text-gray-700"}`}>{m.is_blocked?"—":m.effective_rate+"%"}</span></Td>
-                  <Td>
-                    <button onClick={()=>toggleBlock(m.product_id, m.is_blocked)}
-                      className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
-                      {m.is_blocked?"Unblock":"Block"}
-                    </button>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={[
+            { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=><div className={m.is_blocked?"opacity-60":""}><p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p><p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p></div> },
+            { accessorKey:"category", header:"Category", cell:({row:{original:m}})=><span className="text-xs text-gray-500">{m.category}</span> },
+            { accessorKey:"commission_rate", header:"Commission Rate", cell:({row:{original:m}})=>!m.is_blocked?<div className="flex items-center gap-1.5"><input type="number" min={10} max={50} step={0.5} defaultValue={m.commission_rate} className={`w-16 text-center border rounded-lg px-2 py-1 text-xs font-semibold focus:outline-none focus:border-bassani-600 ${m.is_custom?"border-bassani-300 bg-bassani-50 text-bassani-700":"border-gray-200 bg-gray-50 text-gray-600"}`} onBlur={e=>{if(parseFloat(e.target.value)!==m.commission_rate)updateRate(m.product_id,e.target.value);}}/><span className="text-xs text-gray-400">%</span></div>:<span className="text-xs text-red-400">Blocked</span> },
+            { accessorKey:"source", header:"Source", enableSorting:false, cell:({row:{original:m}})=><span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sourceStyle[m.source]||"bg-gray-100 text-gray-500"}`}>{m.source.replace(/_/g," ")}</span> },
+            { accessorKey:"effective_rate", header:"Effective Rate", cell:({row:{original:m}})=><span className={`font-semibold text-sm ${m.is_blocked?"text-red-500":m.is_custom?"text-bassani-700":"text-gray-700"}`}>{m.is_blocked?"—":m.effective_rate+"%"}</span> },
+            { id:"block", header:"Block/Unblock", enableSorting:false, cell:({row:{original:m}})=><button onClick={()=>toggleBlock(m.product_id,m.is_blocked)} className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>{m.is_blocked?"Unblock":"Block"}</button> },
+          ]}
+          data={matrix} loading={loading} defaultPageSize={50}
+        />
       </main>
     </div>
   );
@@ -1179,11 +1149,11 @@ export function Reports() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Reports & Analytics" subtitle="Live data from Odoo" onRefresh={()=>load(activeReport)} />
-      <main className="flex-1 overflow-y-auto p-6 flex gap-5">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col sm:flex-row gap-4 sm:gap-5">
         {/* Report nav */}
-        <div className="w-44 flex-shrink-0">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">Reports</p>
-          <div className="space-y-1">
+        <div className="sm:w-44 sm:flex-shrink-0">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 sm:mb-3">Reports</p>
+          <div className="flex sm:flex-col gap-1 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
             {REPORTS.map(r=>(
               <button key={r.key} onClick={()=>{ setActiveReport(r.key); setData(null); }}
                 className={`w-full text-left text-xs px-3 py-2.5 rounded-lg transition-all border font-medium ${activeReport===r.key?"border-bassani-600 text-bassani-700 bg-bassani-50":"border-transparent text-gray-500 hover:bg-gray-100"}`}>
@@ -1206,7 +1176,7 @@ export function Reports() {
 function ReportContent({ type, data }) {
   if (type === "turnover") return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCardInline label="Total Revenue" value={fmtR(data.revenue?.total)} />
         <StatCardInline label="Direct Sales"  value={fmtR(data.revenue?.direct)} />
         <StatCardInline label="Reseller Sales" value={fmtR(data.revenue?.reseller)} />
@@ -1231,7 +1201,7 @@ function ReportContent({ type, data }) {
   if (type === "best-sellers") return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-50"><h3 className="text-sm font-semibold">Top products by revenue</h3></div>
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
         <thead><tr className="bg-gray-50">{["#","Product","Units","Revenue","Share"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
         <tbody>
           {data.products?.map((p,i)=>{
@@ -1245,14 +1215,14 @@ function ReportContent({ type, data }) {
             </tr>;
           })}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 
   if (type === "best-customers") return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-50"><h3 className="text-sm font-semibold">Top customers by spend</h3></div>
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[400px]">
         <thead><tr className="bg-gray-50">{["#","Customer","Orders","Total Spend","Avg Order"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
         <tbody>
           {data.customers?.map((c,i)=>(
@@ -1265,7 +1235,7 @@ function ReportContent({ type, data }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 
@@ -1275,7 +1245,7 @@ function ReportContent({ type, data }) {
         {data.total} products haven't moved in {data.days_threshold}+ days
       </div>
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
           <thead><tr className="bg-gray-50">{["Product","Category","Stock","Last Sold","Status"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
           <tbody>
             {data.dead_stock?.map(p=>(
@@ -1288,7 +1258,7 @@ function ReportContent({ type, data }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );
@@ -1359,7 +1329,7 @@ export function Healthcare() {
       <TopBar title="Healthcare Onboarding" subtitle="HPCSA-registered practitioners" onRefresh={load} />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCardInline label="Total Submissions" value={total} />
           <StatCardInline label="Pending Review"    value={stats.pending||0}   accent="text-amber-600" />
           <StatCardInline label="Approved"          value={stats.approved||0}  accent="text-bassani-700" />

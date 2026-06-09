@@ -31,7 +31,7 @@ export default function Dashboard() {
         {data    && (
           <div className="space-y-5 max-w-6xl">
             {/* KPI row */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {isReseller ? (
                 <>
                   <StatCard label="Orders This Month" value={data.orders.this_month} sub={fmtR(data.orders.month_revenue)} />
@@ -86,8 +86,8 @@ export default function Dashboard() {
               </div>
             ) : (
               /* Admin — recent orders + low stock + invoicing */
-              <div className="grid grid-cols-5 gap-4">
-                <div className="col-span-3 bg-white rounded-xl border border-gray-100 overflow-hidden">
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                <div className="lg:col-span-3 bg-white rounded-xl border border-gray-100 overflow-hidden">
                   <div className="px-5 py-4 border-b border-gray-50 flex justify-between items-center">
                     <h3 className="text-sm font-semibold text-gray-800">Recent orders</h3>
                   </div>
@@ -112,7 +112,7 @@ export default function Dashboard() {
                   </table>
                 </div>
 
-                <div className="col-span-2 space-y-4">
+                <div className="lg:col-span-2 space-y-4">
                   <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
                     <div className="px-5 py-4 border-b border-gray-50">
                       <h3 className="text-sm font-semibold text-gray-800">Low stock alerts</h3>

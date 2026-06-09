@@ -48,9 +48,14 @@ def list_customers(
     customer_type: Optional[str] = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
+    sort_by: str = Query("name"),
+    sort_dir: str = Query("asc"),
     current_user: dict = Depends(get_current_user),
 ):
     """List all customers from Odoo."""
+    _SORTABLE = {"name", "email", "city", "credit_limit"}
+    sort_by  = sort_by  if sort_by  in _SORTABLE          else "name"
+    sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "asc"
     odoo = get_odoo_client()
     domain = [("customer_rank", ">", 0), ("active", "=", True)]
 
@@ -70,7 +75,7 @@ def list_customers(
             fields=CUSTOMER_FIELDS,
             limit=limit,
             offset=offset,
-            order="name asc",
+            order=f"{sort_by} {sort_dir}",
         )
         # Odoo returns False for unset relation/text fields; normalize to None
         # so JavaScript optional chaining (?.) works correctly

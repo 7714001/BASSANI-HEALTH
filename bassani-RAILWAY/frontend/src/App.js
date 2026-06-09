@@ -1,8 +1,8 @@
+import { useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { useAuth } from "./AuthContext";
-import { Sidebar } from "./components/UI";
-import { Spinner } from "./components/UI";
+import { Sidebar, Spinner, SidebarContext } from "./components/UI";
 
 // Views
 import Login      from "./views/Login";
@@ -29,11 +29,17 @@ function ProtectedRoute({ children, adminOnly }) {
 }
 
 function AppLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">{children}</div>
-    </div>
+    <SidebarContext.Provider value={{ open: sidebarOpen, toggle: () => setSidebarOpen(v => !v), close: () => setSidebarOpen(false) }}>
+      <div className="flex h-screen overflow-hidden bg-gray-50">
+        {sidebarOpen && (
+          <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        )}
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">{children}</div>
+      </div>
+    </SidebarContext.Provider>
   );
 }
 

@@ -42,9 +42,14 @@ def list_products(
     category: Optional[str] = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
+    sort_by: str = Query("name"),
+    sort_dir: str = Query("asc"),
     current_user: dict = Depends(get_current_user),
 ):
     """List all products from Odoo with optional search and category filter."""
+    _SORTABLE = {"name", "default_code", "list_price", "standard_price", "qty_available"}
+    sort_by  = sort_by  if sort_by  in _SORTABLE          else "name"
+    sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "asc"
     odoo = get_odoo_client()
     domain = [("type", "in", ["product", "consu"]), ("active", "=", True)]
 
@@ -62,7 +67,7 @@ def list_products(
             fields=PRODUCT_FIELDS,
             limit=limit,
             offset=offset,
-            order="name asc",
+            order=f"{sort_by} {sort_dir}",
         )
         total = odoo.count("product.template", domain)
         return {"products": products, "total": total, "limit": limit, "offset": offset}

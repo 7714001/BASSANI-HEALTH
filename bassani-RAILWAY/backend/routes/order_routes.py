@@ -100,9 +100,14 @@ async def list_orders(
     reseller_id: Optional[str] = None,
     limit: int = Query(20, le=100),
     offset: int = 0,
+    sort_by: str = Query("date_order"),
+    sort_dir: str = Query("desc"),
     current_user: dict = Depends(get_current_user),
 ):
     """List orders from Odoo. Reseller users only see their own orders."""
+    _SORTABLE = {"date_order", "name", "amount_untaxed", "amount_total"}
+    sort_by  = sort_by  if sort_by  in _SORTABLE          else "date_order"
+    sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "desc"
     odoo = get_odoo_client()
 
     allowed_odoo_ids: Optional[list] = None
@@ -137,7 +142,7 @@ async def list_orders(
             fields=ORDER_FIELDS,
             limit=limit,
             offset=offset,
-            order="date_order desc",
+            order=f"{sort_by} {sort_dir}",
         )
         total = odoo.count("sale.order", domain)
 
