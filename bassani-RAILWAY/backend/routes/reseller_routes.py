@@ -121,7 +121,7 @@ async def create_reseller(
       2. The reseller record linked to both the user and the Odoo partner
     Rolls back the user account if the reseller insert fails.
     """
-    validate_rates(reseller.commission_rates.model_dump())
+    validate_rates(reseller.commission_rates)
 
     # Validate Odoo partner exists
     odoo = get_odoo_client()
@@ -172,7 +172,7 @@ async def create_reseller(
         "email": reseller.email,
         "phone": reseller.phone,
         "address": reseller.address,
-        "commission_rates": reseller.commission_rates.model_dump(),
+        "commission_rates": reseller.commission_rates,
         "default_commission": reseller.default_commission,
         "odoo_partner_id": reseller.odoo_partner_id,
         "user_id": user_id,
