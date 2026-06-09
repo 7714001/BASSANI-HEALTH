@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Package, Users, ShoppingCart,
   DollarSign, Percent, BarChart3, Phone,
   LogOut, Bell, RefreshCw, UserCog,
-  ChevronLeft, ChevronRight, Menu, X, ChevronsUpDown,
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
