@@ -71,9 +71,11 @@ export function Products() {
       <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load}
         actions={!isReseller && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products, SKU…" />
-          {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+            {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          </div>
         </div>
         <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted",...(!isReseller?["Actions"]:[])]} loading={loading}>
           {products.length === 0 && !loading && <tr><td colSpan={7}><EmptyState /></td></tr>}
@@ -578,9 +580,11 @@ export function Orders() {
       <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load}
         actions={<BtnPrimary onClick={openCart}><Plus size={14}/>Place Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search order, customer…" />
-          {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s==="sale"?"Confirmed":s==="draft"?"Quotation":s.charAt(0).toUpperCase()+s.slice(1)} active={status===s} onClick={()=>setStatus(s)} />)}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+            {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s==="sale"?"Confirmed":s==="draft"?"Quotation":s.charAt(0).toUpperCase()+s.slice(1)} active={status===s} onClick={()=>setStatus(s)} />)}
+          </div>
         </div>
         <Table headers={["Order #","Customer","Date","Amount","VAT","Total","Commission","Status","Payment","Actions"]} loading={loading}>
           {orders.length===0&&!loading&&<tr><td colSpan={10}><EmptyState /></td></tr>}
@@ -961,9 +965,11 @@ export function Commission() {
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-          {["all",...categories].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+            {["all",...categories].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          </div>
         </div>
 
         {/* Matrix table */}
@@ -1226,9 +1232,11 @@ export function Healthcare() {
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search name, HPCSA, practice…" />
-          {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s.charAt(0).toUpperCase()+s.slice(1)} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+            {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s.charAt(0).toUpperCase()+s.slice(1)} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+          </div>
         </div>
 
         <Table headers={["Professional","Profession","Practice","Location","Section 21","Prescribing","Submitted","Status","Actions"]} loading={loading}>
