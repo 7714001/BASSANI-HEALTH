@@ -340,7 +340,7 @@ export function SearchBar({ value, onChange, placeholder = "Search…" }) {
 export function FilterPill({ label, active, onClick }) {
   return (
     <button onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+      className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
         active ? "bg-bassani-600 text-white border-bassani-600" : "bg-white text-gray-500 border-gray-200 hover:border-bassani-600 hover:text-bassani-600"
       }`}>
       {label}

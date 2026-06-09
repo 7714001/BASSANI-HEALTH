@@ -215,6 +215,7 @@ export function Orders() {
   const [prodsLoading, setProdsLoading] = useState(false);
   const [prodSearch,   setProdSearch  ] = useState("");
   const [prodCat,      setProdCat     ] = useState("all");
+  const [stockFilter,  setStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,         setCart        ] = useState([]);
   const [orderNote,    setOrderNote   ] = useState("");
   const [custSearch,   setCustSearch  ] = useState("");
@@ -269,7 +270,7 @@ export function Orders() {
 
   // ── Open cart view ────────────────────────────────────────────────────────
   const openCart = () => {
-    setCart([]); setProdSearch(""); setProdCat("all"); setOrderNote("");
+    setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
     setCustSearch(""); setCustResults([]); setSelectedCust(null);
     setCustDropOpen(false); setSubmitting(false);
     loadProducts();
@@ -320,10 +321,12 @@ export function Orders() {
   // ── Derived ───────────────────────────────────────────────────────────────
   const productCategories = ["all", ...Array.from(new Set(products.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
   const filteredProducts  = products.filter(p => {
-    const q = prodSearch.toLowerCase();
-    const matchQ   = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-    const matchCat = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
-    return matchQ && matchCat;
+    const q         = prodSearch.toLowerCase();
+    const inStock   = (p.qty_available ?? 0) > 0;
+    const matchQ    = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
+    const matchCat  = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
+    const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
+    return matchQ && matchCat && matchStock;
   });
   const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
   const cartVat      = cartSubtotal * 0.15;
@@ -345,11 +348,19 @@ export function Orders() {
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Search + category filters */}
             <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100 space-y-3">
-              <SearchBar value={prodSearch} onChange={setProdSearch} placeholder="Search by product name or SKU…" />
-              <div className="flex gap-2 flex-wrap">
+              <input
+                value={prodSearch}
+                onChange={e => setProdSearch(e.target.value)}
+                placeholder="Search by product name or SKU…"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
+              />
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
                 {productCategories.map(c => (
                   <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={prodCat === c} onClick={() => setProdCat(c)} />
                 ))}
+                <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
+                <FilterPill label="In Stock"     active={stockFilter === "in_stock"}     onClick={() => setStockFilter(stockFilter === "in_stock"     ? "all" : "in_stock")}     />
+                <FilterPill label="Out of Stock" active={stockFilter === "out_of_stock"} onClick={() => setStockFilter(stockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
               </div>
             </div>
             {/* Product grid */}
