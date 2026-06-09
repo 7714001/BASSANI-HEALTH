@@ -276,14 +276,22 @@ export function Orders() {
     setCustDropOpen(false); setSubmitting(false); setCommissionRates(null);
     loadProducts();
     // Load commission rates for resellers so the cart can show an estimated commission line
-    if (isReseller && user?.reseller_id) {
+    if (isReseller) {
       try {
-        const r = await api.get(`/api/resellers/${user.reseller_id}`);
-        const { default_commission, commission_rates } = r.data;
-        setCommissionRates({
-          default_rate:    default_commission ?? 0,
-          category_rates:  commission_rates ?? {},
-        });
+        let rid = user?.reseller_id;
+        if (!rid) {
+          // Fallback: re-fetch user context if reseller_id wasn't in the cached session
+          const me = await api.get("/api/auth/me");
+          rid = me.data.reseller_id;
+        }
+        if (rid) {
+          const r = await api.get(`/api/resellers/${rid}`);
+          const { default_commission, commission_rates } = r.data;
+          setCommissionRates({
+            default_rate:   default_commission ?? 0,
+            category_rates: commission_rates ?? {},
+          });
+        }
       } catch { /* commission preview is optional — don't block cart open */ }
     }
     setView("cart");
@@ -615,12 +623,14 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{ Flower:10,Tinctures:10,Vapes:10,Edibles:10,Topicals:10,Accessories:10 }, odoo_partner_id:"", username:"", password:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, odoo_partner_id:"", username:"", password:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
   const [modal,              setModal             ] = useState(false);
   const [form,               setForm              ] = useState(BLANK_FORM);
+  const [categories,         setCategories        ] = useState([]);
+  const [catsLoading,        setCatsLoading       ] = useState(false);
   const [customerSearch,     setCustomerSearch    ] = useState("");
   const [customers,          setCustomers         ] = useState([]);
   const [customerLoading,    setCustomerLoading   ] = useState(false);
@@ -674,6 +684,24 @@ export function Resellers() {
     setCustDropdownOpen(true);
   };
 
+  // Load Odoo product categories when modal opens — drives the commission rate fields
+  useEffect(() => {
+    if (!modal) return;
+    setCatsLoading(true);
+    api.get("/api/products/categories")
+      .then(r => {
+        const cats = r.data.categories || [];
+        setCategories(cats);
+        // Pre-seed rates from existing form values; default new categories to 10
+        setForm(f => ({
+          ...f,
+          commission_rates: Object.fromEntries(cats.map(cat => [cat, f.commission_rates?.[cat] ?? 10])),
+        }));
+      })
+      .catch(() => { /* categories are optional — form still usable without them */ })
+      .finally(() => setCatsLoading(false));
+  }, [modal]);
+
   const openModal = () => { setForm(BLANK_FORM); setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true); };
 
   const save = async () => {
@@ -713,11 +741,15 @@ export function Resellers() {
                 ))}
               </div>
               <div>
-                <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider mb-2">Category Rates</p>
-                <div className="grid grid-cols-3 gap-1.5">
+                <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider mb-2">Commission Rates</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <div className="bg-bassani-50 rounded-lg px-2 py-1.5 shrink-0">
+                    <p className="text-[10px] text-gray-400">Default</p>
+                    <p className="text-sm font-semibold text-bassani-700">{r.default_commission ?? 10}%</p>
+                  </div>
                   {Object.entries(r.commission_rates||{}).map(([cat,rate])=>(
-                    <div key={cat} className="bg-gray-50 rounded-lg px-2 py-1.5">
-                      <p className="text-[10px] text-gray-400">{cat}</p>
+                    <div key={cat} className="bg-gray-50 rounded-lg px-2 py-1.5 shrink-0 max-w-[90px]">
+                      <p className="text-[10px] text-gray-400 truncate" title={cat}>{cat}</p>
                       <p className="text-sm font-semibold text-bassani-700">{rate}%</p>
                     </div>
                   ))}
@@ -803,12 +835,34 @@ export function Resellers() {
             <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
           </div>
 
-          {/* Section 4 — Commission rates */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Default Commission Rates (%)</p>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            {Object.keys(form.commission_rates).map(cat=>(
-              <FormGroup key={cat} label={cat}><Input type="number" min={10} max={50} value={form.commission_rates[cat]} onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[cat]:parseFloat(e.target.value)||10}})} /></FormGroup>
-            ))}
+          {/* Section 4 — Commission */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
+          <div className="mb-4">
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <FormGroup label="Default Rate (fallback for all categories)">
+                <Input type="number" min={10} max={12.5} step={0.5}
+                  value={form.default_commission}
+                  onChange={e=>setForm({...form,default_commission:Math.min(12.5,parseFloat(e.target.value)||10)})} />
+              </FormGroup>
+              <div className="flex items-end pb-1.5">
+                <p className="text-xs text-gray-400 leading-snug">Applied when no category-specific rate matches. Product-level overrides can be set in the Commission Matrix.</p>
+              </div>
+            </div>
+            {catsLoading && <p className="text-xs text-gray-400 py-1">Loading categories from Odoo…</p>}
+            {!catsLoading && categories.length > 0 && (
+              <>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates — from Odoo product catalog</p>
+                <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
+                  {categories.map(cat=>(
+                    <FormGroup key={cat} label={cat}>
+                      <Input type="number" min={10} max={12.5} step={0.5}
+                        value={form.commission_rates?.[cat] ?? 10}
+                        onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[cat]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
+                    </FormGroup>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Create Reseller</BtnPrimary></div>

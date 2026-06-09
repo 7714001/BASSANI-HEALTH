@@ -10,14 +10,6 @@ router = APIRouter(prefix="/api/resellers", tags=["resellers"])
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
-class CommissionRates(BaseModel):
-    Flower: float = 10.0
-    Tinctures: float = 10.0
-    Vapes: float = 10.0
-    Edibles: float = 10.0
-    Topicals: float = 10.0
-    Accessories: float = 10.0
-
 class ResellerCreate(BaseModel):
     name: str
     type: str = "Distributor"               # Distributor|Agent|Broker
@@ -26,8 +18,8 @@ class ResellerCreate(BaseModel):
     email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
-    commission_rates: CommissionRates = CommissionRates()
-    default_commission: float = 10.0
+    commission_rates: Dict[str, float] = {}  # Odoo category name → rate; empty = use default_commission
+    default_commission: float = 10.0         # Fallback rate applied when no category-specific rate is set
     odoo_partner_id: int                    # Must be an existing Odoo res.partner ID
     username: str                           # Login username for the reseller portal
     password: str                           # Hashed immediately — never stored plain
@@ -39,7 +31,7 @@ class ResellerUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
-    commission_rates: Optional[CommissionRates] = None
+    commission_rates: Optional[Dict[str, float]] = None
     default_commission: Optional[float] = None
     active: Optional[bool] = None
 

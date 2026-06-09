@@ -72,15 +72,26 @@ def list_products(
 
 @router.get("/categories")
 def list_categories(current_user: dict = Depends(get_current_user)):
-    """Return all product categories from Odoo."""
+    """
+    Return unique product categories derived from active storable products.
+    Keys match the exact categ_id display name on each product — used to ensure
+    commission rate keys align with what the cart sees at order time.
+    """
     odoo = get_odoo_client()
     try:
-        cats = odoo.search_read(
-            "product.category",
-            fields=["id", "name", "complete_name"],
-            limit=200,
+        products = odoo.search_read(
+            "product.template",
+            domain=[("type", "in", ["product", "consu"]), ("active", "=", True)],
+            fields=["categ_id"],
+            limit=2000,
         )
-        return {"categories": cats}
+        seen: dict = {}
+        for p in products:
+            if p.get("categ_id") and p["categ_id"] is not False:
+                cat_id, cat_name = p["categ_id"]
+                seen[cat_id] = cat_name
+        categories = sorted(seen.values())
+        return {"categories": categories}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
