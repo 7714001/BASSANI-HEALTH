@@ -12,19 +12,25 @@ import {
   LoadingState, EmptyState, Badge, fmtR,
 } from "../components/UI";
 
-const CATEGORIES = ["Flower","Tinctures","Vapes","Edibles","Topicals","Accessories"];
 
 export function Products() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
-  const [products, setProducts] = useState([]);
-  const [total,    setTotal   ] = useState(0);
-  const [loading,  setLoading ] = useState(true);
-  const [search,   setSearch  ] = useState("");
-  const [cat,      setCat     ] = useState("all");
-  const [modal,    setModal   ] = useState(false);
-  const [editing,  setEditing ] = useState(null);
-  const [form,     setForm    ] = useState({ name:"", default_code:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [products,   setProducts  ] = useState([]);
+  const [total,      setTotal     ] = useState(0);
+  const [loading,    setLoading   ] = useState(true);
+  const [search,     setSearch    ] = useState("");
+  const [cat,        setCat       ] = useState("all");
+  const [categories, setCategories] = useState([]);
+  const [modal,      setModal     ] = useState(false);
+  const [editing,    setEditing   ] = useState(null);
+  const [form,       setForm      ] = useState({ name:"", default_code:"", list_price:"", standard_price:"", type:"product", description:"" });
+
+  useEffect(() => {
+    api.get("/api/products/categories")
+      .then(r => setCategories(r.data.categories || []))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,7 +73,7 @@ export function Products() {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products, SKU…" />
-          {["all",...CATEGORIES].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
         </div>
         <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted",...(!isReseller?["Actions"]:[])]} loading={loading}>
           {products.length === 0 && !loading && <tr><td colSpan={7}><EmptyState /></td></tr>}
@@ -886,6 +892,13 @@ export function Commission() {
   const [loading,    setLoading   ] = useState(false);
   const [search,     setSearch    ] = useState("");
   const [cat,        setCat       ] = useState("all");
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    api.get("/api/products/categories")
+      .then(r => setCategories(r.data.categories || []))
+      .catch(() => {});
+  }, []);
 
   const loadResellers = async () => {
     if (isReseller) {
@@ -925,11 +938,9 @@ export function Commission() {
 
   const sourceStyle = { custom:"bg-bassani-50 text-bassani-700", category_default:"bg-gray-100 text-gray-500", blocked:"bg-red-50 text-red-600", reseller_default:"bg-gray-100 text-gray-500", system_default:"bg-gray-100 text-gray-400" };
 
-  const CATS = ["all","Flower","Tinctures","Vapes","Edibles","Topicals","Accessories"];
-
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Commission Matrix" subtitle="Per-product rates per reseller · 10%–50% range" onRefresh={loadMatrix} />
+      <TopBar title="Commission Matrix" subtitle="Per-product rates per reseller · 10%–12.5% range" onRefresh={loadMatrix} />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {/* Reseller tabs */}
         <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex items-center gap-4 flex-wrap">
@@ -952,7 +963,7 @@ export function Commission() {
         {/* Filters */}
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-          {CATS.map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+          {["all",...categories].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
         </div>
 
         {/* Matrix table */}
