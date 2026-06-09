@@ -55,6 +55,35 @@ export default function Dashboard() {
               )}
             </div>
 
+            {/* Admin-only pipeline overview */}
+            {!isReseller && data.pipeline && (
+              <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-800">Active Pipeline</h3>
+                  <span className="text-xs text-gray-400">
+                    Today: <b className="text-gray-700">{data.pipeline.today}</b> new {data.pipeline.today === 1 ? "order" : "orders"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Quotes / Drafts</p>
+                    <p className="text-2xl font-bold text-gray-800">{data.pipeline.draft_count}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{fmtR(data.pipeline.draft_value)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Confirmed Orders</p>
+                    <p className="text-2xl font-bold text-bassani-700">{data.pipeline.confirmed_count}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{fmtR(data.pipeline.confirmed_value)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Balance to Chase</p>
+                    <p className="text-2xl font-bold text-red-600">{fmtR(data.invoices.overdue_amount)}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{data.invoices.unpaid} unpaid invoice{data.invoices.unpaid !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {isReseller ? (
               /* Reseller — full-width recent orders */
               <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">

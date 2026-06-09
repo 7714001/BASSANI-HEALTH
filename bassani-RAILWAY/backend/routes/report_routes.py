@@ -147,6 +147,10 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             }
 
         # ── Admin dashboard ───────────────────────────────────────────────────
+        tomorrow = today + timedelta(days=1)
+        today_str    = today.strftime("%Y-%m-%d")
+        tomorrow_str = tomorrow.strftime("%Y-%m-%d")
+
         month_orders = odoo.search_read(
             "sale.order",
             domain=[
@@ -160,6 +164,23 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
         month_revenue = sum(o["amount_total"] for o in month_orders)
         total_orders = odoo.count("sale.order", [])
         active_customers = odoo.count("res.partner", [("customer_rank", ">", 0), ("active", "=", True)])
+
+        today_orders_count = odoo.count("sale.order", [
+            ("date_order", ">=", today_str + " 00:00:00"),
+            ("date_order", "<",  tomorrow_str + " 00:00:00"),
+        ])
+        draft_data = odoo.search_read(
+            "sale.order",
+            domain=[("state", "=", "draft")],
+            fields=["amount_total"],
+            limit=5000,
+        )
+        confirmed_data = odoo.search_read(
+            "sale.order",
+            domain=[("state", "=", "sale")],
+            fields=["amount_total"],
+            limit=5000,
+        )
 
         unpaid_invoices = odoo.count(
             "account.move",
@@ -207,6 +228,13 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             "customers": {"active": active_customers},
             "invoices": {"unpaid": unpaid_invoices, "overdue_amount": overdue_amount},
             "commission": {"due_this_month": commission_due},
+            "pipeline": {
+                "today": today_orders_count,
+                "draft_count": len(draft_data),
+                "draft_value": sum(o["amount_total"] for o in draft_data),
+                "confirmed_count": len(confirmed_data),
+                "confirmed_value": sum(o["amount_total"] for o in confirmed_data),
+            },
             "recent_orders": recent_orders,
             "low_stock_products": low_stock_products,
         }

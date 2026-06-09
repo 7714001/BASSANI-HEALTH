@@ -963,7 +963,7 @@ function ResellerCommissionView() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start">
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden lg:w-64 shrink-0 w-full">
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shrink-0 w-full lg:w-auto">
         <div className="px-5 py-4 border-b border-gray-50">
           <h3 className="text-sm font-semibold text-gray-800">Your Commission Rates</h3>
           <p className="text-xs text-gray-400 mt-0.5">Set by Bassani Health — applied to your orders at checkout</p>
