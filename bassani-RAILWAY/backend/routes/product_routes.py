@@ -95,7 +95,7 @@ def list_categories(current_user: dict = Depends(get_current_user)):
             if p.get("categ_id") and p["categ_id"] is not False:
                 cat_id, cat_name = p["categ_id"]
                 seen[cat_id] = cat_name
-        categories = sorted(seen.values())
+        categories = sorted([{"id": k, "name": v} for k, v in seen.items()], key=lambda x: x["name"])
         return {"categories": categories}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

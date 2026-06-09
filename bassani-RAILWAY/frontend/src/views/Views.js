@@ -24,7 +24,7 @@ export function Products() {
   const [categories, setCategories] = useState([]);
   const [modal,      setModal     ] = useState(false);
   const [editing,    setEditing   ] = useState(null);
-  const [form,       setForm      ] = useState({ name:"", default_code:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [form,       setForm      ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" });
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -52,8 +52,8 @@ export function Products() {
 
   const stockColor = (qty) => qty <= 0 ? "text-red-600 font-semibold" : qty < 10 ? "text-amber-600 font-semibold" : "text-bassani-700 font-semibold";
 
-  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", list_price:"", standard_price:"", type:"product", description:"" }); setModal(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"" }); setModal(true); };
+  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" }); setModal(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"" }); setModal(true); };
 
   const save = async () => {
     if (!form.name) return toast.error("Product name required");
@@ -78,7 +78,7 @@ export function Products() {
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
           <ChipRow>
-            {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setPagination(p => ({...p, pageIndex:0})); }} />)}
+            {["all",...categories.map(c=>c.name)].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setPagination(p => ({...p, pageIndex:0})); }} />)}
           </ChipRow>
         </div>
         <DataTable
@@ -102,6 +102,10 @@ export function Products() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormGroup label="Product Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Tincture 20ml THC" /></FormGroup>
             <FormGroup label="SKU / Reference"><Input value={form.default_code} onChange={e=>setForm({...form,default_code:e.target.value})} placeholder="THC-TINC-20" /></FormGroup>
+            <FormGroup label="Category"><Select value={form.categ_id} onChange={e=>setForm({...form,categ_id:parseInt(e.target.value)||""})}>
+              <option value="">— Select category —</option>
+              {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select></FormGroup>
             <FormGroup label="Sale Price (ZAR)"><Input type="number" value={form.list_price} onChange={e=>setForm({...form,list_price:e.target.value})} placeholder="450.00" /></FormGroup>
             <FormGroup label="Cost (ZAR)"><Input type="number" value={form.standard_price} onChange={e=>setForm({...form,standard_price:e.target.value})} placeholder="200.00" /></FormGroup>
           </div>
@@ -448,7 +452,9 @@ export function Orders() {
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
                               className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-                            <span className="flex-1 text-center font-bold text-sm">{item.product_uom_qty}</span>
+                            <input type="number" min={1} max={item._stock || 999} value={item.product_uom_qty}
+                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock || 999)); }}
+                              className="flex-1 w-10 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                             <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
                               className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
                             <button onClick={() => removeFromCart(item.product_id)}
@@ -542,7 +548,9 @@ export function Orders() {
                         <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
                           <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
                             className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
-                          <span className="w-8 text-center text-sm font-bold text-gray-800">{item.product_uom_qty}</span>
+                          <input type="number" min={1} max={item._stock || 999} value={item.product_uom_qty}
+                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock || 999)); }}
+                            className="w-10 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                           <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
                             className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
                         </div>
@@ -954,8 +962,8 @@ function ResellerCommissionView() {
   const rates = reseller.commission_rates || {};
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+    <div className="flex flex-col lg:flex-row gap-4 items-start">
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden lg:w-64 shrink-0 w-full">
         <div className="px-5 py-4 border-b border-gray-50">
           <h3 className="text-sm font-semibold text-gray-800">Your Commission Rates</h3>
           <p className="text-xs text-gray-400 mt-0.5">Set by Bassani Health — applied to your orders at checkout</p>
@@ -982,7 +990,7 @@ function ResellerCommissionView() {
         </table></div>
       </div>
 
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden flex-1 min-w-0 w-full">
         <div className="px-5 py-4 border-b border-gray-50">
           <h3 className="text-sm font-semibold text-gray-800">Commission History</h3>
           <p className="text-xs text-gray-400 mt-0.5">Commission earned per order</p>
@@ -1078,15 +1086,15 @@ export function Commission() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Commission Matrix" subtitle="Per-product rates per reseller · 10%–12.5% range" onRefresh={loadMatrix} />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Reseller tabs */}
-        <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex items-center gap-4 flex-wrap">
-          <span className="text-xs text-gray-400 font-medium">Reseller:</span>
-          {resellers.map(r=>(
-            <button key={r.id} onClick={()=>setSelected(r.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${selected===r.id?"bg-bassani-600 text-white border-bassani-600":"bg-white text-gray-500 border-gray-200 hover:border-bassani-600"}`}>
-              {r.name.split(" ")[0]} <span className="opacity-60 font-mono">{r.seller_code}</span>
-            </button>
-          ))}
+        {/* Reseller selector */}
+        <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 font-medium shrink-0">Reseller:</span>
+            <select value={selected||""} onChange={e=>setSelected(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 bg-white min-w-[200px]">
+              {resellers.map(r=><option key={r.id} value={r.id}>{r.name}{r.seller_code?" · "+r.seller_code:""}</option>)}
+            </select>
+          </div>
           {summary && (
             <div className="ml-auto flex gap-4 text-xs text-gray-500">
               <span>Custom: <b className="text-bassani-700">{summary.custom_rates}</b></span>
@@ -1100,7 +1108,7 @@ export function Commission() {
         <div className="space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
           <ChipRow>
-            {["all",...categories].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+            {["all",...categories.map(c=>c.name)].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
           </ChipRow>
         </div>
 
