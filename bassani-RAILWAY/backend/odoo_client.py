@@ -23,13 +23,12 @@ def odoo(model, method, args=None, kwargs=None):
     with _lock:
         if _uid is None:
             _connect()
-    try:
-        return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
-    except Exception:
-        with _lock:
+        try:
+            return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+        except Exception:
             _uid = None
-        _connect()
-        return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+            _connect()
+            return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
 
 def odoo_execute_kw(model, method, args=None, kwargs=None):
     return odoo(model, method, args, kwargs)
