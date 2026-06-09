@@ -38,20 +38,32 @@ INVOICE_DOMAIN = [("move_type", "in", ["out_invoice", "in_invoice", "out_refund"
 async def list_invoices(
     move_type: Optional[str] = None,
     state: Optional[str] = None,
+    payment_state: Optional[str] = None,
     search: Optional[str] = None,
-    limit: int = Query(20, le=100),
+    limit: int = Query(25, le=200),
     offset: int = 0,
+    sort_by: str = Query("invoice_date"),
+    sort_dir: str = Query("desc"),
     current_user: dict = Depends(get_current_user),
 ):
     """List invoices from Odoo. Resellers only see invoices for their own orders."""
+    _SORTABLE = {"invoice_date", "invoice_date_due", "name", "amount_total", "amount_residual"}
+    sort_by  = sort_by  if sort_by  in _SORTABLE       else "invoice_date"
+    sort_dir = sort_dir if sort_dir in ("asc", "desc") else "desc"
+
     odoo = get_odoo_client()
-    domain = INVOICE_DOMAIN.copy()
-    if move_type:
-        domain = [("move_type", "=", move_type)]
+    domain = [("move_type", "=", move_type)] if move_type else [("move_type", "=", "out_invoice"), ("state", "=", "posted")]
     if state:
         domain.append(("state", "=", state))
+    if payment_state:
+        if payment_state == "unpaid":
+            domain.append(("payment_state", "in", ["not_paid", "partial"]))
+        else:
+            domain.append(("payment_state", "=", payment_state))
     if search:
+        domain.append("|")
         domain.append(("name", "ilike", search))
+        domain.append(("partner_id.name", "ilike", search))
 
     # Reseller: restrict to invoices where they are the customer in Odoo
     if current_user.get("role") == "reseller":
@@ -68,7 +80,7 @@ async def list_invoices(
             fields=INVOICE_FIELDS,
             limit=limit,
             offset=offset,
-            order="invoice_date desc",
+            order=f"{sort_by} {sort_dir}",
         )
         total = odoo.count("account.move", domain)
         return {"invoices": invoices, "total": total}

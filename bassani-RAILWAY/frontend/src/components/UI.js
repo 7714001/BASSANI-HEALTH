@@ -7,7 +7,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, Users, ShoppingCart,
-  DollarSign, Percent, BarChart3, Phone,
+  DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
 } from "lucide-react";
@@ -27,6 +27,7 @@ const NAV = [
   { label: "Orders",     path: "/orders",      icon: ShoppingCart,    section: "Main"      },
   { label: "Resellers",  path: "/resellers",   icon: DollarSign,      section: "Resellers" },
   { label: "Commission", path: "/commission",  icon: Percent,         section: "Resellers" },
+  { label: "Invoices",   path: "/invoices",    icon: FileText,        section: "Finance"   },
   { label: "Reports",    path: "/reports",     icon: BarChart3,       section: "Insights"  },
   { label: "Healthcare", path: "/healthcare",  icon: Phone,           section: "Insights"  },
   { label: "Users",      path: "/users",       icon: UserCog,         section: "Admin"     },

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api";
 import { useAuth } from "../AuthContext";
 import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from "../components/UI";
@@ -6,6 +7,7 @@ import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from
 export default function Dashboard() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
+  const navigate = useNavigate();
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -75,11 +77,11 @@ export default function Dashboard() {
                     <p className="text-2xl font-bold text-bassani-700">{data.pipeline.confirmed_count}</p>
                     <p className="text-xs text-gray-500 mt-0.5">{fmtR(data.pipeline.confirmed_value)}</p>
                   </div>
-                  <div>
+                  <button className="text-left hover:opacity-75 transition-opacity" onClick={() => navigate("/invoices", { state: { filter: "unpaid" } })}>
                     <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Balance to Chase</p>
                     <p className="text-2xl font-bold text-red-600">{fmtR(data.invoices.overdue_amount)}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{data.invoices.unpaid} unpaid invoice{data.invoices.unpaid !== 1 ? "s" : ""}</p>
-                  </div>
+                    <p className="text-xs text-bassani-600 mt-0.5 underline underline-offset-2">{data.invoices.unpaid} unpaid invoice{data.invoices.unpaid !== 1 ? "s" : ""} — view list →</p>
+                  </button>
                 </div>
               </div>
             )}
@@ -164,7 +166,8 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-xl border border-gray-100 p-5">
+                  <button className="bg-white rounded-xl border border-gray-100 p-5 text-left w-full hover:border-bassani-200 transition-colors"
+                    onClick={() => navigate("/invoices", { state: { filter: "unpaid" } })}>
                     <h3 className="text-sm font-semibold text-gray-800 mb-3">Invoicing</h3>
                     <div className="space-y-2.5">
                       <div className="flex justify-between text-sm">
@@ -176,7 +179,8 @@ export default function Dashboard() {
                         <span className="font-semibold text-red-600">{fmtR(data.invoices.overdue_amount)}</span>
                       </div>
                     </div>
-                  </div>
+                    <p className="text-[10px] text-bassani-600 mt-3">View all invoices →</p>
+                  </button>
                 </div>
               </div>
             )}
