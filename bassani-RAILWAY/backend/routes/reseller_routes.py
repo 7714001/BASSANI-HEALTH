@@ -46,7 +46,7 @@ class ResellerUpdate(BaseModel):
 # ── Validation helper ─────────────────────────────────────────────────────────
 
 MIN_COMMISSION = 10.0
-MAX_COMMISSION = 50.0
+MAX_COMMISSION = 12.5    # Hard cap — mirrors commission_routes.MAX_RATE
 
 def validate_rates(rates: dict) -> None:
     for cat, rate in rates.items():

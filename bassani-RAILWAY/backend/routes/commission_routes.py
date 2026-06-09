@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/commission", tags=["commission"])
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MIN_RATE = 10.0
-MAX_RATE = 50.0
+MAX_RATE = 12.5          # Hard cap — resellers cannot earn more than 12.5% on any product
 SYSTEM_DEFAULT = 10.0
 
 # ── Pydantic models ───────────────────────────────────────────────────────────

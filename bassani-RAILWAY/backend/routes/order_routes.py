@@ -29,6 +29,7 @@ class StatusUpdate(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 VAT_RATE = 0.15
+COMMISSION_CAP = 12.5    # System-wide hard cap — no reseller can earn more than this %
 
 async def calculate_commission(reseller_id: str, order_lines: list, odoo) -> dict:
     """
@@ -75,6 +76,7 @@ async def calculate_commission(reseller_id: str, order_lines: list, odoo) -> dic
             except Exception:
                 rate = reseller.get("default_commission", 10)
 
+        rate = min(rate, COMMISSION_CAP)
         commission_amount = subtotal * (rate / 100)
         commission_total += commission_amount
         enriched_lines.append({**line, "commission_rate": rate, "commission_amount": commission_amount})

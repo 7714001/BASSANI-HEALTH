@@ -222,8 +222,9 @@ export function Orders() {
   const [custResults,  setCustResults ] = useState([]);
   const [custLoading,  setCustLoading ] = useState(false);
   const [selectedCust, setSelectedCust] = useState(null);
-  const [custDropOpen, setCustDropOpen] = useState(false);
-  const [submitting,   setSubmitting  ] = useState(false);
+  const [custDropOpen,     setCustDropOpen    ] = useState(false);
+  const [submitting,       setSubmitting      ] = useState(false);
+  const [commissionRates,  setCommissionRates ] = useState(null); // null = not loaded / not applicable
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,11 +270,22 @@ export function Orders() {
   }, [custSearch, custDropOpen, isReseller]);
 
   // ── Open cart view ────────────────────────────────────────────────────────
-  const openCart = () => {
+  const openCart = async () => {
     setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
     setCustSearch(""); setCustResults([]); setSelectedCust(null);
-    setCustDropOpen(false); setSubmitting(false);
+    setCustDropOpen(false); setSubmitting(false); setCommissionRates(null);
     loadProducts();
+    // Load commission rates for resellers so the cart can show an estimated commission line
+    if (isReseller && user?.reseller_id) {
+      try {
+        const r = await api.get(`/api/resellers/${user.reseller_id}`);
+        const { default_commission, commission_rates } = r.data;
+        setCommissionRates({
+          default_rate:    default_commission ?? 0,
+          category_rates:  commission_rates ?? {},
+        });
+      } catch { /* commission preview is optional — don't block cart open */ }
+    }
     setView("cart");
   };
 
@@ -328,9 +340,19 @@ export function Orders() {
     const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
     return matchQ && matchCat && matchStock;
   });
-  const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  const cartVat      = cartSubtotal * 0.15;
-  const cartTotal    = cartSubtotal + cartVat;
+  const COMMISSION_CAP = 12.5;
+  const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
+  const cartVat        = cartSubtotal * 0.15;
+  const cartTotal      = cartSubtotal + cartVat;
+  const cartCommission = (isReseller && commissionRates)
+    ? cart.reduce((sum, item) => {
+        const prod = products.find(p => (p.product_variant_ids?.[0] ?? p.id) === item.product_id);
+        const cat  = prod?.categ_id?.[1] || "";
+        const raw  = commissionRates.category_rates?.[cat] ?? commissionRates.default_rate ?? 0;
+        const rate = Math.min(raw, COMMISSION_CAP);
+        return sum + item.product_uom_qty * item.price_unit * (rate / 100);
+      }, 0)
+    : 0;
 
   const STATUSES = ["all","draft","sale","done","cancel"];
 
@@ -514,6 +536,12 @@ export function Orders() {
                     <span className="text-gray-900">Total</span>
                     <span className="text-bassani-700">{fmtR(cartTotal)}</span>
                   </div>
+                  {isReseller && cartCommission > 0 && (
+                    <div className="flex justify-between pt-1.5 border-t border-dashed border-bassani-200">
+                      <span className="text-bassani-700 font-medium">Est. Commission</span>
+                      <span className="text-bassani-700 font-semibold">{fmtR(cartCommission)}</span>
+                    </div>
+                  )}
                 </div>
               )}
               <Textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
