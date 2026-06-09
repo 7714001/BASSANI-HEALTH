@@ -60,11 +60,34 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 {"user_id": current_user["id"]}, NO_ID
             )
             reseller_id = reseller["id"] if reseller else None
+            odoo_partner_id = reseller.get("odoo_partner_id") if reseller else None
 
             commission_records = await col("order_commissions").find(
                 {"reseller_id": reseller_id}, NO_ID
             ).to_list(length=10000)
             allowed_odoo_ids = [int(r["odoo_order_id"]) for r in commission_records]
+
+            # Fetch outstanding invoices for this reseller's Odoo partner
+            unpaid_invoices = 0
+            overdue_amount = 0.0
+            if odoo_partner_id:
+                try:
+                    invoice_domain = [
+                        ("move_type", "=", "out_invoice"),
+                        ("payment_state", "in", ["not_paid", "partial"]),
+                        ("state", "=", "posted"),
+                        ("partner_id", "=", odoo_partner_id),
+                    ]
+                    unpaid_invoices = odoo.count("account.move", invoice_domain)
+                    invoice_data = odoo.search_read(
+                        "account.move",
+                        domain=invoice_domain,
+                        fields=["amount_residual"],
+                        limit=500,
+                    )
+                    overdue_amount = sum(i["amount_residual"] for i in invoice_data)
+                except Exception:
+                    pass
 
             if not allowed_odoo_ids:
                 return {
@@ -72,7 +95,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                     "orders": {"total": 0, "this_month": 0, "month_revenue": 0.0},
                     "customers": {"active": 0},
                     "commission": {"due_this_month": 0.0},
-                    "invoices": {"unpaid": 0, "overdue_amount": 0.0},
+                    "invoices": {"unpaid": unpaid_invoices, "overdue_amount": overdue_amount},
                     "recent_orders": [],
                     "low_stock_products": low_stock_products,
                 }
@@ -118,7 +141,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 },
                 "customers": {"active": 0},
                 "commission": {"due_this_month": commission_due},
-                "invoices": {"unpaid": 0, "overdue_amount": 0.0},
+                "invoices": {"unpaid": unpaid_invoices, "overdue_amount": overdue_amount},
                 "recent_orders": recent_orders,
                 "low_stock_products": low_stock_products,
             }

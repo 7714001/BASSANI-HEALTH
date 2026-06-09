@@ -1,9 +1,11 @@
+import { useRef } from "react";
 import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, Users, ShoppingCart,
   DollarSign, Percent, BarChart3, Phone,
   LogOut, Bell, RefreshCw, UserCog,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -332,6 +334,27 @@ export function SearchBar({ value, onChange, placeholder = "Search…" }) {
       <input value={value} onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-sm bg-white text-gray-800 focus:outline-none focus:border-bassani-600 w-64 transition-all placeholder-gray-400" />
+    </div>
+  );
+}
+
+// ── Chip row with chevron scroll buttons ──────────────────────────────────────
+export function ChipRow({ children }) {
+  const ref = useRef(null);
+  const scroll = (dir) => ref.current?.scrollBy({ left: dir * 160, behavior: "smooth" });
+  return (
+    <div className="flex items-center gap-1">
+      <button type="button" onClick={() => scroll(-1)}
+        className="shrink-0 p-0.5 text-gray-300 hover:text-gray-500 transition-colors">
+        <ChevronLeft size={15} />
+      </button>
+      <div ref={ref} className="flex gap-2 overflow-x-auto no-scrollbar flex-1 pb-0.5">
+        {children}
+      </div>
+      <button type="button" onClick={() => scroll(1)}
+        className="shrink-0 p-0.5 text-gray-300 hover:text-gray-500 transition-colors">
+        <ChevronRight size={15} />
+      </button>
     </div>
   );
 }

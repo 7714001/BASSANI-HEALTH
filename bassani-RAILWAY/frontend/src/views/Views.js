@@ -8,8 +8,8 @@ import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, ChevronDown } from "lucide-react";
 import {
   TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select, Textarea,
-  BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill,
-  LoadingState, EmptyState, Badge, fmtR,
+  BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
+  LoadingState, EmptyState, Badge, fmtR, fmtDate,
 } from "../components/UI";
 
 
@@ -73,9 +73,9 @@ export function Products() {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products, SKU…" />
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <ChipRow>
             {["all",...categories].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
-          </div>
+          </ChipRow>
         </div>
         <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted",...(!isReseller?["Actions"]:[])]} loading={loading}>
           {products.length === 0 && !loading && <tr><td colSpan={7}><EmptyState /></td></tr>}
@@ -392,14 +392,14 @@ export function Orders() {
                 placeholder="Search by product name or SKU…"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
               />
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+              <ChipRow>
                 {productCategories.map(c => (
                   <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={prodCat === c} onClick={() => setProdCat(c)} />
                 ))}
                 <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
                 <FilterPill label="In Stock"     active={stockFilter === "in_stock"}     onClick={() => setStockFilter(stockFilter === "in_stock"     ? "all" : "in_stock")}     />
                 <FilterPill label="Out of Stock" active={stockFilter === "out_of_stock"} onClick={() => setStockFilter(stockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
-              </div>
+              </ChipRow>
             </div>
             {/* Product grid */}
             <div className="flex-1 overflow-y-auto p-6">
@@ -582,9 +582,9 @@ export function Orders() {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search order, customer…" />
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <ChipRow>
             {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s==="sale"?"Confirmed":s==="draft"?"Quotation":s.charAt(0).toUpperCase()+s.slice(1)} active={status===s} onClick={()=>setStatus(s)} />)}
-          </div>
+          </ChipRow>
         </div>
         <Table headers={["Order #","Customer","Date","Amount","VAT","Total","Commission","Status","Payment","Actions"]} loading={loading}>
           {orders.length===0&&!loading&&<tr><td colSpan={10}><EmptyState /></td></tr>}
@@ -646,6 +646,9 @@ export function Resellers() {
   const [customerLoading,    setCustomerLoading   ] = useState(false);
   const [selectedCustomer,   setSelectedCustomer  ] = useState(null);
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
+  const [editModal,          setEditModal         ] = useState(false);
+  const [editingId,          setEditingId         ] = useState(null);
+  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10 });
 
   const load = async () => {
     setLoading(true);
@@ -694,25 +697,36 @@ export function Resellers() {
     setCustDropdownOpen(true);
   };
 
-  // Load Odoo product categories when modal opens — drives the commission rate fields
+  // Load Odoo product categories on mount — used by both create and edit modals
   useEffect(() => {
-    if (!modal) return;
     setCatsLoading(true);
     api.get("/api/products/categories")
-      .then(r => {
-        const cats = r.data.categories || [];
-        setCategories(cats);
-        // Pre-seed rates from existing form values; default new categories to 10
-        setForm(f => ({
-          ...f,
-          commission_rates: Object.fromEntries(cats.map(cat => [cat, f.commission_rates?.[cat] ?? 10])),
-        }));
-      })
-      .catch(() => { /* categories are optional — form still usable without them */ })
+      .then(r => setCategories(r.data.categories || []))
+      .catch(() => {})
       .finally(() => setCatsLoading(false));
-  }, [modal]);
+  }, []);
 
-  const openModal = () => { setForm(BLANK_FORM); setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true); };
+  const openModal = () => {
+    setForm({ ...BLANK_FORM, commission_rates: Object.fromEntries(categories.map(cat => [cat, 10])) });
+    setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true);
+  };
+
+  const openEdit = (r) => {
+    const merged = Object.fromEntries(categories.map(cat => [cat, r.commission_rates?.[cat] ?? r.default_commission ?? 10]));
+    setEditForm({ name:r.name, type:r.type, contact_person:r.contact_person||"", email:r.email||"", phone:r.phone||"", commission_rates:merged, default_commission:r.default_commission??10 });
+    setEditingId(r.id);
+    setEditModal(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editForm.name) return toast.error("Name required");
+    try {
+      await api.put(`/api/resellers/${editingId}`, editForm);
+      toast.success("Reseller updated");
+      setEditModal(false);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+  };
 
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
@@ -734,40 +748,31 @@ export function Resellers() {
       <TopBar title="Resellers" subtitle="Distributors, agents and brokers" onRefresh={load}
         actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        {loading && <LoadingState />}
-        <div className="grid grid-cols-2 gap-4">
+        <Table headers={["Name / Code","Type","Default Rate","Contact","Actions"]} loading={loading}>
+          {resellers.length === 0 && !loading && <tr><td colSpan={5}><EmptyState /></td></tr>}
           {resellers.map(r=>(
-            <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-5">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-bassani-50 flex items-center justify-center text-bassani-700 font-semibold text-sm">{initials(r.name)}</div>
-                <div>
-                  <p className="font-semibold text-gray-900">{r.name}</p>
-                  <p className="text-xs text-gray-400 font-mono">{r.seller_code} · {r.type}</p>
-                </div>
-              </div>
-              <div className="space-y-1.5 text-sm mb-4">
-                {[["Total Sales",fmtR(r.total_sales)],["Commission Earned",fmtR(r.total_commission)],["Contact",r.contact_person||"—"]].map(([l,v])=>(
-                  <div key={l} className="flex justify-between"><span className="text-gray-500">{l}</span><span className={l==="Commission Earned"?"font-semibold text-bassani-700":"font-medium"}>{v}</span></div>
-                ))}
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider mb-2">Commission Rates</p>
-                <div className="flex flex-wrap gap-1.5">
-                  <div className="bg-bassani-50 rounded-lg px-2 py-1.5 shrink-0">
-                    <p className="text-[10px] text-gray-400">Default</p>
-                    <p className="text-sm font-semibold text-bassani-700">{r.default_commission ?? 10}%</p>
-                  </div>
-                  {Object.entries(r.commission_rates||{}).map(([cat,rate])=>(
-                    <div key={cat} className="bg-gray-50 rounded-lg px-2 py-1.5 shrink-0 max-w-[90px]">
-                      <p className="text-[10px] text-gray-400 truncate" title={cat}>{cat}</p>
-                      <p className="text-sm font-semibold text-bassani-700">{rate}%</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <Tr key={r.id}>
+              <Td>
+                <p className="font-semibold text-gray-900">{r.name}</p>
+                <p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p>
+              </Td>
+              <Td><span className="text-xs text-gray-500">{r.type}</span></Td>
+              <Td>
+                <span className="font-semibold text-bassani-700">{r.default_commission ?? 10}%</span>
+                {Object.keys(r.commission_rates||{}).length > 0 && (
+                  <span className="text-[10px] text-gray-400 ml-1.5">+{Object.keys(r.commission_rates).length} cat.</span>
+                )}
+              </Td>
+              <Td>
+                <p className="text-gray-700">{r.contact_person||"—"}</p>
+                {r.email && <p className="text-[10px] text-gray-400">{r.email}</p>}
+              </Td>
+              <Td>
+                <BtnSecondary size="sm" onClick={()=>openEdit(r)}><Edit2 size={11}/>Edit</BtnSecondary>
+              </Td>
+            </Tr>
           ))}
-        </div>
+        </Table>
       </main>
 
       {modal && (
@@ -878,6 +883,45 @@ export function Resellers() {
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Create Reseller</BtnPrimary></div>
         </Modal>
       )}
+
+      {editModal && (
+        <Modal title="Edit Reseller" onClose={()=>setEditModal(false)} width="max-w-2xl">
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <FormGroup label="Business Name" required><Input value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></FormGroup>
+            <FormGroup label="Type"><Select value={editForm.type} onChange={e=>setEditForm({...editForm,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
+            <FormGroup label="Contact Person"><Input value={editForm.contact_person} onChange={e=>setEditForm({...editForm,contact_person:e.target.value})} /></FormGroup>
+            <FormGroup label="Email"><Input value={editForm.email} onChange={e=>setEditForm({...editForm,email:e.target.value})} /></FormGroup>
+            <FormGroup label="Phone"><Input value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})} /></FormGroup>
+          </div>
+
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
+          <div className="mb-4">
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <FormGroup label="Default Rate (fallback for all categories)">
+                <Input type="number" min={10} max={12.5} step={0.5}
+                  value={editForm.default_commission}
+                  onChange={e=>setEditForm({...editForm,default_commission:Math.min(12.5,parseFloat(e.target.value)||10)})} />
+              </FormGroup>
+            </div>
+            {categories.length > 0 && (
+              <>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates</p>
+                <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
+                  {categories.map(cat=>(
+                    <FormGroup key={cat} label={cat}>
+                      <Input type="number" min={10} max={12.5} step={0.5}
+                        value={editForm.commission_rates?.[cat] ?? 10}
+                        onChange={e=>setEditForm({...editForm,commission_rates:{...editForm.commission_rates,[cat]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
+                    </FormGroup>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit}>Save Changes</BtnPrimary></div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -885,6 +929,93 @@ export function Resellers() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Commission matrix view
 // ─────────────────────────────────────────────────────────────────────────────
+function ResellerCommissionView() {
+  const [reseller, setReseller] = useState(null);
+  const [history,  setHistory ] = useState([]);
+  const [loading,  setLoading ] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await api.get("/api/auth/me");
+        const rid = me.data.reseller_id;
+        if (!rid) return;
+        const [rRes, hRes] = await Promise.all([
+          api.get(`/api/resellers/${rid}`),
+          api.get(`/api/commission/${rid}/history`),
+        ]);
+        setReseller(rRes.data);
+        setHistory(hRes.data.records || []);
+      } catch { toast.error("Failed to load commission data"); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  if (loading) return <LoadingState />;
+  if (!reseller) return <EmptyState message="No commission data found" />;
+
+  const rates = reseller.commission_rates || {};
+
+  return (
+    <div className="space-y-5 max-w-3xl">
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-50">
+          <h3 className="text-sm font-semibold text-gray-800">Your Commission Rates</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Set by Bassani Health — applied to your orders at checkout</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">Category</th>
+              <th className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-gray-50">
+              <td className="px-4 py-3 text-gray-500 italic text-sm">Default — all categories</td>
+              <td className="px-4 py-3 font-semibold text-bassani-700">{reseller.default_commission ?? 10}%</td>
+            </tr>
+            {Object.entries(rates).map(([cat, rate]) => (
+              <tr key={cat} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3 text-gray-700">{cat}</td>
+                <td className="px-4 py-3 font-semibold text-bassani-700">{rate}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-50">
+          <h3 className="text-sm font-semibold text-gray-800">Commission History</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Commission earned per order</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              {["Order #","Date","Commission Earned"].map(h=>(
+                <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {history.length === 0 && (
+              <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400 text-sm">No commission records yet</td></tr>
+            )}
+            {history.map((rec, i) => (
+              <tr key={i} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3 font-mono text-xs text-bassani-700">{rec.odoo_order_id}</td>
+                <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(rec.created_at)}</td>
+                <td className="px-4 py-3 font-semibold text-bassani-700">{fmtR(rec.commission_total || 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function Commission() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
@@ -899,33 +1030,28 @@ export function Commission() {
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
+    if (isReseller) return;
     api.get("/api/products/categories")
       .then(r => setCategories(r.data.categories || []))
       .catch(() => {});
-  }, []);
+  }, [isReseller]);
 
   const loadResellers = async () => {
-    if (isReseller) {
-      // Resellers load their own ID from /me — no admin list needed
-      const me = await api.get("/api/auth/me");
-      const resellerId = me.data.reseller_id;
-      if (resellerId) setSelected(resellerId);
-      return;
-    }
+    if (isReseller) return;
     try { const r = await api.get("/api/resellers/"); setResellers(r.data.resellers); if (r.data.resellers.length) setSelected(r.data.resellers[0].id); }
     catch { toast.error("Failed to load resellers"); }
   };
   useEffect(() => { loadResellers(); }, []); // eslint-disable-line
 
   const loadMatrix = useCallback(async () => {
-    if (!selected) return;
+    if (!selected || isReseller) return;
     setLoading(true);
     try {
       const r = await api.get(`/api/commission/${selected}/matrix`, { params:{ search:search||undefined, category:cat==="all"?undefined:cat } });
       setMatrix(r.data.matrix); setSummary(r.data.summary);
     } catch { toast.error("Failed to load matrix"); }
     finally { setLoading(false); }
-  }, [selected, search, cat]);
+  }, [selected, search, cat, isReseller]);
 
   useEffect(() => { loadMatrix(); }, [loadMatrix]);
 
@@ -941,6 +1067,15 @@ export function Commission() {
   };
 
   const sourceStyle = { custom:"bg-bassani-50 text-bassani-700", category_default:"bg-gray-100 text-gray-500", blocked:"bg-red-50 text-red-600", reseller_default:"bg-gray-100 text-gray-500", system_default:"bg-gray-100 text-gray-400" };
+
+  if (isReseller) return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      <TopBar title="My Commission" subtitle="Your category rates and earnings history" />
+      <main className="flex-1 overflow-y-auto p-6 space-y-4">
+        <ResellerCommissionView />
+      </main>
+    </div>
+  );
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -967,9 +1102,9 @@ export function Commission() {
         {/* Filters */}
         <div className="space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <ChipRow>
             {["all",...categories].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
-          </div>
+          </ChipRow>
         </div>
 
         {/* Matrix table */}
@@ -1234,9 +1369,9 @@ export function Healthcare() {
         {/* Filters */}
         <div className="space-y-2">
           <SearchBar value={search} onChange={setSearch} placeholder="Search name, HPCSA, practice…" />
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <ChipRow>
             {STATUSES.map(s=><FilterPill key={s} label={s==="all"?"All":s.charAt(0).toUpperCase()+s.slice(1)} active={statusF===s} onClick={()=>setStatusF(s)} />)}
-          </div>
+          </ChipRow>
         </div>
 
         <Table headers={["Professional","Profession","Practice","Location","Section 21","Prescribing","Submitted","Status","Actions"]} loading={loading}>

@@ -364,6 +364,31 @@ async def bulk_upload_matrix(
     }
 
 
+@router.get("/{reseller_id}/history")
+async def get_commission_history(
+    reseller_id: str,
+    limit: int = Query(50, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Commission order history for a reseller. Resellers see only their own."""
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one(
+            {"user_id": current_user["id"]}, NO_ID
+        )
+        if not reseller or reseller["id"] != reseller_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    records = await col("order_commissions").find(
+        {"reseller_id": reseller_id}, NO_ID
+    ).sort("created_at", -1).to_list(length=limit)
+
+    return {
+        "reseller_id": reseller_id,
+        "records": records,
+        "total_records": len(records),
+    }
+
+
 @router.get("/limits")
 async def get_commission_limits(current_user: dict = Depends(get_current_user)):
     """Get the current system-wide commission min/max limits."""
