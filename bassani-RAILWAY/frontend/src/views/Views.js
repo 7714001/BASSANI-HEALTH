@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive } from "lucide-react";
+import { Plus, Edit2, Archive, ChevronDown } from "lucide-react";
 import {
   TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill,
@@ -201,6 +201,8 @@ export function Orders() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
 
+  // ── List view state ───────────────────────────────────────────────────────
+  const [view,        setView       ] = useState("list"); // "list" | "cart"
   const [orders,      setOrders     ] = useState([]);
   const [orderTotal,  setOrderTotal ] = useState(0);
   const [loading,     setLoading    ] = useState(true);
@@ -208,16 +210,18 @@ export function Orders() {
   const [status,      setStatus     ] = useState("all");
   const [detail,      setDetail     ] = useState(null);
 
-  // Create order state
-  const [createModal,  setCreateModal ] = useState(false);
-  const [cart,         setCart        ] = useState([]);
+  // ── Cart view state ───────────────────────────────────────────────────────
+  const [products,     setProducts    ] = useState([]);
+  const [prodsLoading, setProdsLoading] = useState(false);
   const [prodSearch,   setProdSearch  ] = useState("");
-  const [prodResults,  setProdResults ] = useState([]);
+  const [prodCat,      setProdCat     ] = useState("all");
+  const [cart,         setCart        ] = useState([]);
   const [orderNote,    setOrderNote   ] = useState("");
   const [custSearch,   setCustSearch  ] = useState("");
   const [custResults,  setCustResults ] = useState([]);
   const [custLoading,  setCustLoading ] = useState(false);
   const [selectedCust, setSelectedCust] = useState(null);
+  const [custDropOpen, setCustDropOpen] = useState(false);
   const [submitting,   setSubmitting  ] = useState(false);
 
   const load = useCallback(async () => {
@@ -236,39 +240,49 @@ export function Orders() {
     catch (e) { toast.error(e.response?.data?.detail||"Failed"); }
   };
 
-  // Product search with 300ms debounce
-  useEffect(() => {
-    if (prodSearch.length < 2) { setProdResults([]); return; }
-    const t = setTimeout(async () => {
-      try {
-        const r = await api.get("/api/products/", { params: { search: prodSearch, limit: 10 } });
-        setProdResults(r.data.products || []);
-      } catch { setProdResults([]); }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [prodSearch]);
+  // ── Load products for cart view ───────────────────────────────────────────
+  const loadProducts = async () => {
+    setProdsLoading(true);
+    try {
+      const r = await api.get("/api/products/", { params: { limit: 200 } });
+      setProducts(r.data.products || []);
+    } catch { toast.error("Failed to load products"); }
+    finally { setProdsLoading(false); }
+  };
 
-  // Customer search — admin only
+  // ── Customer search debounce (admin cart) ─────────────────────────────────
   useEffect(() => {
-    if (isReseller || custSearch.length < 2) { setCustResults([]); return; }
+    if (isReseller || !custDropOpen) { setCustResults([]); return; }
+    const delay = custSearch.length >= 2 ? 300 : 0;
     const t = setTimeout(async () => {
       setCustLoading(true);
       try {
-        const r = await api.get("/api/customers/", { params: { search: custSearch, limit: 10 } });
+        const params = { limit: 20 };
+        if (custSearch.length >= 2) params.search = custSearch;
+        const r = await api.get("/api/customers/", { params });
         setCustResults(r.data.customers || []);
       } catch { setCustResults([]); }
       finally { setCustLoading(false); }
-    }, 300);
+    }, delay);
     return () => clearTimeout(t);
-  }, [custSearch, isReseller]);
+  }, [custSearch, custDropOpen, isReseller]);
 
+  // ── Open cart view ────────────────────────────────────────────────────────
+  const openCart = () => {
+    setCart([]); setProdSearch(""); setProdCat("all"); setOrderNote("");
+    setCustSearch(""); setCustResults([]); setSelectedCust(null);
+    setCustDropOpen(false); setSubmitting(false);
+    loadProducts();
+    setView("cart");
+  };
+
+  // ── Cart operations ───────────────────────────────────────────────────────
   const addToCart = (product) => {
-    const productId = product.product_variant_ids?.[0] ?? product.id;
-    setProdSearch(""); setProdResults([]);
+    const pid = product.product_variant_ids?.[0] ?? product.id;
     setCart(prev => {
-      const existing = prev.find(i => i.product_id === productId);
-      if (existing) return prev.map(i => i.product_id === productId ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
-      return [...prev, { product_id: productId, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: product.qty_available ?? 0 }];
+      const ex = prev.find(i => i.product_id === pid);
+      if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
+      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: product.qty_available ?? 0 }];
     });
   };
 
@@ -279,14 +293,14 @@ export function Orders() {
     setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
   };
 
-  const openCreate = () => {
-    setCart([]); setProdSearch(""); setProdResults([]);
-    setCustSearch(""); setCustResults([]); setSelectedCust(null);
-    setOrderNote(""); setSubmitting(false); setCreateModal(true);
+  const cartItemFor = (product) => {
+    const pid = product.product_variant_ids?.[0] ?? product.id;
+    return cart.find(i => i.product_id === pid) || null;
   };
 
+  // ── Submit order ──────────────────────────────────────────────────────────
   const submitOrder = async () => {
-    if (cart.length === 0) return toast.error("Add at least one product to the order");
+    if (cart.length === 0) return toast.error("Add at least one product");
     if (!isReseller && !selectedCust) return toast.error("Select a customer first");
     setSubmitting(true);
     try {
@@ -296,23 +310,220 @@ export function Orders() {
         note: orderNote,
       });
       toast.success("Order placed successfully");
-      setCreateModal(false);
+      setView("list");
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to place order");
     } finally { setSubmitting(false); }
   };
 
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const productCategories = ["all", ...Array.from(new Set(products.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
+  const filteredProducts  = products.filter(p => {
+    const q = prodSearch.toLowerCase();
+    const matchQ   = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
+    const matchCat = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
+    return matchQ && matchCat;
+  });
   const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
   const cartVat      = cartSubtotal * 0.15;
   const cartTotal    = cartSubtotal + cartVat;
 
   const STATUSES = ["all","draft","sale","done","cancel"];
 
+  // ── Cart view ─────────────────────────────────────────────────────────────
+  if (view === "cart") {
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        <TopBar title="Place New Order"
+          subtitle={isReseller ? "Ordering under your linked account" : "Select a customer and add products"}
+          actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
+
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* ── Left panel: product browser ────────────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Search + category filters */}
+            <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100 space-y-3">
+              <SearchBar value={prodSearch} onChange={setProdSearch} placeholder="Search by product name or SKU…" />
+              <div className="flex gap-2 flex-wrap">
+                {productCategories.map(c => (
+                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={prodCat === c} onClick={() => setProdCat(c)} />
+                ))}
+              </div>
+            </div>
+            {/* Product grid */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {prodsLoading && <LoadingState />}
+              {!prodsLoading && filteredProducts.length === 0 && <EmptyState />}
+              {!prodsLoading && (
+                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                  {filteredProducts.map(p => {
+                    const item        = cartItemFor(p);
+                    const outOfStock  = (p.qty_available ?? 0) <= 0;
+                    const lowStock    = !outOfStock && (p.qty_available ?? 0) < 10;
+                    return (
+                      <div key={p.id}
+                        className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
+                        {/* Name + SKU + category */}
+                        <div className="flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="font-semibold text-gray-900 text-sm leading-snug">{p.name}</p>
+                            {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
+                          </div>
+                          {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
+                          {p.categ_id?.[1] && <span className="inline-block mt-1 text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+                        </div>
+                        {/* Price + stock badge */}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
+                            {outOfStock ? "Out of stock" : `${p.qty_available} in stock`}
+                          </span>
+                        </div>
+                        {/* Add button or qty stepper */}
+                        {item ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
+                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
+                            <span className="flex-1 text-center font-bold text-sm">{item.product_uom_qty}</span>
+                            <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
+                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
+                            <button onClick={() => removeFromCart(item.product_id)}
+                              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => !outOfStock && addToCart(p)}
+                            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
+                            {outOfStock ? "Out of stock" : "+ Add to Order"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Right panel: cart ──────────────────────────────────────── */}
+          <div className="w-80 xl:w-96 flex flex-col bg-white border-l border-gray-100 shrink-0">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">Your Order</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
+              </div>
+              {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+              {/* Customer selector — admin only */}
+              {!isReseller && (
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Customer <span className="text-red-400">*</span></p>
+                  {selectedCust ? (
+                    <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
+                      <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                      <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{selectedCust.name}</p>
+                      <button onClick={() => { setSelectedCust(null); setCustSearch(""); setCustDropOpen(true); }}
+                        className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input value={custSearch} onChange={e => setCustSearch(e.target.value)}
+                        onFocus={() => setCustDropOpen(true)}
+                        onBlur={() => setTimeout(() => setCustDropOpen(false), 150)}
+                        placeholder="Search customers…" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                        <ChevronDown size={14} />
+                      </span>
+                      {custDropOpen && (
+                        <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
+                          {custLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
+                          {!custLoading && custResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
+                          {custResults.map(c => (
+                            <button key={c.id} onMouseDown={() => { setSelectedCust(c); setCustSearch(c.name); setCustDropOpen(false); setCustResults([]); }}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                              <span className="font-medium">{c.name}</span>
+                              {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Cart items */}
+              {cart.length === 0 ? (
+                <div className="py-10 text-center">
+                  <p className="text-sm text-gray-400">No products added yet</p>
+                  <p className="text-xs text-gray-300 mt-1">Click "+ Add to Order" on a product card</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {cart.map(item => (
+                    <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
+                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                        </div>
+                        <button onClick={() => removeFromCart(item.product_id)}
+                          className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
+                          <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
+                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
+                          <span className="w-8 text-center text-sm font-bold text-gray-800">{item.product_uom_qty}</span>
+                          <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
+                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
+                        </div>
+                        <span className="text-xs text-gray-400 flex-1 truncate">× {fmtR(item.price_unit)}</span>
+                        <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer: totals + notes + actions */}
+            <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white">
+              {cart.length > 0 && (
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between text-gray-500"><span>Subtotal (excl. VAT)</span><span>{fmtR(cartSubtotal)}</span></div>
+                  <div className="flex justify-between text-gray-500"><span>VAT (15%)</span><span>{fmtR(cartVat)}</span></div>
+                  <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
+                    <span className="text-gray-900">Total</span>
+                    <span className="text-bassani-700">{fmtR(cartTotal)}</span>
+                  </div>
+                </div>
+              )}
+              <Textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
+              <div className="flex gap-2">
+                <BtnSecondary onClick={() => setView("list")} className="flex-1">Cancel</BtnSecondary>
+                <BtnPrimary onClick={submitOrder} disabled={submitting || cart.length === 0} className="flex-1">
+                  {submitting ? "Placing…" : "Place Order"}
+                </BtnPrimary>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── List view ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load}
-        actions={<BtnPrimary onClick={openCreate}><Plus size={14}/>Place Order</BtnPrimary>} />
+        actions={<BtnPrimary onClick={openCart}><Plus size={14}/>Place Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <SearchBar value={search} onChange={setSearch} placeholder="Search order, customer…" />
@@ -338,8 +549,6 @@ export function Orders() {
           ))}
         </Table>
       </main>
-
-      {/* Order detail modal */}
       {detail && (
         <Modal title={detail.name} onClose={()=>setDetail(null)} width="max-w-xl">
           <div className="space-y-1.5 text-sm mb-4">
@@ -359,144 +568,6 @@ export function Orders() {
           </div>
         </Modal>
       )}
-
-      {/* Create order modal */}
-      {createModal && (
-        <Modal title="Place New Order" onClose={()=>setCreateModal(false)} width="max-w-2xl">
-
-          {/* Customer selector — admin only */}
-          {!isReseller && (
-            <>
-              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Customer</p>
-              <div className="relative mb-5">
-                <Input value={custSearch} onChange={e=>{ setCustSearch(e.target.value); setSelectedCust(null); }} placeholder="Search Odoo customers…" />
-                {selectedCust && (
-                  <div className="mt-1 flex items-center gap-2 text-xs text-bassani-700 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block"/>
-                    {selectedCust.name} {selectedCust.city ? `· ${selectedCust.city}` : ""}
-                  </div>
-                )}
-                {custResults.length > 0 && (
-                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
-                    {custLoading && <p className="p-3 text-xs text-gray-400">Searching…</p>}
-                    {custResults.map(c=>(
-                      <button key={c.id} onClick={()=>{ setSelectedCust(c); setCustSearch(c.name); setCustResults([]); }}
-                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm">
-                        <span className="font-medium text-gray-900">{c.name}</span>
-                        {c.city && <span className="text-gray-400 text-xs ml-2">{c.city}</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-          {isReseller && (
-            <div className="mb-5 flex items-center gap-2 bg-bassani-50 border border-bassani-100 rounded-lg px-4 py-2.5">
-              <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block shrink-0"/>
-              <p className="text-sm text-bassani-700 font-medium">Ordering under your linked account</p>
-            </div>
-          )}
-
-          {/* Product search */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Add Products</p>
-          <div className="relative mb-4">
-            <Input value={prodSearch} onChange={e=>setProdSearch(e.target.value)} placeholder="Search products by name or SKU…" />
-            {prodResults.length > 0 && (
-              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-56 overflow-y-auto">
-                {prodResults.map(p => {
-                  const pid = p.product_variant_ids?.[0] ?? p.id;
-                  const inCart = cart.find(i => i.product_id === pid);
-                  return (
-                    <button key={p.id} onClick={()=>addToCart(p)}
-                      className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center justify-between text-sm border-b border-gray-50 last:border-0">
-                      <div className="min-w-0">
-                        <span className="font-medium text-gray-900">{p.name}</span>
-                        {p.default_code && <span className="font-mono text-[10px] text-gray-400 ml-2">{p.default_code}</span>}
-                      </div>
-                      <div className="flex items-center gap-2.5 text-xs text-gray-500 ml-3 shrink-0">
-                        <span className="font-semibold text-gray-700">{fmtR(p.list_price)}</span>
-                        <span className={p.qty_available > 0 ? "text-green-600" : "text-red-400"}>{p.qty_available ?? 0} in stock</span>
-                        {inCart && <span className="bg-bassani-50 text-bassani-700 px-1.5 py-0.5 rounded-full font-semibold">×{inCart.product_uom_qty}</span>}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Cart */}
-          {cart.length > 0 ? (
-            <>
-              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Order Lines</p>
-              <div className="border border-gray-100 rounded-xl overflow-hidden mb-4">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                      <th className="text-left px-4 py-2.5">Product</th>
-                      <th className="text-center px-3 py-2.5 w-28">Qty</th>
-                      <th className="text-right px-4 py-2.5 w-32">Unit Price</th>
-                      <th className="text-right px-4 py-2.5 w-28">Subtotal</th>
-                      <th className="px-2 py-2.5 w-8"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map(item => (
-                      <tr key={item.product_id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5">
-                          <p className="font-medium text-gray-900">{item.name}</p>
-                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={()=>updateQty(item.product_id, item.product_uom_qty-1)}
-                              className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 flex items-center justify-center font-medium leading-none">−</button>
-                            <span className="w-8 text-center font-semibold">{item.product_uom_qty}</span>
-                            <button onClick={()=>updateQty(item.product_id, item.product_uom_qty+1)}
-                              className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 flex items-center justify-center font-medium leading-none">+</button>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <input type="number" min={0} step={0.01} value={item.price_unit}
-                            onChange={e=>setCart(prev=>prev.map(i=>i.product_id===item.product_id?{...i,price_unit:parseFloat(e.target.value)||0}:i))}
-                            className="w-24 text-right border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-bassani-500"/>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-semibold text-gray-800">{fmtR(item.product_uom_qty*item.price_unit)}</td>
-                        <td className="px-2 py-2.5 text-center">
-                          <button onClick={()=>removeFromCart(item.product_id)} className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none">×</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {/* Totals */}
-              <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-1.5 text-sm mb-4">
-                <div className="flex justify-between text-gray-500"><span>Subtotal (excl. VAT)</span><span>{fmtR(cartSubtotal)}</span></div>
-                <div className="flex justify-between text-gray-500"><span>VAT (15%)</span><span>{fmtR(cartVat)}</span></div>
-                <div className="flex justify-between font-semibold text-base pt-1.5 border-t border-gray-200"><span>Total</span><span className="text-bassani-700">{fmtR(cartTotal)}</span></div>
-              </div>
-            </>
-          ) : (
-            <div className="border border-dashed border-gray-200 rounded-xl py-8 text-center text-gray-400 text-sm mb-4">
-              Search for a product above to add it to the order
-            </div>
-          )}
-
-          {/* Notes */}
-          <FormGroup label="Notes (optional)">
-            <Textarea value={orderNote} onChange={e=>setOrderNote(e.target.value)} rows={2} placeholder="Special instructions, delivery notes…" />
-          </FormGroup>
-
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={()=>setCreateModal(false)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={submitOrder} disabled={submitting || cart.length===0}>
-              {submitting ? "Placing…" : cart.length > 0 ? `Place Order (${cart.length} line${cart.length>1?"s":""})` : "Place Order"}
-            </BtnPrimary>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -507,14 +578,15 @@ export function Orders() {
 export function Resellers() {
   const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{ Flower:10,Tinctures:10,Vapes:10,Edibles:10,Topicals:10,Accessories:10 }, odoo_partner_id:"", username:"", password:"" };
 
-  const [resellers,       setResellers      ] = useState([]);
-  const [loading,         setLoading        ] = useState(true);
-  const [modal,           setModal          ] = useState(false);
-  const [form,            setForm           ] = useState(BLANK_FORM);
-  const [customerSearch,  setCustomerSearch ] = useState("");
-  const [customers,       setCustomers      ] = useState([]);
-  const [customerLoading, setCustomerLoading] = useState(false);
-  const [selectedCustomer,setSelectedCustomer] = useState(null);
+  const [resellers,          setResellers         ] = useState([]);
+  const [loading,            setLoading           ] = useState(true);
+  const [modal,              setModal             ] = useState(false);
+  const [form,               setForm              ] = useState(BLANK_FORM);
+  const [customerSearch,     setCustomerSearch    ] = useState("");
+  const [customers,          setCustomers         ] = useState([]);
+  const [customerLoading,    setCustomerLoading   ] = useState(false);
+  const [selectedCustomer,   setSelectedCustomer  ] = useState(null);
+  const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -524,28 +596,46 @@ export function Resellers() {
   };
   useEffect(() => { load(); }, []);
 
-  // Debounced customer search against Odoo
+  // Load customers whenever dropdown is open — debounce only when typing
   useEffect(() => {
-    if (customerSearch.length < 2) { setCustomers([]); return; }
+    if (!custDropdownOpen) { setCustomers([]); return; }
+    const delay = customerSearch.length >= 2 ? 300 : 0;
     const t = setTimeout(async () => {
       setCustomerLoading(true);
       try {
-        const r = await api.get("/api/customers/", { params: { search: customerSearch, limit: 10 } });
+        const params = { limit: 20 };
+        if (customerSearch.length >= 2) params.search = customerSearch;
+        const r = await api.get("/api/customers/", { params });
         setCustomers(r.data.customers || []);
       } catch { setCustomers([]); }
       finally { setCustomerLoading(false); }
-    }, 300);
+    }, delay);
     return () => clearTimeout(t);
-  }, [customerSearch]);
+  }, [customerSearch, custDropdownOpen]);
 
   const selectCustomer = (c) => {
     setSelectedCustomer(c);
-    setForm(f => ({ ...f, odoo_partner_id: c.id, name: f.name || c.name, email: f.email || (c.email||""), phone: f.phone || (c.phone||"") }));
+    setCustDropdownOpen(false);
     setCustomers([]);
-    setCustomerSearch(c.name);
+    setCustomerSearch("");
+    setForm(f => ({
+      ...f,
+      odoo_partner_id: c.id,
+      name:        f.name        || c.name        || "",
+      email:       f.email       || c.email        || "",
+      phone:       f.phone       || c.phone        || "",
+      seller_code: f.seller_code || c.ref          || "",
+    }));
   };
 
-  const openModal = () => { setForm(BLANK_FORM); setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setModal(true); };
+  const clearCustomer = () => {
+    setSelectedCustomer(null);
+    setForm(f => ({ ...f, odoo_partner_id: "" }));
+    setCustomerSearch("");
+    setCustDropdownOpen(true);
+  };
+
+  const openModal = () => { setForm(BLANK_FORM); setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true); };
 
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
@@ -603,27 +693,53 @@ export function Resellers() {
         <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-2xl">
 
           {/* Section 1 — Odoo customer link */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Link to Odoo Customer</p>
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Link to Odoo Customer <span className="text-red-400">*</span></p>
           <div className="relative mb-4">
-            <Input
-              value={customerSearch}
-              onChange={e=>{ setCustomerSearch(e.target.value); setSelectedCustomer(null); setForm(f=>({...f,odoo_partner_id:""})); }}
-              placeholder="Search existing Odoo customers…"
-            />
-            {selectedCustomer && (
-              <div className="mt-1 flex items-center gap-2 text-xs text-bassani-700 font-medium">
-                <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block"/>
-                Linked to: {selectedCustomer.name} (ID {selectedCustomer.id})
+            {selectedCustomer ? (
+              /* Selected state — show chip with clear button */
+              <div className="flex items-center gap-3 border border-bassani-300 bg-bassani-50 rounded-xl px-4 py-2.5">
+                <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-bassani-800 truncate">{selectedCustomer.name}</p>
+                  {selectedCustomer.email && <p className="text-xs text-gray-400 truncate">{selectedCustomer.email}</p>}
+                </div>
+                <button onClick={clearCustomer}
+                  className="text-gray-400 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+              </div>
+            ) : (
+              /* Search state — input with chevron */
+              <div className="relative">
+                <Input
+                  value={customerSearch}
+                  onChange={e=>setCustomerSearch(e.target.value)}
+                  onFocus={()=>setCustDropdownOpen(true)}
+                  onBlur={()=>setTimeout(()=>setCustDropdownOpen(false), 150)}
+                  placeholder="Click to browse or type to search…"
+                  className="pr-10"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                  <ChevronDown size={15} className={custDropdownOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+                </span>
               </div>
             )}
-            {customers.length > 0 && (
-              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
-                {customerLoading && <p className="p-3 text-xs text-gray-400">Searching…</p>}
+
+            {/* Dropdown list */}
+            {custDropdownOpen && !selectedCustomer && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-56 overflow-y-auto">
+                {customerLoading && (
+                  <p className="px-4 py-3 text-xs text-gray-400">Loading customers…</p>
+                )}
+                {!customerLoading && customers.length === 0 && (
+                  <p className="px-4 py-3 text-xs text-gray-400">No customers found</p>
+                )}
                 {customers.map(c=>(
-                  <button key={c.id} onClick={()=>selectCustomer(c)}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm">
-                    <span className="font-medium text-gray-900">{c.name}</span>
-                    {c.email && <span className="text-gray-400 text-xs ml-2">{c.email}</span>}
+                  <button key={c.id} onMouseDown={()=>selectCustomer(c)}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                      {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
+                    </div>
+                    {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
                   </button>
                 ))}
               </div>

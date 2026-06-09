@@ -70,7 +70,9 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 return {
                     "products": {"total": total_products, "low_stock": low_stock},
                     "orders": {"total": 0, "this_month": 0, "month_revenue": 0.0},
+                    "customers": {"active": 0},
                     "commission": {"due_this_month": 0.0},
+                    "invoices": {"unpaid": 0, "overdue_amount": 0.0},
                     "recent_orders": [],
                     "low_stock_products": low_stock_products,
                 }
@@ -114,7 +116,9 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                     "this_month": len(reseller_month_orders),
                     "month_revenue": sum(o["amount_total"] for o in reseller_month_orders),
                 },
+                "customers": {"active": 0},
                 "commission": {"due_this_month": commission_due},
+                "invoices": {"unpaid": 0, "overdue_amount": 0.0},
                 "recent_orders": recent_orders,
                 "low_stock_products": low_stock_products,
             }

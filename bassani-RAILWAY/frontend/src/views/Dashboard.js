@@ -1,8 +1,11 @@
 import { useState, useEffect } from "react";
 import api from "../api";
+import { useAuth } from "../AuthContext";
 import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from "../components/UI";
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -31,9 +34,17 @@ export default function Dashboard() {
             <div className="grid grid-cols-4 gap-4">
               <StatCard label="Total Products"    value={data.products.total}           sub={`${data.products.low_stock} low stock`} />
               <StatCard label="Orders This Month" value={data.orders.this_month}        sub={fmtR(data.orders.month_revenue)} />
-              <StatCard label="Active Customers"  value={data.customers.active}         />
-              <StatCard label="Commission Due"    value={fmtR(data.commission.due_this_month)} accent="text-bassani-700"
-                sub={`${data.invoices.unpaid} unpaid invoices`} />
+              {isReseller ? (
+                <StatCard label="All-Time Orders"     value={data.orders.total} />
+              ) : (
+                <StatCard label="Active Customers"    value={data.customers.active} />
+              )}
+              {isReseller ? (
+                <StatCard label="Commission This Month" value={fmtR(data.commission.due_this_month)} accent="text-bassani-700" />
+              ) : (
+                <StatCard label="Commission Due"      value={fmtR(data.commission.due_this_month)} accent="text-bassani-700"
+                  sub={`${data.invoices.unpaid} unpaid invoices`} />
+              )}
             </div>
 
             <div className="grid grid-cols-5 gap-4">
@@ -88,20 +99,22 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Invoice summary */}
-                <div className="bg-white rounded-xl border border-gray-100 p-5">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-3">Invoicing</h3>
-                  <div className="space-y-2.5">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Unpaid invoices</span>
-                      <span className="font-semibold text-amber-600">{data.invoices.unpaid}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Outstanding balance</span>
-                      <span className="font-semibold text-red-600">{fmtR(data.invoices.overdue_amount)}</span>
+                {/* Invoice summary — admin only */}
+                {!isReseller && (
+                  <div className="bg-white rounded-xl border border-gray-100 p-5">
+                    <h3 className="text-sm font-semibold text-gray-800 mb-3">Invoicing</h3>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Unpaid invoices</span>
+                        <span className="font-semibold text-amber-600">{data.invoices.unpaid}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Outstanding balance</span>
+                        <span className="font-semibold text-red-600">{fmtR(data.invoices.overdue_amount)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
