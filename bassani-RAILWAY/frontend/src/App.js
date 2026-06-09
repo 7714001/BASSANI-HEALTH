@@ -14,6 +14,7 @@ import Resellers  from "./views/Resellers";
 import Commission from "./views/Commission";
 import Reports    from "./views/Reports";
 import Healthcare from "./views/Healthcare";
+import Users      from "./views/Users";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -53,10 +54,10 @@ export default function App() {
           <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>
         } />
         <Route path="/products" element={
-          <ProtectedRoute adminOnly><AppLayout><Products /></AppLayout></ProtectedRoute>
+          <ProtectedRoute><AppLayout><Products /></AppLayout></ProtectedRoute>
         } />
         <Route path="/customers" element={
-          <ProtectedRoute adminOnly><AppLayout><Customers /></AppLayout></ProtectedRoute>
+          <ProtectedRoute><AppLayout><Customers /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders" element={
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>
@@ -72,6 +73,9 @@ export default function App() {
         } />
         <Route path="/healthcare" element={
           <ProtectedRoute adminOnly><AppLayout><Healthcare /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/users" element={
+          <ProtectedRoute adminOnly><AppLayout><Users /></AppLayout></ProtectedRoute>
         } />
 
         {/* Catch-all */}

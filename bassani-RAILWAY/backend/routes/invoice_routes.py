@@ -3,6 +3,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
+from database import col, NO_ID
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -34,7 +35,7 @@ INVOICE_DOMAIN = [("move_type", "in", ["out_invoice", "in_invoice", "out_refund"
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/")
-def list_invoices(
+async def list_invoices(
     move_type: Optional[str] = None,
     state: Optional[str] = None,
     search: Optional[str] = None,
@@ -42,7 +43,7 @@ def list_invoices(
     offset: int = 0,
     current_user: dict = Depends(get_current_user),
 ):
-    """List invoices and bills from Odoo."""
+    """List invoices from Odoo. Resellers only see invoices for their own orders."""
     odoo = get_odoo_client()
     domain = INVOICE_DOMAIN.copy()
     if move_type:
@@ -51,6 +52,15 @@ def list_invoices(
         domain.append(("state", "=", state))
     if search:
         domain.append(("name", "ilike", search))
+
+    # Reseller: restrict to invoices where they are the customer in Odoo
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        odoo_partner_id = reseller.get("odoo_partner_id") if reseller else None
+        if not odoo_partner_id:
+            return {"invoices": [], "total": 0}
+        domain.append(("partner_id", "=", odoo_partner_id))
+
     try:
         invoices = odoo.search_read(
             "account.move",

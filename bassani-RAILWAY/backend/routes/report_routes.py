@@ -30,7 +30,7 @@ def odoo_date_domain(field: str, from_date: str, to_date: str) -> list:
 async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     """
     Master dashboard — KPIs from Odoo + commission totals from MongoDB.
-    Single endpoint so the dashboard loads in one request.
+    Resellers see only their own data. Admins see everything.
     """
     odoo = get_odoo_client()
     today = date.today()
@@ -38,7 +38,6 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     month_end = last_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
 
     try:
-        # Product counts
         total_products = odoo.count(
             "product.template",
             [("type", "in", ["product", "consu"]), ("active", "=", True)]
@@ -47,8 +46,80 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             "product.template",
             [("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)]
         )
+        low_stock_products = odoo.search_read(
+            "product.template",
+            domain=[("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
+            fields=["id", "name", "qty_available", "uom_id", "categ_id"],
+            limit=5,
+            order="name asc",
+        )
 
-        # Order counts + revenue this month
+        # ── Reseller dashboard ────────────────────────────────────────────────
+        if current_user.get("role") == "reseller":
+            reseller = await col("resellers").find_one(
+                {"user_id": current_user["id"]}, NO_ID
+            )
+            reseller_id = reseller["id"] if reseller else None
+
+            commission_records = await col("order_commissions").find(
+                {"reseller_id": reseller_id}, NO_ID
+            ).to_list(length=10000)
+            allowed_odoo_ids = [int(r["odoo_order_id"]) for r in commission_records]
+
+            if not allowed_odoo_ids:
+                return {
+                    "products": {"total": total_products, "low_stock": low_stock},
+                    "orders": {"total": 0, "this_month": 0, "month_revenue": 0.0},
+                    "commission": {"due_this_month": 0.0},
+                    "recent_orders": [],
+                    "low_stock_products": low_stock_products,
+                }
+
+            reseller_month_orders = odoo.search_read(
+                "sale.order",
+                domain=[
+                    ("id", "in", allowed_odoo_ids),
+                    ("state", "in", ["sale", "done"]),
+                    ("date_order", ">=", month_start),
+                    ("date_order", "<=", month_end),
+                ],
+                fields=["amount_total"],
+                limit=5000,
+            )
+            recent_orders = odoo.search_read(
+                "sale.order",
+                domain=[("id", "in", allowed_odoo_ids)],
+                fields=["id", "name", "partner_id", "amount_total", "state", "date_order"],
+                limit=5,
+                order="date_order desc",
+            )
+
+            pipeline = [
+                {"$match": {
+                    "reseller_id": reseller_id,
+                    "created_at": {
+                        "$gte": first_day_of_month(today.year, today.month),
+                        "$lte": last_day_of_month(today.year, today.month),
+                    },
+                }},
+                {"$group": {"_id": None, "total": {"$sum": "$commission_total"}}},
+            ]
+            result = await col("order_commissions").aggregate(pipeline).to_list(1)
+            commission_due = result[0]["total"] if result else 0
+
+            return {
+                "products": {"total": total_products, "low_stock": low_stock},
+                "orders": {
+                    "total": len(allowed_odoo_ids),
+                    "this_month": len(reseller_month_orders),
+                    "month_revenue": sum(o["amount_total"] for o in reseller_month_orders),
+                },
+                "commission": {"due_this_month": commission_due},
+                "recent_orders": recent_orders,
+                "low_stock_products": low_stock_products,
+            }
+
+        # ── Admin dashboard ───────────────────────────────────────────────────
         month_orders = odoo.search_read(
             "sale.order",
             domain=[
@@ -60,18 +131,12 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             limit=5000,
         )
         month_revenue = sum(o["amount_total"] for o in month_orders)
-
-        total_orders   = odoo.count("sale.order", [])
+        total_orders = odoo.count("sale.order", [])
         active_customers = odoo.count("res.partner", [("customer_rank", ">", 0), ("active", "=", True)])
 
-        # Invoice summary
         unpaid_invoices = odoo.count(
             "account.move",
-            [
-                ("move_type", "=", "out_invoice"),
-                ("payment_state", "=", "not_paid"),
-                ("state", "=", "posted"),
-            ]
+            [("move_type", "=", "out_invoice"), ("payment_state", "=", "not_paid"), ("state", "=", "posted")]
         )
         overdue_data = odoo.search_read(
             "account.move",
@@ -85,7 +150,6 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
         )
         overdue_amount = sum(i["amount_residual"] for i in overdue_data)
 
-        # Recent orders (last 5)
         recent_orders = odoo.search_read(
             "sale.order",
             domain=[],
@@ -94,50 +158,28 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             order="date_order desc",
         )
 
-        # Low stock products
-        low_stock_products = odoo.search_read(
-            "product.template",
-            domain=[("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
-            fields=["id", "name", "qty_available", "uom_id", "categ_id"],
-            limit=5,
-            order="name asc",
-        )
-
-        # Commission due this month from MongoDB
         pipeline = [
-            {
-                "$match": {
-                    "created_at": {
-                        "$gte": first_day_of_month(today.year, today.month),
-                        "$lte": last_day_of_month(today.year, today.month),
-                    }
+            {"$match": {
+                "created_at": {
+                    "$gte": first_day_of_month(today.year, today.month),
+                    "$lte": last_day_of_month(today.year, today.month),
                 }
-            },
+            }},
             {"$group": {"_id": None, "total": {"$sum": "$commission_total"}}},
         ]
         result = await col("order_commissions").aggregate(pipeline).to_list(1)
         commission_due = result[0]["total"] if result else 0
 
         return {
-            "products": {
-                "total": total_products,
-                "low_stock": low_stock,
-            },
+            "products": {"total": total_products, "low_stock": low_stock},
             "orders": {
                 "total": total_orders,
                 "this_month": len(month_orders),
                 "month_revenue": month_revenue,
             },
-            "customers": {
-                "active": active_customers,
-            },
-            "invoices": {
-                "unpaid": unpaid_invoices,
-                "overdue_amount": overdue_amount,
-            },
-            "commission": {
-                "due_this_month": commission_due,
-            },
+            "customers": {"active": active_customers},
+            "invoices": {"unpaid": unpaid_invoices, "overdue_amount": overdue_amount},
+            "commission": {"due_this_month": commission_due},
             "recent_orders": recent_orders,
             "low_stock_products": low_stock_products,
         }
@@ -152,7 +194,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
 async def monthly_turnover(
     year: int = Query(default=None),
     month: int = Query(default=None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """
     Monthly revenue split — direct vs reseller sales.
@@ -275,7 +317,7 @@ def best_sellers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """Top products by revenue — pulled from Odoo sale order lines."""
     odoo = get_odoo_client()
@@ -336,7 +378,7 @@ def best_customers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """Top customers by spend — pulled from Odoo sale orders."""
     odoo = get_odoo_client()
@@ -394,7 +436,7 @@ def best_customers(
 @router.get("/dead-stock")
 def dead_stock(
     days_threshold: int = Query(60),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """
     Products that haven't moved in `days_threshold` days.
@@ -458,7 +500,7 @@ def dead_stock(
 def category_performance(
     year: int = Query(default=None),
     month: int = Query(default=None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """Revenue and order count broken down by product category."""
     odoo = get_odoo_client()

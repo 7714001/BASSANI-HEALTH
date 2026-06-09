@@ -2,6 +2,7 @@
 // Products view
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
+import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive } from "lucide-react";
@@ -14,6 +15,8 @@ import {
 const CATEGORIES = ["Flower","Tinctures","Vapes","Edibles","Topicals","Accessories"];
 
 export function Products() {
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
   const [products, setProducts] = useState([]);
   const [total,    setTotal   ] = useState(0);
   const [loading,  setLoading ] = useState(true);
@@ -60,13 +63,13 @@ export function Products() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load}
-        actions={<BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
+        actions={!isReseller && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <SearchBar value={search} onChange={setSearch} placeholder="Search products, SKU…" />
           {["all",...CATEGORIES].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
         </div>
-        <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted","Actions"]} loading={loading}>
+        <Table headers={["Product / SKU","Category","Sale Price","Cost","On Hand","Forecasted",...(!isReseller?["Actions"]:[])]} loading={loading}>
           {products.length === 0 && !loading && <tr><td colSpan={7}><EmptyState /></td></tr>}
           {products.map(p => (
             <Tr key={p.id}>
@@ -76,12 +79,14 @@ export function Products() {
               <Td className="text-gray-500">{fmtR(p.standard_price)}</Td>
               <Td><span className={stockColor(p.qty_available||0)}>{p.qty_available??0}</span></Td>
               <Td className="text-gray-500">{p.virtual_available??0}</Td>
-              <Td>
-                <div className="flex gap-1.5">
-                  <BtnSecondary size="sm" onClick={()=>openEdit(p)}><Edit2 size={11}/></BtnSecondary>
-                  <BtnDanger onClick={()=>archive(p.id)}><Archive size={11}/></BtnDanger>
-                </div>
-              </Td>
+              {!isReseller && (
+                <Td>
+                  <div className="flex gap-1.5">
+                    <BtnSecondary size="sm" onClick={()=>openEdit(p)}><Edit2 size={11}/></BtnSecondary>
+                    <BtnDanger onClick={()=>archive(p.id)}><Archive size={11}/></BtnDanger>
+                  </div>
+                </Td>
+              )}
             </Tr>
           ))}
         </Table>
@@ -106,6 +111,8 @@ export function Products() {
 // Customers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Customers() {
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
   const [customers, setCustomers] = useState([]);
   const [total,     setTotal    ] = useState(0);
   const [loading,   setLoading  ] = useState(true);
@@ -139,7 +146,7 @@ export function Customers() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Customers" subtitle={`${total} active accounts`} onRefresh={load}
-        actions={<BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
+        actions={!isReseller && <BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={setSearch} placeholder="Search customers, city…" /></div>
         <Table headers={["Customer","Type","Contact","City","Section 21","Balance","Terms","Actions"]} loading={loading}>
@@ -191,18 +198,33 @@ export function Customers() {
 // Orders view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Orders() {
-  const [orders,  setOrders ] = useState([]);
-  const [total,   setTotal  ] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [search,  setSearch ] = useState("");
-  const [status,  setStatus ] = useState("all");
-  const [detail,  setDetail ] = useState(null);
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
+
+  const [orders,      setOrders     ] = useState([]);
+  const [orderTotal,  setOrderTotal ] = useState(0);
+  const [loading,     setLoading    ] = useState(true);
+  const [search,      setSearch     ] = useState("");
+  const [status,      setStatus     ] = useState("all");
+  const [detail,      setDetail     ] = useState(null);
+
+  // Create order state
+  const [createModal,  setCreateModal ] = useState(false);
+  const [cart,         setCart        ] = useState([]);
+  const [prodSearch,   setProdSearch  ] = useState("");
+  const [prodResults,  setProdResults ] = useState([]);
+  const [orderNote,    setOrderNote   ] = useState("");
+  const [custSearch,   setCustSearch  ] = useState("");
+  const [custResults,  setCustResults ] = useState([]);
+  const [custLoading,  setCustLoading ] = useState(false);
+  const [selectedCust, setSelectedCust] = useState(null);
+  const [submitting,   setSubmitting  ] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/api/orders/", { params: { limit:20, search:search||undefined, status:status==="all"?undefined:status } });
-      setOrders(r.data.orders); setTotal(r.data.total);
+      setOrders(r.data.orders); setOrderTotal(r.data.total);
     } catch { toast.error("Failed to load orders"); }
     finally { setLoading(false); }
   }, [search, status]);
@@ -214,11 +236,83 @@ export function Orders() {
     catch (e) { toast.error(e.response?.data?.detail||"Failed"); }
   };
 
+  // Product search with 300ms debounce
+  useEffect(() => {
+    if (prodSearch.length < 2) { setProdResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get("/api/products/", { params: { search: prodSearch, limit: 10 } });
+        setProdResults(r.data.products || []);
+      } catch { setProdResults([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [prodSearch]);
+
+  // Customer search — admin only
+  useEffect(() => {
+    if (isReseller || custSearch.length < 2) { setCustResults([]); return; }
+    const t = setTimeout(async () => {
+      setCustLoading(true);
+      try {
+        const r = await api.get("/api/customers/", { params: { search: custSearch, limit: 10 } });
+        setCustResults(r.data.customers || []);
+      } catch { setCustResults([]); }
+      finally { setCustLoading(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [custSearch, isReseller]);
+
+  const addToCart = (product) => {
+    const productId = product.product_variant_ids?.[0] ?? product.id;
+    setProdSearch(""); setProdResults([]);
+    setCart(prev => {
+      const existing = prev.find(i => i.product_id === productId);
+      if (existing) return prev.map(i => i.product_id === productId ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
+      return [...prev, { product_id: productId, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: product.qty_available ?? 0 }];
+    });
+  };
+
+  const removeFromCart = (pid) => setCart(prev => prev.filter(i => i.product_id !== pid));
+
+  const updateQty = (pid, qty) => {
+    if (qty <= 0) { removeFromCart(pid); return; }
+    setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
+  };
+
+  const openCreate = () => {
+    setCart([]); setProdSearch(""); setProdResults([]);
+    setCustSearch(""); setCustResults([]); setSelectedCust(null);
+    setOrderNote(""); setSubmitting(false); setCreateModal(true);
+  };
+
+  const submitOrder = async () => {
+    if (cart.length === 0) return toast.error("Add at least one product to the order");
+    if (!isReseller && !selectedCust) return toast.error("Select a customer first");
+    setSubmitting(true);
+    try {
+      await api.post("/api/orders/", {
+        partner_id: selectedCust?.id ?? 0,
+        order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
+        note: orderNote,
+      });
+      toast.success("Order placed successfully");
+      setCreateModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to place order");
+    } finally { setSubmitting(false); }
+  };
+
+  const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
+  const cartVat      = cartSubtotal * 0.15;
+  const cartTotal    = cartSubtotal + cartVat;
+
   const STATUSES = ["all","draft","sale","done","cancel"];
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Orders" subtitle={`${total} orders`} onRefresh={load} />
+      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load}
+        actions={<BtnPrimary onClick={openCreate}><Plus size={14}/>Place Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <SearchBar value={search} onChange={setSearch} placeholder="Search order, customer…" />
@@ -238,12 +332,14 @@ export function Orders() {
               <Td><Badge status={o.state} /></Td>
               <Td><Badge status={o.invoice_status} /></Td>
               <Td onClick={e=>e.stopPropagation()}>
-                {o.state==="draft"&&<BtnPrimary size="sm" onClick={()=>confirm(o.id)}>Confirm</BtnPrimary>}
+                {!isReseller && o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)}>Confirm</BtnPrimary>}
               </Td>
             </Tr>
           ))}
         </Table>
       </main>
+
+      {/* Order detail modal */}
       {detail && (
         <Modal title={detail.name} onClose={()=>setDetail(null)} width="max-w-xl">
           <div className="space-y-1.5 text-sm mb-4">
@@ -258,8 +354,146 @@ export function Orders() {
             <Badge status={detail.state} />
             <div className="flex gap-2">
               <BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary>
-              {detail.state==="draft"&&<BtnPrimary onClick={()=>{confirm(detail.id);setDetail(null);}}>Confirm Order</BtnPrimary>}
+              {!isReseller && detail.state==="draft" && <BtnPrimary onClick={()=>{confirm(detail.id);setDetail(null);}}>Confirm Order</BtnPrimary>}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Create order modal */}
+      {createModal && (
+        <Modal title="Place New Order" onClose={()=>setCreateModal(false)} width="max-w-2xl">
+
+          {/* Customer selector — admin only */}
+          {!isReseller && (
+            <>
+              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Customer</p>
+              <div className="relative mb-5">
+                <Input value={custSearch} onChange={e=>{ setCustSearch(e.target.value); setSelectedCust(null); }} placeholder="Search Odoo customers…" />
+                {selectedCust && (
+                  <div className="mt-1 flex items-center gap-2 text-xs text-bassani-700 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block"/>
+                    {selectedCust.name} {selectedCust.city ? `· ${selectedCust.city}` : ""}
+                  </div>
+                )}
+                {custResults.length > 0 && (
+                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
+                    {custLoading && <p className="p-3 text-xs text-gray-400">Searching…</p>}
+                    {custResults.map(c=>(
+                      <button key={c.id} onClick={()=>{ setSelectedCust(c); setCustSearch(c.name); setCustResults([]); }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm">
+                        <span className="font-medium text-gray-900">{c.name}</span>
+                        {c.city && <span className="text-gray-400 text-xs ml-2">{c.city}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          {isReseller && (
+            <div className="mb-5 flex items-center gap-2 bg-bassani-50 border border-bassani-100 rounded-lg px-4 py-2.5">
+              <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block shrink-0"/>
+              <p className="text-sm text-bassani-700 font-medium">Ordering under your linked account</p>
+            </div>
+          )}
+
+          {/* Product search */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Add Products</p>
+          <div className="relative mb-4">
+            <Input value={prodSearch} onChange={e=>setProdSearch(e.target.value)} placeholder="Search products by name or SKU…" />
+            {prodResults.length > 0 && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-56 overflow-y-auto">
+                {prodResults.map(p => {
+                  const pid = p.product_variant_ids?.[0] ?? p.id;
+                  const inCart = cart.find(i => i.product_id === pid);
+                  return (
+                    <button key={p.id} onClick={()=>addToCart(p)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center justify-between text-sm border-b border-gray-50 last:border-0">
+                      <div className="min-w-0">
+                        <span className="font-medium text-gray-900">{p.name}</span>
+                        {p.default_code && <span className="font-mono text-[10px] text-gray-400 ml-2">{p.default_code}</span>}
+                      </div>
+                      <div className="flex items-center gap-2.5 text-xs text-gray-500 ml-3 shrink-0">
+                        <span className="font-semibold text-gray-700">{fmtR(p.list_price)}</span>
+                        <span className={p.qty_available > 0 ? "text-green-600" : "text-red-400"}>{p.qty_available ?? 0} in stock</span>
+                        {inCart && <span className="bg-bassani-50 text-bassani-700 px-1.5 py-0.5 rounded-full font-semibold">×{inCart.product_uom_qty}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Cart */}
+          {cart.length > 0 ? (
+            <>
+              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Order Lines</p>
+              <div className="border border-gray-100 rounded-xl overflow-hidden mb-4">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                      <th className="text-left px-4 py-2.5">Product</th>
+                      <th className="text-center px-3 py-2.5 w-28">Qty</th>
+                      <th className="text-right px-4 py-2.5 w-32">Unit Price</th>
+                      <th className="text-right px-4 py-2.5 w-28">Subtotal</th>
+                      <th className="px-2 py-2.5 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map(item => (
+                      <tr key={item.product_id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-2.5">
+                          <p className="font-medium text-gray-900">{item.name}</p>
+                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={()=>updateQty(item.product_id, item.product_uom_qty-1)}
+                              className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 flex items-center justify-center font-medium leading-none">−</button>
+                            <span className="w-8 text-center font-semibold">{item.product_uom_qty}</span>
+                            <button onClick={()=>updateQty(item.product_id, item.product_uom_qty+1)}
+                              className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 flex items-center justify-center font-medium leading-none">+</button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <input type="number" min={0} step={0.01} value={item.price_unit}
+                            onChange={e=>setCart(prev=>prev.map(i=>i.product_id===item.product_id?{...i,price_unit:parseFloat(e.target.value)||0}:i))}
+                            className="w-24 text-right border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-bassani-500"/>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-gray-800">{fmtR(item.product_uom_qty*item.price_unit)}</td>
+                        <td className="px-2 py-2.5 text-center">
+                          <button onClick={()=>removeFromCart(item.product_id)} className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none">×</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Totals */}
+              <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-1.5 text-sm mb-4">
+                <div className="flex justify-between text-gray-500"><span>Subtotal (excl. VAT)</span><span>{fmtR(cartSubtotal)}</span></div>
+                <div className="flex justify-between text-gray-500"><span>VAT (15%)</span><span>{fmtR(cartVat)}</span></div>
+                <div className="flex justify-between font-semibold text-base pt-1.5 border-t border-gray-200"><span>Total</span><span className="text-bassani-700">{fmtR(cartTotal)}</span></div>
+              </div>
+            </>
+          ) : (
+            <div className="border border-dashed border-gray-200 rounded-xl py-8 text-center text-gray-400 text-sm mb-4">
+              Search for a product above to add it to the order
+            </div>
+          )}
+
+          {/* Notes */}
+          <FormGroup label="Notes (optional)">
+            <Textarea value={orderNote} onChange={e=>setOrderNote(e.target.value)} rows={2} placeholder="Special instructions, delivery notes…" />
+          </FormGroup>
+
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={()=>setCreateModal(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={submitOrder} disabled={submitting || cart.length===0}>
+              {submitting ? "Placing…" : cart.length > 0 ? `Place Order (${cart.length} line${cart.length>1?"s":""})` : "Place Order"}
+            </BtnPrimary>
           </div>
         </Modal>
       )}
@@ -271,10 +505,16 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
-  const [resellers, setResellers] = useState([]);
-  const [loading,   setLoading  ] = useState(true);
-  const [modal,     setModal    ] = useState(false);
-  const [form,      setForm     ] = useState({ name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{ Flower:10,Tinctures:10,Vapes:10,Edibles:10,Topicals:10,Accessories:10 } });
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{ Flower:10,Tinctures:10,Vapes:10,Edibles:10,Topicals:10,Accessories:10 }, odoo_partner_id:"", username:"", password:"" };
+
+  const [resellers,       setResellers      ] = useState([]);
+  const [loading,         setLoading        ] = useState(true);
+  const [modal,           setModal          ] = useState(false);
+  const [form,            setForm           ] = useState(BLANK_FORM);
+  const [customerSearch,  setCustomerSearch ] = useState("");
+  const [customers,       setCustomers      ] = useState([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [selectedCustomer,setSelectedCustomer] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -284,10 +524,40 @@ export function Resellers() {
   };
   useEffect(() => { load(); }, []);
 
+  // Debounced customer search against Odoo
+  useEffect(() => {
+    if (customerSearch.length < 2) { setCustomers([]); return; }
+    const t = setTimeout(async () => {
+      setCustomerLoading(true);
+      try {
+        const r = await api.get("/api/customers/", { params: { search: customerSearch, limit: 10 } });
+        setCustomers(r.data.customers || []);
+      } catch { setCustomers([]); }
+      finally { setCustomerLoading(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
+
+  const selectCustomer = (c) => {
+    setSelectedCustomer(c);
+    setForm(f => ({ ...f, odoo_partner_id: c.id, name: f.name || c.name, email: f.email || (c.email||""), phone: f.phone || (c.phone||"") }));
+    setCustomers([]);
+    setCustomerSearch(c.name);
+  };
+
+  const openModal = () => { setForm(BLANK_FORM); setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setModal(true); };
+
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
-    try { await api.post("/api/resellers/", form); toast.success("Reseller created"); setModal(false); load(); }
-    catch (e) { toast.error(e.response?.data?.detail||"Save failed"); }
+    if (!form.odoo_partner_id) return toast.error("You must link this reseller to an Odoo customer");
+    if (!form.username || !form.password) return toast.error("Username and password are required");
+    if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+    try {
+      await api.post("/api/resellers/", { ...form, odoo_partner_id: parseInt(form.odoo_partner_id) });
+      toast.success("Reseller created");
+      setModal(false);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
   };
 
   const initials = (name) => name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
@@ -295,7 +565,7 @@ export function Resellers() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Resellers" subtitle="Distributors, agents and brokers" onRefresh={load}
-        actions={<BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Reseller</BtnPrimary>} />
+        actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         {loading && <LoadingState />}
         <div className="grid grid-cols-2 gap-4">
@@ -328,9 +598,41 @@ export function Resellers() {
           ))}
         </div>
       </main>
+
       {modal && (
-        <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-xl">
-          <div className="grid grid-cols-2 gap-3">
+        <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-2xl">
+
+          {/* Section 1 — Odoo customer link */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Link to Odoo Customer</p>
+          <div className="relative mb-4">
+            <Input
+              value={customerSearch}
+              onChange={e=>{ setCustomerSearch(e.target.value); setSelectedCustomer(null); setForm(f=>({...f,odoo_partner_id:""})); }}
+              placeholder="Search existing Odoo customers…"
+            />
+            {selectedCustomer && (
+              <div className="mt-1 flex items-center gap-2 text-xs text-bassani-700 font-medium">
+                <span className="w-2 h-2 rounded-full bg-bassani-500 inline-block"/>
+                Linked to: {selectedCustomer.name} (ID {selectedCustomer.id})
+              </div>
+            )}
+            {customers.length > 0 && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
+                {customerLoading && <p className="p-3 text-xs text-gray-400">Searching…</p>}
+                {customers.map(c=>(
+                  <button key={c.id} onClick={()=>selectCustomer(c)}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm">
+                    <span className="font-medium text-gray-900">{c.name}</span>
+                    {c.email && <span className="text-gray-400 text-xs ml-2">{c.email}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section 2 — Business details */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
+          <div className="grid grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></FormGroup>
             <FormGroup label="Type"><Select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
             <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
@@ -338,13 +640,23 @@ export function Resellers() {
             <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
             <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></FormGroup>
           </div>
-          <p className="text-xs font-semibold text-gray-500 mb-3 mt-1 uppercase tracking-wider">Default Commission Rates (%)</p>
-          <div className="grid grid-cols-3 gap-3">
+
+          {/* Section 3 — Portal login */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Portal Login Credentials</p>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <FormGroup label="Username" required><Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" /></FormGroup>
+            <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
+          </div>
+
+          {/* Section 4 — Commission rates */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Default Commission Rates (%)</p>
+          <div className="grid grid-cols-3 gap-3 mb-4">
             {Object.keys(form.commission_rates).map(cat=>(
               <FormGroup key={cat} label={cat}><Input type="number" min={10} max={50} value={form.commission_rates[cat]} onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[cat]:parseFloat(e.target.value)||10}})} /></FormGroup>
             ))}
           </div>
-          <div className="flex justify-end gap-2 mt-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Save Reseller</BtnPrimary></div>
+
+          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Create Reseller</BtnPrimary></div>
         </Modal>
       )}
     </div>
@@ -355,6 +667,9 @@ export function Resellers() {
 // Commission matrix view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Commission() {
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
+
   const [resellers,  setResellers ] = useState([]);
   const [selected,   setSelected  ] = useState(null);
   const [matrix,     setMatrix    ] = useState([]);
@@ -364,10 +679,17 @@ export function Commission() {
   const [cat,        setCat       ] = useState("all");
 
   const loadResellers = async () => {
+    if (isReseller) {
+      // Resellers load their own ID from /me — no admin list needed
+      const me = await api.get("/api/auth/me");
+      const resellerId = me.data.reseller_id;
+      if (resellerId) setSelected(resellerId);
+      return;
+    }
     try { const r = await api.get("/api/resellers/"); setResellers(r.data.resellers); if (r.data.resellers.length) setSelected(r.data.resellers[0].id); }
     catch { toast.error("Failed to load resellers"); }
   };
-  useEffect(() => { loadResellers(); }, []);
+  useEffect(() => { loadResellers(); }, []); // eslint-disable-line
 
   const loadMatrix = useCallback(async () => {
     if (!selected) return;

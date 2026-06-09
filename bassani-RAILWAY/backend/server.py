@@ -69,6 +69,7 @@ def debug_static():
     return result
 
 from routes.auth_routes          import router as auth_router
+from routes.user_routes          import router as user_router
 from routes.product_routes       import router as product_router
 from routes.customer_routes      import router as customer_router
 from routes.order_routes         import router as order_router
@@ -91,7 +92,7 @@ from routes.script_routes        import router as script_router
 from routes.packing_board_routes import router as packing_board_router
 
 for router in [
-    auth_router, product_router, customer_router, order_router,
+    auth_router, user_router, product_router, customer_router, order_router,
     stock_router, invoice_router, reseller_router, commission_router,
     report_router, healthcare_router, notification_router,
     aged_debtors_router, payment_router, audit_router, batch_router,
@@ -125,4 +126,13 @@ if os.path.exists(static_dir):
         file_path = os.path.join(static_dir, full_path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)
-        return FileResponse(os.path.join(static_dir, "index.html"))
+        # index.html must never be cached — the hashed JS/CSS filenames inside it
+        # change on every build, so a stale index.html will load the old bundle.
+        return FileResponse(
+            os.path.join(static_dir, "index.html"),
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )

@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, Dict
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, hash_password
+from odoo_client import get_odoo_client
 from database import col, NO_ID
 
 router = APIRouter(prefix="/api/resellers", tags=["resellers"])
@@ -27,7 +28,9 @@ class ResellerCreate(BaseModel):
     address: Optional[str] = ""
     commission_rates: CommissionRates = CommissionRates()
     default_commission: float = 10.0
-    user_id: Optional[str] = None           # Link to users collection (optional)
+    odoo_partner_id: int                    # Must be an existing Odoo res.partner ID
+    username: str                           # Login username for the reseller portal
+    password: str                           # Hashed immediately — never stored plain
 
 class ResellerUpdate(BaseModel):
     name: Optional[str] = None
@@ -119,23 +122,57 @@ async def create_reseller(
     reseller: ResellerCreate,
     current_user: dict = Depends(require_admin),
 ):
-    """Create a new reseller. Admin only."""
-    # Validate commission rates
+    """
+    Create a reseller. Admin only.
+    Validates the Odoo partner exists, then atomically creates:
+      1. A login account in the users collection
+      2. The reseller record linked to both the user and the Odoo partner
+    Rolls back the user account if the reseller insert fails.
+    """
     validate_rates(reseller.commission_rates.model_dump())
 
-    # Ensure seller code is unique
-    existing = await col("resellers").find_one(
-        {"seller_code": reseller.seller_code.upper()}
-    )
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Seller code '{reseller.seller_code}' already exists"
+    # Validate Odoo partner exists
+    odoo = get_odoo_client()
+    try:
+        partners = odoo.read(
+            "res.partner",
+            [reseller.odoo_partner_id],
+            fields=["id", "name", "email"],
         )
+        if not partners:
+            raise HTTPException(status_code=400, detail="Odoo customer not found — check the partner ID")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not verify Odoo customer: {str(e)}")
+
+    # Uniqueness checks before any writes
+    if await col("resellers").find_one({"seller_code": reseller.seller_code.upper()}):
+        raise HTTPException(status_code=400, detail=f"Seller code '{reseller.seller_code}' already exists")
+    if await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
+        raise HTTPException(status_code=400, detail="This Odoo customer is already linked to a reseller")
+    if await col("users").find_one({"username": reseller.username}):
+        raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
 
     now = datetime.now(timezone.utc)
-    doc = {
-        "id": f"reseller_{reseller.seller_code.lower()}",
+    reseller_id = f"reseller_{reseller.seller_code.lower()}"
+
+    # Step 1 — create login account
+    user_doc = {
+        "username": reseller.username,
+        "password": hash_password(reseller.password),
+        "role": "reseller",
+        "name": reseller.name,
+        "reseller_id": reseller_id,
+        "active": True,
+        "created_at": now,
+    }
+    user_result = await col("users").insert_one(user_doc)
+    user_id = str(user_result.inserted_id)
+
+    # Step 2 — create reseller record (rollback user if this fails)
+    reseller_doc = {
+        "id": reseller_id,
         "name": reseller.name,
         "type": reseller.type,
         "seller_code": reseller.seller_code.upper(),
@@ -145,15 +182,21 @@ async def create_reseller(
         "address": reseller.address,
         "commission_rates": reseller.commission_rates.model_dump(),
         "default_commission": reseller.default_commission,
-        "user_id": reseller.user_id,
+        "odoo_partner_id": reseller.odoo_partner_id,
+        "user_id": user_id,
         "total_sales": 0.0,
         "total_commission": 0.0,
         "active": True,
         "created_at": now,
         "updated_at": now,
     }
-    await col("resellers").insert_one(doc)
-    return {"success": True, "reseller_id": doc["id"]}
+    try:
+        await col("resellers").insert_one(reseller_doc)
+    except Exception as e:
+        await col("users").delete_one({"_id": user_result.inserted_id})
+        raise HTTPException(status_code=500, detail=f"Reseller creation failed — login account rolled back: {str(e)}")
+
+    return {"success": True, "reseller_id": reseller_id, "user_id": user_id}
 
 
 @router.put("/{reseller_id}")
