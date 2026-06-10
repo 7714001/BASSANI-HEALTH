@@ -3,7 +3,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client
+from odoo_client import get_odoo_client, OdooClient
 from database import col, NO_ID
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -69,6 +69,52 @@ async def calculate_commission(reseller_id: str, order_lines: list, odoo, overri
         enriched_lines.append({**line, "commission_rate": rate, "commission_amount": commission_amount})
 
     return {"commission_total": commission_total, "lines": enriched_lines}
+
+
+async def _get_commission_account(odoo: OdooClient) -> Optional[int]:
+    """
+    Return the Odoo expense account ID used for reseller commission vendor bills.
+    Preference order:
+      1. Cached value in MongoDB settings (avoids repeated Odoo round-trips)
+      2. Odoo account with 'commission' in the name (expense type)
+      3. First expense account alphabetically by code
+    Returns None if no expense account can be found (bill will be skipped with a warning).
+    """
+    cached = await col("settings").find_one({"key": "commission_account_id"})
+    if cached and cached.get("value"):
+        return int(cached["value"])
+
+    searches = [
+        [("account_type", "=", "expense"), ("deprecated", "=", False), ("name", "ilike", "commission")],
+        [("account_type", "=", "expense"), ("deprecated", "=", False)],
+    ]
+    for domain in searches:
+        try:
+            accounts = odoo.search_read(
+                "account.account",
+                domain=domain,
+                fields=["id", "code", "name"],
+                limit=1,
+                order="code asc",
+            )
+            if accounts:
+                account_id = int(accounts[0]["id"])
+                await col("settings").update_one(
+                    {"key": "commission_account_id"},
+                    {"$set": {
+                        "key": "commission_account_id",
+                        "value": account_id,
+                        "account_name": accounts[0]["name"],
+                        "account_code": accounts[0]["code"],
+                        "updated_at": datetime.now(timezone.utc),
+                    }},
+                    upsert=True,
+                )
+                return account_id
+        except Exception:
+            continue
+
+    return None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -309,22 +355,124 @@ async def create_order(
 
 @router.put("/{order_id}/confirm")
 async def confirm_order(order_id: int, current_user: dict = Depends(require_admin)):
-    """Confirm a quotation into a sales order in Odoo, then auto-queue the pink slip."""
+    """
+    Confirm a quotation. On success, three further steps run in sequence:
+      1. Create + post the customer invoice (out_invoice) in Odoo
+      2. Create + post a reseller commission vendor bill (in_invoice) if applicable
+      3. Queue the order on the packing board
+    Steps 2–4 are non-fatal: failures are returned as warnings so the admin can
+    resolve them manually in Odoo without needing to re-confirm.
+    """
     odoo = get_odoo_client()
+    warnings: List[str] = []
+
+    # ── Step 1: Confirm (hard fail — nothing else runs if this fails) ──────────
     try:
         odoo.execute("sale.order", "action_confirm", [order_id])
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
 
-    # Auto-queue pink slip to packing board — non-blocking, never fails the confirmation
+    # Read order data needed by all subsequent steps
+    order_data = None
     try:
-        orders = odoo.read(
+        rows = odoo.read(
             "sale.order",
             [order_id],
-            fields=["name", "partner_id", "picking_ids", "invoice_ids", "note"],
+            fields=["name", "partner_id", "picking_ids", "note"],
         )
-        order_data = orders[0] if orders else None
+        order_data = rows[0] if rows else None
+    except Exception as e:
+        warnings.append(f"Could not read order after confirm: {str(e)}")
 
+    # ── Step 2: Customer invoice — create and post ─────────────────────────────
+    invoice_id: Optional[int] = None
+    invoice_name: Optional[str] = None
+    try:
+        # _create_invoices returns varying types across Odoo versions;
+        # always re-read invoice_ids from the SO as the authoritative source.
+        try:
+            odoo.execute("sale.order", "_create_invoices", [order_id])
+        except Exception as inner:
+            warnings.append(f"_create_invoices call failed ({inner}), falling back to direct read")
+
+        refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+        inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
+        invoice_id = inv_ids[0] if inv_ids else None
+
+        if invoice_id:
+            odoo.execute("account.move", "action_post", [invoice_id])
+            inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
+            invoice_name = inv_rows[0]["name"] if inv_rows else None
+        else:
+            warnings.append(
+                "Customer invoice could not be created automatically — "
+                "please create it manually from the sale order in Odoo."
+            )
+    except Exception as e:
+        warnings.append(
+            f"Invoice creation failed: {str(e)} — "
+            "create the customer invoice manually in Odoo."
+        )
+
+    # ── Step 3: Commission vendor bill ────────────────────────────────────────
+    comm_data = await col("order_commissions").find_one(
+        {"odoo_order_id": str(order_id)}, NO_ID
+    )
+    commission_bill_id: Optional[int] = None
+
+    if comm_data and comm_data.get("commission_total", 0) > 0:
+        reseller = await col("resellers").find_one({"id": comm_data["reseller_id"]}, NO_ID)
+        reseller_odoo_partner = int(reseller["odoo_partner_id"]) if reseller and reseller.get("odoo_partner_id") else None
+
+        if reseller_odoo_partner:
+            try:
+                account_id = await _get_commission_account(odoo)
+                if account_id:
+                    order_name = order_data["name"] if order_data else str(order_id)
+                    rate = comm_data.get("commission_rate_override")
+                    rate_label = f"{rate}%" if rate is not None else "12.5%"
+
+                    bill_id = odoo.create("account.move", {
+                        "move_type": "in_invoice",
+                        "partner_id": reseller_odoo_partner,
+                        "invoice_origin": order_name,
+                        "ref": f"Commission — {order_name}",
+                        "invoice_line_ids": [(0, 0, {
+                            "name": f"Reseller commission on {order_name} @ {rate_label}",
+                            "quantity": 1.0,
+                            "price_unit": round(float(comm_data["commission_total"]), 2),
+                            "account_id": account_id,
+                        })],
+                    })
+                    odoo.execute("account.move", "action_post", [bill_id])
+                    commission_bill_id = bill_id
+
+                    await col("order_commissions").update_one(
+                        {"odoo_order_id": str(order_id)},
+                        {"$set": {
+                            "odoo_bill_id": str(bill_id),
+                            "confirmed_at": datetime.now(timezone.utc),
+                        }},
+                    )
+                else:
+                    warnings.append(
+                        "No expense account found in Odoo — commission vendor bill skipped. "
+                        "Commission is still tracked in the portal payout view."
+                    )
+            except Exception as e:
+                warnings.append(
+                    f"Commission vendor bill failed: {str(e)} — "
+                    "commission is still tracked in the portal payout view."
+                )
+        else:
+            # No Odoo vendor link — portal payout view is the only record
+            await col("order_commissions").update_one(
+                {"odoo_order_id": str(order_id)},
+                {"$set": {"confirmed_at": datetime.now(timezone.utc)}},
+            )
+
+    # ── Step 4: Packing board (non-blocking) ──────────────────────────────────
+    try:
         if order_data and order_data.get("picking_ids"):
             picking_id = order_data["picking_ids"][0]
             pickings = odoo.read(
@@ -335,7 +483,6 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
             picking = pickings[0] if pickings else None
 
             if picking:
-                # Read move lines for item detail
                 items = []
                 if picking.get("move_ids"):
                     moves = odoo.read(
@@ -345,58 +492,51 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
                     )
                     for m in moves:
                         pname = m["product_id"][1] if m.get("product_id") else "Unknown"
-                        # derive SKU from product default_code if available
-                        prod = odoo.read("product.product", [m["product_id"][0]], fields=["default_code"]) if m.get("product_id") else []
+                        prod = (
+                            odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
+                            if m.get("product_id") else []
+                        )
                         sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        items.append({
-                            "name": pname,
-                            "sku": sku,
-                            "qty": m["product_uom_qty"],
-                            "location": "",
-                        })
+                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
 
                 partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
-                inv_num = ""
-                if order_data.get("invoice_ids"):
-                    invs = odoo.read("account.move", [order_data["invoice_ids"][0]], fields=["name"])
-                    inv_num = invs[0]["name"] if invs else ""
+                is_reseller_order = bool(comm_data)
+                reseller_name_val = comm_data.get("reseller_name") if comm_data else None
 
-                # Resolve reseller info from commission record
-                comm_data = await col("order_commissions").find_one(
-                    {"odoo_order_id": str(order_id)}, NO_ID
-                )
-                is_reseller = bool(comm_data)
-                reseller_name = comm_data.get("reseller_name") if comm_data else None
-
-                entry = {
+                from routes.packing_board_routes import manager
+                now = datetime.now(timezone.utc)
+                doc = {
                     "order_id": str(order_id),
                     "customer_name": partner_name,
                     "customer_city": "",
                     "items": items,
                     "total_units": int(sum(i["qty"] for i in items)),
-                    "inv_num": inv_num,
+                    "inv_num": invoice_name or "",
                     "dn_num": picking["name"],
                     "ps_num": order_data["name"],
                     "notes": order_data.get("note") or "",
-                    "is_reseller": is_reseller,
-                    "reseller_name": reseller_name,
+                    "is_reseller": is_reseller_order,
+                    "reseller_name": reseller_name_val,
+                    "packer_name": None,
+                    "status": "queued",
+                    "queued_at": now,
+                    "packed_at": None,
+                    "ready_at": None,
+                    "collected_at": None,
+                    "item_ticks": {i["sku"]: False for i in items},
                 }
-                # Import here to avoid circular dependency at module load time
-                from routes.packing_board_routes import manager
-                now = datetime.now(timezone.utc)
-                doc = {**entry, "packer_name": None, "status": "queued", "queued_at": now,
-                       "packed_at": None, "ready_at": None, "collected_at": None,
-                       "item_ticks": {i["sku"]: False for i in items}}
-                await col("packing_board").replace_one(
-                    {"order_id": str(order_id)}, doc, upsert=True
-                )
-                await manager.broadcast({"type": "entry_update", "data": {
-                    **doc, "queued_at": now.isoformat()
-                }})
+                await col("packing_board").replace_one({"order_id": str(order_id)}, doc, upsert=True)
+                await manager.broadcast({"type": "entry_update", "data": {**doc, "queued_at": now.isoformat()}})
     except Exception as e:
         print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
 
-    return {"success": True}
+    return {
+        "success": True,
+        "invoice_id": invoice_id,
+        "invoice_name": invoice_name,
+        "commission_bill_id": commission_bill_id,
+        "warnings": warnings,
+    }
 
 
 @router.put("/{order_id}/cancel")

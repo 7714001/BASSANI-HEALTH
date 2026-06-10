@@ -263,8 +263,32 @@ export function Orders() {
   useEffect(() => { load(); }, [load]);
 
   const confirm = async (id) => {
-    try { await api.put(`/api/orders/${id}/confirm`); toast.success("Order confirmed"); load(); }
-    catch (e) { toast.error(e.response?.data?.detail||"Failed"); }
+    try {
+      const { data } = await api.put(`/api/orders/${id}/confirm`);
+      if (data.invoice_name) {
+        toast.success(`Order confirmed · Invoice ${data.invoice_name} created`);
+      } else {
+        toast.success("Order confirmed");
+      }
+      if (data.warnings?.length) {
+        data.warnings.forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
+      }
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to confirm order");
+    }
+  };
+
+  const cancelOrder = async (id) => {
+    if (!window.confirm("Cancel this order? This cannot be undone.")) return;
+    try {
+      await api.put(`/api/orders/${id}/cancel`);
+      toast.success("Order cancelled");
+      setDetail(null);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to cancel order");
+    }
   };
 
   // ── Load products for cart view ───────────────────────────────────────────
@@ -625,7 +649,14 @@ export function Orders() {
             { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:o}})=><span className={o.commission_total>0?"text-bassani-700 font-medium":"text-gray-300"}>{o.commission_total>0?fmtR(o.commission_total):"—"}</span> },
             { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
             { id:"invoice", header:"Payment", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
-            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>o.state==="draft"?<BtnPrimary size="sm" onClick={e=>{e.stopPropagation();confirm(o.id);}}>Confirm</BtnPrimary>:null }]:[]),
+            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
+              (o.state==="draft"||o.state==="sale") ? (
+                <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
+                  {o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)}>Confirm</BtnPrimary>}
+                  {o.state!=="cancel" && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                </div>
+              ) : null
+            }]:[]),
           ]}
           data={orders} loading={loading} total={orderTotal}
           pagination={orderPag} onPaginationChange={setOrderPag}
@@ -648,6 +679,9 @@ export function Orders() {
             <Badge status={detail.state} />
             <div className="flex gap-2">
               <BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary>
+              {!isReseller && detail.state!=="cancel" && detail.state!=="done" && (
+                <BtnSecondary onClick={()=>cancelOrder(detail.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel Order</BtnSecondary>
+              )}
               {!isReseller && detail.state==="draft" && <BtnPrimary onClick={()=>{confirm(detail.id);setDetail(null);}}>Confirm Order</BtnPrimary>}
             </div>
           </div>
