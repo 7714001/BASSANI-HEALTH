@@ -559,7 +559,7 @@ export function Orders() {
                   </div>
                   {cartDiscount > 0 && (
                     <div className="flex justify-between text-green-700">
-                      <span>Discount ({(commissionRates.default_rate - commissionOverride).toFixed(1)}%)</span>
+                      <span>Discount ({(COMMISSION_CAP - commissionOverride).toFixed(1)}%)</span>
                       <span className="font-semibold">-{fmtR(cartDiscount)}</span>
                     </div>
                   )}
