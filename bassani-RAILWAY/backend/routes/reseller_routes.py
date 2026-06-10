@@ -20,9 +20,15 @@ class ResellerCreate(BaseModel):
     address: Optional[str] = ""
     commission_rates: Dict[str, float] = {}  # Odoo category name → rate; empty = use default_commission
     default_commission: float = 10.0         # Fallback rate applied when no category-specific rate is set
-    odoo_partner_id: int                    # Must be an existing Odoo res.partner ID
+    odoo_partner_id: Optional[int] = None   # Odoo vendor partner for commission billing — optional
     username: str                           # Login username for the reseller portal
     password: str                           # Hashed immediately — never stored plain
+    vat_registered: bool = False
+    vat_number: Optional[str] = ""
+    bank_name: Optional[str] = ""
+    bank_account_holder: Optional[str] = ""
+    bank_account_number: Optional[str] = ""
+    bank_branch_code: Optional[str] = ""
 
 class ResellerUpdate(BaseModel):
     name: Optional[str] = None
@@ -34,6 +40,12 @@ class ResellerUpdate(BaseModel):
     commission_rates: Optional[Dict[str, float]] = None
     default_commission: Optional[float] = None
     active: Optional[bool] = None
+    vat_registered: Optional[bool] = None
+    vat_number: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account_holder: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    bank_branch_code: Optional[str] = None
 
 # ── Validation helper ─────────────────────────────────────────────────────────
 
@@ -123,26 +135,28 @@ async def create_reseller(
     """
     validate_rates(reseller.commission_rates)
 
-    # Validate Odoo partner exists
     odoo = get_odoo_client()
-    try:
-        partners = odoo.read(
-            "res.partner",
-            [reseller.odoo_partner_id],
-            fields=["id", "name", "email"],
-        )
-        if not partners:
-            raise HTTPException(status_code=400, detail="Odoo customer not found — check the partner ID")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not verify Odoo customer: {str(e)}")
+
+    # Validate Odoo partner exists when provided
+    if reseller.odoo_partner_id:
+        try:
+            partners = odoo.read(
+                "res.partner",
+                [reseller.odoo_partner_id],
+                fields=["id", "name", "email"],
+            )
+            if not partners:
+                raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
 
     # Uniqueness checks before any writes
     if await col("resellers").find_one({"seller_code": reseller.seller_code.upper()}):
         raise HTTPException(status_code=400, detail=f"Seller code '{reseller.seller_code}' already exists")
-    if await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
-        raise HTTPException(status_code=400, detail="This Odoo customer is already linked to a reseller")
+    if reseller.odoo_partner_id and await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
+        raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a reseller")
     if await col("users").find_one({"username": reseller.username}):
         raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
 
@@ -176,6 +190,12 @@ async def create_reseller(
         "default_commission": reseller.default_commission,
         "odoo_partner_id": reseller.odoo_partner_id,
         "user_id": user_id,
+        "vat_registered": reseller.vat_registered,
+        "vat_number": reseller.vat_number or "",
+        "bank_name": reseller.bank_name or "",
+        "bank_account_holder": reseller.bank_account_holder or "",
+        "bank_account_number": reseller.bank_account_number or "",
+        "bank_branch_code": reseller.bank_branch_code or "",
         "total_sales": 0.0,
         "total_commission": 0.0,
         "active": True,

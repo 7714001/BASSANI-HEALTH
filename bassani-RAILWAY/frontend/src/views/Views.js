@@ -243,8 +243,9 @@ export function Orders() {
   const [custLoading,  setCustLoading ] = useState(false);
   const [selectedCust, setSelectedCust] = useState(null);
   const [custDropOpen,     setCustDropOpen    ] = useState(false);
-  const [submitting,       setSubmitting      ] = useState(false);
-  const [commissionRates,  setCommissionRates ] = useState(null); // null = not loaded / not applicable
+  const [submitting,        setSubmitting       ] = useState(false);
+  const [commissionRates,   setCommissionRates  ] = useState(null); // null = not loaded / not applicable
+  const [commissionOverride, setCommissionOverride] = useState(null); // reseller's chosen rate for this order
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -277,9 +278,9 @@ export function Orders() {
     finally { setProdsLoading(false); }
   };
 
-  // ── Customer search debounce (admin cart) ─────────────────────────────────
+  // ── Customer search debounce (cart) ───────────────────────────────────────
   useEffect(() => {
-    if (isReseller || !custDropOpen) { setCustResults([]); return; }
+    if (!custDropOpen) { setCustResults([]); return; }
     const delay = custSearch.length >= 2 ? 300 : 0;
     const t = setTimeout(async () => {
       setCustLoading(true);
@@ -298,24 +299,25 @@ export function Orders() {
   const openCart = async () => {
     setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
     setCustSearch(""); setCustResults([]); setSelectedCust(null);
-    setCustDropOpen(false); setSubmitting(false); setCommissionRates(null);
+    setCustDropOpen(false); setSubmitting(false); setCommissionRates(null); setCommissionOverride(null);
     loadProducts();
-    // Load commission rates for resellers so the cart can show an estimated commission line
+    // Load commission rates for resellers so the cart can show the commission/discount controls
     if (isReseller) {
       try {
         let rid = user?.reseller_id;
         if (!rid) {
-          // Fallback: re-fetch user context if reseller_id wasn't in the cached session
           const me = await api.get("/api/auth/me");
           rid = me.data.reseller_id;
         }
         if (rid) {
           const r = await api.get(`/api/resellers/${rid}`);
           const { default_commission, commission_rates } = r.data;
-          setCommissionRates({
+          const rates = {
             default_rate:   default_commission ?? 0,
             category_rates: commission_rates ?? {},
-          });
+          };
+          setCommissionRates(rates);
+          setCommissionOverride(rates.default_rate); // Start at full commission (no discount to customer)
         }
       } catch { /* commission preview is optional — don't block cart open */ }
     }
@@ -347,14 +349,18 @@ export function Orders() {
   // ── Submit order ──────────────────────────────────────────────────────────
   const submitOrder = async () => {
     if (cart.length === 0) return toast.error("Add at least one product");
-    if (!isReseller && !selectedCust) return toast.error("Select a customer first");
+    if (!selectedCust) return toast.error("Select a customer first");
     setSubmitting(true);
     try {
-      await api.post("/api/orders/", {
-        partner_id: selectedCust?.id ?? 0,
+      const payload = {
+        partner_id: selectedCust.id,
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: orderNote,
-      });
+      };
+      if (isReseller && commissionOverride !== null) {
+        payload.commission_override = commissionOverride;
+      }
+      await api.post("/api/orders/", payload);
       toast.success("Order placed successfully");
       setView("list");
       load();
@@ -377,7 +383,9 @@ export function Orders() {
   const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
   const cartVat        = cartSubtotal * 0.15;
   const cartTotal      = cartSubtotal + cartVat;
-  const cartCommission = (isReseller && commissionRates)
+  const cartCommission = (isReseller && commissionRates && commissionOverride !== null)
+    ? cartSubtotal * (commissionOverride / 100)
+    : (isReseller && commissionRates)
     ? cart.reduce((sum, item) => {
         const prod = products.find(p => (p.product_variant_ids?.[0] ?? p.id) === item.product_id);
         const cat  = prod?.categ_id?.[1] || "";
@@ -394,7 +402,7 @@ export function Orders() {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar title="Place New Order"
-          subtitle={isReseller ? "Ordering under your linked account" : "Select a customer and add products"}
+          subtitle="Select a customer and add products"
           actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
 
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
@@ -488,43 +496,43 @@ export function Orders() {
             {/* Scrollable body */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
 
-              {/* Customer selector — admin only */}
-              {!isReseller && (
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Customer <span className="text-red-400">*</span></p>
-                  {selectedCust ? (
-                    <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
-                      <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
-                      <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{selectedCust.name}</p>
-                      <button onClick={() => { setSelectedCust(null); setCustSearch(""); setCustDropOpen(true); }}
-                        className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <Input value={custSearch} onChange={e => setCustSearch(e.target.value)}
-                        onFocus={() => setCustDropOpen(true)}
-                        onBlur={() => setTimeout(() => setCustDropOpen(false), 150)}
-                        placeholder="Search customers…" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                        <ChevronDown size={14} />
-                      </span>
-                      {custDropOpen && (
-                        <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
-                          {custLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
-                          {!custLoading && custResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
-                          {custResults.map(c => (
-                            <button key={c.id} onMouseDown={() => { setSelectedCust(c); setCustSearch(c.name); setCustDropOpen(false); setCustResults([]); }}
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
-                              <span className="font-medium">{c.name}</span>
-                              {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Customer selector */}
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                  {isReseller ? "Ordering For (Customer)" : "Customer"} <span className="text-red-400">*</span>
+                </p>
+                {selectedCust ? (
+                  <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
+                    <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                    <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{selectedCust.name}</p>
+                    <button onClick={() => { setSelectedCust(null); setCustSearch(""); setCustDropOpen(true); }}
+                      className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <Input value={custSearch} onChange={e => setCustSearch(e.target.value)}
+                      onFocus={() => setCustDropOpen(true)}
+                      onBlur={() => setTimeout(() => setCustDropOpen(false), 150)}
+                      placeholder="Search customers…" />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                      <ChevronDown size={14} />
+                    </span>
+                    {custDropOpen && (
+                      <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
+                        {custLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
+                        {!custLoading && custResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
+                        {custResults.map(c => (
+                          <button key={c.id} onMouseDown={() => { setSelectedCust(c); setCustSearch(c.name); setCustDropOpen(false); setCustResults([]); }}
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                            <span className="font-medium">{c.name}</span>
+                            {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Cart items */}
               {cart.length === 0 ? (
@@ -573,10 +581,34 @@ export function Orders() {
                     <span className="text-gray-900">Total</span>
                     <span className="text-bassani-700">{fmtR(cartTotal)}</span>
                   </div>
-                  {isReseller && cartCommission > 0 && (
-                    <div className="flex justify-between pt-1.5 border-t border-dashed border-bassani-200">
-                      <span className="text-bassani-700 font-medium">Est. Commission</span>
-                      <span className="text-bassani-700 font-semibold">{fmtR(cartCommission)}</span>
+                  {isReseller && commissionRates && commissionOverride !== null && (
+                    <div className="pt-2 border-t border-dashed border-bassani-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Commission Rate</span>
+                        <span className="text-xs font-bold text-bassani-700">{commissionOverride}%</span>
+                      </div>
+                      <input type="range" min={0} max={commissionRates.default_rate} step={0.5}
+                        value={commissionOverride}
+                        onChange={e => setCommissionOverride(parseFloat(e.target.value))}
+                        className="w-full accent-bassani-600" />
+                      <div className="flex justify-between text-[10px] text-gray-400">
+                        <span>Max discount to customer</span>
+                        <span>Full commission</span>
+                      </div>
+                      <div className="bg-bassani-50 rounded-lg px-3 py-2 space-y-1">
+                        {commissionOverride < commissionRates.default_rate && (
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-500">Customer saves</span>
+                            <span className="font-semibold text-green-700">
+                              -{fmtR(cartSubtotal * (commissionRates.default_rate - commissionOverride) / 100)}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-500">You earn</span>
+                          <span className="font-semibold text-bassani-700">{fmtR(cartCommission)}</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -653,7 +685,7 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, odoo_partner_id:"", username:"", password:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, odoo_partner_id:"", username:"", password:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -668,7 +700,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,          setEditModal         ] = useState(false);
   const [editingId,          setEditingId         ] = useState(null);
-  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10 });
+  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
 
   const load = async () => {
     setLoading(true);
@@ -727,13 +759,19 @@ export function Resellers() {
   }, []);
 
   const openModal = () => {
-    setForm({ ...BLANK_FORM, commission_rates: Object.fromEntries(categories.map(cat => [cat, 10])) });
+    setForm({ ...BLANK_FORM, commission_rates: Object.fromEntries(categories.map(c => [c.name, 10])) });
     setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true);
   };
 
   const openEdit = (r) => {
-    const merged = Object.fromEntries(categories.map(cat => [cat, r.commission_rates?.[cat] ?? r.default_commission ?? 10]));
-    setEditForm({ name:r.name, type:r.type, contact_person:r.contact_person||"", email:r.email||"", phone:r.phone||"", commission_rates:merged, default_commission:r.default_commission??10 });
+    const merged = Object.fromEntries(categories.map(c => [c.name, r.commission_rates?.[c.name] ?? r.default_commission ?? 10]));
+    setEditForm({
+      name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
+      commission_rates: merged, default_commission: r.default_commission ?? 10,
+      vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
+      bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
+      bank_account_number: r.bank_account_number || "", bank_branch_code: r.bank_branch_code || "",
+    });
     setEditingId(r.id);
     setEditModal(true);
   };
@@ -750,11 +788,13 @@ export function Resellers() {
 
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
-    if (!form.odoo_partner_id) return toast.error("You must link this reseller to an Odoo customer");
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
     try {
-      await api.post("/api/resellers/", { ...form, odoo_partner_id: parseInt(form.odoo_partner_id) });
+      const payload = { ...form };
+      if (payload.odoo_partner_id) payload.odoo_partner_id = parseInt(payload.odoo_partner_id);
+      else delete payload.odoo_partner_id;
+      await api.post("/api/resellers/", payload);
       toast.success("Reseller created");
       setModal(false);
       load();
@@ -783,8 +823,8 @@ export function Resellers() {
       {modal && (
         <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-2xl">
 
-          {/* Section 1 — Odoo customer link */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Link to Odoo Customer <span className="text-red-400">*</span></p>
+          {/* Section 1 — Odoo vendor partner link (optional) */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Odoo Vendor Profile <span className="text-gray-300 font-normal normal-case">(optional — used for commission billing)</span></p>
           <div className="relative mb-4">
             {selectedCustomer ? (
               /* Selected state — show chip with clear button */
@@ -855,7 +895,31 @@ export function Resellers() {
             <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
           </div>
 
-          {/* Section 4 — Commission */}
+          {/* Section 4 — VAT */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">VAT Status</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <FormGroup label="VAT Registration">
+              <label className="flex items-center gap-2 cursor-pointer h-9">
+                <input type="checkbox" checked={form.vat_registered} onChange={e=>setForm({...form,vat_registered:e.target.checked,vat_number:e.target.checked?form.vat_number:""})}
+                  className="w-4 h-4 accent-bassani-600" />
+                <span className="text-sm text-gray-700">VAT registered</span>
+              </label>
+            </FormGroup>
+            {form.vat_registered && (
+              <FormGroup label="VAT Number"><Input value={form.vat_number} onChange={e=>setForm({...form,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+            )}
+          </div>
+
+          {/* Section 5 — Banking */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <FormGroup label="Bank Name"><Input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} placeholder="e.g. FNB" /></FormGroup>
+            <FormGroup label="Account Holder"><Input value={form.bank_account_holder} onChange={e=>setForm({...form,bank_account_holder:e.target.value})} /></FormGroup>
+            <FormGroup label="Account Number"><Input value={form.bank_account_number} onChange={e=>setForm({...form,bank_account_number:e.target.value})} /></FormGroup>
+            <FormGroup label="Branch Code"><Input value={form.bank_branch_code} onChange={e=>setForm({...form,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
+          </div>
+
+          {/* Section 6 — Commission */}
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
           <div className="mb-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
@@ -873,11 +937,11 @@ export function Resellers() {
               <>
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates — from Odoo product catalog</p>
                 <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
-                  {categories.map(cat=>(
-                    <FormGroup key={cat} label={cat}>
+                  {categories.map(c=>(
+                    <FormGroup key={c.id} label={c.name}>
                       <Input type="number" min={10} max={12.5} step={0.5}
-                        value={form.commission_rates?.[cat] ?? 10}
-                        onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[cat]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
+                        value={form.commission_rates?.[c.name] ?? 10}
+                        onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[c.name]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
                     </FormGroup>
                   ))}
                 </div>
@@ -913,17 +977,40 @@ export function Resellers() {
               <>
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates</p>
                 <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
-                  {categories.map(cat=>(
-                    <FormGroup key={cat} label={cat}>
+                  {categories.map(c=>(
+                    <FormGroup key={c.id} label={c.name}>
                       <Input type="number" min={10} max={12.5} step={0.5}
-                        value={editForm.commission_rates?.[cat] ?? 10}
-                        onChange={e=>setEditForm({...editForm,commission_rates:{...editForm.commission_rates,[cat]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
+                        value={editForm.commission_rates?.[c.name] ?? 10}
+                        onChange={e=>setEditForm({...editForm,commission_rates:{...editForm.commission_rates,[c.name]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
                     </FormGroup>
                   ))}
                 </div>
               </>
             )}
           </div>
+
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">VAT Status</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <FormGroup label="VAT Registration">
+              <label className="flex items-center gap-2 cursor-pointer h-9">
+                <input type="checkbox" checked={editForm.vat_registered} onChange={e=>setEditForm({...editForm,vat_registered:e.target.checked,vat_number:e.target.checked?editForm.vat_number:""})}
+                  className="w-4 h-4 accent-bassani-600" />
+                <span className="text-sm text-gray-700">VAT registered</span>
+              </label>
+            </FormGroup>
+            {editForm.vat_registered && (
+              <FormGroup label="VAT Number"><Input value={editForm.vat_number} onChange={e=>setEditForm({...editForm,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+            )}
+          </div>
+
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <FormGroup label="Bank Name"><Input value={editForm.bank_name} onChange={e=>setEditForm({...editForm,bank_name:e.target.value})} placeholder="e.g. FNB" /></FormGroup>
+            <FormGroup label="Account Holder"><Input value={editForm.bank_account_holder} onChange={e=>setEditForm({...editForm,bank_account_holder:e.target.value})} /></FormGroup>
+            <FormGroup label="Account Number"><Input value={editForm.bank_account_number} onChange={e=>setEditForm({...editForm,bank_account_number:e.target.value})} /></FormGroup>
+            <FormGroup label="Branch Code"><Input value={editForm.bank_branch_code} onChange={e=>setEditForm({...editForm,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
+          </div>
+
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit}>Save Changes</BtnPrimary></div>
         </Modal>
       )}
@@ -995,23 +1082,29 @@ function ResellerCommissionView() {
           <h3 className="text-sm font-semibold text-gray-800">Commission History</h3>
           <p className="text-xs text-gray-400 mt-0.5">Commission earned per order</p>
         </div>
-        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[320px]">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[420px]">
           <thead>
             <tr className="bg-gray-50">
-              {["Order #","Date","Commission Earned"].map(h=>(
+              {["Order #","Customer","Date","Commission","Status"].map(h=>(
                 <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {history.length === 0 && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400 text-sm">No commission records yet</td></tr>
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400 text-sm">No commission records yet</td></tr>
             )}
             {history.map((rec, i) => (
               <tr key={i} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 font-mono text-xs text-bassani-700">{rec.odoo_order_id}</td>
+                <td className="px-4 py-3 text-gray-700 text-xs">{rec.customer_name || "—"}</td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(rec.created_at)}</td>
                 <td className="px-4 py-3 font-semibold text-bassani-700">{fmtR(rec.commission_total || 0)}</td>
+                <td className="px-4 py-3">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${rec.payout_status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                    {rec.payout_status === "paid" ? "Paid" : "Pending"}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
