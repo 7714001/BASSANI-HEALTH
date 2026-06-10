@@ -438,9 +438,9 @@ export function Orders() {
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
                               className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-                            <input type="number" min={1} max={item._stock || 999} value={item.product_uom_qty}
-                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock || 999)); }}
-                              className="flex-1 w-10 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                            <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock)); }}
+                              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                             <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
                               className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
                             <button onClick={() => removeFromCart(item.product_id)}
@@ -534,9 +534,9 @@ export function Orders() {
                         <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
                           <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
                             className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
-                          <input type="number" min={1} max={item._stock || 999} value={item.product_uom_qty}
-                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock || 999)); }}
-                            className="w-10 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                          <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock)); }}
+                            className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                           <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
                             className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
                         </div>
