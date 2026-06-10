@@ -381,8 +381,13 @@ export function Orders() {
   });
   const COMMISSION_CAP = 12.5;
   const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  const cartVat        = cartSubtotal * 0.15;
-  const cartTotal      = cartSubtotal + cartVat;
+  // Discount = the slice of commission the reseller is giving to the customer
+  const cartDiscount   = (isReseller && commissionRates && commissionOverride !== null)
+    ? cartSubtotal * ((commissionRates.default_rate - commissionOverride) / 100)
+    : 0;
+  const cartAdjusted   = cartSubtotal - cartDiscount;   // what the customer actually pays (ex-VAT)
+  const cartVat        = cartAdjusted * 0.15;
+  const cartTotal      = cartAdjusted + cartVat;
   const cartCommission = (isReseller && commissionRates && commissionOverride !== null)
     ? cartSubtotal * (commissionOverride / 100)
     : (isReseller && commissionRates)
@@ -575,8 +580,20 @@ export function Orders() {
             <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white">
               {cart.length > 0 && (
                 <div className="space-y-1 text-sm">
-                  <div className="flex justify-between text-gray-500"><span>Subtotal (excl. VAT)</span><span>{fmtR(cartSubtotal)}</span></div>
-                  <div className="flex justify-between text-gray-500"><span>VAT (15%)</span><span>{fmtR(cartVat)}</span></div>
+                  <div className="flex justify-between text-gray-500">
+                    <span>Subtotal (excl. VAT)</span>
+                    <span>{fmtR(cartSubtotal)}</span>
+                  </div>
+                  {cartDiscount > 0 && (
+                    <div className="flex justify-between text-green-700">
+                      <span>Discount ({(commissionRates.default_rate - commissionOverride).toFixed(1)}%)</span>
+                      <span className="font-semibold">-{fmtR(cartDiscount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-gray-500">
+                    <span>VAT (15%)</span>
+                    <span>{fmtR(cartVat)}</span>
+                  </div>
                   <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
                     <span className="text-gray-900">Total</span>
                     <span className="text-bassani-700">{fmtR(cartTotal)}</span>
@@ -584,30 +601,16 @@ export function Orders() {
                   {isReseller && commissionRates && commissionOverride !== null && (
                     <div className="pt-2 border-t border-dashed border-bassani-200 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Commission Rate</span>
-                        <span className="text-xs font-bold text-bassani-700">{commissionOverride}%</span>
+                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Your Commission</span>
+                        <span className="text-xs font-bold text-bassani-700">{commissionOverride}% · {fmtR(cartCommission)}</span>
                       </div>
                       <input type="range" min={0} max={commissionRates.default_rate} step={0.5}
                         value={commissionOverride}
                         onChange={e => setCommissionOverride(parseFloat(e.target.value))}
                         className="w-full accent-bassani-600" />
                       <div className="flex justify-between text-[10px] text-gray-400">
-                        <span>Max discount to customer</span>
-                        <span>Full commission</span>
-                      </div>
-                      <div className="bg-bassani-50 rounded-lg px-3 py-2 space-y-1">
-                        {commissionOverride < commissionRates.default_rate && (
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-500">Customer saves</span>
-                            <span className="font-semibold text-green-700">
-                              -{fmtR(cartSubtotal * (commissionRates.default_rate - commissionOverride) / 100)}
-                            </span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-xs">
-                          <span className="text-gray-500">You earn</span>
-                          <span className="font-semibold text-bassani-700">{fmtR(cartCommission)}</span>
-                        </div>
+                        <span>0% (max discount)</span>
+                        <span>{commissionRates.default_rate}% (full commission)</span>
                       </div>
                     </div>
                   )}
