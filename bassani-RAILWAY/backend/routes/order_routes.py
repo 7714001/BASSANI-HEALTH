@@ -56,12 +56,7 @@ async def calculate_commission(reseller_id: str, order_lines: list, odoo, overri
             matrix_entry = await col("commission_matrix").find_one(
                 {"reseller_id": reseller_id, "product_id": str(product_id)}, NO_ID
             )
-            if matrix_entry and matrix_entry.get("is_blocked"):
-                rate = 0
-            elif matrix_entry and matrix_entry.get("commission_rate") is not None:
-                rate = matrix_entry["commission_rate"]
-            else:
-                rate = COMMISSION_CAP
+            rate = 0 if (matrix_entry and matrix_entry.get("is_blocked")) else COMMISSION_CAP
 
         rate = min(rate, COMMISSION_CAP)
         commission_amount = subtotal * (rate / 100)

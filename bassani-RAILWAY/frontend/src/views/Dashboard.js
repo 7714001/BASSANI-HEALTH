@@ -57,6 +57,38 @@ export default function Dashboard() {
               )}
             </div>
 
+            {/* Admin-only channel KPIs */}
+            {!isReseller && data.channel_kpis && (
+              <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-800">Channel Performance</h3>
+                  <span className="text-xs text-gray-400">{data.channel_kpis.fy_label} · 1 Mar – 28 Feb</span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="rounded-xl border border-gray-100 p-4 space-y-1">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Bassani {data.channel_kpis.fy_label}</p>
+                    <p className="text-2xl font-bold text-gray-800">{data.channel_kpis.bassani.fy_orders}</p>
+                    <p className="text-xs text-gray-500">{fmtR(data.channel_kpis.bassani.fy_value)}</p>
+                  </div>
+                  <div className="rounded-xl border border-gray-100 p-4 space-y-1">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Bassani This Month</p>
+                    <p className="text-2xl font-bold text-gray-800">{data.channel_kpis.bassani.month_orders}</p>
+                    <p className="text-xs text-gray-500">{fmtR(data.channel_kpis.bassani.month_value)}</p>
+                  </div>
+                  <div className="rounded-xl border border-bassani-100 bg-bassani-50/30 p-4 space-y-1">
+                    <p className="text-[10px] font-semibold text-bassani-500 uppercase tracking-wider">Reseller {data.channel_kpis.fy_label}</p>
+                    <p className="text-2xl font-bold text-bassani-700">{data.channel_kpis.reseller.fy_orders}</p>
+                    <p className="text-xs text-bassani-600">{fmtR(data.channel_kpis.reseller.fy_value)}</p>
+                  </div>
+                  <div className="rounded-xl border border-bassani-100 bg-bassani-50/30 p-4 space-y-1">
+                    <p className="text-[10px] font-semibold text-bassani-500 uppercase tracking-wider">Reseller This Month</p>
+                    <p className="text-2xl font-bold text-bassani-700">{data.channel_kpis.reseller.month_orders}</p>
+                    <p className="text-xs text-bassani-600">{fmtR(data.channel_kpis.reseller.month_value)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Admin-only pipeline overview */}
             {!isReseller && data.pipeline && (
               <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from datetime import datetime, timezone, date, timedelta
+import calendar as _cal
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from database import col, NO_ID
@@ -16,6 +17,18 @@ def last_day_of_month(year: int, month: int) -> datetime:
     if month == 12:
         return datetime(year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=1)
     return datetime(year, month + 1, 1, tzinfo=timezone.utc) - timedelta(seconds=1)
+
+def financial_year_bounds(today: date) -> tuple:
+    """
+    SA financial year: 1 March → last day of February the following year.
+    Returns (fy_start datetime, fy_end datetime, label str).
+    """
+    fy_start_year = today.year if today.month >= 3 else today.year - 1
+    fy_end_year   = fy_start_year + 1
+    fy_start = datetime(fy_start_year, 3, 1, tzinfo=timezone.utc)
+    fy_end   = datetime(fy_end_year, 2, _cal.monthrange(fy_end_year, 2)[1], 23, 59, 59, tzinfo=timezone.utc)
+    label    = f"FY{fy_start_year}/{str(fy_end_year)[2:]}"
+    return fy_start, fy_end, label
 
 def odoo_date_domain(field: str, from_date: str, to_date: str) -> list:
     """Build Odoo domain for date range filtering."""
@@ -158,7 +171,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 ("date_order", ">=", month_start),
                 ("date_order", "<=", month_end),
             ],
-            fields=["amount_total"],
+            fields=["id", "amount_total"],
             limit=5000,
         )
         month_revenue = sum(o["amount_total"] for o in month_orders)
@@ -218,6 +231,34 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
         result = await col("order_commissions").aggregate(pipeline).to_list(1)
         commission_due = result[0]["total"] if result else 0
 
+        # ── Channel KPIs: Bassani direct vs Reseller ──────────────────────────
+        fy_start, fy_end, fy_label = financial_year_bounds(today)
+
+        # FY confirmed orders from Odoo
+        fy_orders = odoo.search_read(
+            "sale.order",
+            domain=[
+                ("state", "in", ["sale", "done"]),
+                ("date_order", ">=", fy_start.strftime("%Y-%m-%d")),
+                ("date_order", "<=", fy_end.strftime("%Y-%m-%d")),
+            ],
+            fields=["id", "amount_total"],
+            limit=10000,
+        )
+
+        # All reseller order IDs ever — used to classify any order
+        reseller_odoo_ids: set = set()
+        async for doc in col("order_commissions").find({}, {"odoo_order_id": 1, "_id": 0}):
+            reseller_odoo_ids.add(str(doc["odoo_order_id"]))
+
+        # Split FY orders
+        fy_bassani  = [o for o in fy_orders if str(o["id"]) not in reseller_odoo_ids]
+        fy_reseller = [o for o in fy_orders if str(o["id"]) in reseller_odoo_ids]
+
+        # Split month orders (already fetched above, now has id field)
+        month_bassani  = [o for o in month_orders if str(o["id"]) not in reseller_odoo_ids]
+        month_reseller = [o for o in month_orders if str(o["id"]) in reseller_odoo_ids]
+
         return {
             "products": {"total": total_products, "low_stock": low_stock},
             "orders": {
@@ -234,6 +275,21 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 "draft_value": sum(o["amount_total"] for o in draft_data),
                 "confirmed_count": len(confirmed_data),
                 "confirmed_value": sum(o["amount_total"] for o in confirmed_data),
+            },
+            "channel_kpis": {
+                "fy_label": fy_label,
+                "bassani": {
+                    "fy_orders": len(fy_bassani),
+                    "fy_value": round(sum(o["amount_total"] for o in fy_bassani), 2),
+                    "month_orders": len(month_bassani),
+                    "month_value": round(sum(o["amount_total"] for o in month_bassani), 2),
+                },
+                "reseller": {
+                    "fy_orders": len(fy_reseller),
+                    "fy_value": round(sum(o["amount_total"] for o in fy_reseller), 2),
+                    "month_orders": len(month_reseller),
+                    "month_value": round(sum(o["amount_total"] for o in month_reseller), 2),
+                },
             },
             "recent_orders": recent_orders,
             "low_stock_products": low_stock_products,

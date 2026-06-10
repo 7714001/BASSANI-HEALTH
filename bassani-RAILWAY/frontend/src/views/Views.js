@@ -1082,22 +1082,15 @@ export function Commission() {
 
   useEffect(() => { loadMatrix(); }, [loadMatrix]);
 
-  const updateRate = async (productId, rate) => {
-    try { await api.put(`/api/commission/${selected}/matrix/${productId}`, { commission_rate: parseFloat(rate) }); toast.success("Rate saved"); loadMatrix(); }
-    catch (e) { toast.error(e.response?.data?.detail||"Save failed"); }
-  };
-
   const toggleBlock = async (productId, currentlyBlocked) => {
     const endpoint = currentlyBlocked ? "unblock" : "block";
-    try { await api.put(`/api/commission/${selected}/matrix/${productId}/${endpoint}`); toast.success(currentlyBlocked?"Unblocked":"Blocked"); loadMatrix(); }
+    try { await api.put(`/api/commission/${selected}/matrix/${productId}/${endpoint}`); toast.success(currentlyBlocked ? "Product unblocked — 12.5% restored" : "Product blocked — 0% commission"); loadMatrix(); }
     catch { toast.error("Failed"); }
   };
 
-  const sourceStyle = { custom:"bg-bassani-50 text-bassani-700", category_default:"bg-gray-100 text-gray-500", blocked:"bg-red-50 text-red-600", reseller_default:"bg-gray-100 text-gray-500", system_default:"bg-gray-100 text-gray-400" };
-
   if (isReseller) return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="My Commission" subtitle="Your category rates and earnings history" />
+      <TopBar title="My Commission" subtitle="Your earnings history" />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         <ResellerCommissionView />
       </main>
@@ -1106,7 +1099,7 @@ export function Commission() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Commission Matrix" subtitle="Per-product rates per reseller · 10%–12.5% range" onRefresh={loadMatrix} />
+      <TopBar title="Product Blocks" subtitle="Block specific products per reseller — all active products earn 12.5%" onRefresh={loadMatrix} />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {/* Reseller selector */}
         <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex flex-wrap items-center gap-4">
@@ -1119,9 +1112,9 @@ export function Commission() {
           </div>
           {summary && (
             <div className="ml-auto flex gap-4 text-xs text-gray-500">
-              <span>Custom: <b className="text-bassani-700">{summary.custom_rates}</b></span>
+              <span>Active: <b className="text-green-700">{summary.active_products}</b></span>
               <span>Blocked: <b className="text-red-600">{summary.blocked_products}</b></span>
-              <span>Avg rate: <b>{summary.avg_effective_rate}%</b></span>
+              <span>Default rate: <b className="text-bassani-700">{summary.default_rate}%</b></span>
             </div>
           )}
         </div>
@@ -1137,12 +1130,22 @@ export function Commission() {
         {/* Matrix table */}
         <DataTable
           columns={[
-            { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=><div className={m.is_blocked?"opacity-60":""}><p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p><p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p></div> },
+            { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=>
+                <div className={m.is_blocked?"opacity-50":""}>
+                  <p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p>
+                  <p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p>
+                </div> },
             { accessorKey:"category", header:"Category", cell:({row:{original:m}})=><span className="text-xs text-gray-500">{m.category}</span> },
-            { accessorKey:"commission_rate", header:"Commission Rate", cell:({row:{original:m}})=>!m.is_blocked?<div className="flex items-center gap-1.5"><input type="number" min={10} max={50} step={0.5} defaultValue={m.commission_rate} className={`w-16 text-center border rounded-lg px-2 py-1 text-xs font-semibold focus:outline-none focus:border-bassani-600 ${m.is_custom?"border-bassani-300 bg-bassani-50 text-bassani-700":"border-gray-200 bg-gray-50 text-gray-600"}`} onBlur={e=>{if(parseFloat(e.target.value)!==m.commission_rate)updateRate(m.product_id,e.target.value);}}/><span className="text-xs text-gray-400">%</span></div>:<span className="text-xs text-red-400">Blocked</span> },
-            { accessorKey:"source", header:"Source", enableSorting:false, cell:({row:{original:m}})=><span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sourceStyle[m.source]||"bg-gray-100 text-gray-500"}`}>{m.source.replace(/_/g," ")}</span> },
-            { accessorKey:"effective_rate", header:"Effective Rate", cell:({row:{original:m}})=><span className={`font-semibold text-sm ${m.is_blocked?"text-red-500":m.is_custom?"text-bassani-700":"text-gray-700"}`}>{m.is_blocked?"—":m.effective_rate+"%"}</span> },
-            { id:"block", header:"Block/Unblock", enableSorting:false, cell:({row:{original:m}})=><button onClick={()=>toggleBlock(m.product_id,m.is_blocked)} className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>{m.is_blocked?"Unblock":"Block"}</button> },
+            { accessorKey:"list_price", header:"List Price", cell:({row:{original:m}})=><span className="text-sm">{fmtR(m.list_price)}</span> },
+            { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:m}})=>
+                m.is_blocked
+                  ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600">Blocked — 0%</span>
+                  : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700">Active — 12.5%</span> },
+            { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=>
+                <button onClick={()=>toggleBlock(m.product_id, m.is_blocked)}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
+                  {m.is_blocked ? "Unblock" : "Block"}
+                </button> },
           ]}
           data={matrix} loading={loading} defaultPageSize={50}
         />
