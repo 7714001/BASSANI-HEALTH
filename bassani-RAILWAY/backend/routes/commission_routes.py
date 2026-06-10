@@ -10,10 +10,109 @@ router = APIRouter(prefix="/api/commission", tags=["commission"])
 
 COMMISSION_CAP = 12.5   # Flat rate for all resellers — matrix only controls blocked products
 
-class MatrixBlock(BaseModel):
-    is_blocked: bool
+class PayoutMarkPaid(BaseModel):
+    payment_reference: Optional[str] = ""
+    payment_date: Optional[str] = ""   # ISO date string e.g. "2025-06-10"
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Payout endpoints (defined before /{reseller_id} routes to avoid capture) ──
+
+@router.get("/payouts")
+async def get_payouts_summary(current_user: dict = Depends(require_admin)):
+    """
+    Pending commission payouts grouped by reseller.
+    Includes banking details so admin can process EFT without leaving the portal.
+    """
+    pipeline = [
+        {"$match": {"payout_status": "pending", "commission_total": {"$gt": 0}}},
+        {"$group": {
+            "_id": "$reseller_id",
+            "reseller_name": {"$first": "$reseller_name"},
+            "total_pending": {"$sum": "$commission_total"},
+            "order_count": {"$sum": 1},
+            "oldest_order": {"$min": "$created_at"},
+            "latest_order": {"$max": "$created_at"},
+        }},
+        {"$sort": {"total_pending": -1}},
+    ]
+    rows = await col("order_commissions").aggregate(pipeline).to_list(200)
+
+    # Enrich with banking details from reseller profiles
+    reseller_ids = [r["_id"] for r in rows]
+    resellers = await col("resellers").find(
+        {"id": {"$in": reseller_ids}}, NO_ID
+    ).to_list(200)
+    reseller_map = {r["id"]: r for r in resellers}
+
+    result = []
+    for r in rows:
+        res = reseller_map.get(r["_id"], {})
+        result.append({
+            "reseller_id": r["_id"],
+            "reseller_name": r["reseller_name"],
+            "total_pending": round(r["total_pending"], 2),
+            "order_count": r["order_count"],
+            "oldest_order": r["oldest_order"],
+            "latest_order": r["latest_order"],
+            "email": res.get("email", ""),
+            "bank_name": res.get("bank_name", ""),
+            "bank_account_holder": res.get("bank_account_holder", ""),
+            "bank_account_number": res.get("bank_account_number", ""),
+            "bank_branch_code": res.get("bank_branch_code", ""),
+            "odoo_partner_id": res.get("odoo_partner_id"),
+        })
+
+    return {
+        "resellers": result,
+        "grand_total": round(sum(r["total_pending"] for r in result), 2),
+        "total_resellers": len(result),
+    }
+
+
+@router.get("/payouts/{reseller_id}/orders")
+async def get_pending_payout_orders(
+    reseller_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Individual pending commission records for a single reseller."""
+    records = await col("order_commissions").find(
+        {"reseller_id": reseller_id, "payout_status": "pending", "commission_total": {"$gt": 0}},
+        NO_ID,
+    ).sort("created_at", -1).to_list(500)
+
+    return {
+        "reseller_id": reseller_id,
+        "orders": records,
+        "total": round(sum(r["commission_total"] for r in records), 2),
+    }
+
+
+@router.put("/payouts/{reseller_id}/mark-paid")
+async def mark_payout_paid(
+    reseller_id: str,
+    payload: PayoutMarkPaid,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Mark all pending commissions for a reseller as paid in one batch.
+    Records who paid, when, and the payment reference for audit trail.
+    """
+    now = datetime.now(timezone.utc)
+    result = await col("order_commissions").update_many(
+        {"reseller_id": reseller_id, "payout_status": "pending"},
+        {"$set": {
+            "payout_status": "paid",
+            "paid_at": now,
+            "paid_by": current_user.get("username", "admin"),
+            "payment_reference": payload.payment_reference or "",
+            "payment_date": payload.payment_date or now.strftime("%Y-%m-%d"),
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No pending commissions found for this reseller")
+    return {"success": True, "updated": result.modified_count}
+
+
+# ── Matrix / block endpoints ───────────────────────────────────────────────────
 
 @router.get("/{reseller_id}/matrix")
 async def get_commission_matrix(

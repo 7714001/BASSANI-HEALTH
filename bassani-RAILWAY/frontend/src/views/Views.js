@@ -695,7 +695,7 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -708,7 +708,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,          setEditModal         ] = useState(false);
   const [editingId,          setEditingId         ] = useState(null);
-  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
 
   const load = async () => {
     setLoading(true);
@@ -765,6 +765,7 @@ export function Resellers() {
   const openEdit = (r) => {
     setEditForm({
       name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
+      company_reg_number: r.company_reg_number || "",
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
       bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
       bank_account_number: r.bank_account_number || "", bank_branch_code: r.bank_branch_code || "",
@@ -892,19 +893,24 @@ export function Resellers() {
             <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
           </div>
 
-          {/* Section 4 — VAT */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">VAT Status</p>
+          {/* Section 4 — Registration */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="VAT Registration">
-              <label className="flex items-center gap-2 cursor-pointer h-9">
-                <input type="checkbox" checked={form.vat_registered} onChange={e=>setForm({...form,vat_registered:e.target.checked,vat_number:e.target.checked?form.vat_number:""})}
-                  className="w-4 h-4 accent-bassani-600" />
-                <span className="text-sm text-gray-700">VAT registered</span>
-              </label>
+            <FormGroup label="Company Reg Number">
+              <Input value={form.company_reg_number} onChange={e=>setForm({...form,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
             </FormGroup>
-            {form.vat_registered && (
-              <FormGroup label="VAT Number"><Input value={form.vat_number} onChange={e=>setForm({...form,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
-            )}
+            <div className="space-y-2">
+              <FormGroup label="VAT">
+                <label className="flex items-center gap-2 cursor-pointer h-9">
+                  <input type="checkbox" checked={form.vat_registered} onChange={e=>setForm({...form,vat_registered:e.target.checked,vat_number:e.target.checked?form.vat_number:""})}
+                    className="w-4 h-4 accent-bassani-600" />
+                  <span className="text-sm text-gray-700">VAT registered</span>
+                </label>
+              </FormGroup>
+              {form.vat_registered && (
+                <FormGroup label="VAT Number"><Input value={form.vat_number} onChange={e=>setForm({...form,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+              )}
+            </div>
           </div>
 
           {/* Section 5 — Banking */}
@@ -936,18 +942,23 @@ export function Resellers() {
             <FormGroup label="Phone"><Input value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})} /></FormGroup>
           </div>
 
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">VAT Status</p>
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="VAT Registration">
-              <label className="flex items-center gap-2 cursor-pointer h-9">
-                <input type="checkbox" checked={editForm.vat_registered} onChange={e=>setEditForm({...editForm,vat_registered:e.target.checked,vat_number:e.target.checked?editForm.vat_number:""})}
-                  className="w-4 h-4 accent-bassani-600" />
-                <span className="text-sm text-gray-700">VAT registered</span>
-              </label>
+            <FormGroup label="Company Reg Number">
+              <Input value={editForm.company_reg_number} onChange={e=>setEditForm({...editForm,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
             </FormGroup>
-            {editForm.vat_registered && (
-              <FormGroup label="VAT Number"><Input value={editForm.vat_number} onChange={e=>setEditForm({...editForm,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
-            )}
+            <div className="space-y-2">
+              <FormGroup label="VAT">
+                <label className="flex items-center gap-2 cursor-pointer h-9">
+                  <input type="checkbox" checked={editForm.vat_registered} onChange={e=>setEditForm({...editForm,vat_registered:e.target.checked,vat_number:e.target.checked?editForm.vat_number:""})}
+                    className="w-4 h-4 accent-bassani-600" />
+                  <span className="text-sm text-gray-700">VAT registered</span>
+                </label>
+              </FormGroup>
+              {editForm.vat_registered && (
+                <FormGroup label="VAT Number"><Input value={editForm.vat_number} onChange={e=>setEditForm({...editForm,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+              )}
+            </div>
           </div>
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
@@ -1043,10 +1054,212 @@ function ResellerCommissionView() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Payouts view (admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+function PayoutsView() {
+  const [payouts,    setPayouts   ] = useState([]);
+  const [grandTotal, setGrandTotal] = useState(0);
+  const [loading,    setLoading   ] = useState(true);
+  const [expanded,   setExpanded  ] = useState(null);   // reseller_id
+  const [orderCache, setOrderCache] = useState({});     // reseller_id → orders[]
+  const [payModal,   setPayModal  ] = useState(null);   // payout row being paid
+  const [payRef,     setPayRef    ] = useState("");
+  const [payDate,    setPayDate   ] = useState("");
+  const [paying,     setPaying    ] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get("/api/commission/payouts");
+      setPayouts(r.data.resellers);
+      setGrandTotal(r.data.grand_total);
+    } catch { toast.error("Failed to load payouts"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const toggleExpand = async (resellerId) => {
+    if (expanded === resellerId) { setExpanded(null); return; }
+    setExpanded(resellerId);
+    if (!orderCache[resellerId]) {
+      try {
+        const r = await api.get(`/api/commission/payouts/${resellerId}/orders`);
+        setOrderCache(prev => ({ ...prev, [resellerId]: r.data.orders }));
+      } catch { toast.error("Failed to load orders"); }
+    }
+  };
+
+  const openPayModal = (payout) => {
+    setPayModal(payout);
+    setPayRef("");
+    setPayDate(new Date().toISOString().split("T")[0]);
+  };
+
+  const markPaid = async () => {
+    if (!payModal) return;
+    setPaying(true);
+    try {
+      await api.put(`/api/commission/payouts/${payModal.reseller_id}/mark-paid`, {
+        payment_reference: payRef,
+        payment_date: payDate,
+      });
+      toast.success(`${payModal.reseller_name} — ${payModal.order_count} order${payModal.order_count !== 1 ? "s" : ""} marked as paid`);
+      setPayModal(null);
+      setOrderCache(prev => { const n = { ...prev }; delete n[payModal.reseller_id]; return n; });
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to mark as paid");
+    } finally { setPaying(false); }
+  };
+
+  if (loading) return <LoadingState />;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary banner */}
+      <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-800">Pending Commission Payouts</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {payouts.length} reseller{payouts.length !== 1 ? "s" : ""} awaiting payment
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-bold text-bassani-700">{fmtR(grandTotal)}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">total outstanding</p>
+        </div>
+      </div>
+
+      {payouts.length === 0 && (
+        <div className="bg-white border border-gray-100 rounded-xl px-5 py-14 text-center">
+          <p className="text-sm font-medium text-gray-400">No pending payouts</p>
+          <p className="text-xs text-gray-300 mt-1">All commission payments are up to date</p>
+        </div>
+      )}
+
+      {/* Per-reseller cards */}
+      {payouts.map(p => (
+        <div key={p.reseller_id} className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          {/* Header row */}
+          <div className="px-5 py-4 flex flex-wrap items-start gap-4">
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex items-center gap-2">
+                <p className="font-semibold text-gray-900">{p.reseller_name}</p>
+                <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                  {p.reseller_id.replace("reseller_", "").toUpperCase()}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400">
+                {p.order_count} order{p.order_count !== 1 ? "s" : ""} · oldest {fmtDate(p.oldest_order)}
+              </p>
+              {p.bank_account_number ? (
+                <p className="text-xs text-gray-500">
+                  {p.bank_name && <span className="font-medium">{p.bank_name} · </span>}
+                  {p.bank_account_holder && <span>{p.bank_account_holder} · </span>}
+                  <span className="font-mono">{p.bank_account_number}</span>
+                  {p.bank_branch_code && <span className="text-gray-400"> ({p.bank_branch_code})</span>}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-600 font-medium">⚠ No banking details on file</p>
+              )}
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-right">
+                <p className="text-xl font-bold text-bassani-700">{fmtR(p.total_pending)}</p>
+                <p className="text-[10px] text-gray-400">pending</p>
+              </div>
+              <button onClick={() => toggleExpand(p.reseller_id)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
+                {expanded === p.reseller_id ? "Hide" : "View Orders"}
+              </button>
+              <BtnPrimary size="sm" onClick={() => openPayModal(p)}>Mark as Paid</BtnPrimary>
+            </div>
+          </div>
+
+          {/* Expanded order detail */}
+          {expanded === p.reseller_id && (
+            <div className="border-t border-gray-50">
+              {!orderCache[p.reseller_id] ? (
+                <p className="px-5 py-4 text-xs text-gray-400">Loading…</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      {["Order #", "Customer", "Date", "Order Value", "Commission", "Odoo Bill"].map(h => (
+                        <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-2.5">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderCache[p.reseller_id].map(o => (
+                      <tr key={o.odoo_order_id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-2.5 font-mono text-xs text-bassani-700">#{o.odoo_order_id}</td>
+                        <td className="px-4 py-2.5 text-gray-700 text-xs">{o.customer_name || "—"}</td>
+                        <td className="px-4 py-2.5 text-gray-400 text-xs">{fmtDate(o.created_at)}</td>
+                        <td className="px-4 py-2.5 text-gray-700">{fmtR(o.original_subtotal || 0)}</td>
+                        <td className="px-4 py-2.5 font-semibold text-bassani-700">{fmtR(o.commission_total)}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">
+                          {o.odoo_bill_id ? `#${o.odoo_bill_id}` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-bassani-100 bg-bassani-50/40">
+                      <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-gray-600 text-right">Total</td>
+                      <td className="px-4 py-2.5 font-bold text-bassani-700">
+                        {fmtR(orderCache[p.reseller_id].reduce((s, o) => s + o.commission_total, 0))}
+                      </td>
+                      <td />
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Mark as Paid modal */}
+      {payModal && (
+        <Modal title={`Mark as Paid — ${payModal.reseller_name}`} onClose={() => setPayModal(null)}>
+          <p className="text-sm text-gray-600 mb-5">
+            This will mark <b>{payModal.order_count} order{payModal.order_count !== 1 ? "s" : ""}</b> as paid,
+            totalling <b className="text-bassani-700">{fmtR(payModal.total_pending)}</b>.
+          </p>
+          {payModal.bank_account_number && (
+            <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 mb-5 space-y-0.5">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Banking Details</p>
+              <p className="text-sm font-medium text-gray-800">{payModal.bank_account_holder}</p>
+              <p className="text-xs text-gray-500">{payModal.bank_name}</p>
+              <p className="text-sm font-mono text-gray-800">
+                {payModal.bank_account_number}
+                {payModal.bank_branch_code && <span className="text-gray-400 font-sans"> · {payModal.bank_branch_code}</span>}
+              </p>
+            </div>
+          )}
+          <div className="space-y-3 mb-6">
+            <FormGroup label="Payment Reference">
+              <Input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder="e.g. EFT ref 20250610-JOE" autoFocus />
+            </FormGroup>
+            <FormGroup label="Payment Date">
+              <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
+            </FormGroup>
+          </div>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setPayModal(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={markPaid} disabled={paying}>{paying ? "Saving…" : "Confirm Payment"}</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 export function Commission() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
 
+  const [activeTab,  setActiveTab ] = useState("blocks");
   const [resellers,  setResellers ] = useState([]);
   const [selected,   setSelected  ] = useState(null);
   const [matrix,     setMatrix    ] = useState([]);
@@ -1099,56 +1312,67 @@ export function Commission() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Product Blocks" subtitle="Block specific products per reseller — all active products earn 12.5%" onRefresh={loadMatrix} />
+      <TopBar
+        title="Commission"
+        subtitle={activeTab === "blocks" ? "Block products per reseller — all active products earn 12.5%" : "Pending EFT payouts to resellers"}
+        onRefresh={activeTab === "blocks" ? loadMatrix : undefined}
+      />
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Reseller selector */}
-        <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400 font-medium shrink-0">Reseller:</span>
-            <select value={selected||""} onChange={e=>setSelected(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 bg-white min-w-[200px]">
-              {resellers.map(r=><option key={r.id} value={r.id}>{r.name}{r.seller_code?" · "+r.seller_code:""}</option>)}
-            </select>
-          </div>
-          {summary && (
-            <div className="ml-auto flex gap-4 text-xs text-gray-500">
-              <span>Active: <b className="text-green-700">{summary.active_products}</b></span>
-              <span>Blocked: <b className="text-red-600">{summary.blocked_products}</b></span>
-              <span>Default rate: <b className="text-bassani-700">{summary.default_rate}%</b></span>
+        {/* Tab navigation */}
+        <ChipRow>
+          <FilterPill label="Product Blocks" active={activeTab === "blocks"} onClick={() => setActiveTab("blocks")} />
+          <FilterPill label="Payouts" active={activeTab === "payouts"} onClick={() => setActiveTab("payouts")} />
+        </ChipRow>
+
+        {/* ── Product Blocks tab ── */}
+        {activeTab === "blocks" && (<>
+          <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 font-medium shrink-0">Reseller:</span>
+              <select value={selected||""} onChange={e=>setSelected(e.target.value)}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 bg-white min-w-[200px]">
+                {resellers.map(r=><option key={r.id} value={r.id}>{r.name}{r.seller_code?" · "+r.seller_code:""}</option>)}
+              </select>
             </div>
-          )}
-        </div>
+            {summary && (
+              <div className="ml-auto flex gap-4 text-xs text-gray-500">
+                <span>Active: <b className="text-green-700">{summary.active_products}</b></span>
+                <span>Blocked: <b className="text-red-600">{summary.blocked_products}</b></span>
+                <span>Default rate: <b className="text-bassani-700">{summary.default_rate}%</b></span>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
+            <ChipRow>
+              {["all",...categories.map(c=>c.name)].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
+            </ChipRow>
+          </div>
+          <DataTable
+            columns={[
+              { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=>
+                  <div className={m.is_blocked?"opacity-50":""}>
+                    <p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p>
+                    <p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p>
+                  </div> },
+              { accessorKey:"category", header:"Category", cell:({row:{original:m}})=><span className="text-xs text-gray-500">{m.category}</span> },
+              { accessorKey:"list_price", header:"List Price", cell:({row:{original:m}})=><span className="text-sm">{fmtR(m.list_price)}</span> },
+              { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:m}})=>
+                  m.is_blocked
+                    ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600">Blocked — 0%</span>
+                    : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700">Active — 12.5%</span> },
+              { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=>
+                  <button onClick={()=>toggleBlock(m.product_id, m.is_blocked)}
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
+                    {m.is_blocked ? "Unblock" : "Block"}
+                  </button> },
+            ]}
+            data={matrix} loading={loading} defaultPageSize={50}
+          />
+        </>)}
 
-        {/* Filters */}
-        <div className="space-y-2">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-          <ChipRow>
-            {["all",...categories.map(c=>c.name)].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
-          </ChipRow>
-        </div>
-
-        {/* Matrix table */}
-        <DataTable
-          columns={[
-            { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=>
-                <div className={m.is_blocked?"opacity-50":""}>
-                  <p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p>
-                  <p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p>
-                </div> },
-            { accessorKey:"category", header:"Category", cell:({row:{original:m}})=><span className="text-xs text-gray-500">{m.category}</span> },
-            { accessorKey:"list_price", header:"List Price", cell:({row:{original:m}})=><span className="text-sm">{fmtR(m.list_price)}</span> },
-            { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:m}})=>
-                m.is_blocked
-                  ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600">Blocked — 0%</span>
-                  : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700">Active — 12.5%</span> },
-            { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=>
-                <button onClick={()=>toggleBlock(m.product_id, m.is_blocked)}
-                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
-                  {m.is_blocked ? "Unblock" : "Block"}
-                </button> },
-          ]}
-          data={matrix} loading={loading} defaultPageSize={50}
-        />
+        {/* ── Payouts tab ── */}
+        {activeTab === "payouts" && <PayoutsView />}
       </main>
     </div>
   );

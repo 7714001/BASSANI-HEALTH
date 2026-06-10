@@ -23,6 +23,7 @@ class ResellerCreate(BaseModel):
     odoo_partner_id: Optional[int] = None   # Odoo vendor partner for commission billing — optional
     username: str                           # Login username for the reseller portal
     password: str                           # Hashed immediately — never stored plain
+    company_reg_number: Optional[str] = ""
     vat_registered: bool = False
     vat_number: Optional[str] = ""
     bank_name: Optional[str] = ""
@@ -38,6 +39,7 @@ class ResellerUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     active: Optional[bool] = None
+    company_reg_number: Optional[str] = None
     vat_registered: Optional[bool] = None
     vat_number: Optional[str] = None
     bank_name: Optional[str] = None
@@ -172,6 +174,7 @@ async def create_reseller(
         "default_commission": COMMISSION_RATE,
         "odoo_partner_id": reseller.odoo_partner_id,
         "user_id": user_id,
+        "company_reg_number": reseller.company_reg_number or "",
         "vat_registered": reseller.vat_registered,
         "vat_number": reseller.vat_number or "",
         "bank_name": reseller.bank_name or "",

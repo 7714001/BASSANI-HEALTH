@@ -535,14 +535,24 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
 
 
 @router.put("/{order_id}/cancel")
-def cancel_order(order_id: int, current_user: dict = Depends(require_admin)):
-    """Cancel a sales order in Odoo."""
+async def cancel_order(order_id: int, current_user: dict = Depends(require_admin)):
+    """Cancel a sales order in Odoo and void the related commission record."""
     odoo = get_odoo_client()
     try:
         odoo.execute("sale.order", "action_cancel", [order_id])
-        return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+    # Void the commission record so it never appears in the payout queue
+    await col("order_commissions").update_one(
+        {"odoo_order_id": str(order_id), "payout_status": "pending"},
+        {"$set": {
+            "payout_status": "cancelled",
+            "cancelled_at": datetime.now(timezone.utc),
+            "cancelled_by": current_user.get("username", "admin"),
+        }},
+    )
+    return {"success": True}
 
 
 @router.get("/stats/summary")
