@@ -34,17 +34,13 @@ COMMISSION_CAP = 12.5    # System-wide hard cap — no reseller can earn more th
 
 async def calculate_commission(reseller_id: str, order_lines: list, odoo, override_rate: Optional[float] = None) -> dict:
     """
-    Three-tier commission logic:
+    Commission logic:
     1. override_rate (per-order reseller adjustment) — if provided, applies to all lines
-    2. Product-specific rate from commission_matrix
-    3. Reseller category default rate / system default (10%)
+    2. Product-specific rate from commission_matrix (admin-set exception for specific products)
+    3. Flat system cap (12.5%) for everything else
     Commission is always calculated on the original list price, regardless of any customer discount applied.
     """
     if not reseller_id:
-        return {"commission_total": 0, "lines": order_lines}
-
-    reseller = await col("resellers").find_one({"id": reseller_id}, NO_ID)
-    if not reseller:
         return {"commission_total": 0, "lines": order_lines}
 
     commission_total = 0
@@ -57,27 +53,15 @@ async def calculate_commission(reseller_id: str, order_lines: list, odoo, overri
         if override_rate is not None:
             rate = override_rate
         else:
-            # Check product-specific rate in commission_matrix
             matrix_entry = await col("commission_matrix").find_one(
                 {"reseller_id": reseller_id, "product_id": str(product_id)}, NO_ID
             )
-
             if matrix_entry and matrix_entry.get("is_blocked"):
                 rate = 0
-            elif matrix_entry and matrix_entry.get("commission_rate"):
+            elif matrix_entry and matrix_entry.get("commission_rate") is not None:
                 rate = matrix_entry["commission_rate"]
             else:
-                try:
-                    product = odoo.read(
-                        "product.template",
-                        [product_id],
-                        fields=["categ_id"],
-                    )
-                    cat_name = product[0]["categ_id"][1] if product else ""
-                    rates = reseller.get("commission_rates", {})
-                    rate = rates.get(cat_name, reseller.get("default_commission", 10))
-                except Exception:
-                    rate = reseller.get("default_commission", 10)
+                rate = COMMISSION_CAP
 
         rate = min(rate, COMMISSION_CAP)
         commission_amount = subtotal * (rate / 100)
@@ -240,17 +224,15 @@ async def create_order(
         # Pin reseller_id so commission is always recorded
         order = order.model_copy(update={"reseller_id": reseller_profile["id"]})
 
-        # Validate and apply commission override
+        # Validate and apply commission override — capped at system hard cap (12.5%)
         if order.commission_override is not None:
-            max_rate = reseller_profile.get("default_commission", 10)
-            override_rate = max(0.0, min(float(order.commission_override), max_rate))
+            override_rate = max(0.0, min(float(order.commission_override), COMMISSION_CAP))
 
-    # When a commission override reduces the reseller's rate below their max, the difference
-    # is passed to the customer as a price discount (Bassani net stays constant either way)
+    # Discount to customer = gap between system cap (12.5%) and chosen rate
+    # Bassani's net is constant at list_price × (1 − COMMISSION_CAP%)
     discount_factor = 1.0
     if override_rate is not None and reseller_profile:
-        max_rate = reseller_profile.get("default_commission", 10)
-        discount_pct = max_rate - override_rate
+        discount_pct = COMMISSION_CAP - override_rate
         discount_factor = 1.0 - (discount_pct / 100.0)
 
     lines = [

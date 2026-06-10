@@ -243,8 +243,7 @@ export function Orders() {
   const [custLoading,  setCustLoading ] = useState(false);
   const [selectedCust, setSelectedCust] = useState(null);
   const [custDropOpen,     setCustDropOpen    ] = useState(false);
-  const [submitting,        setSubmitting       ] = useState(false);
-  const [commissionRates,   setCommissionRates  ] = useState(null); // null = not loaded / not applicable
+  const [submitting,         setSubmitting        ] = useState(false);
   const [commissionOverride, setCommissionOverride] = useState(null); // reseller's chosen rate for this order
 
   const load = useCallback(async () => {
@@ -296,31 +295,13 @@ export function Orders() {
   }, [custSearch, custDropOpen, isReseller]);
 
   // ── Open cart view ────────────────────────────────────────────────────────
-  const openCart = async () => {
+  const openCart = () => {
     setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
     setCustSearch(""); setCustResults([]); setSelectedCust(null);
-    setCustDropOpen(false); setSubmitting(false); setCommissionRates(null); setCommissionOverride(null);
+    setCustDropOpen(false); setSubmitting(false);
+    // Resellers always start at the full 12.5% rate — slider lets them reduce it as a customer discount
+    setCommissionOverride(isReseller ? COMMISSION_CAP : null);
     loadProducts();
-    // Load commission rates for resellers so the cart can show the commission/discount controls
-    if (isReseller) {
-      try {
-        let rid = user?.reseller_id;
-        if (!rid) {
-          const me = await api.get("/api/auth/me");
-          rid = me.data.reseller_id;
-        }
-        if (rid) {
-          const r = await api.get(`/api/resellers/${rid}`);
-          const { default_commission, commission_rates } = r.data;
-          const rates = {
-            default_rate:   default_commission ?? 0,
-            category_rates: commission_rates ?? {},
-          };
-          setCommissionRates(rates);
-          setCommissionOverride(rates.default_rate); // Start at full commission (no discount to customer)
-        }
-      } catch { /* commission preview is optional — don't block cart open */ }
-    }
     setView("cart");
   };
 
@@ -381,23 +362,15 @@ export function Orders() {
   });
   const COMMISSION_CAP = 12.5;
   const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  // Discount = the slice of commission the reseller is giving to the customer
-  const cartDiscount   = (isReseller && commissionRates && commissionOverride !== null)
-    ? cartSubtotal * ((commissionRates.default_rate - commissionOverride) / 100)
+  // Discount = the gap between the 12.5% cap and the reseller's chosen rate, passed to the customer
+  const cartDiscount   = (isReseller && commissionOverride !== null)
+    ? cartSubtotal * ((COMMISSION_CAP - commissionOverride) / 100)
     : 0;
   const cartAdjusted   = cartSubtotal - cartDiscount;   // what the customer actually pays (ex-VAT)
   const cartVat        = cartAdjusted * 0.15;
   const cartTotal      = cartAdjusted + cartVat;
-  const cartCommission = (isReseller && commissionRates && commissionOverride !== null)
+  const cartCommission = (isReseller && commissionOverride !== null)
     ? cartSubtotal * (commissionOverride / 100)
-    : (isReseller && commissionRates)
-    ? cart.reduce((sum, item) => {
-        const prod = products.find(p => (p.product_variant_ids?.[0] ?? p.id) === item.product_id);
-        const cat  = prod?.categ_id?.[1] || "";
-        const raw  = commissionRates.category_rates?.[cat] ?? commissionRates.default_rate ?? 0;
-        const rate = Math.min(raw, COMMISSION_CAP);
-        return sum + item.product_uom_qty * item.price_unit * (rate / 100);
-      }, 0)
     : 0;
 
   const STATUSES = ["all","draft","sale","done","cancel"];
@@ -598,19 +571,19 @@ export function Orders() {
                     <span className="text-gray-900">Total</span>
                     <span className="text-bassani-700">{fmtR(cartTotal)}</span>
                   </div>
-                  {isReseller && commissionRates && commissionOverride !== null && (
+                  {isReseller && commissionOverride !== null && (
                     <div className="pt-2 border-t border-dashed border-bassani-200 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Your Commission</span>
                         <span className="text-xs font-bold text-bassani-700">{commissionOverride}% · {fmtR(cartCommission)}</span>
                       </div>
-                      <input type="range" min={0} max={commissionRates.default_rate} step={0.5}
+                      <input type="range" min={0} max={COMMISSION_CAP} step={0.5}
                         value={commissionOverride}
                         onChange={e => setCommissionOverride(parseFloat(e.target.value))}
                         className="w-full accent-bassani-600" />
                       <div className="flex justify-between text-[10px] text-gray-400">
                         <span>0% (max discount)</span>
-                        <span>{commissionRates.default_rate}% (full commission)</span>
+                        <span>{COMMISSION_CAP}% (no discount)</span>
                       </div>
                     </div>
                   )}
@@ -688,14 +661,12 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, odoo_partner_id:"", username:"", password:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
   const [modal,              setModal             ] = useState(false);
   const [form,               setForm              ] = useState(BLANK_FORM);
-  const [categories,         setCategories        ] = useState([]);
-  const [catsLoading,        setCatsLoading       ] = useState(false);
   const [customerSearch,     setCustomerSearch    ] = useState("");
   const [customers,          setCustomers         ] = useState([]);
   const [customerLoading,    setCustomerLoading   ] = useState(false);
@@ -703,7 +674,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,          setEditModal         ] = useState(false);
   const [editingId,          setEditingId         ] = useState(null);
-  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_rates:{}, default_commission:10, vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
 
   const load = async () => {
     setLoading(true);
@@ -752,25 +723,14 @@ export function Resellers() {
     setCustDropdownOpen(true);
   };
 
-  // Load Odoo product categories on mount — used by both create and edit modals
-  useEffect(() => {
-    setCatsLoading(true);
-    api.get("/api/products/categories")
-      .then(r => setCategories(r.data.categories || []))
-      .catch(() => {})
-      .finally(() => setCatsLoading(false));
-  }, []);
-
   const openModal = () => {
-    setForm({ ...BLANK_FORM, commission_rates: Object.fromEntries(categories.map(c => [c.name, 10])) });
+    setForm({ ...BLANK_FORM });
     setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true);
   };
 
   const openEdit = (r) => {
-    const merged = Object.fromEntries(categories.map(c => [c.name, r.commission_rates?.[c.name] ?? r.default_commission ?? 10]));
     setEditForm({
       name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
-      commission_rates: merged, default_commission: r.default_commission ?? 10,
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
       bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
       bank_account_number: r.bank_account_number || "", bank_branch_code: r.bank_branch_code || "",
@@ -815,7 +775,7 @@ export function Resellers() {
           columns={[
             { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
             { accessorKey:"type", header:"Type", cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
-            { accessorKey:"default_commission", header:"Default Rate", cell:({row:{original:r}})=><div><span className="font-semibold text-bassani-700">{r.default_commission??10}%</span>{Object.keys(r.commission_rates||{}).length>0&&<span className="text-[10px] text-gray-400 ml-1.5">+{Object.keys(r.commission_rates).length} cat.</span>}</div> },
+            { id:"commission", header:"Commission", enableSorting:false, cell:()=><span className="font-semibold text-bassani-700">12.5%</span> },
             { id:"contact", header:"Contact", enableSorting:false, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
             { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary> },
           ]}
@@ -922,34 +882,9 @@ export function Resellers() {
             <FormGroup label="Branch Code"><Input value={form.bank_branch_code} onChange={e=>setForm({...form,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
           </div>
 
-          {/* Section 6 — Commission */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
-          <div className="mb-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <FormGroup label="Default Rate (fallback for all categories)">
-                <Input type="number" min={10} max={12.5} step={0.5}
-                  value={form.default_commission}
-                  onChange={e=>setForm({...form,default_commission:Math.min(12.5,parseFloat(e.target.value)||10)})} />
-              </FormGroup>
-              <div className="flex items-end pb-1.5">
-                <p className="text-xs text-gray-400 leading-snug">Applied when no category-specific rate matches. Product-level overrides can be set in the Commission Matrix.</p>
-              </div>
-            </div>
-            {catsLoading && <p className="text-xs text-gray-400 py-1">Loading categories from Odoo…</p>}
-            {!catsLoading && categories.length > 0 && (
-              <>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates — from Odoo product catalog</p>
-                <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
-                  {categories.map(c=>(
-                    <FormGroup key={c.id} label={c.name}>
-                      <Input type="number" min={10} max={12.5} step={0.5}
-                        value={form.commission_rates?.[c.name] ?? 10}
-                        onChange={e=>setForm({...form,commission_rates:{...form.commission_rates,[c.name]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
-                    </FormGroup>
-                  ))}
-                </div>
-              </>
-            )}
+          <div className="bg-bassani-50 rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
+            <span className="text-xs text-gray-600">Commission rate</span>
+            <span className="text-sm font-bold text-bassani-700">12.5% (all products)</span>
           </div>
 
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Create Reseller</BtnPrimary></div>
@@ -965,31 +900,6 @@ export function Resellers() {
             <FormGroup label="Contact Person"><Input value={editForm.contact_person} onChange={e=>setEditForm({...editForm,contact_person:e.target.value})} /></FormGroup>
             <FormGroup label="Email"><Input value={editForm.email} onChange={e=>setEditForm({...editForm,email:e.target.value})} /></FormGroup>
             <FormGroup label="Phone"><Input value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})} /></FormGroup>
-          </div>
-
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Commission Rates (%)</p>
-          <div className="mb-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <FormGroup label="Default Rate (fallback for all categories)">
-                <Input type="number" min={10} max={12.5} step={0.5}
-                  value={editForm.default_commission}
-                  onChange={e=>setEditForm({...editForm,default_commission:Math.min(12.5,parseFloat(e.target.value)||10)})} />
-              </FormGroup>
-            </div>
-            {categories.length > 0 && (
-              <>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Per-Category Rates</p>
-                <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-0.5">
-                  {categories.map(c=>(
-                    <FormGroup key={c.id} label={c.name}>
-                      <Input type="number" min={10} max={12.5} step={0.5}
-                        value={editForm.commission_rates?.[c.name] ?? 10}
-                        onChange={e=>setEditForm({...editForm,commission_rates:{...editForm.commission_rates,[c.name]:Math.min(12.5,parseFloat(e.target.value)||10)}})} />
-                    </FormGroup>
-                  ))}
-                </div>
-              </>
-            )}
           </div>
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">VAT Status</p>
@@ -1049,35 +959,17 @@ function ResellerCommissionView() {
   if (loading) return <LoadingState />;
   if (!reseller) return <EmptyState message="No commission data found" />;
 
-  const rates = reseller.commission_rates || {};
-
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start">
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shrink-0 w-full lg:w-auto">
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shrink-0 w-full lg:w-64">
         <div className="px-5 py-4 border-b border-gray-50">
-          <h3 className="text-sm font-semibold text-gray-800">Your Commission Rates</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Set by Bassani Health — applied to your orders at checkout</p>
+          <h3 className="text-sm font-semibold text-gray-800">Your Commission Rate</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Applied across all products</p>
         </div>
-        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[280px]">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">Category</th>
-              <th className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-t border-gray-50">
-              <td className="px-4 py-3 text-gray-500 italic text-sm">Default — all categories</td>
-              <td className="px-4 py-3 font-semibold text-bassani-700">{reseller.default_commission ?? 10}%</td>
-            </tr>
-            {Object.entries(rates).map(([cat, rate]) => (
-              <tr key={cat} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 text-gray-700">{cat}</td>
-                <td className="px-4 py-3 font-semibold text-bassani-700">{rate}%</td>
-              </tr>
-            ))}
-          </tbody>
-        </table></div>
+        <div className="px-5 py-6 flex flex-col items-center gap-1">
+          <span className="text-4xl font-bold text-bassani-700">12.5%</span>
+          <span className="text-xs text-gray-400 text-center">You can reduce this per order to pass savings to the customer</span>
+        </div>
       </div>
 
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden flex-1 min-w-0 w-full">

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional, Dict
+from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from auth import get_current_user, require_admin, hash_password
@@ -10,6 +10,8 @@ router = APIRouter(prefix="/api/resellers", tags=["resellers"])
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+COMMISSION_RATE = 12.5   # Flat rate for all resellers — no per-category breakdown
+
 class ResellerCreate(BaseModel):
     name: str
     type: str = "Distributor"               # Distributor|Agent|Broker
@@ -18,8 +20,6 @@ class ResellerCreate(BaseModel):
     email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
-    commission_rates: Dict[str, float] = {}  # Odoo category name → rate; empty = use default_commission
-    default_commission: float = 10.0         # Fallback rate applied when no category-specific rate is set
     odoo_partner_id: Optional[int] = None   # Odoo vendor partner for commission billing — optional
     username: str                           # Login username for the reseller portal
     password: str                           # Hashed immediately — never stored plain
@@ -37,8 +37,6 @@ class ResellerUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
-    commission_rates: Optional[Dict[str, float]] = None
-    default_commission: Optional[float] = None
     active: Optional[bool] = None
     vat_registered: Optional[bool] = None
     vat_number: Optional[str] = None
@@ -46,19 +44,6 @@ class ResellerUpdate(BaseModel):
     bank_account_holder: Optional[str] = None
     bank_account_number: Optional[str] = None
     bank_branch_code: Optional[str] = None
-
-# ── Validation helper ─────────────────────────────────────────────────────────
-
-MIN_COMMISSION = 10.0
-MAX_COMMISSION = 12.5    # Hard cap — mirrors commission_routes.MAX_RATE
-
-def validate_rates(rates: dict) -> None:
-    for cat, rate in rates.items():
-        if rate < MIN_COMMISSION or rate > MAX_COMMISSION:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{cat} commission must be between {MIN_COMMISSION}% and {MAX_COMMISSION}%"
-            )
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -133,8 +118,6 @@ async def create_reseller(
       2. The reseller record linked to both the user and the Odoo partner
     Rolls back the user account if the reseller insert fails.
     """
-    validate_rates(reseller.commission_rates)
-
     odoo = get_odoo_client()
 
     # Validate Odoo partner exists when provided
@@ -186,8 +169,7 @@ async def create_reseller(
         "email": reseller.email,
         "phone": reseller.phone,
         "address": reseller.address,
-        "commission_rates": reseller.commission_rates,
-        "default_commission": reseller.default_commission,
+        "default_commission": COMMISSION_RATE,
         "odoo_partner_id": reseller.odoo_partner_id,
         "user_id": user_id,
         "vat_registered": reseller.vat_registered,
@@ -223,8 +205,6 @@ async def update_reseller(
         raise HTTPException(status_code=404, detail="Reseller not found")
 
     updates = {k: v for k, v in reseller.model_dump().items() if v is not None}
-    if "commission_rates" in updates:
-        validate_rates(updates["commission_rates"])
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
