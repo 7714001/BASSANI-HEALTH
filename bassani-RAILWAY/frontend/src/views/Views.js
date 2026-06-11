@@ -161,14 +161,19 @@ export function Customers() {
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
   const [saving,    setSaving   ] = useState(false);
+  const [custTab,   setCustTab  ] = useState("customers"); // "customers" | "applications"
 
-  // Add customer modal state
+  // Applications (reseller) state
+  const [applications,    setApplications   ] = useState([]);
+  const [appsLoading,     setAppsLoading    ] = useState(false);
+
+  // Admin add-customer modal state
   const BLANK_FORM = { name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false };
   const [form,         setForm        ] = useState(BLANK_FORM);
-  const [nameSearch,   setNameSearch  ] = useState("");       // live search query
-  const [nameResults,  setNameResults ] = useState([]);       // Odoo matches
+  const [nameSearch,   setNameSearch  ] = useState("");
+  const [nameResults,  setNameResults ] = useState([]);
   const [nameSearching,setNameSearching] = useState(false);
-  const [step,         setStep        ] = useState("search"); // "search" | "create"
+  const [step,         setStep        ] = useState("search");
   const [claiming,     setClaiming    ] = useState(false);
 
   const load = useCallback(async () => {
@@ -184,9 +189,21 @@ export function Customers() {
     finally { setLoading(false); }
   }, [search, custPag, custSort]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadApplications = useCallback(async () => {
+    setAppsLoading(true);
+    try {
+      const r = await api.get("/api/onboarding/");
+      setApplications(r.data.applications || []);
+    } catch { toast.error("Failed to load applications"); }
+    finally { setAppsLoading(false); }
+  }, []);
 
-  // Debounced Odoo search as reseller types customer name
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (isReseller && custTab === "applications") loadApplications();
+  }, [isReseller, custTab, loadApplications]);
+
+  // Debounced Odoo search for admin add-customer modal
   useEffect(() => {
     if (!modal || step !== "search") return;
     if (nameSearch.length < 2) { setNameResults([]); return; }
@@ -228,14 +245,84 @@ export function Customers() {
   };
 
   const TYPES = ["Pharmacy","Dispensary","Clinic","Hospital","Retail"];
+  const APP_STATUS_CLS = { pending:"bg-amber-50 text-amber-700", approved:"bg-green-50 text-green-700", rejected:"bg-red-50 text-red-700" };
   const balanceColor = (b, l) => !l ? "text-gray-600" : b/l >= 1 ? "text-red-600" : b/l >= 0.75 ? "text-amber-600" : "text-bassani-700";
+  const pendingApps = applications.filter(a => a.status === "pending").length;
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title={isReseller ? "My Customers" : "Customers"} subtitle={`${total} active accounts`} onRefresh={load}
-        actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Customer</BtnPrimary>} />
+      <TopBar
+        title={isReseller ? "My Customers" : "Customers"}
+        subtitle={custTab === "applications"
+          ? `${applications.length} application${applications.length !== 1 ? "s" : ""}`
+          : `${total} active accounts`}
+        onRefresh={custTab === "applications" ? loadApplications : load}
+        actions={isReseller
+          ? <BtnPrimary onClick={() => navigate("/onboard")}><Plus size={14}/>Onboard Customer</BtnPrimary>
+          : <BtnPrimary onClick={openModal}><Plus size={14}/>Add Customer</BtnPrimary>
+        }
+      />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
+        {/* Reseller tab bar */}
+        {isReseller && (
+          <div className="mb-4">
+            <ChipRow>
+              <FilterPill label="Active Customers" active={custTab === "customers"}
+                onClick={() => setCustTab("customers")} />
+              <FilterPill
+                label={`My Applications${pendingApps > 0 ? ` (${pendingApps} pending)` : ""}`}
+                active={custTab === "applications"}
+                onClick={() => setCustTab("applications")} />
+            </ChipRow>
+          </div>
+        )}
+
+        {/* Reseller: Applications list */}
+        {isReseller && custTab === "applications" && (
+          <div>
+            {appsLoading && <div className="text-sm text-gray-400 py-10 text-center">Loading…</div>}
+            {!appsLoading && applications.length === 0 && (
+              <div className="text-center py-16">
+                <p className="text-sm text-gray-400 mb-1">No applications yet</p>
+                <p className="text-xs text-gray-300">Click "Onboard Customer" to start a new application</p>
+              </div>
+            )}
+            {!appsLoading && applications.length > 0 && (
+              <div className="space-y-3">
+                {applications.map(a => (
+                  <div key={a.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="font-semibold text-sm text-gray-900">{a.company_name}</p>
+                        {a.trading_name && <p className="text-xs text-gray-400">t/a {a.trading_name}</p>}
+                      </div>
+                      <p className="text-xs text-gray-400">{[a.city, a.province].filter(Boolean).join(", ")} · {a.business_type}</p>
+                    </div>
+                    <div className="text-right shrink-0 space-y-1">
+                      <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${APP_STATUS_CLS[a.status] || "bg-gray-100 text-gray-500"}`}>
+                        {a.status.charAt(0).toUpperCase() + a.status.slice(1)}
+                      </span>
+                      <p className="text-[10px] text-gray-400 font-mono">{a.id}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-400">{fmtDate(a.submitted_at)}</p>
+                      {a.status === "rejected" && a.rejection_reason && (
+                        <p className="text-[10px] text-red-500 mt-0.5 max-w-[180px] truncate" title={a.rejection_reason}>
+                          {a.rejection_reason}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Customer list (both admin and reseller when on customers tab) */}
+        {(!isReseller || custTab === "customers") && (
+          <>
+            <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
         <DataTable
           columns={[
             { accessorKey:"name", header:"Customer", cell:({row:{original:c}})=><p className="font-medium">{c.name}</p> },
@@ -260,6 +347,8 @@ export function Customers() {
           onRowClick={isReseller ? setDetail : c => navigate(`/customers/${c.id}`)}
           manualPagination manualSorting
         />
+          </>
+        )}
       </main>
       {modal && (
         <Modal title="Add Customer" onClose={()=>setModal(false)}>

@@ -10,7 +10,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target,
+  ScrollText, Target, ClipboardCheck,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -24,7 +24,8 @@ export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year:
 const NAV = [
   { label: "Dashboard",  path: "/",            icon: LayoutDashboard, section: "Main"      },
   { label: "Products",   path: "/products",    icon: Package,         section: "Main"      },
-  { label: "Customers",  path: "/customers",   icon: Users,           section: "Main"      },
+  { label: "Customers",     path: "/customers",     icon: Users,           section: "Main"      },
+  { label: "Applications",  path: "/applications",  icon: ClipboardCheck,  section: "Main", adminOnly: true },
   { label: "Orders",     path: "/orders",      icon: ShoppingCart,    section: "Main"      },
   { label: "Resellers",  path: "/resellers",   icon: DollarSign,      section: "Resellers" },
   { label: "Commission", path: "/commission",  icon: Percent,         section: "Resellers" },
