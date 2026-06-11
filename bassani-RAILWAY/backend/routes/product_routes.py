@@ -148,7 +148,7 @@ def create_product(
         "name": product.name,
         "list_price": product.list_price,
         "standard_price": product.standard_price,
-        "detailed_type": product.type,  # Odoo 17+: type is computed; detailed_type is the writable field
+        "type": "consu",  # Physical product — 'product' was retired in Odoo 17+
     }
     if product.default_code:
         vals["default_code"] = product.default_code
