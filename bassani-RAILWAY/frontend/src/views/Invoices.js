@@ -198,7 +198,7 @@ export default function Invoices() {
               <Select value={payForm.journal_id} onChange={e => setPayForm({ ...payForm, journal_id: e.target.value })}>
                 <option value="">— Select journal —</option>
                 {journals.map(j => (
-                  <option key={j.id} value={j.id}>{j.name} ({j.type})</option>
+                  <option key={j.id} value={j.id}>{j.display_label} ({j.type})</option>
                 ))}
               </Select>
             </FormGroup>

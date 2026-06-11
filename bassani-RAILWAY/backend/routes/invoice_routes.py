@@ -125,16 +125,29 @@ def invoice_summary(current_user: dict = Depends(get_current_user)):
 
 @router.get("/payment-journals")
 def list_payment_journals(current_user: dict = Depends(require_admin)):
-    """Return bank and cash journals available for payment registration."""
+    """
+    Return bank and cash journals with enough detail to distinguish between them.
+    Fetches code + bank_account_id so the frontend can show account numbers
+    instead of the generic 'Bank' label that all bank journals share.
+    """
     odoo = get_odoo_client()
     try:
         journals = odoo.search_read(
             "account.journal",
             domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
-            fields=["id", "name", "type"],
+            fields=["id", "name", "type", "code", "bank_account_id"],
             limit=50,
-            order="name asc",
+            order="type asc, name asc",
         )
+
+        # bank_account_id is a many2one — Odoo returns [id, display_name] or False.
+        # The display_name is typically the masked account number, e.g. "****1234".
+        # Build a clean label: account number if available, otherwise fall back to code.
+        for j in journals:
+            bank_account = j.get("bank_account_id")
+            acc_display = bank_account[1] if bank_account and bank_account is not False else None
+            j["display_label"] = acc_display or j.get("code") or j["name"]
+
         return {"journals": journals}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

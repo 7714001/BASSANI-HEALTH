@@ -191,8 +191,8 @@ export function Customers() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Customers" subtitle={`${total} active accounts`} onRefresh={load}
-        actions={!isReseller && <BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
+      <TopBar title={isReseller ? "My Customers" : "Customers"} subtitle={`${total} active accounts`} onRefresh={load}
+        actions={<BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
         <DataTable
@@ -204,7 +204,14 @@ export function Customers() {
             { id:"s21", header:"Section 21", enableSorting:false, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
             { accessorKey:"credit_limit", header:"Credit Limit", cell:({row:{original:c}})=><span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span> },
             { id:"terms", header:"Terms", enableSorting:false, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
-            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();setDetail(c);}}>View</BtnSecondary> }]:[]),
+            ...(!isReseller ? [
+              { id:"createdBy", header:"Created By", enableSorting:false, cell:({row:{original:c}})=>
+                c.created_by_reseller_name
+                  ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">{c.created_by_reseller_name}</span>
+                  : <span className="text-xs text-gray-400">Bassani</span>
+              },
+              { id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();setDetail(c);}}>View</BtnSecondary> },
+            ] : []),
           ]}
           data={customers} loading={loading} total={total}
           pagination={custPag} onPaginationChange={setCustPag}
@@ -234,6 +241,16 @@ export function Customers() {
             {[["Email",detail.email||"—"],["Phone",detail.phone||"—"],["City",detail.city||"—"],["Credit Limit",fmtR(detail.credit_limit)],["Payment Terms",detail.property_payment_term_id?.[1]||"—"]].map(([l,v])=>(
               <div key={l} className="flex justify-between py-2 border-b border-gray-50"><span className="text-gray-500">{l}</span><span className="font-medium">{v}</span></div>
             ))}
+            {!isReseller && (
+              <div className="flex justify-between py-2 border-b border-gray-50">
+                <span className="text-gray-500">Onboarded By</span>
+                <span className="font-medium">
+                  {detail.created_by_reseller_name
+                    ? <span className="text-purple-700">{detail.created_by_reseller_name}</span>
+                    : "Bassani (admin)"}
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary></div>
         </Modal>
