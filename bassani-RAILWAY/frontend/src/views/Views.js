@@ -506,6 +506,25 @@ export function Orders() {
     if (cart.length === 0) return toast.error("Add at least one product");
     if (!selectedCust) return toast.error("Select a customer first");
     setSubmitting(true);
+
+    // Section 21 script check — blocks expired/missing scripts, warns if expiring soon
+    try {
+      const { data: sc } = await api.get(`/api/scripts/check/${selectedCust.id}`);
+      if (sc.block_order) {
+        toast.error(`Order blocked: ${sc.reason}`, { duration: 8000 });
+        setSubmitting(false);
+        return;
+      }
+      if (sc.warn) {
+        toast(`⚠️ ${sc.reason}`, { duration: 6000 });
+      }
+    } catch (e) {
+      // 404 = customer has no script record (not a private patient) — proceed normally
+      if (e.response?.status !== 404) {
+        console.warn("Script check error:", e);
+      }
+    }
+
     try {
       const payload = {
         partner_id: selectedCust.id,

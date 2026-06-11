@@ -17,6 +17,7 @@ import Healthcare from "./views/Healthcare";
 import Users      from "./views/Users";
 import Invoices         from "./views/Invoices";
 import CustomerProfile  from "./views/CustomerProfile";
+import Scripts          from "./views/Scripts";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -87,6 +88,9 @@ export default function App() {
         } />
         <Route path="/healthcare" element={
           <ProtectedRoute adminOnly><AppLayout><Healthcare /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/scripts" element={
+          <ProtectedRoute adminOnly><AppLayout><Scripts /></AppLayout></ProtectedRoute>
         } />
         <Route path="/users" element={
           <ProtectedRoute adminOnly><AppLayout><Users /></AppLayout></ProtectedRoute>
