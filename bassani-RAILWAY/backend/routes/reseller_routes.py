@@ -231,6 +231,157 @@ async def deactivate_reseller(
     return {"success": True, "message": "Reseller deactivated"}
 
 
+@router.get("/{reseller_id}/profile")
+async def reseller_profile(
+    reseller_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Reseller 360 — aggregates MongoDB profile, commission history,
+    linked customers, and recent orders for the admin profile page.
+    """
+    from datetime import date
+
+    reseller = await col("resellers").find_one({"id": reseller_id}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=404, detail="Reseller not found")
+
+    odoo = get_odoo_client()
+    today = date.today()
+
+    # SA financial year: 1 March
+    fy_start_year = today.year if today.month >= 3 else today.year - 1
+    fy_start = datetime(fy_start_year, 3, 1, tzinfo=timezone.utc)
+    fy_label = f"FY{fy_start_year}/{str(fy_start_year + 1)[-2:]}"
+
+    start_of_month = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+
+    # ── Commission aggregation ─────────────────────────────────────────────────
+    pipeline_all = [
+        {"$match": {"reseller_id": reseller_id}},
+        {"$group": {
+            "_id": None,
+            "total_commission": {"$sum": "$commission_total"},
+            "total_orders":     {"$sum": 1},
+        }},
+    ]
+    all_result = await col("order_commissions").aggregate(pipeline_all).to_list(1)
+    total_commission = all_result[0]["total_commission"] if all_result else 0
+    total_orders     = all_result[0]["total_orders"]     if all_result else 0
+
+    pipeline_month = [
+        {"$match": {"reseller_id": reseller_id, "created_at": {"$gte": start_of_month}}},
+        {"$group": {"_id": None, "v": {"$sum": "$commission_total"}, "c": {"$sum": 1}}},
+    ]
+    month_result      = await col("order_commissions").aggregate(pipeline_month).to_list(1)
+    month_commission  = month_result[0]["v"] if month_result else 0
+    month_orders      = month_result[0]["c"] if month_result else 0
+
+    pipeline_fy = [
+        {"$match": {"reseller_id": reseller_id, "created_at": {"$gte": fy_start}}},
+        {"$group": {"_id": None, "v": {"$sum": "$commission_total"}, "c": {"$sum": 1}}},
+    ]
+    fy_result    = await col("order_commissions").aggregate(pipeline_fy).to_list(1)
+    fy_commission = fy_result[0]["v"] if fy_result else 0
+    fy_orders     = fy_result[0]["c"] if fy_result else 0
+
+    # ── Linked customers ──────────────────────────────────────────────────────
+    ownership_records = await col("customer_ownership").find(
+        {"reseller_id": reseller_id}, NO_ID
+    ).to_list(length=5000)
+    odoo_partner_ids = [o["odoo_partner_id"] for o in ownership_records]
+    customer_total   = len(odoo_partner_ids)
+
+    customers = []
+    if odoo_partner_ids:
+        try:
+            rows = odoo.read(
+                "res.partner", odoo_partner_ids,
+                fields=["id", "name", "email", "city", "phone"],
+            )
+            customers = [
+                {k: (None if v is False else v) for k, v in r.items()}
+                for r in rows
+            ]
+        except Exception:
+            pass
+
+    # ── Recent orders (last 10) ───────────────────────────────────────────────
+    recent_commissions = await col("order_commissions").find(
+        {"reseller_id": reseller_id}, NO_ID
+    ).sort("created_at", -1).limit(10).to_list(10)
+
+    recent_orders = []
+    if recent_commissions:
+        odoo_ids = [int(c["odoo_order_id"]) for c in recent_commissions if c.get("odoo_order_id")]
+        if odoo_ids:
+            try:
+                odoo_orders = odoo.read(
+                    "sale.order", odoo_ids,
+                    fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "partner_id"],
+                )
+                order_map = {o["id"]: o for o in odoo_orders}
+                for comm in recent_commissions:
+                    oid = int(comm.get("odoo_order_id", 0))
+                    o   = order_map.get(oid, {})
+                    recent_orders.append({
+                        "order_id":        oid,
+                        "order_name":      o.get("name", str(oid)),
+                        "date_order":      o.get("date_order", ""),
+                        "amount_total":    o.get("amount_total", 0),
+                        "amount_untaxed":  o.get("amount_untaxed", 0),
+                        "state":           o.get("state", ""),
+                        "customer_name":   (o.get("partner_id") or [None, "—"])[1],
+                        "commission":      comm.get("commission_total", 0),
+                    })
+            except Exception:
+                pass
+
+    # ── Commission vendor bills from Odoo ─────────────────────────────────────
+    commission_bills = []
+    odoo_partner_id = reseller.get("odoo_partner_id")
+    if odoo_partner_id:
+        try:
+            bills = odoo.search_read(
+                "account.move",
+                domain=[
+                    ("move_type", "=", "in_invoice"),
+                    ("partner_id", "=", int(odoo_partner_id)),
+                    ("state", "=", "posted"),
+                ],
+                fields=["id", "name", "invoice_date", "invoice_date_due",
+                        "amount_total", "amount_residual", "payment_state"],
+                limit=10,
+                order="invoice_date desc",
+            )
+            commission_bills = [{k: (None if v is False else v) for k, v in b.items()} for b in bills]
+        except Exception:
+            pass
+
+    # ── Pending onboarding applications ──────────────────────────────────────
+    pending_applications = await col("customer_onboarding").count_documents(
+        {"reseller_id": reseller_id, "status": "pending"}
+    )
+
+    return {
+        "reseller":            reseller,
+        "fy_label":            fy_label,
+        "stats": {
+            "total_orders":      total_orders,
+            "total_commission":  total_commission,
+            "month_orders":      month_orders,
+            "month_commission":  month_commission,
+            "fy_orders":         fy_orders,
+            "fy_commission":     fy_commission,
+            "customer_total":    customer_total,
+            "pending_applications": pending_applications,
+        },
+        "customers":           customers,
+        "recent_orders":       recent_orders,
+        "commission_bills":    commission_bills,
+    }
+
+
 @router.get("/{reseller_id}/stats")
 async def reseller_stats(
     reseller_id: str,

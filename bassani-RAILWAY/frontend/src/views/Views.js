@@ -951,6 +951,7 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
+  const navigate = useNavigate();
   const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
@@ -1072,7 +1073,12 @@ export function Resellers() {
             { accessorKey:"type", header:"Type", cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
             { id:"commission", header:"Commission", enableSorting:false, cell:()=><span className="font-semibold text-bassani-700">12.5%</span> },
             { id:"contact", header:"Contact", enableSorting:false, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
-            { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary> },
+            { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=>(
+              <div className="flex gap-2">
+                <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/resellers/${r.id}`);}}>View</BtnSecondary>
+                <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary>
+              </div>
+            )},
           ]}
           data={resellers} loading={loading}
         />

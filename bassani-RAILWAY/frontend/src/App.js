@@ -22,6 +22,7 @@ import HcpRegister      from "./views/HcpRegister";
 import Targets               from "./views/Targets";
 import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications  from "./views/CustomerApplications";
+import ResellerProfile       from "./views/ResellerProfile";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -87,6 +88,9 @@ export default function App() {
         } />
         <Route path="/resellers" element={
           <ProtectedRoute adminOnly><AppLayout><Resellers /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/resellers/:id" element={
+          <ProtectedRoute adminOnly><AppLayout><ResellerProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/commission" element={
           <ProtectedRoute><AppLayout><Commission /></AppLayout></ProtectedRoute>
