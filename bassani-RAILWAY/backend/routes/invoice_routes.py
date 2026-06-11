@@ -135,18 +135,23 @@ def list_payment_journals(current_user: dict = Depends(require_admin)):
         journals = odoo.search_read(
             "account.journal",
             domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
-            fields=["id", "name", "type", "code", "bank_account_id"],
+            fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
             limit=50,
-            order="type asc, name asc",
+            order="company_id asc, type asc, name asc",
         )
 
-        # bank_account_id is a many2one — Odoo returns [id, display_name] or False.
-        # The display_name is typically the masked account number, e.g. "****1234".
-        # Build a clean label: account number if available, otherwise fall back to code.
+        # Build a label that uniquely identifies each journal:
+        # Prefer bank account number, fall back to code, always append company name
+        # when there are multiple companies so the admin can tell them apart.
+        company_ids = {j["company_id"][0] for j in journals if j.get("company_id")}
+        multi_company = len(company_ids) > 1
+
         for j in journals:
             bank_account = j.get("bank_account_id")
-            acc_display = bank_account[1] if bank_account and bank_account is not False else None
-            j["display_label"] = acc_display or j.get("code") or j["name"]
+            acc_display  = bank_account[1] if bank_account and bank_account is not False else None
+            base         = acc_display or j.get("code") or j["name"]
+            company_name = j["company_id"][1] if j.get("company_id") else None
+            j["display_label"] = f"{base} — {company_name}" if (multi_company and company_name) else base
 
         return {"journals": journals}
     except Exception as e:
