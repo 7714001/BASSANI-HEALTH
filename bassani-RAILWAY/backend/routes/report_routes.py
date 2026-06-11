@@ -670,6 +670,120 @@ def category_performance(
         raise HTTPException(status_code=502, detail=f"Report error: {str(e)}")
 
 
+# ── Best Resellers ────────────────────────────────────────────────────────────
+
+@router.get("/best-resellers")
+async def best_resellers_report(current_user: dict = Depends(require_admin)):
+    """
+    FY reseller performance — orders processed, revenue generated, customers onboarded.
+    Uses SA financial year: 1 March → end of February.
+    """
+    today = date.today()
+    fy_start, fy_end, fy_label = financial_year_bounds(today)
+    odoo = get_odoo_client()
+
+    try:
+        # Per-reseller FY aggregates from order_commissions
+        fy_pipeline = [
+            {"$match": {"created_at": {"$gte": fy_start, "$lte": fy_end}}},
+            {"$group": {
+                "_id": "$reseller_id",
+                "reseller_name":    {"$first": "$reseller_name"},
+                "fy_orders":        {"$sum": 1},
+                "fy_commission":    {"$sum": "$commission_total"},
+                "odoo_order_ids":   {"$push": "$odoo_order_id"},
+            }},
+        ]
+        fy_stats = await col("order_commissions").aggregate(fy_pipeline).to_list(200)
+
+        # All-time order + commission totals per reseller
+        at_pipeline = [
+            {"$group": {
+                "_id": "$reseller_id",
+                "all_time_orders":     {"$sum": 1},
+                "all_time_commission": {"$sum": "$commission_total"},
+            }},
+        ]
+        at_stats = await col("order_commissions").aggregate(at_pipeline).to_list(200)
+        at_map = {r["_id"]: r for r in at_stats}
+
+        # Customers onboarded per reseller (all-time, from customer_ownership)
+        own_pipeline = [
+            {"$group": {"_id": "$reseller_id", "customers_onboarded": {"$sum": 1}}}
+        ]
+        own_stats  = await col("customer_ownership").aggregate(own_pipeline).to_list(200)
+        own_map    = {o["_id"]: o["customers_onboarded"] for o in own_stats}
+
+        # Batch-fetch Odoo order amounts for FY revenue per reseller
+        all_odoo_ids = [
+            int(oid) for r in fy_stats for oid in r.get("odoo_order_ids", []) if oid
+        ]
+        odoo_amounts: dict = {}
+        if all_odoo_ids:
+            orders = odoo.search_read(
+                "sale.order",
+                domain=[("id", "in", all_odoo_ids)],
+                fields=["id", "amount_total"],
+                limit=len(all_odoo_ids) + 1,
+            )
+            odoo_amounts = {o["id"]: o["amount_total"] for o in orders}
+
+        # Build ranked list
+        results = []
+        for r in fy_stats:
+            ids        = [int(oid) for oid in r.get("odoo_order_ids", []) if oid]
+            fy_revenue = sum(odoo_amounts.get(i, 0) for i in ids)
+            at         = at_map.get(r["_id"], {})
+            results.append({
+                "reseller_id":         r["_id"],
+                "reseller_name":       r["reseller_name"] or "—",
+                "fy_orders":           r["fy_orders"],
+                "fy_revenue":          round(fy_revenue, 2),
+                "fy_commission":       round(r["fy_commission"], 2),
+                "avg_order_value":     round(fy_revenue / r["fy_orders"], 2) if r["fy_orders"] else 0,
+                "customers_onboarded": own_map.get(r["_id"], 0),
+                "all_time_orders":     at.get("all_time_orders", 0),
+                "all_time_commission": round(at.get("all_time_commission", 0), 2),
+            })
+
+        # Include resellers with no FY orders (zero-activity rows)
+        active_ids = {r["reseller_id"] for r in results}
+        all_resellers = await col("resellers").find({}, NO_ID).to_list(200)
+        for rs in all_resellers:
+            rid = rs.get("id")
+            if rid not in active_ids:
+                at = at_map.get(rid, {})
+                results.append({
+                    "reseller_id":         rid,
+                    "reseller_name":       rs.get("name", "—"),
+                    "fy_orders":           0,
+                    "fy_revenue":          0.0,
+                    "fy_commission":       0.0,
+                    "avg_order_value":     0.0,
+                    "customers_onboarded": own_map.get(rid, 0),
+                    "all_time_orders":     at.get("all_time_orders", 0),
+                    "all_time_commission": round(at.get("all_time_commission", 0), 2),
+                })
+
+        results.sort(key=lambda x: (x["fy_orders"], x["fy_revenue"]), reverse=True)
+        for i, r in enumerate(results):
+            r["rank"] = i + 1
+
+        return {
+            "fy_label":                 fy_label,
+            "fy_start":                 fy_start.date().isoformat(),
+            "fy_end":                   fy_end.date().isoformat(),
+            "resellers":                results,
+            "total_fy_orders":          sum(r["fy_orders"]           for r in results),
+            "total_fy_revenue":         round(sum(r["fy_revenue"]    for r in results), 2),
+            "total_fy_commission":      round(sum(r["fy_commission"] for r in results), 2),
+            "total_customers_onboarded":sum(r["customers_onboarded"] for r in results),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Report error: {str(e)}")
+
+
 # ── Commission Report ─────────────────────────────────────────────────────────
 
 @router.get("/commissions")

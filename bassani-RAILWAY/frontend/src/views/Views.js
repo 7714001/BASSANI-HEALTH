@@ -1677,10 +1677,11 @@ export function Reports() {
   const [loading,setLoading] = useState(false);
 
   const REPORTS = [
-    { key:"turnover",     label:"Monthly Turnover" },
-    { key:"best-sellers", label:"Best Sellers"     },
-    { key:"best-customers",label:"Best Customers"  },
-    { key:"dead-stock",   label:"Dead Stock"       },
+    { key:"turnover",          label:"Monthly Turnover"   },
+    { key:"best-sellers",      label:"Best Sellers"       },
+    { key:"best-customers",    label:"Best Customers"     },
+    { key:"best-resellers",    label:"Best Resellers"     },
+    { key:"dead-stock",        label:"Dead Stock"         },
     { key:"category-performance", label:"Category Performance" },
   ];
 
@@ -1785,6 +1786,74 @@ function ReportContent({ type, data }) {
       </table></div>
     </div>
   );
+
+  if (type === "best-resellers") {
+    const rs = data.resellers || [];
+    const rankStyle = (i) =>
+      i === 0 ? "bg-amber-50 text-amber-700" :
+      i === 1 ? "bg-gray-100 text-gray-600"  :
+      i === 2 ? "bg-bassani-50 text-bassani-700" : "bg-gray-50 text-gray-400";
+    return (
+      <div className="space-y-4">
+        {/* FY banner + summary KPIs */}
+        <div className="bg-white border border-gray-100 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="text-xs font-bold text-bassani-700 bg-bassani-50 px-2.5 py-1 rounded-full">{data.fy_label}</span>
+            <p className="text-xs text-gray-400 mt-1">{fmtDate(data.fy_start)} — {fmtDate(data.fy_end)}</p>
+          </div>
+          <div className="flex flex-wrap gap-5">
+            <div className="text-right"><p className="text-xs text-gray-400">FY Orders</p><p className="font-bold text-gray-900">{data.total_fy_orders}</p></div>
+            <div className="text-right"><p className="text-xs text-gray-400">FY Revenue</p><p className="font-bold text-gray-900">{fmtR(data.total_fy_revenue)}</p></div>
+            <div className="text-right"><p className="text-xs text-gray-400">FY Commission</p><p className="font-bold text-red-600">{fmtR(data.total_fy_commission)}</p></div>
+            <div className="text-right"><p className="text-xs text-gray-400">Customers Onboarded</p><p className="font-bold text-gray-900">{data.total_customers_onboarded}</p></div>
+          </div>
+        </div>
+
+        {/* Leaderboard table */}
+        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h3 className="text-sm font-semibold">Reseller leaderboard — {data.fy_label}</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[700px]">
+              <thead>
+                <tr className="bg-gray-50">
+                  {["#","Reseller","FY Orders","FY Revenue","Avg Order","Commission","Customers","All-time Orders"].map(h=>(
+                    <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rs.map((r, i) => (
+                  <tr key={r.reseller_id || i} className="border-t border-gray-50 hover:bg-gray-50">
+                    <Td>
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${rankStyle(i)}`}>{r.rank}</span>
+                    </Td>
+                    <Td>
+                      <p className="font-semibold text-gray-800">{r.reseller_name}</p>
+                    </Td>
+                    <Td>
+                      <span className={`font-bold ${r.fy_orders > 0 ? "text-gray-900" : "text-gray-300"}`}>{r.fy_orders}</span>
+                    </Td>
+                    <Td className="font-semibold">{r.fy_revenue > 0 ? fmtR(r.fy_revenue) : <span className="text-gray-300">—</span>}</Td>
+                    <Td className="text-gray-500">{r.avg_order_value > 0 ? fmtR(r.avg_order_value) : <span className="text-gray-300">—</span>}</Td>
+                    <Td className="text-red-600 font-medium">{r.fy_commission > 0 ? fmtR(r.fy_commission) : <span className="text-gray-300">—</span>}</Td>
+                    <Td>
+                      <span className={`font-semibold ${r.customers_onboarded > 0 ? "text-bassani-700" : "text-gray-300"}`}>{r.customers_onboarded || "—"}</span>
+                    </Td>
+                    <Td className="text-gray-400">{r.all_time_orders}</Td>
+                  </tr>
+                ))}
+                {rs.length === 0 && (
+                  <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-gray-400">No reseller activity found for this financial year.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (type === "dead-stock") return (
     <div className="space-y-4">
