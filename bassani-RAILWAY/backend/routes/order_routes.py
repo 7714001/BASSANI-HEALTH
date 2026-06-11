@@ -211,6 +211,15 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
             raise HTTPException(status_code=404, detail="Order not found")
         order = records[0]
 
+        # Fetch partner address + VAT for order view header
+        if order.get("partner_id"):
+            partners = odoo.read(
+                "res.partner", [order["partner_id"][0]],
+                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat"],
+            )
+            if partners:
+                order["partner_detail"] = partners[0]
+
         # Get line items
         if order.get("order_line"):
             lines = odoo.read(

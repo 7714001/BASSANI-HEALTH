@@ -160,25 +160,55 @@ def list_payment_journals(current_user: dict = Depends(require_admin)):
 
 @router.get("/{invoice_id}")
 def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
-    """Get a single invoice with line items."""
+    """Get a single invoice with line items, partner details, and tax breakdown."""
     odoo = get_odoo_client()
     try:
         records = odoo.read(
             "account.move",
             [invoice_id],
-            fields=INVOICE_FIELDS + ["invoice_line_ids", "narration"],
+            fields=INVOICE_FIELDS + [
+                "invoice_line_ids", "narration",
+                "amount_untaxed", "invoice_origin", "ref",
+            ],
         )
         if not records:
             raise HTTPException(status_code=404, detail="Invoice not found")
         invoice = records[0]
 
+        # Fetch partner address + VAT for invoice header
+        if invoice.get("partner_id"):
+            partner_id = invoice["partner_id"][0]
+            partners = odoo.read(
+                "res.partner", [partner_id],
+                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat"],
+            )
+            if partners:
+                invoice["partner_detail"] = partners[0]
+
+        # Fetch lines with tax IDs
         if invoice.get("invoice_line_ids"):
             lines = odoo.read(
                 "account.move.line",
                 invoice["invoice_line_ids"],
-                fields=["product_id", "name", "quantity", "price_unit", "price_subtotal"],
+                fields=["product_id", "name", "quantity", "price_unit", "price_subtotal", "tax_ids"],
             )
-            invoice["lines"] = [l for l in lines if l.get("name")]
+            lines = [l for l in lines if l.get("name") and l.get("price_unit") is not None]
+
+            # Batch-fetch tax names/amounts so we can show e.g. "15%"
+            all_tax_ids = list({tid for l in lines for tid in (l.get("tax_ids") or [])})
+            tax_map: dict = {}
+            if all_tax_ids:
+                taxes = odoo.read("account.tax", all_tax_ids, fields=["name", "amount", "amount_type"])
+                tax_map = {t["id"]: t for t in taxes}
+
+            for l in lines:
+                l["tax_display"] = ", ".join(
+                    (f"{tax_map[tid]['amount']:.0f}%" if tax_map.get(tid) and tax_map[tid].get("amount_type") == "percent"
+                     else tax_map[tid]["name"] if tax_map.get(tid) else "VAT")
+                    for tid in (l.get("tax_ids") or [])
+                )
+
+            invoice["lines"] = lines
 
         return invoice
     except HTTPException:

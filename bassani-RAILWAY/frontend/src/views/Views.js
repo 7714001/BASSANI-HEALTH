@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, ChevronDown, Loader2 } from "lucide-react";
+import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
@@ -356,7 +357,6 @@ export function Orders() {
   const [search,      setSearch     ] = useState("");
   const [status,      setStatus     ] = useState("all");
   const [detail,         setDetail        ] = useState(null);
-  const [detailLoading,  setDetailLoading ] = useState(false);
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
   const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
@@ -397,12 +397,10 @@ export function Orders() {
   const openDetail = async (order) => {
     setDetail(order);
     setView("detail");
-    setDetailLoading(true);
     try {
       const r = await api.get(`/api/orders/${order.id}`);
       setDetail(r.data);
     } catch { /* keep showing basic data */ }
-    finally { setDetailLoading(false); }
   };
 
   const confirm = async (id) => {
@@ -803,124 +801,18 @@ export function Orders() {
     );
   }
 
-  // ── Detail / invoice view ─────────────────────────────────────────────────
+  // ── Detail / order view ───────────────────────────────────────────────────
   if (view === "detail" && detail) {
-    const o = detail;
-    const stateLabel = { draft:"Quotation", sent:"Quotation Sent", sale:"Sales Order", cancel:"Cancelled", done:"Done" };
-    const stateColor = { draft:"text-amber-700 bg-amber-50 border-amber-200", sale:"text-green-700 bg-green-50 border-green-200", cancel:"text-red-700 bg-red-50 border-red-200", done:"text-gray-700 bg-gray-50 border-gray-200", sent:"text-blue-700 bg-blue-50 border-blue-200" };
     return (
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <div className="border-b border-gray-100 bg-white px-6 py-3 flex items-center justify-between gap-4 shrink-0">
-          <button onClick={()=>{ setView("list"); setDetail(null); }} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
-            <ChevronDown size={14} className="-rotate-90" />Back to Orders
-          </button>
-          {!isReseller && (
-            <div className="flex gap-2">
-              {o.state !== "cancel" && o.state !== "done" && (
-                <BtnDanger size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Cancel Order</BtnDanger>
-              )}
-              {o.state === "draft" && (
-                <BtnPrimary size="sm" onClick={()=>{ confirm(o.id); setView("list"); setDetail(null); }} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm Order</BtnPrimary>
-              )}
-            </div>
-          )}
-        </div>
-        <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              {/* Invoice header */}
-              <div className="px-8 pt-8 pb-6 border-b border-gray-100">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="text-2xl font-bold text-bassani-700 tracking-tight mb-0.5">Bassani Health</div>
-                    <div className="text-sm text-gray-400">Kyalami, South Africa</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold text-gray-900 font-mono">{o.name}</div>
-                    <div className="text-sm text-gray-400 mt-0.5">{o.date_order?.split("T")[0]}</div>
-                    <span className={`inline-block mt-2 text-xs font-semibold px-2.5 py-1 rounded-full border ${stateColor[o.state] || stateColor.draft}`}>
-                      {stateLabel[o.state] || o.state}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-6 grid grid-cols-2 gap-6">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Bill To</p>
-                    <p className="font-semibold text-gray-900">{o.partner_id?.[1] || "—"}</p>
-                  </div>
-                  {o.reseller_name && (
-                    <div>
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Via Reseller</p>
-                      <p className="font-semibold text-gray-900">{o.reseller_name}</p>
-                      {o.commission_total > 0 && (
-                        <p className="text-xs text-bassani-600 mt-0.5">Commission: {fmtR(o.commission_total)}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Line items */}
-              <div className="px-8 py-6">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Items</p>
-                {detailLoading ? (
-                  <div className="flex items-center gap-2 py-6 text-sm text-gray-400 justify-center">
-                    <Loader2 size={16} className="animate-spin" />Loading order lines…
-                  </div>
-                ) : (
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b-2 border-gray-100">
-                        <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Product</th>
-                        <th className="text-right text-xs font-semibold text-gray-500 pb-2 px-4 w-20">Qty</th>
-                        <th className="text-right text-xs font-semibold text-gray-500 pb-2 px-4 w-32">Unit Price</th>
-                        <th className="text-right text-xs font-semibold text-gray-500 pb-2 pl-4 w-32">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(o.lines || []).map((line, i) => (
-                        <tr key={i} className="border-b border-gray-50">
-                          <td className="py-3 pr-4">
-                            <p className="font-medium text-gray-900 text-sm">{line.product_id?.[1] || line.name}</p>
-                            {line.name && line.product_id?.[1] && line.name !== line.product_id[1] && (
-                              <p className="text-xs text-gray-400 mt-0.5">{line.name}</p>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-gray-600">{line.product_uom_qty}</td>
-                          <td className="py-3 px-4 text-right text-sm text-gray-600">{fmtR(line.price_unit)}</td>
-                          <td className="py-3 pl-4 text-right text-sm font-semibold text-gray-800">{fmtR(line.price_subtotal)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-
-              {/* Totals */}
-              <div className="px-8 pb-8">
-                <div className="ml-auto w-72 space-y-2 text-sm">
-                  <div className="flex justify-between py-1.5"><span className="text-gray-500">Subtotal (excl. VAT)</span><span>{fmtR(o.amount_untaxed)}</span></div>
-                  <div className="flex justify-between py-1.5"><span className="text-gray-500">VAT (15%)</span><span>{fmtR(o.amount_tax)}</span></div>
-                  {o.commission_total > 0 && (
-                    <div className="flex justify-between py-1.5 text-bassani-700"><span>Reseller Commission</span><span className="font-medium">{fmtR(o.commission_total)}</span></div>
-                  )}
-                  <div className="flex justify-between py-2.5 border-t-2 border-gray-900 font-bold text-base"><span>Total</span><span>{fmtR(o.amount_total)}</span></div>
-                </div>
-              </div>
-
-              {/* Notes */}
-              {o.note && (
-                <div className="px-8 pb-8">
-                  <div className="bg-gray-50 rounded-xl p-4">
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Notes</p>
-                    <p className="text-sm text-gray-600">{o.note.replace(/<[^>]*>/g, "")}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
-      </div>
+      <OrderView
+        order={detail}
+        isAdmin={!isReseller}
+        onClose={() => { setView("list"); setDetail(null); }}
+        onConfirm={() => { confirm(detail.id); setView("list"); setDetail(null); }}
+        onCancel={() => cancelOrder(detail.id)}
+        confirming={confirming.has(detail.id)}
+        cancelling={cancelling.has(detail.id)}
+      />
     );
   }
 
