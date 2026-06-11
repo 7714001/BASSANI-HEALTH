@@ -19,6 +19,7 @@ import Invoices         from "./views/Invoices";
 import CustomerProfile  from "./views/CustomerProfile";
 import Scripts          from "./views/Scripts";
 import HcpRegister      from "./views/HcpRegister";
+import Targets          from "./views/Targets";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -84,6 +85,9 @@ export default function App() {
         } />
         <Route path="/invoices" element={
           <ProtectedRoute adminOnly><AppLayout><Invoices /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/targets" element={
+          <ProtectedRoute adminOnly><AppLayout><Targets /></AppLayout></ProtectedRoute>
         } />
         <Route path="/reports" element={
           <ProtectedRoute adminOnly><AppLayout><Reports /></AppLayout></ProtectedRoute>

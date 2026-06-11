@@ -8,17 +8,21 @@ export default function Dashboard() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
   const navigate = useNavigate();
-  const [data, setData]     = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState(null);
+  const [data,   setData  ] = useState(null);
+  const [loading,setLoading] = useState(true);
+  const [error,  setError ] = useState(null);
+  const [target, setTarget] = useState(null);
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const r = await api.get("/api/reports/dashboard");
-      setData(r.data);
-    } catch (e) {
-      setError(e.response?.data?.detail || "Failed to load dashboard");
+      const [dashRes, targetRes] = await Promise.allSettled([
+        api.get("/api/reports/dashboard"),
+        api.get("/api/targets/current"),
+      ]);
+      if (dashRes.status === "fulfilled") setData(dashRes.value.data);
+      else setError(dashRes.reason?.response?.data?.detail || "Failed to load dashboard");
+      if (targetRes.status === "fulfilled") setTarget(targetRes.value.data);
     } finally { setLoading(false); }
   };
 
@@ -86,6 +90,64 @@ export default function Dashboard() {
                     <p className="text-xs text-bassani-600">{fmtR(data.channel_kpis.reseller.month_value)}</p>
                   </div>
                 </div>
+
+                {/* Monthly target tile — injected into Channel Performance */}
+                {target && (target.target_revenue || target.target_orders) ? (() => {
+                  const paceRatio = target.days_in_month > 0 ? target.days_elapsed / target.days_in_month : 0;
+                  const revPct    = target.target_revenue ? Math.round(target.actual_revenue / target.target_revenue * 100) : null;
+                  const ordPct    = target.target_orders  ? Math.round(target.actual_orders  / target.target_orders  * 100) : null;
+                  const revOnTrack = revPct != null && revPct >= paceRatio * 100 * 0.9;
+                  const ordOnTrack = ordPct != null && ordPct >= paceRatio * 100 * 0.9;
+                  const barCls = (pct, onTrack) =>
+                    pct >= 100 ? "bg-green-500" : onTrack ? "bg-bassani-600" : "bg-amber-500";
+                  return (
+                    <div className="mt-4 pt-4 border-t border-gray-50">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                          Monthly Target — {target.month_name}
+                        </p>
+                        <span className="text-[10px] text-gray-400">Day {target.days_elapsed} of {target.days_in_month}</span>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        {revPct != null && (
+                          <div>
+                            <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+                              <span className="font-medium">Revenue</span>
+                              <span>{fmtR(target.actual_revenue)} <span className="text-gray-300">/ {fmtR(target.target_revenue)}</span></span>
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full ${barCls(revPct, revOnTrack)}`} style={{ width: `${Math.min(revPct, 100)}%` }} />
+                            </div>
+                            <p className={`text-[10px] mt-1 font-medium ${revPct >= 100 ? "text-green-600" : revOnTrack ? "text-bassani-600" : "text-amber-600"}`}>
+                              {revPct}% · {revPct >= 100 ? "Target hit!" : revOnTrack ? "On track" : "Behind target"}
+                            </p>
+                          </div>
+                        )}
+                        {ordPct != null && (
+                          <div>
+                            <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+                              <span className="font-medium">Orders</span>
+                              <span>{target.actual_orders} <span className="text-gray-300">/ {target.target_orders}</span></span>
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full ${barCls(ordPct, ordOnTrack)}`} style={{ width: `${Math.min(ordPct, 100)}%` }} />
+                            </div>
+                            <p className={`text-[10px] mt-1 font-medium ${ordPct >= 100 ? "text-green-600" : ordOnTrack ? "text-bassani-600" : "text-amber-600"}`}>
+                              {ordPct}% · {ordPct >= 100 ? "Target hit!" : ordOnTrack ? "On track" : "Behind target"}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })() : !isReseller && (
+                  <div className="mt-4 pt-4 border-t border-gray-50">
+                    <button onClick={() => navigate("/targets")}
+                      className="text-xs text-bassani-600 hover:text-bassani-700 hover:underline transition-colors">
+                      Set a target for this month →
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 

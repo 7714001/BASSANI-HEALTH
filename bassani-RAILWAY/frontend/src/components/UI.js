@@ -10,7 +10,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText,
+  ScrollText, Target,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -29,6 +29,7 @@ const NAV = [
   { label: "Resellers",  path: "/resellers",   icon: DollarSign,      section: "Resellers" },
   { label: "Commission", path: "/commission",  icon: Percent,         section: "Resellers" },
   { label: "Invoices",   path: "/invoices",    icon: FileText,        section: "Finance"   },
+  { label: "Targets",    path: "/targets",     icon: Target,          section: "Finance"   },
   { label: "Reports",    path: "/reports",     icon: BarChart3,       section: "Insights"  },
   { label: "Healthcare", path: "/healthcare",  icon: Phone,           section: "Insights"  },
   { label: "Scripts",    path: "/scripts",     icon: ScrollText,      section: "Insights"  },
