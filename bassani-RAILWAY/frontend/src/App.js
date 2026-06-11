@@ -15,7 +15,8 @@ import Commission from "./views/Commission";
 import Reports    from "./views/Reports";
 import Healthcare from "./views/Healthcare";
 import Users      from "./views/Users";
-import Invoices   from "./views/Invoices";
+import Invoices         from "./views/Invoices";
+import CustomerProfile  from "./views/CustomerProfile";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -65,6 +66,9 @@ export default function App() {
         } />
         <Route path="/customers" element={
           <ProtectedRoute><AppLayout><Customers /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/customers/:id" element={
+          <ProtectedRoute adminOnly><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders" element={
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>

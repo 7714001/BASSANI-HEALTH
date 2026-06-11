@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
+import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, ChevronDown, Loader2 } from "lucide-react";
@@ -148,6 +149,7 @@ export function Products() {
 // ─────────────────────────────────────────────────────────────────────────────
 export function Customers() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isReseller = user?.role === "reseller";
   const [customers, setCustomers] = useState([]);
   const [total,     setTotal    ] = useState(0);
@@ -248,13 +250,13 @@ export function Customers() {
                   ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">{c.created_by_reseller_name}</span>
                   : <span className="text-xs text-gray-400">Bassani</span>
               },
-              { id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();setDetail(c);}}>View</BtnSecondary> },
+              { id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/customers/${c.id}`);}}>View</BtnSecondary> },
             ] : []),
           ]}
           data={customers} loading={loading} total={total}
           pagination={custPag} onPaginationChange={setCustPag}
           sorting={custSort} onSortingChange={u=>{ setCustSort(typeof u==="function"?u(custSort):u); setCustPag(p=>({...p,pageIndex:0})); }}
-          onRowClick={setDetail}
+          onRowClick={isReseller ? setDetail : c => navigate(`/customers/${c.id}`)}
           manualPagination manualSorting
         />
       </main>

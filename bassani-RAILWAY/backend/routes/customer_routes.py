@@ -107,6 +107,82 @@ async def list_customers(
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/{customer_id}/profile")
+async def customer_profile(
+    customer_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Customer 360 view — aggregates Odoo orders + invoices + MongoDB ownership
+    into a single response for the admin customer profile page.
+    """
+    from datetime import date
+    odoo = get_odoo_client()
+
+    # Customer info
+    records = odoo.read("res.partner", [customer_id], fields=CUSTOMER_FIELDS)
+    if not records:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    customer = records[0]
+    for k, v in customer.items():
+        if v is False and k != "active":
+            customer[k] = None
+
+    # All confirmed/done orders
+    all_orders = odoo.search_read(
+        "sale.order",
+        domain=[("partner_id", "=", customer_id), ("state", "not in", ["cancel"])],
+        fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "invoice_status"],
+        limit=2000,
+        order="date_order desc",
+    )
+
+    # Stats
+    this_month = date.today().replace(day=1).isoformat()
+    confirmed = [o for o in all_orders if o["state"] in ("sale", "done")]
+    orders_this_month = [o for o in confirmed if (o.get("date_order") or "") >= this_month]
+
+    stats = {
+        "total_orders":        len(confirmed),
+        "total_spend":         sum(o["amount_total"] for o in confirmed),
+        "orders_this_month":   len(orders_this_month),
+        "revenue_this_month":  sum(o["amount_total"] for o in orders_this_month),
+    }
+
+    # Outstanding invoices
+    invoices = odoo.search_read(
+        "account.move",
+        domain=[
+            ("partner_id", "=", customer_id),
+            ("move_type", "=", "out_invoice"),
+            ("state", "=", "posted"),
+            ("payment_state", "in", ["not_paid", "partial"]),
+        ],
+        fields=["id", "name", "invoice_date", "invoice_date_due",
+                "amount_total", "amount_residual", "payment_state"],
+        limit=50,
+        order="invoice_date_due asc",
+    )
+    stats["outstanding_balance"]  = sum(i["amount_residual"] for i in invoices)
+    stats["outstanding_invoices"] = len(invoices)
+
+    # Credit utilisation
+    credit_limit = customer.get("credit_limit") or 0
+    stats["credit_limit"]       = credit_limit
+    stats["credit_utilisation"] = round(stats["outstanding_balance"] / credit_limit * 100, 1) if credit_limit else None
+
+    # Ownership
+    ownership = await col("customer_ownership").find_one({"odoo_partner_id": customer_id}, NO_ID)
+
+    return {
+        "customer":             customer,
+        "stats":                stats,
+        "recent_orders":        all_orders[:10],
+        "outstanding_invoices": invoices,
+        "ownership":            ownership,
+    }
+
+
 @router.get("/search")
 def search_all_customers(
     q: str = Query(..., min_length=2),
