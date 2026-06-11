@@ -3,7 +3,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client, OdooClient
+from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -383,12 +383,19 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
     try:
-        # _create_invoices returns varying types across Odoo versions;
-        # always re-read invoice_ids from the SO as the authoritative source.
-        try:
-            odoo.execute("sale.order", "_create_invoices", [order_id])
-        except Exception as inner:
-            warnings.append(f"_create_invoices call failed ({inner}), falling back to direct read")
+        # Use the advance payment wizard — the only public XML-RPC route for
+        # creating invoices from a sale order (_create_invoices is private).
+        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id}
+        wizard_id = odoo_call(
+            "sale.advance.payment.inv", "create",
+            [{"advance_payment_method": "delivered"}],
+            {"context": ctx},
+        )
+        odoo_call(
+            "sale.advance.payment.inv", "create_invoices",
+            [[wizard_id]],
+            {"context": ctx},
+        )
 
         refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
         inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
