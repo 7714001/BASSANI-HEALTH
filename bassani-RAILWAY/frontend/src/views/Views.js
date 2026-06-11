@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, ChevronDown } from "lucide-react";
+import { Plus, Edit2, Archive, ChevronDown, Loader2 } from "lucide-react";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
@@ -22,9 +22,11 @@ export function Products() {
   const [search,     setSearch    ] = useState("");
   const [cat,        setCat       ] = useState("all");
   const [categories, setCategories] = useState([]);
-  const [modal,      setModal     ] = useState(false);
-  const [editing,    setEditing   ] = useState(null);
-  const [form,       setForm      ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [modal,       setModal      ] = useState(false);
+  const [editing,     setEditing    ] = useState(null);
+  const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [saving,      setSaving     ] = useState(false);
+  const [archivingId, setArchivingId] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -57,17 +59,21 @@ export function Products() {
 
   const save = async () => {
     if (!form.name) return toast.error("Product name required");
+    setSaving(true);
     try {
       if (editing) { await api.put(`/api/products/${editing.id}`, form); toast.success("Product updated"); }
       else         { await api.post("/api/products/", form);              toast.success("Product created"); }
       setModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
   };
 
   const archive = async (id) => {
     if (!window.confirm("Archive this product?")) return;
+    setArchivingId(id);
     try { await api.delete(`/api/products/${id}`); toast.success("Product archived"); load(); }
     catch { toast.error("Archive failed"); }
+    finally { setArchivingId(null); }
   };
 
   return (
@@ -89,7 +95,7 @@ export function Products() {
             { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
             { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=><span className="text-gray-500">{p.virtual_available??0}</span> },
-            ...(!isReseller ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}}><Archive size={11}/></BtnDanger></div> }] : []),
+            ...(!isReseller ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
           ]}
           data={products} loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
@@ -110,7 +116,7 @@ export function Products() {
             <FormGroup label="Cost (ZAR)"><Input type="number" value={form.standard_price} onChange={e=>setForm({...form,standard_price:e.target.value})} placeholder="200.00" /></FormGroup>
           </div>
           <FormGroup label="Description"><Textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} placeholder="Short product description" /></FormGroup>
-          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Save Product</BtnPrimary></div>
+          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>{editing ? "Save Product" : "Create Product"}</BtnPrimary></div>
         </Modal>
       )}
     </div>
@@ -132,6 +138,7 @@ export function Customers() {
   const [form,      setForm     ] = useState({ name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false });
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
+  const [saving,    setSaving   ] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,10 +157,12 @@ export function Customers() {
 
   const save = async () => {
     if (!form.name) return toast.error("Name required");
+    setSaving(true);
     try {
       await api.post("/api/customers/", form);
       toast.success("Customer created"); setModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
   };
 
   const TYPES = ["Pharmacy","Dispensary","Clinic","Hospital","Retail"];
@@ -195,7 +204,7 @@ export function Customers() {
           </div>
           <FormGroup label="Address"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
           <div className="flex items-center gap-2 mb-4"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
-          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Save Customer</BtnPrimary></div>
+          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Save Customer</BtnPrimary></div>
         </Modal>
       )}
       {detail && (
@@ -245,6 +254,8 @@ export function Orders() {
   const [custDropOpen,     setCustDropOpen    ] = useState(false);
   const [submitting,         setSubmitting        ] = useState(false);
   const [commissionOverride, setCommissionOverride] = useState(null); // reseller's chosen rate for this order
+  const [confirming,         setConfirming        ] = useState(new Set());
+  const [cancelling,         setCancelling        ] = useState(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -263,6 +274,7 @@ export function Orders() {
   useEffect(() => { load(); }, [load]);
 
   const confirm = async (id) => {
+    setConfirming(s => new Set(s).add(id));
     try {
       const { data } = await api.put(`/api/orders/${id}/confirm`);
       if (data.invoice_name) {
@@ -276,11 +288,14 @@ export function Orders() {
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to confirm order");
+    } finally {
+      setConfirming(s => { const n = new Set(s); n.delete(id); return n; });
     }
   };
 
   const cancelOrder = async (id) => {
     if (!window.confirm("Cancel this order? This cannot be undone.")) return;
+    setCancelling(s => new Set(s).add(id));
     try {
       await api.put(`/api/orders/${id}/cancel`);
       toast.success("Order cancelled");
@@ -288,6 +303,8 @@ export function Orders() {
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to cancel order");
+    } finally {
+      setCancelling(s => { const n = new Set(s); n.delete(id); return n; });
     }
   };
 
@@ -335,7 +352,7 @@ export function Orders() {
     setCart(prev => {
       const ex = prev.find(i => i.product_id === pid);
       if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
-      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: product.qty_available ?? 0 }];
+      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0) }];
     });
   };
 
@@ -378,7 +395,7 @@ export function Orders() {
   const productCategories = ["all", ...Array.from(new Set(products.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
   const filteredProducts  = products.filter(p => {
     const q         = prodSearch.toLowerCase();
-    const inStock   = (p.qty_available ?? 0) > 0;
+    const inStock   = (p.virtual_available ?? 0) > 0;
     const matchQ    = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
     const matchCat  = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
     const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
@@ -436,8 +453,8 @@ export function Orders() {
                 <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
                   {filteredProducts.map(p => {
                     const item        = cartItemFor(p);
-                    const outOfStock  = (p.qty_available ?? 0) <= 0;
-                    const lowStock    = !outOfStock && (p.qty_available ?? 0) < 10;
+                    const outOfStock  = (p.virtual_available ?? 0) <= 0;
+                    const lowStock    = !outOfStock && (p.virtual_available ?? 0) < 10;
                     return (
                       <div key={p.id}
                         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
@@ -454,7 +471,7 @@ export function Orders() {
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
-                            {outOfStock ? "Out of stock" : `${p.qty_available} in stock`}
+                            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
                           </span>
                         </div>
                         {/* Add button or qty stepper */}
@@ -616,7 +633,7 @@ export function Orders() {
               <Textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
               <div className="flex gap-2">
                 <BtnSecondary onClick={() => setView("list")} className="flex-1">Cancel</BtnSecondary>
-                <BtnPrimary onClick={submitOrder} disabled={submitting || cart.length === 0} className="flex-1">
+                <BtnPrimary onClick={submitOrder} loading={submitting} disabled={submitting || cart.length === 0} className="flex-1">
                   {submitting ? "Placing…" : "Place Order"}
                 </BtnPrimary>
               </div>
@@ -652,8 +669,8 @@ export function Orders() {
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
               (o.state==="draft"||o.state==="sale") ? (
                 <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                  {o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)}>Confirm</BtnPrimary>}
-                  {o.state!=="cancel" && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                  {o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
+                  {o.state!=="cancel" && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
                 </div>
               ) : null
             }]:[]),
@@ -680,9 +697,9 @@ export function Orders() {
             <div className="flex gap-2">
               <BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary>
               {!isReseller && detail.state!=="cancel" && detail.state!=="done" && (
-                <BtnSecondary onClick={()=>cancelOrder(detail.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel Order</BtnSecondary>
+                <BtnSecondary onClick={()=>cancelOrder(detail.id)} loading={cancelling.has(detail.id)} disabled={confirming.has(detail.id)||cancelling.has(detail.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel Order</BtnSecondary>
               )}
-              {!isReseller && detail.state==="draft" && <BtnPrimary onClick={()=>{confirm(detail.id);setDetail(null);}}>Confirm Order</BtnPrimary>}
+              {!isReseller && detail.state==="draft" && <BtnPrimary onClick={()=>{confirm(detail.id);setDetail(null);}} loading={confirming.has(detail.id)} disabled={confirming.has(detail.id)||cancelling.has(detail.id)}>Confirm Order</BtnPrimary>}
             </div>
           </div>
         </Modal>
@@ -709,6 +726,8 @@ export function Resellers() {
   const [editModal,          setEditModal         ] = useState(false);
   const [editingId,          setEditingId         ] = useState(null);
   const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [saving,             setSaving            ] = useState(false);
+  const [editSaving,         setEditSaving        ] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -776,18 +795,21 @@ export function Resellers() {
 
   const saveEdit = async () => {
     if (!editForm.name) return toast.error("Name required");
+    setEditSaving(true);
     try {
       await api.put(`/api/resellers/${editingId}`, editForm);
       toast.success("Reseller updated");
       setEditModal(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setEditSaving(false); }
   };
 
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+    setSaving(true);
     try {
       const payload = { ...form };
       if (payload.odoo_partner_id) payload.odoo_partner_id = parseInt(payload.odoo_partner_id);
@@ -797,9 +819,8 @@ export function Resellers() {
       setModal(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
   };
-
-  const initials = (name) => name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -927,7 +948,7 @@ export function Resellers() {
             <span className="text-sm font-bold text-bassani-700">12.5% (all products)</span>
           </div>
 
-          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={save}>Create Reseller</BtnPrimary></div>
+          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Reseller</BtnPrimary></div>
         </Modal>
       )}
 
@@ -969,7 +990,7 @@ export function Resellers() {
             <FormGroup label="Branch Code"><Input value={editForm.bank_branch_code} onChange={e=>setEditForm({...editForm,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
           </div>
 
-          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit}>Save Changes</BtnPrimary></div>
+          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)} disabled={editSaving}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit} loading={editSaving}>Save Changes</BtnPrimary></div>
         </Modal>
       )}
     </div>
@@ -1265,6 +1286,7 @@ export function Commission() {
   const [matrix,     setMatrix    ] = useState([]);
   const [summary,    setSummary   ] = useState(null);
   const [loading,    setLoading   ] = useState(false);
+  const [toggling,   setToggling  ] = useState(new Set());
   const [search,     setSearch    ] = useState("");
   const [cat,        setCat       ] = useState("all");
   const [categories, setCategories] = useState([]);
@@ -1296,9 +1318,14 @@ export function Commission() {
   useEffect(() => { loadMatrix(); }, [loadMatrix]);
 
   const toggleBlock = async (productId, currentlyBlocked) => {
+    setToggling(s => new Set(s).add(productId));
     const endpoint = currentlyBlocked ? "unblock" : "block";
-    try { await api.put(`/api/commission/${selected}/matrix/${productId}/${endpoint}`); toast.success(currentlyBlocked ? "Product unblocked — 12.5% restored" : "Product blocked — 0% commission"); loadMatrix(); }
-    catch { toast.error("Failed"); }
+    try {
+      await api.put(`/api/commission/${selected}/matrix/${productId}/${endpoint}`);
+      toast.success(currentlyBlocked ? "Product unblocked — 12.5% restored" : "Product blocked — 0% commission");
+      loadMatrix();
+    } catch { toast.error("Failed"); }
+    finally { setToggling(s => { const n = new Set(s); n.delete(productId); return n; }); }
   };
 
   if (isReseller) return (
@@ -1361,11 +1388,16 @@ export function Commission() {
                   m.is_blocked
                     ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600">Blocked — 0%</span>
                     : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700">Active — 12.5%</span> },
-              { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=>
-                  <button onClick={()=>toggleBlock(m.product_id, m.is_blocked)}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
-                    {m.is_blocked ? "Unblock" : "Block"}
-                  </button> },
+              { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=> {
+                  const busy = toggling.has(m.product_id);
+                  return (
+                    <button onClick={()=>!busy && toggleBlock(m.product_id, m.is_blocked)} disabled={busy}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
+                      {busy && <Loader2 size={10} className="animate-spin" />}
+                      {busy ? (m.is_blocked ? "Unblocking…" : "Blocking…") : (m.is_blocked ? "Unblock" : "Block")}
+                    </button>
+                  );
+                } },
             ]}
             data={matrix} loading={loading} defaultPageSize={50}
           />
