@@ -91,7 +91,6 @@ from routes.twofa_routes         import router as twofa_router
 from routes.script_routes        import router as script_router
 from routes.target_routes        import router as target_router
 from routes.packing_board_routes import router as packing_board_router
-from routes.debug_routes         import router as debug_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -99,7 +98,7 @@ for router in [
     report_router, healthcare_router, notification_router,
     aged_debtors_router, payment_router, audit_router, batch_router,
     return_router, statement_router, forecast_router, twofa_router,
-    script_router, packing_board_router, debug_router, target_router,
+    script_router, packing_board_router, target_router,
 ]:
     app.include_router(router)
 
