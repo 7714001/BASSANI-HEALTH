@@ -51,7 +51,7 @@ def list_products(
     sort_by  = sort_by  if sort_by  in _SORTABLE          else "name"
     sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "asc"
     odoo = get_odoo_client()
-    domain = [("type", "in", ["product", "consu"]), ("active", "=", True)]
+    domain = [("type", "=", "consu"), ("active", "=", True)]
 
     if search:
         domain.append(("name", "ilike", search))
@@ -86,7 +86,7 @@ def list_categories(current_user: dict = Depends(get_current_user)):
     try:
         products = odoo.search_read(
             "product.template",
-            domain=[("type", "in", ["product", "consu"]), ("active", "=", True)],
+            domain=[("type", "=", "consu"), ("active", "=", True)],
             fields=["categ_id"],
             limit=2000,
         )
@@ -109,7 +109,7 @@ def low_stock_products(current_user: dict = Depends(get_current_user)):
         products = odoo.search_read(
             "product.template",
             domain=[
-                ("detailed_type", "=", "product"),
+                ("is_storable", "=", True),
                 ("active", "=", True),
                 ("qty_available", "<", 10),
             ],
@@ -148,7 +148,8 @@ def create_product(
         "name": product.name,
         "list_price": product.list_price,
         "standard_price": product.standard_price,
-        "type": "consu",  # Physical product — 'product' was retired in Odoo 17+
+        "type": "consu",
+        "is_storable": True,  # Enable inventory tracking
     }
     if product.default_code:
         vals["default_code"] = product.default_code

@@ -281,7 +281,7 @@ async def create_order(
             "product_id": l.product_id,
             "product_uom_qty": l.product_uom_qty,
             "price_unit": round(l.price_unit * discount_factor, 2),
-            "name": l.name or "",
+            **({"name": l.name} if l.name else {}),
         })
         for l in order.order_line
     ]
