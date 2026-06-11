@@ -123,6 +123,23 @@ def invoice_summary(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/payment-journals")
+def list_payment_journals(current_user: dict = Depends(require_admin)):
+    """Return bank and cash journals available for payment registration."""
+    odoo = get_odoo_client()
+    try:
+        journals = odoo.search_read(
+            "account.journal",
+            domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
+            fields=["id", "name", "type"],
+            limit=50,
+            order="name asc",
+        )
+        return {"journals": journals}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.get("/{invoice_id}")
 def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single invoice with line items."""
@@ -202,23 +219,6 @@ def reset_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
-
-
-@router.get("/payment-journals")
-def list_payment_journals(current_user: dict = Depends(require_admin)):
-    """Return bank and cash journals available for payment registration."""
-    odoo = get_odoo_client()
-    try:
-        journals = odoo.search_read(
-            "account.journal",
-            domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
-            fields=["id", "name", "type"],
-            limit=50,
-            order="name asc",
-        )
-        return {"journals": journals}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
 class PaymentRegister(BaseModel):
