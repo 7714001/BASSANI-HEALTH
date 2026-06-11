@@ -54,8 +54,8 @@ export function Products() {
 
   const stockColor = (qty) => qty <= 0 ? "text-red-600 font-semibold" : qty < 10 ? "text-amber-600 font-semibold" : "text-bassani-700 font-semibold";
 
-  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" }); setModal(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"" }); setModal(true); };
+  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"" }); setModal(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"" }); setModal(true); };
 
   const save = async () => {
     if (!form.name) return toast.error("Product name required");
@@ -67,8 +67,19 @@ export function Products() {
         standard_price: parseFloat(form.standard_price) || 0,
         categ_id:       form.categ_id ? parseInt(form.categ_id) : undefined,
       };
-      if (editing) { await api.put(`/api/products/${editing.id}`, payload); toast.success("Product updated"); }
-      else         { await api.post("/api/products/", payload);              toast.success("Product created"); }
+      let productId;
+      if (editing) {
+        await api.put(`/api/products/${editing.id}`, payload);
+        productId = editing.id;
+        toast.success("Product updated");
+      } else {
+        const r = await api.post("/api/products/", payload);
+        productId = r.data.product_id;
+        toast.success("Product created");
+      }
+      if (form.stock_qty !== "") {
+        await api.post(`/api/products/${productId}/stock`, { qty: parseFloat(form.stock_qty) || 0 });
+      }
       setModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     finally { setSaving(false); }
@@ -120,6 +131,9 @@ export function Products() {
             </Select></FormGroup>
             <FormGroup label="Sale Price (ZAR)"><Input type="number" value={form.list_price} onChange={e=>setForm({...form,list_price:e.target.value})} placeholder="450.00" /></FormGroup>
             <FormGroup label="Cost (ZAR)"><Input type="number" value={form.standard_price} onChange={e=>setForm({...form,standard_price:e.target.value})} placeholder="200.00" /></FormGroup>
+            <FormGroup label={editing ? `Stock Quantity (current: ${editing.qty_available ?? 0})` : "Initial Stock"}>
+              <Input type="number" min="0" value={form.stock_qty} onChange={e=>setForm({...form,stock_qty:e.target.value})} placeholder={editing ? "Leave blank to keep current" : "0"} />
+            </FormGroup>
           </div>
           <FormGroup label="Description"><Textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} placeholder="Short product description" /></FormGroup>
           <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>{editing ? "Save Product" : "Create Product"}</BtnPrimary></div>
@@ -242,7 +256,8 @@ export function Orders() {
   const [loading,     setLoading    ] = useState(true);
   const [search,      setSearch     ] = useState("");
   const [status,      setStatus     ] = useState("all");
-  const [detail,      setDetail     ] = useState(null);
+  const [detail,         setDetail        ] = useState(null);
+  const [detailLoading,  setDetailLoading ] = useState(false);
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
   const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
@@ -279,6 +294,16 @@ export function Orders() {
   }, [search, status, orderPag, orderSort]);
 
   useEffect(() => { load(); }, [load]);
+
+  const openDetail = async (order) => {
+    setDetail(order);
+    setDetailLoading(true);
+    try {
+      const r = await api.get(`/api/orders/${order.id}`);
+      setDetail(r.data);
+    } catch { /* keep showing basic data */ }
+    finally { setDetailLoading(false); }
+  };
 
   const confirm = async (id) => {
     setConfirming(s => new Set(s).add(id));
@@ -685,12 +710,38 @@ export function Orders() {
           data={orders} loading={loading} total={orderTotal}
           pagination={orderPag} onPaginationChange={setOrderPag}
           sorting={orderSort} onSortingChange={u=>{ setOrderSort(typeof u==="function"?u(orderSort):u); setOrderPag(p=>({...p,pageIndex:0})); }}
-          onRowClick={setDetail}
+          onRowClick={openDetail}
           manualPagination manualSorting
         />
       </main>
       {detail && (
         <Modal title={detail.name} onClose={()=>setDetail(null)} width="max-w-xl">
+          {/* Line items */}
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Items Ordered</p>
+            {detailLoading ? (
+              <div className="flex items-center gap-2 py-3 text-sm text-gray-400"><Loader2 size={14} className="animate-spin" />Loading items…</div>
+            ) : detail.lines?.length > 0 ? (
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-gray-50 text-xs text-gray-500"><th className="text-left px-3 py-2 font-medium">Product</th><th className="text-right px-3 py-2 font-medium">Qty</th><th className="text-right px-3 py-2 font-medium">Unit Price</th><th className="text-right px-3 py-2 font-medium">Subtotal</th></tr></thead>
+                  <tbody>
+                    {detail.lines.map((line, i) => (
+                      <tr key={i} className="border-t border-gray-50">
+                        <td className="px-3 py-2 font-medium text-gray-800">{line.product_id?.[1] || line.name}</td>
+                        <td className="px-3 py-2 text-right text-gray-600">{line.product_uom_qty}</td>
+                        <td className="px-3 py-2 text-right text-gray-600">{fmtR(line.price_unit)}</td>
+                        <td className="px-3 py-2 text-right font-semibold">{fmtR(line.price_subtotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 py-2">No line items found.</p>
+            )}
+          </div>
+          {/* Totals */}
           <div className="space-y-1.5 text-sm mb-4">
             <div className="flex justify-between py-2 border-b border-gray-50"><span className="text-gray-500">Customer</span><span className="font-medium">{detail.partner_id?.[1]}</span></div>
             {detail.reseller_name&&<div className="flex justify-between py-2 border-b border-gray-50"><span className="text-gray-500">Reseller</span><span className="font-medium">{detail.reseller_name}</span></div>}

@@ -26,6 +26,9 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = None
 
+class StockAdjustment(BaseModel):
+    qty: float
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 PRODUCT_FIELDS = [
@@ -216,3 +219,67 @@ def get_product_stock(product_id: int, current_user: dict = Depends(get_current_
         return {"stock": quants}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/{product_id}/stock")
+def set_stock_level(
+    product_id: int,
+    body: StockAdjustment,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Set the on-hand stock for a product via Odoo inventory adjustment.
+    Resolves template → variant, finds the main internal location,
+    then writes inventory_quantity on stock.quant and applies the adjustment.
+    """
+    odoo = get_odoo_client()
+
+    # Resolve product.template → product.product (variant)
+    templates = odoo.read("product.template", [product_id], fields=["product_variant_ids"])
+    if not templates or not templates[0].get("product_variant_ids"):
+        raise HTTPException(status_code=404, detail="Product variant not found")
+    variant_id = templates[0]["product_variant_ids"][0]
+
+    # Find the main internal stock location (WH/Stock preferred, else first internal)
+    locs = odoo.search_read(
+        "stock.location",
+        domain=[("usage", "=", "internal"), ("active", "=", True), ("name", "ilike", "Stock")],
+        fields=["id", "complete_name"],
+        limit=1,
+        order="id asc",
+    )
+    if not locs:
+        locs = odoo.search_read(
+            "stock.location",
+            domain=[("usage", "=", "internal"), ("active", "=", True)],
+            fields=["id", "complete_name"],
+            limit=1,
+            order="id asc",
+        )
+    if not locs:
+        raise HTTPException(status_code=400, detail="No internal stock location found in Odoo")
+    location_id = locs[0]["id"]
+
+    try:
+        # Find existing quant for this product+location or create one
+        quants = odoo.search_read(
+            "stock.quant",
+            domain=[("product_id", "=", variant_id), ("location_id", "=", location_id)],
+            fields=["id"],
+            limit=1,
+        )
+        if quants:
+            quant_id = quants[0]["id"]
+            odoo.write("stock.quant", [quant_id], {"inventory_quantity": body.qty})
+        else:
+            quant_id = odoo.create("stock.quant", {
+                "product_id": variant_id,
+                "location_id": location_id,
+                "inventory_quantity": body.qty,
+            })
+
+        # Apply the inventory adjustment (creates the stock move)
+        odoo.execute("stock.quant", "action_apply_inventory", [quant_id])
+        return {"success": True, "quant_id": quant_id, "location_id": location_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
