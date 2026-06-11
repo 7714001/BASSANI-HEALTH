@@ -32,7 +32,7 @@ PRODUCT_FIELDS = [
     "id", "name", "default_code", "type", "categ_id",
     "list_price", "standard_price", "uom_id",
     "qty_available", "virtual_available",
-    "description", "active",
+    "description", "active", "product_variant_ids",
 ]
 
 
@@ -109,7 +109,7 @@ def low_stock_products(current_user: dict = Depends(get_current_user)):
         products = odoo.search_read(
             "product.template",
             domain=[
-                ("type", "=", "product"),
+                ("detailed_type", "=", "product"),
                 ("active", "=", True),
                 ("qty_available", "<", 10),
             ],
@@ -148,7 +148,7 @@ def create_product(
         "name": product.name,
         "list_price": product.list_price,
         "standard_price": product.standard_price,
-        "type": product.type,
+        "detailed_type": product.type,  # Odoo 17+: type is computed; detailed_type is the writable field
     }
     if product.default_code:
         vals["default_code"] = product.default_code

@@ -61,8 +61,14 @@ export function Products() {
     if (!form.name) return toast.error("Product name required");
     setSaving(true);
     try {
-      if (editing) { await api.put(`/api/products/${editing.id}`, form); toast.success("Product updated"); }
-      else         { await api.post("/api/products/", form);              toast.success("Product created"); }
+      const payload = {
+        ...form,
+        list_price:     parseFloat(form.list_price)     || 0,
+        standard_price: parseFloat(form.standard_price) || 0,
+        categ_id:       form.categ_id ? parseInt(form.categ_id) : undefined,
+      };
+      if (editing) { await api.put(`/api/products/${editing.id}`, payload); toast.success("Product updated"); }
+      else         { await api.post("/api/products/", payload);              toast.success("Product created"); }
       setModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     finally { setSaving(false); }
@@ -159,7 +165,8 @@ export function Customers() {
     if (!form.name) return toast.error("Name required");
     setSaving(true);
     try {
-      await api.post("/api/customers/", form);
+      const payload = { ...form, credit_limit: parseFloat(form.credit_limit) || 0 };
+      await api.post("/api/customers/", payload);
       toast.success("Customer created"); setModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     finally { setSaving(false); }
