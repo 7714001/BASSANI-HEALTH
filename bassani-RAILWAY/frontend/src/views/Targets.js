@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Target, Edit2, CheckCircle, XCircle, Clock, TrendingUp } from "lucide-react";
+import { Target, Edit2, CheckCircle, XCircle, Clock, TrendingUp, Calendar, Award } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, Modal, FormGroup, Input, BtnPrimary, BtnSecondary, LoadingState, fmtR } from "../components/UI";
@@ -47,6 +47,23 @@ function StatusBadge({ month }) {
   return revHit && ordHit
     ? <span className="flex items-center gap-1 text-[10px] text-green-600 font-semibold"><CheckCircle size={10}/>Hit</span>
     : <span className="flex items-center gap-1 text-[10px] text-red-500 font-semibold"><XCircle size={10}/>Missed</span>;
+}
+
+// ── KPI card ───────────────────────────────────────────────────────────────────
+
+function KpiCard({ label, value, sub, icon: Icon, accent }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-5 flex items-start gap-4">
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${accent}`}>
+        <Icon size={18} className="text-white" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs text-gray-400 font-medium mb-0.5">{label}</p>
+        <p className="text-xl font-bold text-gray-900 truncate">{value}</p>
+        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  );
 }
 
 // ── Month card ─────────────────────────────────────────────────────────────────
@@ -222,26 +239,52 @@ export default function Targets() {
         {loading ? <LoadingState /> : (
           <div className="max-w-5xl mx-auto space-y-5">
 
-            {/* Summary bar */}
-            <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap gap-6">
-              <div><p className="text-xs text-gray-400 mb-0.5">FY</p><p className="font-bold text-gray-900">{fyLabel}</p></div>
-              <div><p className="text-xs text-gray-400 mb-0.5">Months with targets</p><p className="font-bold text-gray-900">{monthsWithTargets.length} / 12</p></div>
-              {past.length > 0 && (
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Targets hit</p>
-                  <p className={`font-bold ${monthsHit.length === past.filter(m => m.target_revenue || m.target_orders).length ? "text-green-600" : "text-amber-600"}`}>
-                    {monthsHit.length} / {past.filter(m => m.target_revenue || m.target_orders).length}
-                  </p>
-                </div>
-              )}
-              {current && current.target_revenue && (
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">This month ({current.month_name?.split(" ")[0]})</p>
-                  <p className={`font-bold ${(current.revenue_pct ?? 0) >= 100 ? "text-green-600" : isOnTrack(current.revenue_pct, current.days_elapsed, current.days_in_month) ? "text-bassani-700" : "text-amber-600"}`}>
-                    {current.revenue_pct ?? 0}% of target
-                  </p>
-                </div>
-              )}
+            {/* KPI cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiCard
+                label="Financial Year"
+                value={fyLabel}
+                sub="1 Mar – 28 Feb"
+                icon={Calendar}
+                accent="bg-slate-600"
+              />
+              <KpiCard
+                label="Targets Set"
+                value={`${monthsWithTargets.length} / 12`}
+                sub={monthsWithTargets.length === 12 ? "All months covered" : `${12 - monthsWithTargets.length} months still to set`}
+                icon={Target}
+                accent="bg-bassani-600"
+              />
+              {(() => {
+                const pastWithTargets = past.filter(m => m.target_revenue || m.target_orders);
+                const allHit = pastWithTargets.length > 0 && monthsHit.length === pastWithTargets.length;
+                return (
+                  <KpiCard
+                    label="Targets Hit"
+                    value={pastWithTargets.length > 0 ? `${monthsHit.length} / ${pastWithTargets.length}` : "—"}
+                    sub={pastWithTargets.length === 0 ? "No past months yet" : allHit ? "All targets met" : `${pastWithTargets.length - monthsHit.length} missed`}
+                    icon={Award}
+                    accent={pastWithTargets.length === 0 ? "bg-gray-400" : allHit ? "bg-green-500" : "bg-amber-500"}
+                  />
+                );
+              })()}
+              {(() => {
+                if (!current) return <KpiCard label="This Month" value="—" sub="No current month data" icon={TrendingUp} accent="bg-gray-400" />;
+                const pct    = current.revenue_pct ?? null;
+                const onTrack = pct != null && isOnTrack(pct, current.days_elapsed, current.days_in_month);
+                return (
+                  <KpiCard
+                    label={`${current.month_name?.split(" ")[0]} Revenue`}
+                    value={pct != null ? `${pct}%` : "No target"}
+                    sub={pct == null ? "Set a target to track progress"
+                      : pct >= 100 ? "Target achieved!"
+                      : onTrack ? `On track · Day ${current.days_elapsed} of ${current.days_in_month}`
+                      : `Behind target · Day ${current.days_elapsed} of ${current.days_in_month}`}
+                    icon={TrendingUp}
+                    accent={pct == null ? "bg-gray-400" : pct >= 100 ? "bg-green-500" : onTrack ? "bg-bassani-600" : "bg-amber-500"}
+                  />
+                );
+              })()}
             </div>
 
             {/* 12-month grid */}
