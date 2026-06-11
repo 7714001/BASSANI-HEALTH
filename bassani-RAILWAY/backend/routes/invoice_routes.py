@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
+from datetime import date as date_type
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client
+from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col, NO_ID
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -198,6 +199,74 @@ def reset_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
     odoo = get_odoo_client()
     try:
         odoo.execute("account.move", "button_draft", [invoice_id])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/payment-journals")
+def list_payment_journals(current_user: dict = Depends(require_admin)):
+    """Return bank and cash journals available for payment registration."""
+    odoo = get_odoo_client()
+    try:
+        journals = odoo.search_read(
+            "account.journal",
+            domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
+            fields=["id", "name", "type"],
+            limit=50,
+            order="name asc",
+        )
+        return {"journals": journals}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+class PaymentRegister(BaseModel):
+    journal_id: int
+    payment_date: Optional[str] = None   # ISO date string, defaults to today
+    amount: Optional[float] = None       # defaults to full outstanding amount
+
+
+@router.put("/{invoice_id}/pay")
+def register_payment(
+    invoice_id: int,
+    body: PaymentRegister,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Register a payment against an invoice using Odoo's account.payment.register wizard.
+    Creates the payment and reconciles it with the invoice in one step.
+    """
+    odoo = get_odoo_client()
+    payment_date = body.payment_date or date_type.today().isoformat()
+
+    # Resolve outstanding amount if not provided
+    amount = body.amount
+    if amount is None:
+        records = odoo.read("account.move", [invoice_id], fields=["amount_residual"])
+        if not records:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        amount = records[0]["amount_residual"]
+
+    try:
+        # Create the payment register wizard in the context of this invoice
+        wizard_id = odoo_call(
+            "account.payment.register",
+            "create",
+            [{"journal_id": body.journal_id, "payment_date": payment_date, "amount": amount}],
+            {"context": {
+                "active_model": "account.move",
+                "active_ids": [invoice_id],
+                "active_id": invoice_id,
+            }},
+        )
+        # Apply: creates the payment and reconciles it against the invoice
+        odoo_call(
+            "account.payment.register",
+            "action_create_payments",
+            [[wizard_id]],
+            {},
+        )
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
