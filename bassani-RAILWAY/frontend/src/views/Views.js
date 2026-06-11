@@ -155,10 +155,18 @@ export function Customers() {
   const [search,    setSearch   ] = useState("");
   const [modal,     setModal    ] = useState(false);
   const [detail,    setDetail   ] = useState(null);
-  const [form,      setForm     ] = useState({ name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false });
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
   const [saving,    setSaving   ] = useState(false);
+
+  // Add customer modal state
+  const BLANK_FORM = { name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false };
+  const [form,         setForm        ] = useState(BLANK_FORM);
+  const [nameSearch,   setNameSearch  ] = useState("");       // live search query
+  const [nameResults,  setNameResults ] = useState([]);       // Odoo matches
+  const [nameSearching,setNameSearching] = useState(false);
+  const [step,         setStep        ] = useState("search"); // "search" | "create"
+  const [claiming,     setClaiming    ] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,6 +182,36 @@ export function Customers() {
   }, [search, custPag, custSort]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Debounced Odoo search as reseller types customer name
+  useEffect(() => {
+    if (!modal || step !== "search") return;
+    if (nameSearch.length < 2) { setNameResults([]); return; }
+    const t = setTimeout(async () => {
+      setNameSearching(true);
+      try {
+        const r = await api.get("/api/customers/search", { params: { q: nameSearch, limit: 8 } });
+        setNameResults(r.data.customers || []);
+      } catch { setNameResults([]); }
+      finally { setNameSearching(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [nameSearch, modal, step]);
+
+  const openModal = () => {
+    setForm(BLANK_FORM); setNameSearch(""); setNameResults([]);
+    setStep("search"); setModal(true);
+  };
+
+  const claim = async (customer) => {
+    setClaiming(true);
+    try {
+      await api.post(`/api/customers/${customer.id}/claim`);
+      toast.success(`${customer.name} linked to your account`);
+      setModal(false); load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not link customer"); }
+    finally { setClaiming(false); }
+  };
 
   const save = async () => {
     if (!form.name) return toast.error("Name required");
@@ -192,7 +230,7 @@ export function Customers() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title={isReseller ? "My Customers" : "Customers"} subtitle={`${total} active accounts`} onRefresh={load}
-        actions={<BtnPrimary onClick={()=>setModal(true)}><Plus size={14}/>Add Customer</BtnPrimary>} />
+        actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Customer</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
         <DataTable
@@ -222,17 +260,59 @@ export function Customers() {
       </main>
       {modal && (
         <Modal title="Add Customer" onClose={()=>setModal(false)}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Wellness Pharmacy" /></FormGroup>
-            <FormGroup label="Type"><Select value={form.customer_type} onChange={e=>setForm({...form,customer_type:e.target.value})}>{TYPES.map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
-            <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="orders@example.co.za" /></FormGroup>
-            <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="+27 11 555 1234" /></FormGroup>
-            <FormGroup label="City"><Input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} placeholder="Johannesburg" /></FormGroup>
-            <FormGroup label="Credit Limit (ZAR)"><Input type="number" value={form.credit_limit} onChange={e=>setForm({...form,credit_limit:e.target.value})} placeholder="50000" /></FormGroup>
-          </div>
-          <FormGroup label="Address"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
-          <div className="flex items-center gap-2 mb-4"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
-          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Save Customer</BtnPrimary></div>
+          {step === "search" ? (
+            <>
+              <p className="text-sm text-gray-500 mb-3">
+                Search for the customer first — if they already exist in the system you can link them to your account without creating a duplicate.
+              </p>
+              <FormGroup label="Customer Name">
+                <div className="relative">
+                  <Input value={nameSearch} onChange={e=>setNameSearch(e.target.value)} placeholder="Start typing a business name…" autoFocus />
+                  {nameSearching && <Loader2 size={13} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />}
+                </div>
+              </FormGroup>
+              {nameResults.length > 0 && (
+                <div className="mt-2 border border-gray-100 rounded-xl overflow-hidden">
+                  <p className="text-xs text-gray-400 px-3 py-2 bg-gray-50 font-medium">Existing customers found</p>
+                  {nameResults.map(c => (
+                    <div key={c.id} className="flex items-center justify-between px-3 py-2.5 border-t border-gray-50 hover:bg-gray-50">
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{c.name}</p>
+                        <p className="text-xs text-gray-400">{[c.city, c.email].filter(Boolean).join(" · ") || "No contact info"}</p>
+                      </div>
+                      <BtnPrimary size="sm" onClick={()=>claim(c)} loading={claiming}>
+                        {isReseller ? "Link to my account" : "Select"}
+                      </BtnPrimary>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {nameSearch.length >= 2 && !nameSearching && nameResults.length === 0 && (
+                <p className="text-xs text-gray-400 mt-2 text-center">No existing customers found for "{nameSearch}"</p>
+              )}
+              <div className="flex justify-between items-center mt-4 pt-3 border-t border-gray-100">
+                <span className="text-xs text-gray-400">Customer not in the system yet?</span>
+                <BtnSecondary onClick={()=>{ setForm({...BLANK_FORM, name:nameSearch}); setStep("create"); }}>Create New</BtnSecondary>
+              </div>
+            </>
+          ) : (
+            <>
+              <button onClick={()=>setStep("search")} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
+                <ChevronDown size={12} className="-rotate-90"/>Back to search
+              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Wellness Pharmacy" /></FormGroup>
+                <FormGroup label="Type"><Select value={form.customer_type} onChange={e=>setForm({...form,customer_type:e.target.value})}>{TYPES.map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
+                <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="orders@example.co.za" /></FormGroup>
+                <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="+27 11 555 1234" /></FormGroup>
+                <FormGroup label="City"><Input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} placeholder="Johannesburg" /></FormGroup>
+                <FormGroup label="Credit Limit (ZAR)"><Input type="number" value={form.credit_limit} onChange={e=>setForm({...form,credit_limit:e.target.value})} placeholder="50000" /></FormGroup>
+              </div>
+              <FormGroup label="Address"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
+              <div className="flex items-center gap-2 mb-4"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
+              <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Customer</BtnPrimary></div>
+            </>
+          )}
         </Modal>
       )}
       {detail && (

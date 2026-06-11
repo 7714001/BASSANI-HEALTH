@@ -107,6 +107,42 @@ async def list_customers(
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/search")
+def search_all_customers(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(8, le=20),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Search all Odoo customers by name — used in the add-customer modal so resellers
+    can find existing Bassani customers before deciding to create a new one.
+    No ownership filter applied.
+    """
+    odoo = get_odoo_client()
+    domain = [
+        ("customer_rank", ">", 0),
+        ("active", "=", True),
+        "|",
+        ("name", "ilike", q),
+        ("email", "ilike", q),
+    ]
+    try:
+        customers = odoo.search_read(
+            "res.partner",
+            domain=domain,
+            fields=["id", "name", "email", "city"],
+            limit=limit,
+            order="name asc",
+        )
+        for c in customers:
+            for k, v in c.items():
+                if v is False:
+                    c[k] = None
+        return {"customers": customers}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.get("/{customer_id}")
 def get_customer(customer_id: int, current_user: dict = Depends(get_current_user)):
     odoo = get_odoo_client()
@@ -187,6 +223,43 @@ async def create_customer(
         })
 
     return {"success": True, "customer_id": customer_id}
+
+
+@router.post("/{customer_id}/claim")
+async def claim_customer(
+    customer_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Reseller claims an existing Odoo customer as their account.
+    Creates a customer_ownership record without touching Odoo — no duplicate created.
+    """
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can claim customers")
+
+    # Verify the customer exists in Odoo
+    odoo = get_odoo_client()
+    records = odoo.read("res.partner", [customer_id], fields=["id", "name"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    # Check not already claimed by anyone
+    existing = await col("customer_ownership").find_one({"odoo_partner_id": customer_id})
+    if existing:
+        if existing.get("reseller_id") == (await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID) or {}).get("id"):
+            return {"success": True, "message": "Already your customer"}
+        raise HTTPException(status_code=409, detail=f"This customer is already linked to another reseller ({existing.get('reseller_name', 'unknown')})")
+
+    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+    await col("customer_ownership").insert_one({
+        "odoo_partner_id":     customer_id,
+        "reseller_id":         reseller["id"]   if reseller else None,
+        "reseller_name":       reseller["name"] if reseller else current_user.get("username", ""),
+        "created_at":          datetime.now(timezone.utc),
+        "created_by_username": current_user.get("username", ""),
+        "claimed":             True,
+    })
+    return {"success": True, "customer_name": records[0]["name"]}
 
 
 @router.put("/{customer_id}")
