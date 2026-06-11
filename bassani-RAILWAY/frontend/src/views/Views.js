@@ -1659,12 +1659,12 @@ export function Commission() {
 // Reports view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Reports() {
-  const [activeReport, setActiveReport] = useState("turnover");
+  const [activeReport, setActiveReport] = useState("monthly-turnover");
   const [data,   setData  ] = useState(null);
   const [loading,setLoading] = useState(false);
 
   const REPORTS = [
-    { key:"turnover",          label:"Monthly Turnover"   },
+    { key:"monthly-turnover",   label:"Monthly Turnover"   },
     { key:"best-sellers",      label:"Best Sellers"       },
     { key:"best-customers",    label:"Best Customers"     },
     { key:"best-resellers",    label:"Best Resellers"     },
@@ -1709,7 +1709,7 @@ export function Reports() {
 }
 
 function ReportContent({ type, data }) {
-  if (type === "turnover") return (
+  if (type === "monthly-turnover") return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCardInline label="Total Revenue" value={fmtR(data.revenue?.total)} />
