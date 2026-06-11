@@ -36,32 +36,23 @@ export default function Dashboard() {
         {error   && <ErrorState message={error} onRetry={load} />}
         {data    && (
           <div className="space-y-5 max-w-6xl">
-            {/* KPI row */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {isReseller ? (
-                <>
-                  <StatCard label="Orders This Month" value={data.orders.this_month} sub={fmtR(data.orders.month_revenue)} />
-                  <StatCard label="All-Time Orders" value={data.orders.total} />
-                  <StatCard label="Commission This Month" value={fmtR(data.commission.due_this_month)} accent="text-bassani-700" />
-                  <StatCard
-                    label="Outstanding Invoices"
-                    value={data.invoices.unpaid}
-                    sub={data.invoices.unpaid > 0 ? fmtR(data.invoices.overdue_amount) : "All clear"}
-                    accent={data.invoices.unpaid > 0 ? "text-amber-600" : undefined}
-                  />
-                </>
-              ) : (
-                <>
-                  <StatCard label="Total Products"    value={data.products.total}           sub={`${data.products.low_stock} low stock`} />
-                  <StatCard label="Orders This Month" value={data.orders.this_month}        sub={fmtR(data.orders.month_revenue)} />
-                  <StatCard label="Active Customers"  value={data.customers.active} />
-                  <StatCard label="Commission Due"    value={fmtR(data.commission.due_this_month)} accent="text-bassani-700"
-                    sub={`${data.invoices.unpaid} unpaid invoices`} />
-                </>
-              )}
-            </div>
 
-            {/* Admin-only channel KPIs */}
+            {/* Reseller KPI row — admins skip this and go straight to Channel Performance */}
+            {isReseller && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard label="Orders This Month" value={data.orders.this_month} sub={fmtR(data.orders.month_revenue)} />
+                <StatCard label="All-Time Orders" value={data.orders.total} />
+                <StatCard label="Commission This Month" value={fmtR(data.commission.due_this_month)} accent="text-bassani-700" />
+                <StatCard
+                  label="Outstanding Invoices"
+                  value={data.invoices.unpaid}
+                  sub={data.invoices.unpaid > 0 ? fmtR(data.invoices.overdue_amount) : "All clear"}
+                  accent={data.invoices.unpaid > 0 ? "text-amber-600" : undefined}
+                />
+              </div>
+            )}
+
+            {/* Channel Performance — first section for admins */}
             {!isReseller && data.channel_kpis && (
               <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
                 <div className="flex items-center justify-between mb-4">
@@ -69,25 +60,33 @@ export default function Dashboard() {
                   <span className="text-xs text-gray-400">{data.channel_kpis.fy_label} · 1 Mar – 28 Feb</span>
                 </div>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Bassani FY */}
                   <div className="rounded-xl border border-gray-100 p-4 space-y-1">
                     <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Bassani {data.channel_kpis.fy_label}</p>
                     <p className="text-2xl font-bold text-gray-800">{data.channel_kpis.bassani.fy_orders}</p>
                     <p className="text-xs text-gray-500">{fmtR(data.channel_kpis.bassani.fy_value)}</p>
                   </div>
+                  {/* Bassani This Month */}
                   <div className="rounded-xl border border-gray-100 p-4 space-y-1">
                     <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Bassani This Month</p>
                     <p className="text-2xl font-bold text-gray-800">{data.channel_kpis.bassani.month_orders}</p>
                     <p className="text-xs text-gray-500">{fmtR(data.channel_kpis.bassani.month_value)}</p>
                   </div>
+                  {/* Reseller FY */}
                   <div className="rounded-xl border border-bassani-100 bg-bassani-50/30 p-4 space-y-1">
                     <p className="text-[10px] font-semibold text-bassani-500 uppercase tracking-wider">Reseller {data.channel_kpis.fy_label}</p>
                     <p className="text-2xl font-bold text-bassani-700">{data.channel_kpis.reseller.fy_orders}</p>
                     <p className="text-xs text-bassani-600">{fmtR(data.channel_kpis.reseller.fy_value)}</p>
                   </div>
-                  <div className="rounded-xl border border-bassani-100 bg-bassani-50/30 p-4 space-y-1">
-                    <p className="text-[10px] font-semibold text-bassani-500 uppercase tracking-wider">Reseller This Month</p>
+                  {/* Reseller This Month — includes commission */}
+                  <div className="rounded-xl border border-bassani-100 bg-bassani-50/30 p-4">
+                    <p className="text-[10px] font-semibold text-bassani-500 uppercase tracking-wider mb-1">Reseller This Month</p>
                     <p className="text-2xl font-bold text-bassani-700">{data.channel_kpis.reseller.month_orders}</p>
-                    <p className="text-xs text-bassani-600">{fmtR(data.channel_kpis.reseller.month_value)}</p>
+                    <p className="text-xs text-bassani-600 mt-0.5">{fmtR(data.channel_kpis.reseller.month_value)}</p>
+                    <div className="mt-2.5 pt-2.5 border-t border-bassani-100">
+                      <p className="text-[10px] text-bassani-400 uppercase tracking-wider font-semibold mb-0.5">Commission Due</p>
+                      <p className="text-sm font-bold text-bassani-700">{fmtR(data.commission.due_this_month)}</p>
+                    </div>
                   </div>
                 </div>
 
