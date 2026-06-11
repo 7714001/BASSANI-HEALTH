@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from odoo_client import get_odoo_client
+from odoo_client import odoo as odoo_call
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 
@@ -38,15 +38,14 @@ CHECKS = {
 @router.get("/odoo-fields")
 def odoo_field_audit():
     """Returns field definitions for key Odoo models to verify correct field names."""
-    client = get_odoo_client()
     result = {}
 
     for model, field_names in CHECKS.items():
         try:
-            all_fields = client.execute(
+            all_fields = odoo_call(
                 model,
                 "fields_get",
-                field_names,
+                [field_names],
                 {"attributes": ["string", "type", "selection", "required", "readonly"]},
             )
             result[model] = {
@@ -55,7 +54,6 @@ def odoo_field_audit():
                     "type":     fdef.get("type"),
                     "required": fdef.get("required", False),
                     "readonly": fdef.get("readonly", False),
-                    # Only include selection choices when present
                     **({"selection": fdef["selection"]} if fdef.get("selection") else {}),
                 }
                 for fname, fdef in (all_fields or {}).items()
