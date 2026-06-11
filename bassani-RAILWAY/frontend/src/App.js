@@ -18,6 +18,7 @@ import Users      from "./views/Users";
 import Invoices         from "./views/Invoices";
 import CustomerProfile  from "./views/CustomerProfile";
 import Scripts          from "./views/Scripts";
+import HcpRegister      from "./views/HcpRegister";
 
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -58,6 +59,7 @@ export default function App() {
 
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/register" element={<HcpRegister />} />
 
         <Route path="/" element={
           <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>
