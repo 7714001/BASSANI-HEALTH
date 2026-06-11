@@ -427,14 +427,21 @@ export function Orders() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const productCategories = ["all", ...Array.from(new Set(products.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
-  const filteredProducts  = products.filter(p => {
-    const q         = prodSearch.toLowerCase();
-    const inStock   = (p.virtual_available ?? 0) > 0;
-    const matchQ    = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-    const matchCat  = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
-    const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
-    return matchQ && matchCat && matchStock;
-  });
+  const filteredProducts  = products
+    .filter(p => {
+      const q         = prodSearch.toLowerCase();
+      const inStock   = (p.virtual_available ?? 0) > 0;
+      const matchQ    = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
+      const matchCat  = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
+      const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
+      return matchQ && matchCat && matchStock;
+    })
+    .sort((a, b) => {
+      const aIn = (a.virtual_available ?? 0) > 0;
+      const bIn = (b.virtual_available ?? 0) > 0;
+      if (aIn !== bIn) return aIn ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   const COMMISSION_CAP = 12.5;
   const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
   // Discount = the gap between the 12.5% cap and the reseller's chosen rate, passed to the customer
@@ -708,7 +715,7 @@ export function Orders() {
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="text-2xl font-bold text-bassani-700 tracking-tight mb-0.5">Bassani Health</div>
-                    <div className="text-sm text-gray-400">Pretoria, South Africa</div>
+                    <div className="text-sm text-gray-400">Kyalami, South Africa</div>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-gray-900 font-mono">{o.name}</div>
