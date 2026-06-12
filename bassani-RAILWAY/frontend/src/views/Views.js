@@ -1360,9 +1360,16 @@ function AdminCommissionView() {
   const [paying,      setPaying     ] = useState(false);
   const [expanded,    setExpanded   ] = useState(null);
   const [stmtOrders,  setStmtOrders ] = useState({});
-  // Tier settings
-  const [tiers,       setTiers      ] = useState([]);
-  const [tierRates,   setTierRates  ] = useState([]);
+  // Tier settings — seeded with defaults so the table is always visible
+  const DEFAULT_TIERS = [
+    { tier: 1, label: "Tier 1", range: "R0 – <R300k",    rate: 2.5  },
+    { tier: 2, label: "Tier 2", range: "R300k – <R500k", rate: 5.0  },
+    { tier: 3, label: "Tier 3", range: "R500k – <R750k", rate: 7.5  },
+    { tier: 4, label: "Tier 4", range: "R750k – <R1m",   rate: 10.0 },
+    { tier: 5, label: "Tier 5", range: "R1m+",           rate: 12.5 },
+  ];
+  const [tiers,       setTiers      ] = useState(DEFAULT_TIERS);
+  const [tierRates,   setTierRates  ] = useState(DEFAULT_TIERS.map(t => t.rate));
   const [tierSaving,  setTierSaving ] = useState(false);
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];

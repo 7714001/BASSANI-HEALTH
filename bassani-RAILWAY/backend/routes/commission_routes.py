@@ -14,11 +14,11 @@ router = APIRouter(prefix="/api/commission", tags=["commission"])
 # Turnover thresholds are fixed; rates are admin-configurable via /tiers PUT.
 
 DEFAULT_TIERS = [
-    {"tier": 1, "min": 0,          "max": 300_000,      "rate": 2.5,  "label": "Tier 1", "range": "R0 – <R300k"},
-    {"tier": 2, "min": 300_000,    "max": 500_000,      "rate": 5.0,  "label": "Tier 2", "range": "R300k – <R500k"},
-    {"tier": 3, "min": 500_000,    "max": 750_000,      "rate": 7.5,  "label": "Tier 3", "range": "R500k – <R750k"},
-    {"tier": 4, "min": 750_000,    "max": 1_000_000,    "rate": 10.0, "label": "Tier 4", "range": "R750k – <R1m"},
-    {"tier": 5, "min": 1_000_000,  "max": float("inf"), "rate": 12.5, "label": "Tier 5", "range": "R1m+"},
+    {"tier": 1, "min": 0,          "max": 300_000,   "rate": 2.5,  "label": "Tier 1", "range": "R0 – <R300k"},
+    {"tier": 2, "min": 300_000,    "max": 500_000,   "rate": 5.0,  "label": "Tier 2", "range": "R300k – <R500k"},
+    {"tier": 3, "min": 500_000,    "max": 750_000,   "rate": 7.5,  "label": "Tier 3", "range": "R500k – <R750k"},
+    {"tier": 4, "min": 750_000,    "max": 1_000_000, "rate": 10.0, "label": "Tier 4", "range": "R750k – <R1m"},
+    {"tier": 5, "min": 1_000_000,  "max": None,      "rate": 12.5, "label": "Tier 5", "range": "R1m+"},
 ]
 
 
@@ -32,7 +32,8 @@ async def get_tiers_config() -> list:
 
 def apply_tier(tiers: list, turnover: float) -> dict:
     for t in tiers:
-        if t["min"] <= turnover < t["max"]:
+        max_val = t.get("max")
+        if t["min"] <= turnover and (max_val is None or turnover < max_val):
             return t
     return tiers[-1]
 
