@@ -22,7 +22,6 @@ class OrderCreate(BaseModel):
     reseller_id: Optional[str] = None          # MongoDB reseller ID
     note: Optional[str] = ""
     delivery_address: Optional[str] = ""
-    commission_override: Optional[float] = None # Reseller can reduce their rate to pass savings to customer
 
 class StatusUpdate(BaseModel):
     status: str                                 # Pending|Processing|Shipped|Delivered
@@ -30,86 +29,6 @@ class StatusUpdate(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 VAT_RATE = 0.15
-COMMISSION_CAP = 12.5    # System-wide hard cap — no reseller can earn more than this %
-
-async def calculate_commission(reseller_id: str, order_lines: list, odoo, override_rate: Optional[float] = None) -> dict:
-    """
-    Commission logic:
-    1. override_rate (per-order reseller adjustment) — if provided, applies to all lines
-    2. Product-specific rate from commission_matrix (admin-set exception for specific products)
-    3. Flat system cap (12.5%) for everything else
-    Commission is always calculated on the original list price, regardless of any customer discount applied.
-    """
-    if not reseller_id:
-        return {"commission_total": 0, "lines": order_lines}
-
-    commission_total = 0
-    enriched_lines = []
-
-    for line in order_lines:
-        product_id = line.get("product_id")
-        subtotal = line.get("product_uom_qty", 0) * line.get("price_unit", 0)
-
-        if override_rate is not None:
-            rate = override_rate
-        else:
-            matrix_entry = await col("commission_matrix").find_one(
-                {"reseller_id": reseller_id, "product_id": str(product_id)}, NO_ID
-            )
-            rate = 0 if (matrix_entry and matrix_entry.get("is_blocked")) else COMMISSION_CAP
-
-        rate = min(rate, COMMISSION_CAP)
-        commission_amount = subtotal * (rate / 100)
-        commission_total += commission_amount
-        enriched_lines.append({**line, "commission_rate": rate, "commission_amount": commission_amount})
-
-    return {"commission_total": commission_total, "lines": enriched_lines}
-
-
-async def _get_commission_account(odoo: OdooClient) -> Optional[int]:
-    """
-    Return the Odoo expense account ID used for reseller commission vendor bills.
-    Preference order:
-      1. Cached value in MongoDB settings (avoids repeated Odoo round-trips)
-      2. Odoo account with 'commission' in the name (expense type)
-      3. First expense account alphabetically by code
-    Returns None if no expense account can be found (bill will be skipped with a warning).
-    """
-    cached = await col("settings").find_one({"key": "commission_account_id"})
-    if cached and cached.get("value"):
-        return int(cached["value"])
-
-    searches = [
-        [("account_type", "=", "expense"), ("deprecated", "=", False), ("name", "ilike", "commission")],
-        [("account_type", "=", "expense"), ("deprecated", "=", False)],
-    ]
-    for domain in searches:
-        try:
-            accounts = odoo.search_read(
-                "account.account",
-                domain=domain,
-                fields=["id", "code", "name"],
-                limit=1,
-                order="code asc",
-            )
-            if accounts:
-                account_id = int(accounts[0]["id"])
-                await col("settings").update_one(
-                    {"key": "commission_account_id"},
-                    {"$set": {
-                        "key": "commission_account_id",
-                        "value": account_id,
-                        "account_name": accounts[0]["name"],
-                        "account_code": accounts[0]["code"],
-                        "updated_at": datetime.now(timezone.utc),
-                    }},
-                    upsert=True,
-                )
-                return account_id
-        except Exception:
-            continue
-
-    return None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -261,7 +180,6 @@ async def create_order(
 
     effective_partner_id = order.partner_id
     reseller_profile = None
-    override_rate = None
 
     if current_user.get("role") == "reseller":
         reseller_profile = await col("resellers").find_one(
@@ -271,25 +189,13 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Reseller account not found")
         if not order.partner_id or order.partner_id <= 0:
             raise HTTPException(status_code=400, detail="Select a customer to place the order for")
-        # Pin reseller_id so commission is always recorded
         order = order.model_copy(update={"reseller_id": reseller_profile["id"]})
-
-        # Validate and apply commission override — capped at system hard cap (12.5%)
-        if order.commission_override is not None:
-            override_rate = max(0.0, min(float(order.commission_override), COMMISSION_CAP))
-
-    # Discount to customer = gap between system cap (12.5%) and chosen rate
-    # Bassani's net is constant at list_price × (1 − COMMISSION_CAP%)
-    discount_factor = 1.0
-    if override_rate is not None and reseller_profile:
-        discount_pct = COMMISSION_CAP - override_rate
-        discount_factor = 1.0 - (discount_pct / 100.0)
 
     lines = [
         (0, 0, {
             "product_id": l.product_id,
             "product_uom_qty": l.product_uom_qty,
-            "price_unit": round(l.price_unit * discount_factor, 2),
+            "price_unit": round(l.price_unit, 2),
             **({"name": l.name} if l.name else {}),
         })
         for l in order.order_line
@@ -306,16 +212,11 @@ async def create_order(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
-    # Calculate and store commission in MongoDB
-    comm = {"commission_total": 0, "lines": []}
+    # Record order for commission tracking — amount calculated at month-end via tier bands
     if order.reseller_id:
-        raw_lines = [l.model_dump() for l in order.order_line]
-        comm = await calculate_commission(order.reseller_id, raw_lines, odoo, override_rate=override_rate)
-
         reseller = await col("resellers").find_one({"id": order.reseller_id}, NO_ID)
         reseller_name = reseller["name"] if reseller else ""
 
-        # Resolve customer name for the record
         customer_name = ""
         try:
             partners = odoo.read("res.partner", [effective_partner_id], fields=["name"])
@@ -324,7 +225,6 @@ async def create_order(
             pass
 
         original_subtotal = sum(l.product_uom_qty * l.price_unit for l in order.order_line)
-        adjusted_subtotal = round(original_subtotal * discount_factor, 2)
 
         await col("order_commissions").insert_one({
             "odoo_order_id": str(odoo_order_id),
@@ -333,28 +233,17 @@ async def create_order(
             "customer_partner_id": effective_partner_id,
             "customer_name": customer_name,
             "original_subtotal": original_subtotal,
-            "adjusted_subtotal": adjusted_subtotal,
-            "commission_rate_override": override_rate,
-            "commission_total": comm["commission_total"],
+            "commission_total": 0,      # Set when monthly statement is generated
             "payout_status": "pending",
-            "lines": comm["lines"],
             "created_at": datetime.now(timezone.utc),
         })
 
-        # Update reseller lifetime totals
         await col("resellers").update_one(
             {"id": order.reseller_id},
-            {"$inc": {
-                "total_sales": original_subtotal,
-                "total_commission": comm["commission_total"],
-            }},
+            {"$inc": {"total_sales": original_subtotal}},
         )
 
-    return {
-        "success": True,
-        "odoo_order_id": odoo_order_id,
-        "commission_total": comm["commission_total"],
-    }
+    return {"success": True, "odoo_order_id": odoo_order_id}
 
 
 @router.put("/{order_id}/confirm")
@@ -425,64 +314,7 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
             "create the customer invoice manually in Odoo."
         )
 
-    # ── Step 3: Commission vendor bill ────────────────────────────────────────
-    comm_data = await col("order_commissions").find_one(
-        {"odoo_order_id": str(order_id)}, NO_ID
-    )
-    commission_bill_id: Optional[int] = None
-
-    if comm_data and comm_data.get("commission_total", 0) > 0:
-        reseller = await col("resellers").find_one({"id": comm_data["reseller_id"]}, NO_ID)
-        reseller_odoo_partner = int(reseller["odoo_partner_id"]) if reseller and reseller.get("odoo_partner_id") else None
-
-        if reseller_odoo_partner:
-            try:
-                account_id = await _get_commission_account(odoo)
-                if account_id:
-                    order_name = order_data["name"] if order_data else str(order_id)
-                    rate = comm_data.get("commission_rate_override")
-                    rate_label = f"{rate}%" if rate is not None else "12.5%"
-
-                    bill_id = odoo.create("account.move", {
-                        "move_type": "in_invoice",
-                        "partner_id": reseller_odoo_partner,
-                        "invoice_origin": order_name,
-                        "ref": f"Commission — {order_name}",
-                        "invoice_line_ids": [(0, 0, {
-                            "name": f"Reseller commission on {order_name} @ {rate_label}",
-                            "quantity": 1.0,
-                            "price_unit": round(float(comm_data["commission_total"]), 2),
-                            "account_id": account_id,
-                        })],
-                    })
-                    odoo.execute("account.move", "action_post", [bill_id])
-                    commission_bill_id = bill_id
-
-                    await col("order_commissions").update_one(
-                        {"odoo_order_id": str(order_id)},
-                        {"$set": {
-                            "odoo_bill_id": str(bill_id),
-                            "confirmed_at": datetime.now(timezone.utc),
-                        }},
-                    )
-                else:
-                    warnings.append(
-                        "No expense account found in Odoo — commission vendor bill skipped. "
-                        "Commission is still tracked in the portal payout view."
-                    )
-            except Exception as e:
-                warnings.append(
-                    f"Commission vendor bill failed: {str(e)} — "
-                    "commission is still tracked in the portal payout view."
-                )
-        else:
-            # No Odoo vendor link — portal payout view is the only record
-            await col("order_commissions").update_one(
-                {"odoo_order_id": str(order_id)},
-                {"$set": {"confirmed_at": datetime.now(timezone.utc)}},
-            )
-
-    # ── Step 4: Packing board (non-blocking) ──────────────────────────────────
+    # ── Step 3: Packing board (non-blocking) ─────────────────────────────────
     try:
         if order_data and order_data.get("picking_ids"):
             picking_id = order_data["picking_ids"][0]
@@ -511,6 +343,9 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
                         items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
 
                 partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
+                comm_data = await col("order_commissions").find_one(
+                    {"odoo_order_id": str(order_id)}, NO_ID
+                )
                 is_reseller_order = bool(comm_data)
                 reseller_name_val = comm_data.get("reseller_name") if comm_data else None
 
@@ -545,7 +380,6 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
         "success": True,
         "invoice_id": invoice_id,
         "invoice_name": invoice_name,
-        "commission_bill_id": commission_bill_id,
         "warnings": warnings,
     }
 

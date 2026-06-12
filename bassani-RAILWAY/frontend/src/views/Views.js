@@ -462,9 +462,8 @@ export function Orders() {
   const [custLoading,  setCustLoading ] = useState(false);
   const [selectedCust, setSelectedCust] = useState(null);
   const [custDropOpen,     setCustDropOpen    ] = useState(false);
-  const [submitting,         setSubmitting        ] = useState(false);
-  const [commissionOverride, setCommissionOverride] = useState(null); // reseller's chosen rate for this order
-  const [confirming,         setConfirming        ] = useState(new Set());
+  const [submitting,  setSubmitting ] = useState(false);
+  const [confirming,  setConfirming ] = useState(new Set());
   const [cancelling,         setCancelling        ] = useState(new Set());
 
   const load = useCallback(async () => {
@@ -560,8 +559,6 @@ export function Orders() {
     setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
     setCustSearch(""); setCustResults([]); setSelectedCust(null);
     setCustDropOpen(false); setSubmitting(false);
-    // Resellers always start at the full 12.5% rate — slider lets them reduce it as a customer discount
-    setCommissionOverride(isReseller ? COMMISSION_CAP : null);
     loadProducts();
     setView("cart");
   };
@@ -618,9 +615,6 @@ export function Orders() {
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: orderNote,
       };
-      if (isReseller && commissionOverride !== null) {
-        payload.commission_override = commissionOverride;
-      }
       await api.post("/api/orders/", payload);
       toast.success("Order placed successfully");
       setView("list");
@@ -647,18 +641,9 @@ export function Orders() {
       if (aIn !== bIn) return aIn ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  const COMMISSION_CAP = 12.5;
-  const cartSubtotal   = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  // Discount = the gap between the 12.5% cap and the reseller's chosen rate, passed to the customer
-  const cartDiscount   = (isReseller && commissionOverride !== null)
-    ? cartSubtotal * ((COMMISSION_CAP - commissionOverride) / 100)
-    : 0;
-  const cartAdjusted   = cartSubtotal - cartDiscount;   // what the customer actually pays (ex-VAT)
-  const cartVat        = cartAdjusted * 0.15;
-  const cartTotal      = cartAdjusted + cartVat;
-  const cartCommission = (isReseller && commissionOverride !== null)
-    ? cartSubtotal * (commissionOverride / 100)
-    : 0;
+  const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
+  const cartVat      = cartSubtotal * 0.15;
+  const cartTotal    = cartSubtotal + cartVat;
 
   const STATUSES = ["all","draft","sale","done","cancel"];
 
@@ -844,12 +829,6 @@ export function Orders() {
                     <span>Subtotal (excl. VAT)</span>
                     <span>{fmtR(cartSubtotal)}</span>
                   </div>
-                  {cartDiscount > 0 && (
-                    <div className="flex justify-between text-green-700">
-                      <span>Discount ({(COMMISSION_CAP - commissionOverride).toFixed(1)}%)</span>
-                      <span className="font-semibold">-{fmtR(cartDiscount)}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between text-gray-500">
                     <span>VAT (15%)</span>
                     <span>{fmtR(cartVat)}</span>
@@ -858,22 +837,6 @@ export function Orders() {
                     <span className="text-gray-900">Total</span>
                     <span className="text-bassani-700">{fmtR(cartTotal)}</span>
                   </div>
-                  {isReseller && commissionOverride !== null && (
-                    <div className="pt-2 border-t border-dashed border-bassani-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Your Commission</span>
-                        <span className="text-xs font-bold text-bassani-700">{commissionOverride}% · {fmtR(cartCommission)}</span>
-                      </div>
-                      <input type="range" min={0} max={COMMISSION_CAP} step={0.5}
-                        value={commissionOverride}
-                        onChange={e => setCommissionOverride(parseFloat(e.target.value))}
-                        className="w-full accent-bassani-600" />
-                      <div className="flex justify-between text-[10px] text-gray-400">
-                        <span>0% (max discount)</span>
-                        <span>{COMMISSION_CAP}% (no discount)</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
               <Textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
@@ -924,7 +887,6 @@ export function Orders() {
             { accessorKey:"date_order", header:"Date", cell:({row:{original:o}})=><span className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</span> },
             { accessorKey:"amount_untaxed", header:"Amount", cell:({row:{original:o}})=>fmtR(o.amount_untaxed) },
             { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
-            { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:o}})=><span className={o.commission_total>0?"text-bassani-700 font-medium":"text-gray-300"}>{o.commission_total>0?fmtR(o.commission_total):"—"}</span> },
             { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
             { id:"invoice", header:"Payment", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
@@ -1071,7 +1033,6 @@ export function Resellers() {
           columns={[
             { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
             { accessorKey:"type", header:"Type", cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
-            { id:"commission", header:"Commission", enableSorting:false, cell:()=><span className="font-semibold text-bassani-700">12.5%</span> },
             { id:"contact", header:"Contact", enableSorting:false, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
             { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=>(
               <div className="flex gap-2">
@@ -1188,10 +1149,6 @@ export function Resellers() {
             <FormGroup label="Branch Code"><Input value={form.bank_branch_code} onChange={e=>setForm({...form,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
           </div>
 
-          <div className="bg-bassani-50 rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
-            <span className="text-xs text-gray-600">Commission rate</span>
-            <span className="text-sm font-bold text-bassani-700">12.5% (all products)</span>
-          </div>
 
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Reseller</BtnPrimary></div>
         </Modal>
@@ -1243,10 +1200,10 @@ export function Resellers() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Commission matrix view
+// Reseller commission view — tier progress + statement history
 // ─────────────────────────────────────────────────────────────────────────────
 function ResellerCommissionView() {
-  const [reseller, setReseller] = useState(null);
+  const [progress, setProgress] = useState(null);
   const [history,  setHistory ] = useState([]);
   const [loading,  setLoading ] = useState(true);
 
@@ -1256,11 +1213,11 @@ function ResellerCommissionView() {
         const me = await api.get("/api/auth/me");
         const rid = me.data.reseller_id;
         if (!rid) return;
-        const [rRes, hRes] = await Promise.all([
-          api.get(`/api/resellers/${rid}`),
+        const [pRes, hRes] = await Promise.all([
+          api.get(`/api/commission/${rid}/current-month`),
           api.get(`/api/commission/${rid}/history`),
         ]);
-        setReseller(rRes.data);
+        setProgress(pRes.data);
         setHistory(hRes.data.records || []);
       } catch { toast.error("Failed to load commission data"); }
       finally { setLoading(false); }
@@ -1268,232 +1225,388 @@ function ResellerCommissionView() {
   }, []);
 
   if (loading) return <LoadingState />;
-  if (!reseller) return <EmptyState message="No commission data found" />;
+
+  const tiers = progress?.all_tiers || [];
+  const currentTier = progress?.tier?.tier;
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 items-start">
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shrink-0 w-full lg:w-64">
-        <div className="px-5 py-4 border-b border-gray-50">
-          <h3 className="text-sm font-semibold text-gray-800">Your Commission Rate</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Applied across all products</p>
+    <div className="space-y-5">
+      {/* Current month progress */}
+      {progress && (
+        <div className="bg-white border border-gray-100 rounded-2xl p-5">
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+            <div>
+              <p className="text-xs text-gray-400 font-medium mb-0.5">{progress.month_label} Progress</p>
+              <p className="text-2xl font-bold text-gray-900">{fmtR(progress.total_turnover)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{progress.order_count} order{progress.order_count !== 1 ? "s" : ""} this month</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-400 mb-0.5">Projected Commission</p>
+              <p className="text-2xl font-bold text-bassani-700">{fmtR(progress.commission_projected)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{progress.tier?.label} @ {progress.commission_rate}%</p>
+            </div>
+          </div>
+          {progress.next_tier && (
+            <div>
+              <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+                <span>Progress to {progress.next_tier.label} ({progress.next_tier.rate}%)</span>
+                <span>{fmtR(progress.next_tier_gap)} to go</span>
+              </div>
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-bassani-600 rounded-full transition-all"
+                  style={{ width: `${Math.min(progress.next_tier_pct, 100)}%` }} />
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">{progress.next_tier_pct}% of {progress.next_tier.range}</p>
+            </div>
+          )}
+          {!progress.next_tier && (
+            <div className="flex items-center gap-2 text-xs text-emerald-700 font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+              Maximum tier achieved — {progress.commission_rate}%
+            </div>
+          )}
         </div>
-        <div className="px-5 py-6 flex flex-col items-center gap-1">
-          <span className="text-4xl font-bold text-bassani-700">12.5%</span>
-          <span className="text-xs text-gray-400 text-center">You can reduce this per order to pass savings to the customer</span>
-        </div>
-      </div>
+      )}
 
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden flex-1 min-w-0 w-full">
+      {/* Tier bands table */}
+      <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-50">
-          <h3 className="text-sm font-semibold text-gray-800">Commission History</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Commission earned per order</p>
+          <h3 className="text-sm font-semibold text-gray-800">Commission Structure</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Your rate is determined by total monthly turnover</p>
         </div>
-        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[420px]">
+        <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50">
-              {["Order #","Customer","Date","Commission","Status"].map(h=>(
-                <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>
+              {["Tier","Turnover Range","Commission Rate",""].map(h=>(
+                <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-5 py-2.5">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {history.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400 text-sm">No commission records yet</td></tr>
-            )}
-            {history.map((rec, i) => (
-              <tr key={i} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 font-mono text-xs text-bassani-700">{rec.odoo_order_id}</td>
-                <td className="px-4 py-3 text-gray-700 text-xs">{rec.customer_name || "—"}</td>
-                <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(rec.created_at)}</td>
-                <td className="px-4 py-3 font-semibold text-bassani-700">{fmtR(rec.commission_total || 0)}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${rec.payout_status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                    {rec.payout_status === "paid" ? "Paid" : "Pending"}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {tiers.map(t => {
+              const active = t.tier === currentTier;
+              return (
+                <tr key={t.tier} className={`border-t border-gray-50 ${active ? "bg-bassani-50" : "hover:bg-gray-50"} transition-colors`}>
+                  <td className="px-5 py-3 font-semibold text-gray-700">{t.label}</td>
+                  <td className="px-5 py-3 text-gray-500">{t.range}</td>
+                  <td className="px-5 py-3 font-bold text-bassani-700">{t.rate}%</td>
+                  <td className="px-5 py-3">
+                    {active && <span className="text-[10px] bg-bassani-600 text-white px-2 py-0.5 rounded-full font-semibold">Current</span>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
-        </table></div>
+        </table>
+      </div>
+
+      {/* Monthly statement history */}
+      <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-50">
+          <h3 className="text-sm font-semibold text-gray-800">Statement History</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Monthly commission statements</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[520px]">
+            <thead>
+              <tr className="bg-gray-50">
+                {["Month","Turnover","Tier","Rate","Commission","Status"].map(h=>(
+                  <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-5 py-2.5">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 && (
+                <tr><td colSpan={6} className="px-5 py-8 text-center text-gray-400 text-sm">No statements yet — generated at month-end by your account manager</td></tr>
+              )}
+              {history.map((rec, i) => (
+                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3 font-medium text-gray-700">{rec.month_label}</td>
+                  <td className="px-5 py-3 text-gray-600">{fmtR(rec.total_turnover)}</td>
+                  <td className="px-5 py-3 text-gray-500 text-xs">{rec.tier_label} <span className="text-gray-300">·</span> {rec.tier_range}</td>
+                  <td className="px-5 py-3 font-semibold text-bassani-700">{rec.commission_rate}%</td>
+                  <td className="px-5 py-3 font-bold text-bassani-700">{fmtR(rec.commission_amount)}</td>
+                  <td className="px-5 py-3">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${rec.status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                      {rec.status === "paid" ? "Paid" : "Pending"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Payouts view (admin only)
+// Admin commission view — statements + tier settings
 // ─────────────────────────────────────────────────────────────────────────────
-function PayoutsView() {
-  const [payouts,    setPayouts   ] = useState([]);
-  const [grandTotal, setGrandTotal] = useState(0);
-  const [loading,    setLoading   ] = useState(true);
-  const [expanded,   setExpanded  ] = useState(null);   // reseller_id
-  const [orderCache, setOrderCache] = useState({});     // reseller_id → orders[]
-  const [payModal,   setPayModal  ] = useState(null);   // payout row being paid
-  const [payRef,     setPayRef    ] = useState("");
-  const [payDate,    setPayDate   ] = useState("");
-  const [paying,     setPaying    ] = useState(false);
+function AdminCommissionView() {
+  const today      = new Date();
+  const [activeTab,   setActiveTab  ] = useState("statements");
+  const [genYear,     setGenYear    ] = useState(today.getFullYear());
+  const [genMonth,    setGenMonth   ] = useState(today.getMonth() + 1);
+  const [generating,  setGenerating ] = useState(false);
+  const [statements,  setStatements ] = useState([]);
+  const [stmtTotal,   setStmtTotal  ] = useState(0);
+  const [stmtLoading, setStmtLoading] = useState(true);
+  const [stmtStatus,  setStmtStatus ] = useState("all");
+  const [payModal,    setPayModal   ] = useState(null);
+  const [payRef,      setPayRef     ] = useState("");
+  const [payDate,     setPayDate    ] = useState("");
+  const [paying,      setPaying     ] = useState(false);
+  const [expanded,    setExpanded   ] = useState(null);
+  const [stmtOrders,  setStmtOrders ] = useState({});
+  // Tier settings
+  const [tiers,       setTiers      ] = useState([]);
+  const [tierRates,   setTierRates  ] = useState([]);
+  const [tierSaving,  setTierSaving ] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const loadStatements = useCallback(async () => {
+    setStmtLoading(true);
     try {
-      const r = await api.get("/api/commission/payouts");
-      setPayouts(r.data.resellers);
-      setGrandTotal(r.data.grand_total);
-    } catch { toast.error("Failed to load payouts"); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
+      const r = await api.get("/api/commission/statements", {
+        params: { status: stmtStatus === "all" ? undefined : stmtStatus, limit: 100 },
+      });
+      setStatements(r.data.statements || []);
+      setStmtTotal(r.data.total || 0);
+    } catch { toast.error("Failed to load statements"); }
+    finally { setStmtLoading(false); }
+  }, [stmtStatus]);
 
-  const toggleExpand = async (resellerId) => {
-    if (expanded === resellerId) { setExpanded(null); return; }
-    setExpanded(resellerId);
-    if (!orderCache[resellerId]) {
-      try {
-        const r = await api.get(`/api/commission/payouts/${resellerId}/orders`);
-        setOrderCache(prev => ({ ...prev, [resellerId]: r.data.orders }));
-      } catch { toast.error("Failed to load orders"); }
-    }
+  useEffect(() => { loadStatements(); }, [loadStatements]);
+
+  useEffect(() => {
+    api.get("/api/commission/tiers").then(r => {
+      setTiers(r.data.tiers || []);
+      setTierRates((r.data.tiers || []).map(t => t.rate));
+    }).catch(() => {});
+  }, []);
+
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      const r = await api.post("/api/commission/statements/generate", { year: genYear, month: genMonth });
+      toast.success(`${r.data.generated} statement${r.data.generated !== 1 ? "s" : ""} generated for ${r.data.month_label}`);
+      loadStatements();
+    } catch (e) { toast.error(e.response?.data?.detail || "Generation failed"); }
+    finally { setGenerating(false); }
   };
 
-  const openPayModal = (payout) => {
-    setPayModal(payout);
-    setPayRef("");
-    setPayDate(new Date().toISOString().split("T")[0]);
-  };
+  const openPay = (stmt) => { setPayModal(stmt); setPayRef(""); setPayDate(today.toISOString().split("T")[0]); };
 
   const markPaid = async () => {
     if (!payModal) return;
     setPaying(true);
     try {
-      await api.put(`/api/commission/payouts/${payModal.reseller_id}/mark-paid`, {
-        payment_reference: payRef,
-        payment_date: payDate,
+      const r = await api.put(`/api/commission/statements/${payModal.id}/mark-paid`, {
+        payment_reference: payRef, payment_date: payDate,
       });
-      toast.success(`${payModal.reseller_name} — ${payModal.order_count} order${payModal.order_count !== 1 ? "s" : ""} marked as paid`);
+      toast.success(`${payModal.reseller_name} — ${payModal.month_label} marked as paid`);
+      if (r.data.warning) toast(r.data.warning, { icon: "⚠️", duration: 8000 });
       setPayModal(null);
-      setOrderCache(prev => { const n = { ...prev }; delete n[payModal.reseller_id]; return n; });
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to mark as paid");
-    } finally { setPaying(false); }
+      loadStatements();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to mark as paid"); }
+    finally { setPaying(false); }
   };
 
-  if (loading) return <LoadingState />;
+  const toggleExpand = async (stmtId) => {
+    if (expanded === stmtId) { setExpanded(null); return; }
+    setExpanded(stmtId);
+    if (!stmtOrders[stmtId]) {
+      try {
+        const r = await api.get(`/api/commission/statements/${stmtId}`);
+        setStmtOrders(prev => ({ ...prev, [stmtId]: r.data.orders || [] }));
+      } catch { toast.error("Failed to load orders"); }
+    }
+  };
+
+  const saveTiers = async () => {
+    setTierSaving(true);
+    try {
+      const r = await api.put("/api/commission/tiers", { rates: tierRates });
+      setTiers(r.data.tiers);
+      toast.success("Tier rates saved");
+    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setTierSaving(false); }
+  };
+
+  const resetTiers = async () => {
+    setTierSaving(true);
+    try {
+      const r = await api.delete("/api/commission/tiers/reset");
+      setTiers(r.data.tiers);
+      setTierRates(r.data.tiers.map(t => t.rate));
+      toast.success("Tier rates reset to defaults");
+    } catch { toast.error("Reset failed"); }
+    finally { setTierSaving(false); }
+  };
+
+  const pendingTotal = statements.filter(s => s.status === "pending").reduce((sum, s) => sum + s.commission_amount, 0);
 
   return (
     <div className="space-y-4">
-      {/* Summary banner */}
-      <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-gray-800">Pending Commission Payouts</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {payouts.length} reseller{payouts.length !== 1 ? "s" : ""} awaiting payment
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-bassani-700">{fmtR(grandTotal)}</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">total outstanding</p>
-        </div>
-      </div>
+      <ChipRow>
+        <FilterPill label="Statements"    active={activeTab === "statements"}    onClick={() => setActiveTab("statements")} />
+        <FilterPill label="Tier Settings" active={activeTab === "tiers"}         onClick={() => setActiveTab("tiers")} />
+      </ChipRow>
 
-      {payouts.length === 0 && (
-        <div className="bg-white border border-gray-100 rounded-xl px-5 py-14 text-center">
-          <p className="text-sm font-medium text-gray-400">No pending payouts</p>
-          <p className="text-xs text-gray-300 mt-1">All commission payments are up to date</p>
-        </div>
-      )}
-
-      {/* Per-reseller cards */}
-      {payouts.map(p => (
-        <div key={p.reseller_id} className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-          {/* Header row */}
-          <div className="px-5 py-4 flex flex-wrap items-start gap-4">
-            <div className="flex-1 min-w-0 space-y-1">
-              <div className="flex items-center gap-2">
-                <p className="font-semibold text-gray-900">{p.reseller_name}</p>
-                <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
-                  {p.reseller_id.replace("reseller_", "").toUpperCase()}
-                </span>
-              </div>
-              <p className="text-xs text-gray-400">
-                {p.order_count} order{p.order_count !== 1 ? "s" : ""} · oldest {fmtDate(p.oldest_order)}
-              </p>
-              {p.bank_account_number ? (
-                <p className="text-xs text-gray-500">
-                  {p.bank_name && <span className="font-medium">{p.bank_name} · </span>}
-                  {p.bank_account_holder && <span>{p.bank_account_holder} · </span>}
-                  <span className="font-mono">{p.bank_account_number}</span>
-                  {p.bank_branch_code && <span className="text-gray-400"> ({p.bank_branch_code})</span>}
-                </p>
-              ) : (
-                <p className="text-xs text-amber-600 font-medium">⚠ No banking details on file</p>
-              )}
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="text-right">
-                <p className="text-xl font-bold text-bassani-700">{fmtR(p.total_pending)}</p>
-                <p className="text-[10px] text-gray-400">pending</p>
-              </div>
-              <button onClick={() => toggleExpand(p.reseller_id)}
-                className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
-                {expanded === p.reseller_id ? "Hide" : "View Orders"}
-              </button>
-              <BtnPrimary size="sm" onClick={() => openPayModal(p)}>Mark as Paid</BtnPrimary>
+      {/* ── Statements tab ── */}
+      {activeTab === "statements" && (<>
+        {/* Generate + filter bar */}
+        <div className="bg-white border border-gray-100 rounded-2xl px-5 py-4 flex flex-wrap items-center gap-4">
+          <div>
+            <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Generate Statements</p>
+            <div className="flex items-center gap-2">
+              <select value={genMonth} onChange={e => setGenMonth(Number(e.target.value))}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 bg-white">
+                {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+              </select>
+              <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} min={2020} max={2040}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 w-24" />
+              <BtnPrimary size="sm" onClick={generate} loading={generating}>
+                {generating ? "Generating…" : "Generate"}
+              </BtnPrimary>
             </div>
           </div>
-
-          {/* Expanded order detail */}
-          {expanded === p.reseller_id && (
-            <div className="border-t border-gray-50">
-              {!orderCache[p.reseller_id] ? (
-                <p className="px-5 py-4 text-xs text-gray-400">Loading…</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      {["Order #", "Customer", "Date", "Order Value", "Commission", "Odoo Bill"].map(h => (
-                        <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-2.5">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orderCache[p.reseller_id].map(o => (
-                      <tr key={o.odoo_order_id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5 font-mono text-xs text-bassani-700">#{o.odoo_order_id}</td>
-                        <td className="px-4 py-2.5 text-gray-700 text-xs">{o.customer_name || "—"}</td>
-                        <td className="px-4 py-2.5 text-gray-400 text-xs">{fmtDate(o.created_at)}</td>
-                        <td className="px-4 py-2.5 text-gray-700">{fmtR(o.original_subtotal || 0)}</td>
-                        <td className="px-4 py-2.5 font-semibold text-bassani-700">{fmtR(o.commission_total)}</td>
-                        <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">
-                          {o.odoo_bill_id ? `#${o.odoo_bill_id}` : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="border-t-2 border-bassani-100 bg-bassani-50/40">
-                      <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-gray-600 text-right">Total</td>
-                      <td className="px-4 py-2.5 font-bold text-bassani-700">
-                        {fmtR(orderCache[p.reseller_id].reduce((s, o) => s + o.commission_total, 0))}
-                      </td>
-                      <td />
-                    </tr>
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
+          <div className="ml-auto text-right">
+            <p className="text-xs text-gray-400">Total Pending</p>
+            <p className="text-2xl font-bold text-bassani-700">{fmtR(pendingTotal)}</p>
+          </div>
         </div>
-      ))}
+
+        <ChipRow>
+          {[["all","All"],["pending","Pending"],["paid","Paid"]].map(([k,l])=>(
+            <FilterPill key={k} label={l} active={stmtStatus===k} onClick={() => setStmtStatus(k)} />
+          ))}
+        </ChipRow>
+
+        {stmtLoading ? <LoadingState /> : statements.length === 0 ? (
+          <div className="bg-white border border-gray-100 rounded-2xl px-5 py-14 text-center">
+            <p className="text-sm font-medium text-gray-400">No statements found</p>
+            <p className="text-xs text-gray-300 mt-1">Generate statements using the controls above</p>
+          </div>
+        ) : statements.map(s => (
+          <div key={s.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 flex flex-wrap items-start gap-4">
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-semibold text-gray-900">{s.reseller_name}</p>
+                  <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">{s.month_label}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${s.status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                    {s.status === "paid" ? "Paid" : "Pending"}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Turnover: <b className="text-gray-700">{fmtR(s.total_turnover)}</b> ·
+                  {" "}{s.tier_label} ({s.tier_range}) · {s.order_count} order{s.order_count !== 1 ? "s" : ""}
+                </p>
+                {s.status === "paid" && s.payment_reference && (
+                  <p className="text-xs text-gray-400">Ref: <span className="font-mono">{s.payment_reference}</span> · {fmtDate(s.paid_at)}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-right">
+                  <p className="text-xl font-bold text-bassani-700">{fmtR(s.commission_amount)}</p>
+                  <p className="text-[10px] text-gray-400">{s.commission_rate}% commission</p>
+                </div>
+                <button onClick={() => toggleExpand(s.id)}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
+                  {expanded === s.id ? "Hide" : "Orders"}
+                </button>
+                {s.status === "pending" && (
+                  <BtnPrimary size="sm" onClick={() => openPay(s)}>Mark Paid</BtnPrimary>
+                )}
+              </div>
+            </div>
+
+            {expanded === s.id && (
+              <div className="border-t border-gray-50">
+                {!stmtOrders[s.id] ? (
+                  <p className="px-5 py-4 text-xs text-gray-400">Loading…</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        {["Order #","Customer","Date","Order Value"].map(h=>(
+                          <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-2.5">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stmtOrders[s.id].map(o => (
+                        <tr key={o.odoo_order_id} className="border-t border-gray-50 hover:bg-gray-50">
+                          <td className="px-4 py-2.5 font-mono text-xs text-bassani-700">#{o.odoo_order_id}</td>
+                          <td className="px-4 py-2.5 text-gray-700 text-xs">{o.customer_name || "—"}</td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs">{fmtDate(o.created_at)}</td>
+                          <td className="px-4 py-2.5 text-gray-700">{fmtR(o.original_subtotal || 0)}</td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-bassani-100 bg-bassani-50/40">
+                        <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-gray-600 text-right">Total Turnover</td>
+                        <td className="px-4 py-2.5 font-bold text-gray-800">{fmtR(s.total_turnover)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </>)}
+
+      {/* ── Tier settings tab ── */}
+      {activeTab === "tiers" && (
+        <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h3 className="text-sm font-semibold text-gray-800">Commission Tier Rates</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Turnover thresholds are fixed. Adjust the commission rate for each tier.</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {tiers.map((t, i) => (
+              <div key={t.tier} className="px-5 py-4 flex items-center gap-4">
+                <div className="w-16 shrink-0">
+                  <span className="text-xs font-bold text-bassani-700 bg-bassani-50 px-2 py-0.5 rounded-full">{t.label}</span>
+                </div>
+                <div className="flex-1 text-sm text-gray-500">{t.range}</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min={0} max={100} step={0.5}
+                    value={tierRates[i] ?? t.rate}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      setTierRates(prev => prev.map((r, j) => j === i ? v : r));
+                    }}
+                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 w-20 text-right"
+                  />
+                  <span className="text-sm text-gray-400">%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="px-5 py-4 border-t border-gray-50 flex justify-between">
+            <BtnSecondary onClick={resetTiers} disabled={tierSaving}>Reset to Defaults</BtnSecondary>
+            <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tier Rates</BtnPrimary>
+          </div>
+        </div>
+      )}
 
       {/* Mark as Paid modal */}
       {payModal && (
         <Modal title={`Mark as Paid — ${payModal.reseller_name}`} onClose={() => setPayModal(null)}>
-          <p className="text-sm text-gray-600 mb-5">
-            This will mark <b>{payModal.order_count} order{payModal.order_count !== 1 ? "s" : ""}</b> as paid,
-            totalling <b className="text-bassani-700">{fmtR(payModal.total_pending)}</b>.
+          <p className="text-sm text-gray-600 mb-4">
+            Marking <b>{payModal.month_label}</b> statement as paid:
+            {" "}turnover <b>{fmtR(payModal.total_turnover)}</b> ·
+            {" "}{payModal.tier_label} @ {payModal.commission_rate}% =
+            {" "}<b className="text-bassani-700">{fmtR(payModal.commission_amount)}</b>
           </p>
           {payModal.bank_account_number && (
-            <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 mb-5 space-y-0.5">
+            <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 mb-4 space-y-0.5">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Banking Details</p>
               <p className="text-sm font-medium text-gray-800">{payModal.bank_account_holder}</p>
               <p className="text-xs text-gray-500">{payModal.bank_name}</p>
@@ -1505,7 +1618,7 @@ function PayoutsView() {
           )}
           <div className="space-y-3 mb-6">
             <FormGroup label="Payment Reference">
-              <Input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder="e.g. EFT ref 20250610-JOE" autoFocus />
+              <Input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder="e.g. EFT ref 20260612-RES01" autoFocus />
             </FormGroup>
             <FormGroup label="Payment Date">
               <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
@@ -1513,7 +1626,7 @@ function PayoutsView() {
           </div>
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setPayModal(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={markPaid} disabled={paying}>{paying ? "Saving…" : "Confirm Payment"}</BtnPrimary>
+            <BtnPrimary onClick={markPaid} loading={paying}>Confirm Payment</BtnPrimary>
           </div>
         </Modal>
       )}
@@ -1525,58 +1638,10 @@ export function Commission() {
   const { user } = useAuth();
   const isReseller = user?.role === "reseller";
 
-  const [activeTab,  setActiveTab ] = useState("blocks");
-  const [resellers,  setResellers ] = useState([]);
-  const [selected,   setSelected  ] = useState(null);
-  const [matrix,     setMatrix    ] = useState([]);
-  const [summary,    setSummary   ] = useState(null);
-  const [loading,    setLoading   ] = useState(false);
-  const [toggling,   setToggling  ] = useState(new Set());
-  const [search,     setSearch    ] = useState("");
-  const [cat,        setCat       ] = useState("all");
-  const [categories, setCategories] = useState([]);
-
-  useEffect(() => {
-    if (isReseller) return;
-    api.get("/api/products/categories")
-      .then(r => setCategories(r.data.categories || []))
-      .catch(() => {});
-  }, [isReseller]);
-
-  const loadResellers = async () => {
-    if (isReseller) return;
-    try { const r = await api.get("/api/resellers/"); setResellers(r.data.resellers); if (r.data.resellers.length) setSelected(r.data.resellers[0].id); }
-    catch { toast.error("Failed to load resellers"); }
-  };
-  useEffect(() => { loadResellers(); }, []); // eslint-disable-line
-
-  const loadMatrix = useCallback(async () => {
-    if (!selected || isReseller) return;
-    setLoading(true);
-    try {
-      const r = await api.get(`/api/commission/${selected}/matrix`, { params:{ search:search||undefined, category:cat==="all"?undefined:cat } });
-      setMatrix(r.data.matrix); setSummary(r.data.summary);
-    } catch { toast.error("Failed to load matrix"); }
-    finally { setLoading(false); }
-  }, [selected, search, cat, isReseller]);
-
-  useEffect(() => { loadMatrix(); }, [loadMatrix]);
-
-  const toggleBlock = async (productId, currentlyBlocked) => {
-    setToggling(s => new Set(s).add(productId));
-    const endpoint = currentlyBlocked ? "unblock" : "block";
-    try {
-      await api.put(`/api/commission/${selected}/matrix/${productId}/${endpoint}`);
-      toast.success(currentlyBlocked ? "Product unblocked — 12.5% restored" : "Product blocked — 0% commission");
-      loadMatrix();
-    } catch { toast.error("Failed"); }
-    finally { setToggling(s => { const n = new Set(s); n.delete(productId); return n; }); }
-  };
-
   if (isReseller) return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="My Commission" subtitle="Your earnings history" />
-      <main className="flex-1 overflow-y-auto p-6 space-y-4">
+      <TopBar title="My Commission" subtitle="Monthly earnings based on turnover tier" />
+      <main className="flex-1 overflow-y-auto p-6 space-y-5">
         <ResellerCommissionView />
       </main>
     </div>
@@ -1584,72 +1649,9 @@ export function Commission() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar
-        title="Commission"
-        subtitle={activeTab === "blocks" ? "Block products per reseller — all active products earn 12.5%" : "Pending EFT payouts to resellers"}
-        onRefresh={activeTab === "blocks" ? loadMatrix : undefined}
-      />
-      <main className="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Tab navigation */}
-        <ChipRow>
-          <FilterPill label="Product Blocks" active={activeTab === "blocks"} onClick={() => setActiveTab("blocks")} />
-          <FilterPill label="Payouts" active={activeTab === "payouts"} onClick={() => setActiveTab("payouts")} />
-        </ChipRow>
-
-        {/* ── Product Blocks tab ── */}
-        {activeTab === "blocks" && (<>
-          <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400 font-medium shrink-0">Reseller:</span>
-              <select value={selected||""} onChange={e=>setSelected(e.target.value)}
-                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 bg-white min-w-[200px]">
-                {resellers.map(r=><option key={r.id} value={r.id}>{r.name}{r.seller_code?" · "+r.seller_code:""}</option>)}
-              </select>
-            </div>
-            {summary && (
-              <div className="ml-auto flex gap-4 text-xs text-gray-500">
-                <span>Active: <b className="text-green-700">{summary.active_products}</b></span>
-                <span>Blocked: <b className="text-red-600">{summary.blocked_products}</b></span>
-                <span>Default rate: <b className="text-bassani-700">{summary.default_rate}%</b></span>
-              </div>
-            )}
-          </div>
-          <div className="space-y-2">
-            <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-            <ChipRow>
-              {["all",...categories.map(c=>c.name)].map(c=><FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={()=>setCat(c)} />)}
-            </ChipRow>
-          </div>
-          <DataTable
-            columns={[
-              { accessorKey:"product_name", header:"Product / SKU", cell:({row:{original:m}})=>
-                  <div className={m.is_blocked?"opacity-50":""}>
-                    <p className={`font-medium ${m.is_blocked?"line-through text-gray-400":"text-gray-900"}`}>{m.product_name}</p>
-                    <p className="font-mono text-[10px] text-gray-400">{m.product_sku}</p>
-                  </div> },
-              { accessorKey:"category", header:"Category", cell:({row:{original:m}})=><span className="text-xs text-gray-500">{m.category}</span> },
-              { accessorKey:"list_price", header:"List Price", cell:({row:{original:m}})=><span className="text-sm">{fmtR(m.list_price)}</span> },
-              { id:"commission", header:"Commission", enableSorting:false, cell:({row:{original:m}})=>
-                  m.is_blocked
-                    ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600">Blocked — 0%</span>
-                    : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700">Active — 12.5%</span> },
-              { id:"block", header:"", enableSorting:false, cell:({row:{original:m}})=> {
-                  const busy = toggling.has(m.product_id);
-                  return (
-                    <button onClick={()=>!busy && toggleBlock(m.product_id, m.is_blocked)} disabled={busy}
-                      className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${m.is_blocked?"border-bassani-300 text-bassani-700 hover:bg-bassani-50":"border-red-200 text-red-600 hover:bg-red-50"}`}>
-                      {busy && <Loader2 size={10} className="animate-spin" />}
-                      {busy ? (m.is_blocked ? "Unblocking…" : "Blocking…") : (m.is_blocked ? "Unblock" : "Block")}
-                    </button>
-                  );
-                } },
-            ]}
-            data={matrix} loading={loading} defaultPageSize={50}
-          />
-        </>)}
-
-        {/* ── Payouts tab ── */}
-        {activeTab === "payouts" && <PayoutsView />}
+      <TopBar title="Commission" subtitle="Monthly statements, tier configuration and payouts" />
+      <main className="flex-1 overflow-y-auto p-6">
+        <AdminCommissionView />
       </main>
     </div>
   );

@@ -237,12 +237,6 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                   <td style={{ padding: "4px 6px", fontSize: 12, color: "#666" }}>VAT 15%</td>
                   <td style={{ padding: "4px 6px", fontSize: 12, textAlign: "right", paddingLeft: 40 }}>R {fmt(o.amount_tax)}</td>
                 </tr>
-                {o.commission_total > 0 && (
-                  <tr>
-                    <td style={{ padding: "4px 6px", fontSize: 12, color: "#0f6e56" }}>Reseller Commission</td>
-                    <td style={{ padding: "4px 6px", fontSize: 12, textAlign: "right", paddingLeft: 40, color: "#0f6e56" }}>R {fmt(o.commission_total)}</td>
-                  </tr>
-                )}
                 <tr>
                   <td style={{ padding: "8px 6px 4px", fontSize: 14, fontWeight: 800, borderTop: "2px solid #111" }}>Total</td>
                   <td style={{ padding: "8px 6px 4px", fontSize: 14, fontWeight: 800, textAlign: "right", paddingLeft: 40, borderTop: "2px solid #111" }}>R {fmt(o.amount_total)}</td>
