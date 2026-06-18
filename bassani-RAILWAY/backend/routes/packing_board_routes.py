@@ -295,6 +295,12 @@ async def list_packers(_: dict = Depends(get_current_user)):
 
 # ── WebSocket endpoints ───────────────────────────────────────────────────────
 
+async def _ws_reject(ws: WebSocket, reason: str):
+    """Send a JSON auth_error before closing — Railway's proxy strips custom close codes."""
+    await ws.send_text(json.dumps({"type": "auth_error", "reason": reason}))
+    await ws.close(code=4001)
+
+
 @router.websocket("/ws/board")
 async def websocket_board(ws: WebSocket):
     """
@@ -303,7 +309,7 @@ async def websocket_board(ws: WebSocket):
     """
     await ws.accept()
     if not _verify_display_token(ws):
-        await ws.close(code=4001, reason="Invalid display token")
+        await _ws_reject(ws, "invalid_token")
         return
     await manager.connect_screen(ws)
     try:
@@ -323,7 +329,7 @@ async def websocket_supervisor(ws: WebSocket):
     await ws.accept()
     user = await _verify_ws_user(ws, {"warehouse_supervisor"})
     if not user:
-        await ws.close(code=4001, reason="Unauthorized")
+        await _ws_reject(ws, "unauthorized")
         return
     await manager.connect_supervisor(ws)
     try:
@@ -353,7 +359,7 @@ async def websocket_packer(ws: WebSocket):
     await ws.accept()
     user = await _verify_ws_user(ws, {"packer"})
     if not user:
-        await ws.close(code=4001, reason="Unauthorized")
+        await _ws_reject(ws, "unauthorized")
         return
     await manager.connect_packer(ws)
     try:

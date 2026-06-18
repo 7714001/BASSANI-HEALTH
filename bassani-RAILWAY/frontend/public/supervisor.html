@@ -438,6 +438,12 @@ function connect() {
 
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
+    if (msg.type === 'auth_error') {
+      clearSession();
+      doLogout();
+      showError('Your session has expired. Please sign in again.');
+      return;
+    }
     if (msg.type === 'full_state') {
       orders = {};
       msg.data.forEach(o => orders[o.order_id] = o);
@@ -447,15 +453,8 @@ function connect() {
     render();
   };
 
-  ws.onclose = (e) => {
+  ws.onclose = () => {
     document.getElementById('conn-status').textContent = 'Reconnecting…';
-    if (e.code === 4001) {
-      // Token expired or invalid — back to login
-      clearSession();
-      doLogout();
-      showError('Your session has expired. Please sign in again.');
-      return;
-    }
     setTimeout(connect, 3000);
   };
 

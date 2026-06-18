@@ -473,8 +473,9 @@
 
 <script>
 // ── State ────────────────────────────────────────────────────────────────────
-let orders = {};   // order_id → entry object
+let orders = {};
 let ws = null;
+let authFailed = false;
 
 // ── Clock ────────────────────────────────────────────────────────────────────
 function updateClock() {
@@ -506,6 +507,12 @@ function connect() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'ping') return;
+    if (msg.type === 'auth_error') {
+      authFailed = true;
+      document.getElementById('offline-banner').textContent = '⚠ Invalid display token — contact your administrator';
+      document.getElementById('offline-banner').classList.add('show');
+      return;
+    }
     if (msg.type === 'full_state') {
       orders = {};
       msg.data.forEach(entry => orders[entry.order_id] = entry);
@@ -515,13 +522,9 @@ function connect() {
     render();
   };
 
-  ws.onclose = (e) => {
+  ws.onclose = () => {
+    if (authFailed) return;
     document.getElementById('live-dot').style.color = '#ef4444';
-    if (e.code === 4001) {
-      document.getElementById('offline-banner').textContent = '⚠ Invalid display token — contact your administrator';
-      document.getElementById('offline-banner').classList.add('show');
-      return;  // do not reconnect with an invalid token
-    }
     document.getElementById('offline-banner').classList.add('show');
     setTimeout(connect, 3000);
   };
