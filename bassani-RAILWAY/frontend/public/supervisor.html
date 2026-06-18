@@ -396,9 +396,7 @@ function showError(msg) {
 function doLogout() {
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   clearSession();
-  document.getElementById('main-ui').style.display = 'none';
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('login-password').value = '';
+  location.href = '/login';
 }
 
 async function enterBoard() {
