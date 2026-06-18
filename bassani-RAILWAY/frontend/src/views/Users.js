@@ -7,8 +7,9 @@ import {
   ChevronDown, ChevronUp, ShieldCheck,
 } from "lucide-react";
 import {
-  TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select,
+  TopBar, DataTable, Modal, FormGroup, Input, Select,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, fmtDate,
+  SearchBar, ChipRow, FilterPill,
 } from "../components/UI";
 
 // ── Permission configuration ──────────────────────────────────────────────────
@@ -139,8 +140,11 @@ export default function Users() {
   const { user: currentUser } = useAuth();
   const isSuperAdmin = currentUser?.is_super_admin;
 
-  const [users,   setUsers  ] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [users,        setUsers       ] = useState([]);
+  const [loading,      setLoading     ] = useState(true);
+  const [search,       setSearch      ] = useState("");
+  const [roleFilter,   setRoleFilter  ] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   // Create modal
   const [createModal, setCreateModal] = useState(false);
@@ -290,6 +294,18 @@ export default function Users() {
 
   const availableRoles = ROLE_OPTIONS.filter(r => isSuperAdmin || !r.adminOnly);
 
+  const filtered = users.filter(u => {
+    const q = search.toLowerCase();
+    const matchSearch = !q || u.username.toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q);
+    const matchRole   = roleFilter === "all"
+      || (roleFilter === "super_admin" && u.is_super_admin)
+      || (!u.is_super_admin && u.role === roleFilter);
+    const matchStatus = statusFilter === "all"
+      || (statusFilter === "active"   && u.active !== false)
+      || (statusFilter === "inactive" && u.active === false);
+    return matchSearch && matchRole && matchStatus;
+  });
+
   const permSummary = (u) => {
     if (u.is_super_admin)                   return "Full access";
     if (u.role === "warehouse_supervisor")  return "Packing floor — supervisor";
@@ -315,64 +331,122 @@ export default function Users() {
       />
 
       <main className="flex-1 overflow-y-auto p-6">
-        {loading ? <LoadingState /> : (
-          <Table headers={["Username", "Name", "Role", "Permissions", "Status", "Last Login", "Actions"]}>
-            {users.length === 0 && (
-              <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">No users found</td></tr>
-            )}
-            {users.map(u => (
-              <Tr key={u.id}>
-                <Td>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-medium text-gray-900">{u.username}</span>
-                    {u.is_super_admin && (
-                      <span title="Super Admin" className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 rounded-full px-2 py-0.5">
-                        <ShieldCheck size={10} /> SUPER
-                      </span>
-                    )}
-                  </div>
-                </Td>
-                <Td>{u.name || <span className="text-gray-300">—</span>}</Td>
-                <Td>
-                  <Badge color={ROLE_COLORS[u.role] || "gray"}>
-                    {u.role?.replace(/_/g, " ")}
-                  </Badge>
-                </Td>
-                <Td>
-                  <span className="text-xs text-gray-500">{permSummary(u)}</span>
-                </Td>
-                <Td>
-                  <Badge color={u.active !== false ? "green" : "red"}>
-                    {u.active !== false ? "Active" : "Inactive"}
-                  </Badge>
-                </Td>
-                <Td>
-                  <span className="text-xs text-gray-400">
-                    {u.last_login_at ? fmtDate(u.last_login_at) : <span className="italic">Never</span>}
-                  </span>
-                </Td>
-                <Td>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {/* Only super_admin can edit permissions on admin accounts */}
-                    {isSuperAdmin && u.role === "admin" && !u.is_super_admin && (
-                      <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
-                        <ShieldCheck size={12} />
-                      </BtnSecondary>
-                    )}
-                    <BtnSecondary size="sm" onClick={() => openReset(u)} title="Reset password">
-                      <KeyRound size={12} />
-                    </BtnSecondary>
-                    {!u.is_super_admin && (
-                      u.active !== false
-                        ? <BtnDanger onClick={() => toggleActive(u)} title="Deactivate"><PowerOff size={12} /></BtnDanger>
-                        : <BtnSecondary size="sm" onClick={() => toggleActive(u)} title="Reactivate"><Power size={12} /></BtnSecondary>
-                    )}
-                  </div>
-                </Td>
-              </Tr>
+        <div className="mb-4 space-y-2">
+          <SearchBar
+            value={search}
+            onChange={v => setSearch(v)}
+            placeholder="Search username or name…"
+          />
+          <ChipRow>
+            {[
+              { value: "all",                  label: "All" },
+              { value: "super_admin",          label: "Super Admin" },
+              { value: "admin",                label: "Admin" },
+              { value: "warehouse_supervisor", label: "Supervisor" },
+              { value: "packer",               label: "Packer" },
+            ].map(r => (
+              <FilterPill key={r.value} label={r.label} active={roleFilter === r.value}
+                onClick={() => setRoleFilter(r.value)} />
             ))}
-          </Table>
-        )}
+            <span className="w-px h-4 bg-gray-200 self-center mx-1" />
+            {[
+              { value: "all",      label: "Any status" },
+              { value: "active",   label: "Active" },
+              { value: "inactive", label: "Inactive" },
+            ].map(s => (
+              <FilterPill key={s.value} label={s.label} active={statusFilter === s.value}
+                onClick={() => setStatusFilter(s.value)} />
+            ))}
+          </ChipRow>
+        </div>
+        <DataTable
+          loading={loading}
+          data={filtered}
+          total={filtered.length}
+          columns={[
+            {
+              id: "username",
+              header: "Username",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm font-medium text-gray-900">{u.username}</span>
+                  {u.is_super_admin && (
+                    <span title="Super Admin" className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 rounded-full px-2 py-0.5">
+                      <ShieldCheck size={10} /> SUPER
+                    </span>
+                  )}
+                </div>
+              ),
+            },
+            {
+              id: "name",
+              header: "Name",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => u.name || <span className="text-gray-300">—</span>,
+            },
+            {
+              id: "role",
+              header: "Role",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <Badge color={ROLE_COLORS[u.role] || "gray"}>
+                  {u.role?.replace(/_/g, " ")}
+                </Badge>
+              ),
+            },
+            {
+              id: "permissions",
+              header: "Permissions",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <span className="text-xs text-gray-500">{permSummary(u)}</span>
+              ),
+            },
+            {
+              id: "status",
+              header: "Status",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <Badge color={u.active !== false ? "green" : "red"}>
+                  {u.active !== false ? "Active" : "Inactive"}
+                </Badge>
+              ),
+            },
+            {
+              id: "last_login",
+              header: "Last Login",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <span className="text-xs text-gray-400">
+                  {u.last_login_at ? fmtDate(u.last_login_at) : <span className="italic">Never</span>}
+                </span>
+              ),
+            },
+            {
+              id: "actions",
+              header: "",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                <div className="flex gap-1.5 flex-wrap">
+                  {isSuperAdmin && u.role === "admin" && !u.is_super_admin && (
+                    <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
+                      <ShieldCheck size={12} />
+                    </BtnSecondary>
+                  )}
+                  <BtnSecondary size="sm" onClick={() => openReset(u)} title="Reset password">
+                    <KeyRound size={12} />
+                  </BtnSecondary>
+                  {!u.is_super_admin && (
+                    u.active !== false
+                      ? <BtnDanger onClick={() => toggleActive(u)} title="Deactivate"><PowerOff size={12} /></BtnDanger>
+                      : <BtnSecondary size="sm" onClick={() => toggleActive(u)} title="Reactivate"><Power size={12} /></BtnSecondary>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
       </main>
 
       {/* ── Create user modal ── */}

@@ -478,9 +478,22 @@ const STATUS_STYLES = {
   delivered:  "bg-green-50 text-green-700",
 };
 
-export function Badge({ status, label }) {
-  const style = STATUS_STYLES[status?.toLowerCase()] || "bg-gray-100 text-gray-600";
-  const text  = label || status?.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "—";
+const COLOR_STYLES = {
+  gray:   "bg-gray-100 text-gray-600",
+  blue:   "bg-blue-50 text-blue-700",
+  green:  "bg-green-50 text-green-700",
+  red:    "bg-red-50 text-red-600",
+  amber:  "bg-amber-50 text-amber-700",
+  purple: "bg-purple-100 text-purple-700",
+  orange: "bg-orange-50 text-orange-700",
+  teal:   "bg-teal-50 text-teal-700",
+};
+
+export function Badge({ status, label, color, children }) {
+  const style = color
+    ? (COLOR_STYLES[color] || "bg-gray-100 text-gray-600")
+    : (STATUS_STYLES[status?.toLowerCase()] || "bg-gray-100 text-gray-600");
+  const text = children ?? label ?? (status ? status.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "—");
   return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${style}`}>{text}</span>;
 }
 
