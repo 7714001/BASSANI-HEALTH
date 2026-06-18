@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from auth import (
     authenticate_user, create_access_token,
     get_current_user, Token
 )
+from database import col
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -31,6 +33,10 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = create_access_token(data={"sub": user["username"]})
+    await col("users").update_one(
+        {"username": user["username"]},
+        {"$set": {"last_login_at": datetime.now(timezone.utc)}},
+    )
     return {
         "access_token": token,
         "token_type": "bearer",

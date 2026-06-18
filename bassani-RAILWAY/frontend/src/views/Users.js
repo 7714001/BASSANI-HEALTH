@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import {
   TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select,
-  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState,
+  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, fmtDate,
 } from "../components/UI";
 
 // ── Permission configuration ──────────────────────────────────────────────────
@@ -316,7 +316,7 @@ export default function Users() {
 
       <main className="flex-1 overflow-y-auto p-6">
         {loading ? <LoadingState /> : (
-          <Table headers={["Username", "Name", "Role", "Permissions", "Status", "Actions"]}>
+          <Table headers={["Username", "Name", "Role", "Permissions", "Status", "Last Login", "Actions"]}>
             {users.length === 0 && (
               <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">No users found</td></tr>
             )}
@@ -345,6 +345,11 @@ export default function Users() {
                   <Badge color={u.active !== false ? "green" : "red"}>
                     {u.active !== false ? "Active" : "Inactive"}
                   </Badge>
+                </Td>
+                <Td>
+                  <span className="text-xs text-gray-400">
+                    {u.last_login_at ? fmtDate(u.last_login_at) : <span className="italic">Never</span>}
+                  </span>
                 </Td>
                 <Td>
                   <div className="flex gap-1.5 flex-wrap">
