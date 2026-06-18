@@ -291,8 +291,11 @@ export default function Users() {
   const availableRoles = ROLE_OPTIONS.filter(r => isSuperAdmin || !r.adminOnly);
 
   const permSummary = (u) => {
-    if (u.is_super_admin) return "Full access";
-    if (!u.permissions) return "—";
+    if (u.is_super_admin)                   return "Full access";
+    if (u.role === "warehouse_supervisor")  return "Packing floor — supervisor";
+    if (u.role === "packer")                return "Packing floor — packer";
+    if (u.role === "reseller")              return "Reseller portal";
+    if (!u.permissions)                     return "—";
     const enabled = Object.values(u.permissions).flatMap(Object.values).filter(Boolean).length;
     const total   = Object.values(u.permissions).flatMap(Object.values).length;
     return `${enabled} / ${total} permissions`;

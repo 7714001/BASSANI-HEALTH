@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import require_admin, hash_password, DEFAULT_ADMIN_PERMISSIONS, FULL_PERMISSIONS, ALL_ROLES
+from auth import require_admin, hash_password, DEFAULT_ADMIN_PERMISSIONS, ALL_ROLES
 from database import col
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -46,11 +46,11 @@ def generate_password(length: int = 12) -> str:
 
 
 def _permissions_for_new_role(role: str, supplied: Optional[dict]) -> Optional[dict]:
-    """Return the permissions dict to store, or None for non-admin roles."""
+    """Return the permissions dict to store, or None for roles that don't use it."""
     if role == "admin":
         return supplied if supplied else DEFAULT_ADMIN_PERMISSIONS
-    if role in ("super_admin", "warehouse_supervisor", "packer"):
-        return FULL_PERMISSIONS  # fixed; stored for completeness but role governs access
+    # warehouse_supervisor and packer access is role-gated at the packing board layer,
+    # not via this permissions object — store nothing so the portal summary shows correctly.
     return None
 
 

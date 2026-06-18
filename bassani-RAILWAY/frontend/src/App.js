@@ -24,6 +24,36 @@ import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications  from "./views/CustomerApplications";
 import ResellerProfile       from "./views/ResellerProfile";
 
+const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
+
+function PackingFloorScreen() {
+  const { user, logout } = useAuth();
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8 text-center">
+        <div className="w-14 h-14 bg-bassani-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-7 h-7 text-bassani-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-.375c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v.375c0 .621.504 1.125 1.125 1.125z" />
+          </svg>
+        </div>
+        <h1 className="text-lg font-bold text-gray-900 mb-1">Packing Floor Access</h1>
+        <p className="text-sm text-gray-500 mb-1">
+          Logged in as <span className="font-semibold text-gray-700">{user?.name || user?.username}</span>
+        </p>
+        <p className="text-xs text-gray-400 mb-6">
+          This account is configured for the packing floor. Use the board URL provided by your supervisor to access your workspace.
+        </p>
+        <button
+          onClick={logout}
+          className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-700 transition-colors"
+        >
+          Log out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading, isAdmin } = useAuth();
   if (loading) return (
@@ -32,6 +62,7 @@ function ProtectedRoute({ children, adminOnly }) {
     </div>
   );
   if (!user) return <Navigate to="/login" replace />;
+  if (PACKING_FLOOR_ROLES.has(user.role)) return <PackingFloorScreen />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
   return children;
 }
