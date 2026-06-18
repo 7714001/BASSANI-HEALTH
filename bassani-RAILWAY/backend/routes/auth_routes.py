@@ -17,6 +17,7 @@ def _user_payload(user: dict) -> dict:
         "username":      user["username"],
         "role":          user.get("role", "reseller"),
         "name":          user.get("name", ""),
+        "display_name":  user.get("display_name", ""),
         "reseller_id":   user.get("reseller_id"),
         "is_super_admin": bool(user.get("is_super_admin", False)),
         "permissions":   user.get("permissions") or {},

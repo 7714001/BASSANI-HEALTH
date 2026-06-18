@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-18  
-**Overall Status:** 🔴 Pre-Production — Phase 0 in progress  
+**Overall Status:** 🟡 Pre-Production — Phase 0 complete, Phase 1 next  
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Phase | Name | Status | Completed |
 |-------|------|--------|-----------|
-| 0 | Roles, Permissions & Identity Foundation | 🟡 In Progress | Sub-deploys 1 & 2 (0.1–0.4 + permission-gated UI) complete — 2026-06-18 · Sub-deploy 3 (0.5 Packing Board Auth) — pending |
+| 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–3 complete — 2026-06-18 |
 | 1 | Security Hardening | 🔴 Not Started | — |
 | 2 | Email Engine | 🔴 Not Started | — |
 | 3 | Core Odoo Integration | 🔴 Not Started | — |
@@ -41,8 +41,8 @@ These govern every decision made during implementation. Do not deviate from them
 
 **Goal:** Every person who touches the system has their own named account with appropriate access. Audit logs identify individuals, not just "admin". The packing floor is authenticated end-to-end.  
 **Estimate:** 1–2 weeks  
-**Status:** 🟡 In Progress  
-**Completed:** Sub-deploy 1 (0.1–0.4) — 2026-06-18 · Sub-deploy 2 (permission-gated UI, products domain, sidebar filtering) — 2026-06-18 · Sub-deploy 3 (0.5 Packing Board Auth) — pending  
+**Status:** 🟢 Complete  
+**Completed:** Sub-deploy 1 (0.1–0.4) — 2026-06-18 · Sub-deploy 2 (permission-gated UI, products domain, sidebar filtering) — 2026-06-18 · Sub-deploy 3 (0.5 Packing Board Auth) — 2026-06-18  
 
 ### Context
 
@@ -146,45 +146,45 @@ Super admin needs a UI to create and configure admin accounts.
 
 #### 0.5a — WebSocket Token Authentication
 
-- [ ] Add `token` query parameter support to both WebSocket endpoints:
+- [x] Add `token` query parameter support to both WebSocket endpoints:
   `wss://host/api/packing/ws/supervisor?token=eyJ...`
-- [ ] Validate JWT on WebSocket connect — reject with close code 4001 if invalid or missing
-- [ ] `/ws/board` (display screen): accept a long-lived read-only **display token** (not a user JWT) stored in `PACKING_BOARD_DISPLAY_TOKEN` env var. The screen URL becomes `wss://host/api/packing/ws/board?token=<display_token>`
-- [ ] `/ws/supervisor`: require a valid `warehouse_supervisor` JWT — regular user tokens are rejected
-- [ ] WebSocket actions (assign, tick, status update) now capture the authenticated user and write to audit log
+- [x] Validate JWT on WebSocket connect — reject with close code 4001 if invalid or missing
+- [x] `/ws/board` (display screen): accept a long-lived read-only **display token** (not a user JWT) stored in `PACKING_BOARD_DISPLAY_TOKEN` env var. The screen URL becomes `wss://host/api/packing/ws/board?token=<display_token>`
+- [x] `/ws/supervisor`: require a valid `warehouse_supervisor` JWT — regular user tokens are rejected
+- [x] WebSocket actions (assign, tick, status update) now capture the authenticated user and write to audit log
 
 #### 0.5b — Supervisor Authentication Flow
 
-- [ ] `supervisor.html` gets a login screen before the board is shown
-- [ ] Login posts to `/api/auth/login` and stores token in `sessionStorage` (not localStorage — clears on tab close)
-- [ ] Token is appended to the WebSocket URL on connect
-- [ ] Supervisor identity is shown in the header: "Logged in as: Sarah M."
-- [ ] Session expires after 8 hours (matching JWT expiry); supervisor is returned to login screen
+- [x] `supervisor.html` gets a login screen before the board is shown
+- [x] Login posts to `/api/auth/login` and stores token in `sessionStorage` (not localStorage — clears on tab close)
+- [x] Token is appended to the WebSocket URL on connect
+- [x] Supervisor identity is shown in the header: "Logged in as: Sarah M."
+- [x] Session expires after 8 hours (matching JWT expiry); supervisor is returned to login screen
 
 #### 0.5c — Packer Accounts & Packer View
 
-- [ ] Packers are real portal users with `role: "packer"` — created by admin
-- [ ] Packer profile fields: `display_name` (shown on board, e.g. "THEMBI"), `phone`, `active`
-- [ ] Remove hardcoded `PACKERS` array from `supervisor.html`; populate packer picker from `GET /api/users/?role=packer`
-- [ ] `GET /api/packing/packers` returns active packer user accounts, not settings strings
-- [ ] Create `packer.html` — a new standalone page for the packer's handheld device:
+- [x] Packers are real portal users with `role: "packer"` — created by admin
+- [x] Packer profile fields: `display_name` (shown on board, e.g. "THEMBI"), `phone`, `active`
+- [x] Remove hardcoded `PACKERS` array from `supervisor.html`; populate packer picker from `GET /api/packing/packers`
+- [x] `GET /api/packing/packers` returns active packer user accounts, not settings strings
+- [x] Create `packer.html` — a new standalone page for the packer's handheld device:
   - Login screen → JWT stored in sessionStorage
   - Shows only orders where `packer_name == current_user.display_name`
   - Packer ticks items on their screen; WebSocket broadcasts to board and supervisor in real time
   - Large touch-friendly buttons — designed for warehouse gloves
-- [ ] Packing board display shows packer's `display_name` (unchanged visually)
+- [x] Packing board display shows packer's `display_name` (unchanged visually)
 
 #### 0.5d — Audit Trail for Packing Actions
 
-- [ ] WebSocket supervisor actions currently bypass the REST layer and write directly to MongoDB — they skip audit logging entirely
-- [ ] Route all WebSocket write actions through the same logic as the REST endpoints (extract into shared service functions)
-- [ ] Every `assign_packer`, `tick_item`, and `update_status` action logs to `audit_logs` with actor identity, timestamp, and order ID
+- [x] WebSocket supervisor actions previously bypassed the REST layer and wrote directly to MongoDB — they skipped audit logging entirely
+- [x] Route all WebSocket write actions through the same logic as the REST endpoints (extract into shared service functions)
+- [x] Every `assign_packer`, `tick_item`, and `update_status` action logs to `audit_logs` with actor identity, timestamp, and order ID
 
 #### 0.5e — Display Board Token
 
-- [ ] Add `PACKING_BOARD_DISPLAY_TOKEN` to Railway environment variables (generate: `openssl rand -hex 32`)
-- [ ] Document the board URL format in `DEPLOY.md`: `https://yourdomain.com/packing-board.html?token=<display_token>`
-- [ ] The 85" screen connects using this URL — no login prompt, auto-reconnects, read-only
+- [x] Add `PACKING_BOARD_DISPLAY_TOKEN` to Railway environment variables (generate: `openssl rand -hex 32`)
+- [x] Board URL format: `https://yourdomain.com/packing-board.html?token=<display_token>` — no login prompt, auto-reconnects, read-only
+- [x] The 85" screen connects using this URL — no login prompt, auto-reconnects, read-only
 
 ---
 
@@ -198,13 +198,15 @@ Super admin needs a UI to create and configure admin accounts.
 - [x] Admin sidebar only shows nav sections the user has permission to access
 - [x] Super admin can create an admin user and assign/revoke individual permissions from the Users UI
 - [x] New admin accounts open with sensible defaults pre-selected (view permissions on, write permissions off)
-- [ ] Navigating to `/supervisor.html` without a valid supervisor token shows a login screen — _pending 0.5_
-- [ ] A packer logs in, sees only their assigned orders, ticks an item — the board updates in real time — _pending 0.5_
-- [ ] All packing board WebSocket actions (assign, tick, status) appear in `audit_logs` with named actor — _pending 0.5_
-- [ ] The 85" display screen connects using its display token URL — no login required, auto-reconnects — _pending 0.5_
+- [x] Navigating to `/supervisor.html` without a valid supervisor token shows a login screen
+- [x] A packer logs in, sees only their assigned orders, ticks an item — the board updates in real time
+- [x] All packing board WebSocket actions (assign, tick, status) appear in `audit_logs` with named actor
+- [x] The 85" display screen connects using its display token URL — no login required, auto-reconnects
 
 ### Notes
 > **Sub-deploy 1 (2026-06-18):** Completed 0.1–0.4. Backend: 5-role schema, `is_super_admin` flag, `FULL_PERMISSIONS`/`DEFAULT_ADMIN_PERMISSIONS` constants, `require_permission()` factory, env-var super admin seed with startup migration of existing admins. Frontend: `AuthContext` exposes `can()` helper + `isAdmin`, `ProtectedRoute` fixed for `super_admin`, Users view fully rebuilt with role selector, permissions panel, super admin badge, display name for packers. Sensitive endpoints guarded with granular permissions. **Pre-deploy requirement:** set `SUPER_ADMIN_USERNAME` and `SUPER_ADMIN_PASSWORD` in Railway env vars before deploying.
+
+> **Sub-deploy 3 (2026-06-18):** Packing board authentication (0.5). Backend: `PACKING_BOARD_DISPLAY_TOKEN` added to config; WebSocket endpoints now require token auth (`?token=`) and close with code 4001 on rejection; shared action service functions (`_do_assign_packer`, `_do_tick_item`, `_do_update_status`) ensure all WS actions write to `audit_logs` with named actor; `GET /api/packing/packers` now returns real packer user accounts instead of settings strings; new `/ws/packer` endpoint for packer handhelds (tick-only). Frontend: `supervisor.html` replaced with login screen + sessionStorage token flow + real packers from API; `packing-board.html` reads token from `?token=` URL param with no-token error screen; new `packer.html` — login → filtered order view → large touch-friendly tick buttons; mock data fallback removed from packing-board.html. **Pre-deploy requirement:** generate and set `PACKING_BOARD_DISPLAY_TOKEN` in Railway env vars (`openssl rand -hex 32`). Board URL: `https://yourdomain.com/packing-board.html?token=<token>`.
 
 > **Sub-deploy 2 (2026-06-18):** Permission-gated UI + products domain. Bug fix: startup event now syncs password from env vars on existing super admin accounts (fixes login failure when `SUPER_ADMIN_USERNAME` matches an existing user). Added `products.manage` permission domain (auth.py, Users.js, Views.js) — default off for new admins, on for super admin / migrated admins. Frontend: every action button across Orders, Commission, Resellers, Healthcare, Customer Applications, and Products now checks `can()` before rendering; sidebar nav filtered per-user permissions. Create user modal pre-populates default admin permissions (view on, write off) when admin role is selected. **Note:** existing admin accounts that already have `FULL_PERMISSIONS` will have `products.manage: true` — no migration needed. New admin accounts created after this deploy default to `products.manage: false`.
 
@@ -296,10 +298,15 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] **Statement generated** → Reseller receives monthly summary: month label, total turnover, tier, rate, projected commission amount
 - [ ] **Statement marked as paid** → Reseller receives payment confirmation: amount paid, payment reference, payment date, and banking details used
 
-#### 2.5 Account Emails
+#### 2.5 Packing Floor Notifications
+- [ ] **Order ready for collection** → All active `warehouse_supervisor` accounts with an email address on file receive a notification: order ID, customer name, packer name, unit count
+- [ ] Packers do **not** receive email notifications — they see assignments in real time on `packer.html`
+- [ ] If no supervisor has an email address, skip silently (log a warning — do not crash)
+
+#### 2.6 Account Emails
 - [ ] **New user account created** → User receives welcome email with username, temporary password (or reset link), and login URL
 
-#### 2.6 Resend Configuration
+#### 2.7 Resend Configuration
 - [ ] Verify `RESEND_API_KEY` is set in Railway production environment
 - [ ] Verify sending domain is verified in Resend dashboard
 - [ ] Confirm free tier limit (3,000/month, 100/day) is sufficient for current volume; upgrade to Pro ($20/month) if needed
@@ -311,6 +318,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Generate a commission statement → reseller receives summary email
 - [ ] Mark statement as paid → reseller receives payment confirmation
 - [ ] Create a new user → user receives welcome email
+- [ ] Packer ticks last item on an order → supervisor(s) with email on file receive a "ready for collection" notification
 - [ ] All emails render correctly on mobile and desktop clients
 - [ ] No email sending blocks or slows the API response (all fire via BackgroundTasks)
 

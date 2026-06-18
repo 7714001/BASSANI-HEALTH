@@ -333,7 +333,7 @@
   .empty-state h2  { font-size: 24px; font-weight: 600; }
   .empty-state p   { font-size: 16px; margin-top: 8px; }
 
-  /* ── Connection lost banner ── */
+  /* ── Connection lost / auth error banner ── */
   .offline-banner {
     display: none;
     position: fixed;
@@ -347,6 +347,22 @@
     z-index: 100;
   }
   .offline-banner.show { display: block; }
+
+  /* ── No-token error screen ── */
+  .token-error {
+    display: none;
+    position: fixed; inset: 0;
+    background: #0a0f1e;
+    align-items: center; justify-content: center;
+    z-index: 200;
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+    padding: 40px;
+  }
+  .token-error.show { display: flex; }
+  .token-error h2 { font-size: 24px; font-weight: 700; color: #f87171; }
+  .token-error p  { font-size: 16px; color: #64748b; max-width: 480px; line-height: 1.6; }
 
   /* ── Collected fade out ── */
   @keyframes fadeOut {
@@ -367,6 +383,16 @@
 
 <div class="offline-banner" id="offline-banner">
   ⚠ Connection lost — reconnecting…
+</div>
+
+<div class="token-error" id="token-error">
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="1.5">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+  </svg>
+  <h2>No Display Token</h2>
+  <p>This screen requires a display token in the URL.<br>
+  Contact your administrator to get the correct board URL.</p>
+  <p style="font-size:13px;color:#475569;">Expected format: <code style="background:#1e293b;padding:2px 8px;border-radius:4px;">packing-board.html?token=YOUR_TOKEN</code></p>
 </div>
 
 <!-- Header -->
@@ -462,9 +488,15 @@ setInterval(updateClock, 1000);
 updateClock();
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
+const DISPLAY_TOKEN = new URLSearchParams(location.search).get('token') || '';
+
 function connect() {
+  if (!DISPLAY_TOKEN) {
+    document.getElementById('token-error').classList.add('show');
+    return;
+  }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/board`);
+  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/board?token=${DISPLAY_TOKEN}`);
 
   ws.onopen = () => {
     document.getElementById('offline-banner').classList.remove('show');
@@ -483,10 +515,15 @@ function connect() {
     render();
   };
 
-  ws.onclose = () => {
-    document.getElementById('offline-banner').classList.add('show');
+  ws.onclose = (e) => {
     document.getElementById('live-dot').style.color = '#ef4444';
-    setTimeout(connect, 3000);   // auto-reconnect
+    if (e.code === 4001) {
+      document.getElementById('offline-banner').textContent = '⚠ Invalid display token — contact your administrator';
+      document.getElementById('offline-banner').classList.add('show');
+      return;  // do not reconnect with an invalid token
+    }
+    document.getElementById('offline-banner').classList.add('show');
+    setTimeout(connect, 3000);
   };
 
   ws.onerror = () => ws.close();
@@ -637,16 +674,7 @@ function statusLabel(st) {
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-// Try WebSocket first, fall back to mock data if no server
-try {
-  connect();
-  // If still no data after 2s, load mock
-  setTimeout(() => {
-    if (Object.keys(orders).length === 0) loadMockData();
-  }, 2000);
-} catch (e) {
-  loadMockData();
-}
+connect();
 </script>
 </body>
 </html>

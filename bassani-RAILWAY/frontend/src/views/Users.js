@@ -149,7 +149,7 @@ export default function Users() {
   // Create modal
   const [createModal, setCreateModal] = useState(false);
   const [createForm,  setCreateForm ] = useState({
-    username: "", password: "", name: "", display_name: "", role: "admin",
+    username: "", password: "", name: "", email: "", display_name: "", role: "admin",
   });
   const [createPerms, setCreatePerms] = useState({ ...EMPTY_PERMISSIONS });
 
@@ -383,7 +383,12 @@ export default function Users() {
               id: "name",
               header: "Name",
               enableSorting: false,
-              cell: ({ row: { original: u } }) => u.name || <span className="text-gray-300">—</span>,
+              cell: ({ row: { original: u } }) => (
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{u.name || <span className="text-gray-300">—</span>}</p>
+                  {u.email && <p className="text-[11px] text-gray-400 mt-0.5">{u.email}</p>}
+                </div>
+              ),
             },
             {
               id: "role",
@@ -465,6 +470,14 @@ export default function Users() {
                 value={createForm.name}
                 onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
                 placeholder="Jane Smith"
+              />
+            </FormGroup>
+            <FormGroup label="Email Address">
+              <Input
+                type="email"
+                value={createForm.email}
+                onChange={e => setCreateForm({ ...createForm, email: e.target.value.toLowerCase() })}
+                placeholder="jane@company.com"
               />
             </FormGroup>
             <FormGroup label="Password" required>

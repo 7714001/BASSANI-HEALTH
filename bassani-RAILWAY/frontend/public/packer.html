@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Bassani · Packer</title>
+<style>
+  :root {
+    --green:  #0f6e56;
+    --amber:  #d97706;
+    --red:    #dc2626;
+    --bg:     #0a0f1e;
+    --card:   #0f172a;
+    --border: #1e293b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--bg);
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding-bottom: 32px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* ── Login screen ── */
+  .login-screen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 24px;
+  }
+  .login-screen.hidden { display: none; }
+  .login-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px 24px;
+    width: 100%; max-width: 360px;
+  }
+  .login-logo {
+    width: 52px; height: 52px;
+    background: var(--green); border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+  }
+  .login-logo svg { width: 28px; height: 28px; }
+  .login-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .login-sub   { font-size: 13px; color: #64748b; margin-bottom: 28px; }
+  .login-label {
+    font-size: 12px; color: #94a3b8; font-weight: 600;
+    text-transform: uppercase; letter-spacing:.06em; margin-bottom: 6px;
+  }
+  .login-input {
+    width: 100%; padding: 14px 16px; border-radius: 12px;
+    background: #1e293b; border: 1px solid #334155;
+    color: #fff; font-size: 16px; outline: none; margin-bottom: 16px;
+    -webkit-appearance: none;
+  }
+  .login-input:focus { border-color: var(--green); }
+  .login-btn {
+    width: 100%; padding: 16px; border-radius: 14px;
+    background: var(--green); border: none; color: #fff;
+    font-size: 18px; font-weight: 700; cursor: pointer; margin-top: 4px;
+  }
+  .login-btn:active { opacity: .85; }
+  .login-btn:disabled { opacity: .5; }
+  .login-error {
+    background: rgba(220,38,38,.1); border: 1px solid rgba(220,38,38,.3);
+    border-radius: 10px; padding: 10px 14px;
+    font-size: 13px; color: #f87171; margin-bottom: 16px; display: none;
+  }
+  .login-error.show { display: block; }
+
+  /* ── Header ── */
+  .header {
+    background: var(--card);
+    border-bottom: 2px solid var(--green);
+    padding: 16px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header-row { display: flex; align-items: center; justify-content: space-between; }
+  .header-name { font-size: 20px; font-weight: 800; letter-spacing: 1.5px; color: var(--amber); }
+  .header-sub  { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .logout-btn {
+    background: #1e293b; border: 1px solid #334155; color: #64748b;
+    font-size: 13px; font-weight: 600; padding: 8px 14px;
+    border-radius: 8px; cursor: pointer;
+  }
+  .conn-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: #4ade80;
+    background: rgba(74,222,128,0.1); border-radius: 99px;
+    padding: 3px 10px; margin-top: 6px;
+  }
+  .conn-pill span {
+    width: 6px; height: 6px; border-radius: 50%; background: #4ade80;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Empty / waiting ── */
+  .empty-state {
+    text-align: center; padding: 80px 24px; color: #334155;
+  }
+  .empty-state .icon { font-size: 56px; margin-bottom: 16px; }
+  .empty-state h2 { font-size: 20px; font-weight: 600; color: #475569; }
+  .empty-state p  { font-size: 14px; margin-top: 8px; color: #334155; }
+
+  /* ── Order card ── */
+  .order-card {
+    background: var(--card);
+    border-radius: 16px;
+    margin: 12px;
+    border: 2px solid var(--amber);
+    overflow: hidden;
+  }
+
+  .card-top {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-order-id { font-size: 13px; font-family: monospace; color: var(--amber); font-weight: 800; }
+  .card-customer { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .card-units    { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+  .progress-bar { height: 5px; background: #1e293b; }
+  .progress-fill { height: 100%; background: var(--amber); transition: width .4s; }
+  .progress-fill.done { background: var(--green); }
+
+  /* ── Items ── */
+  .items-list { padding: 8px 0; }
+  .item-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    active-background: rgba(255,255,255,.04);
+    -webkit-user-select: none; user-select: none;
+  }
+  .item-row:last-child { border-bottom: none; }
+  .item-row:active { background: rgba(255,255,255,.03); }
+
+  .tick-circle {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 3px solid #334155;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all .2s;
+  }
+  .tick-circle.done { background: var(--green); border-color: var(--green); }
+  .tick-circle.done::after {
+    content: '✓'; color: #fff; font-size: 20px; font-weight: 900;
+  }
+
+  .item-info { flex: 1; }
+  .item-name { font-size: 15px; font-weight: 600; }
+  .item-name.done { text-decoration: line-through; color: #475569; }
+  .item-loc {
+    font-size: 12px; font-family: monospace; color: #be185d;
+    background: rgba(190,24,93,.1); border-radius: 4px;
+    padding: 2px 7px; display: inline-block; margin-top: 4px;
+  }
+
+  .item-qty { font-size: 28px; font-weight: 900; min-width: 36px; text-align: right; }
+  .item-qty.done { color: #334155; }
+
+  /* ── Notes ── */
+  .notes-strip {
+    padding: 10px 16px; background: rgba(220,38,38,.08);
+    border-top: 1px solid rgba(220,38,38,.2);
+    font-size: 13px; color: #f87171;
+  }
+
+  /* ── All done banner ── */
+  .done-banner {
+    margin: 12px; padding: 20px 16px;
+    background: rgba(15,110,86,.15); border: 2px solid var(--green);
+    border-radius: 16px; text-align: center;
+  }
+  .done-banner h3 { font-size: 20px; font-weight: 800; color: #4ade80; }
+  .done-banner p  { font-size: 14px; color: #64748b; margin-top: 6px; }
+
+  /* ── Section label ── */
+  .section-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: #475569; padding: 16px 16px 4px; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Login screen ── -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-.375c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v.375c0 .621.504 1.125 1.125 1.125z"/>
+      </svg>
+    </div>
+    <div class="login-title">Packer Login</div>
+    <div class="login-sub">Bassani Health · Warehouse</div>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-label">Username</div>
+    <input class="login-input" id="login-username" type="text"
+      autocomplete="username" autocapitalize="none" placeholder="your.username" />
+    <div class="login-label">Password</div>
+    <input class="login-input" id="login-password" type="password"
+      autocomplete="current-password" placeholder="••••••••" />
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- ── Main UI ── -->
+<div id="main-ui" style="display:none">
+
+  <div class="header">
+    <div class="header-row">
+      <div>
+        <div class="header-name" id="packer-name">—</div>
+        <div class="header-sub">Your orders · tap to tick items</div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()">Log out</button>
+    </div>
+    <div class="conn-pill"><span></span> <span id="conn-status">Connecting…</span></div>
+  </div>
+
+  <div id="board-wrap"></div>
+
+</div>
+
+<script>
+let orders = {};
+let ws = null;
+let myDisplayName = '';
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+function getToken() { return sessionStorage.getItem('packer_token'); }
+function getUser()  { try { return JSON.parse(sessionStorage.getItem('packer_user')); } catch { return null; } }
+function clearSession() { sessionStorage.removeItem('packer_token'); sessionStorage.removeItem('packer_user'); }
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-error');
+
+  err.classList.remove('show');
+  if (!username || !password) { showError('Enter your username and password.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showError(data.detail || 'Login failed.'); return; }
+    if (data.user.role !== 'packer') {
+      showError('This page is for packing floor staff only.'); return;
+    }
+    sessionStorage.setItem('packer_token', data.access_token);
+    sessionStorage.setItem('packer_user', JSON.stringify(data.user));
+    enterBoard();
+  } catch {
+    showError('Could not reach the server. Please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg; el.classList.add('show');
+}
+
+function doLogout() {
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  clearSession();
+  document.getElementById('main-ui').style.display = 'none';
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('login-password').value = '';
+}
+
+function enterBoard() {
+  const user = getUser();
+  myDisplayName = (user?.display_name || user?.name || user?.username || '').toUpperCase();
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('main-ui').style.display = 'block';
+  document.getElementById('packer-name').textContent = myDisplayName || 'Packer';
+  connect();
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+
+function connect() {
+  const token = getToken();
+  if (!token) { doLogout(); return; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/packer?token=${token}`);
+
+  ws.onopen = () => {
+    document.getElementById('conn-status').textContent = 'Connected';
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'full_state') {
+      orders = {};
+      msg.data.forEach(o => { orders[o.order_id] = o; });
+    } else if (msg.type === 'entry_update') {
+      orders[msg.data.order_id] = msg.data;
+    }
+    render();
+  };
+
+  ws.onclose = (e) => {
+    document.getElementById('conn-status').textContent = 'Reconnecting…';
+    if (e.code === 4001) {
+      clearSession(); doLogout();
+      showError('Your session has expired. Please sign in again.');
+      return;
+    }
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function tickItem(orderId, sku, current) {
+  send({ action: 'tick_item', order_id: orderId, sku, ticked: !current });
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function myOrders() {
+  return Object.values(orders).filter(o =>
+    o.status === 'packing' &&
+    o.packer_name &&
+    o.packer_name.toUpperCase() === myDisplayName
+  );
+}
+
+function render() {
+  const mine = myOrders();
+  const wrap = document.getElementById('board-wrap');
+
+  if (mine.length === 0) {
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">📦</div>
+        <h2>No orders assigned</h2>
+        <p>Ask your supervisor to assign an order to <strong>${myDisplayName || 'you'}</strong>.</p>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = mine.map(o => {
+    const ticks  = o.item_ticks || {};
+    const done   = Object.values(ticks).filter(Boolean).length;
+    const total  = Object.values(ticks).length;
+    const pct    = total > 0 ? Math.round(done / total * 100) : 0;
+    const allDone = done === total && total > 0;
+
+    return `
+      <div class="section-label">Order</div>
+      <div class="order-card">
+        <div class="card-top">
+          <div class="card-order-id">${o.order_id}</div>
+          <div class="card-customer">${o.customer_name}</div>
+          <div class="card-units">${o.customer_city} · ${o.total_units} units · ${done}/${total} picked</div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill ${allDone ? 'done' : ''}" style="width:${pct}%"></div>
+        </div>
+        ${o.notes ? `<div class="notes-strip">⚠ ${o.notes}</div>` : ''}
+        <div class="items-list">
+          ${o.items.map(item => {
+            const isDone = ticks[item.sku] === true;
+            return `<div class="item-row" onclick="tickItem('${o.order_id}','${item.sku}',${isDone})">
+              <div class="tick-circle ${isDone ? 'done' : ''}"></div>
+              <div class="item-info">
+                <div class="item-name ${isDone ? 'done' : ''}">${item.name}</div>
+                <div class="item-loc">${item.location}</div>
+              </div>
+              <div class="item-qty ${isDone ? 'done' : ''}">${item.qty}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        ${allDone ? `<div class="done-banner">
+          <h3>✅ All items picked!</h3>
+          <p>Let your supervisor know this order is ready.</p>
+        </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('login-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+if (getToken()) {
+  enterBoard();
+}
+</script>
+</body>
+</html>

@@ -24,11 +24,13 @@ class UserCreate(BaseModel):
     password: str
     role: str = "admin"
     name: str = ""
+    email: Optional[str] = None
     display_name: Optional[str] = None   # shown on packing board (packer role)
     permissions: Optional[dict] = None   # only applied when role == "admin"
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
     display_name: Optional[str] = None
     role: Optional[str] = None
     active: Optional[bool] = None
@@ -117,6 +119,8 @@ async def create_user(
         "created_at": datetime.now(timezone.utc),
     }
 
+    if body.email:
+        doc["email"] = body.email.lower().strip()
     if body.display_name:
         doc["display_name"] = body.display_name
 
@@ -159,6 +163,8 @@ async def update_user(
 
     if body.name is not None:
         updates["name"] = body.name
+    if body.email is not None:
+        updates["email"] = body.email.lower().strip()
     if body.display_name is not None:
         updates["display_name"] = body.display_name
     if body.active is not None:

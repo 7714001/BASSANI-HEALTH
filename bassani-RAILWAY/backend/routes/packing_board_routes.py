@@ -1,9 +1,10 @@
 """
 Packing Board — real-time WebSocket hub.
 
-Connections:
-  ws://host/ws/packing-board          ← 85" screen (read-only display)
-  ws://host/ws/packing-board/supervisor ← supervisor phone (read + write)
+Connections (all require token auth):
+  wss://host/api/packing/ws/board?token=<PACKING_BOARD_DISPLAY_TOKEN>   ← 85" screen
+  wss://host/api/packing/ws/supervisor?token=<supervisor_jwt>             ← supervisor phone
+  wss://host/api/packing/ws/packer?token=<packer_jwt>                    ← packer handheld
 
 All connected clients receive the full board state on connect,
 then incremental updates as orders change.
@@ -11,43 +12,52 @@ then incremental updates as orders change.
 Board state lives in MongoDB `packing_board` collection so it
 survives server restarts.
 """
+import secrets
+import asyncio
+import json
+import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
-import asyncio, json
-from auth import require_admin, get_current_user
+from auth import require_admin, get_current_user, get_user_by_username
+from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
+settings = get_settings()
+
 
 # ── Connection manager ────────────────────────────────────────────────────────
 
 class BoardManager:
     def __init__(self):
-        self.screens:     list[WebSocket] = []   # 85" display connections
-        self.supervisors: list[WebSocket] = []   # supervisor phone connections
+        self.screens:     list[WebSocket] = []
+        self.supervisors: list[WebSocket] = []
+        self.packers:     list[WebSocket] = []
 
     async def connect_screen(self, ws: WebSocket):
-        await ws.accept()
         self.screens.append(ws)
         await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
 
     async def connect_supervisor(self, ws: WebSocket):
-        await ws.accept()
         self.supervisors.append(ws)
+        await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
+
+    async def connect_packer(self, ws: WebSocket):
+        self.packers.append(ws)
         await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
 
     def disconnect(self, ws: WebSocket):
         self.screens     = [c for c in self.screens     if c is not ws]
         self.supervisors = [c for c in self.supervisors if c is not ws]
+        self.packers     = [c for c in self.packers     if c is not ws]
 
     async def broadcast(self, message: dict):
-        """Push update to ALL connected clients (screens + supervisors)."""
         payload = json.dumps(message)
         dead = []
-        for ws in self.screens + self.supervisors:
+        for ws in self.screens + self.supervisors + self.packers:
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -62,7 +72,6 @@ manager = BoardManager()
 # ── Board state helpers ───────────────────────────────────────────────────────
 
 async def get_board_state() -> list:
-    """Return all non-cleared board entries, sorted by queued_at."""
     entries = await (
         col("packing_board")
         .find({"status": {"$ne": "cleared"}}, NO_ID)
@@ -73,17 +82,118 @@ async def get_board_state() -> list:
 
 
 async def push_update(entry: dict):
-    """Broadcast a single entry update to all clients."""
     await manager.broadcast({"type": "entry_update", "data": entry})
 
 
-# ── REST endpoints (called by main app on invoice confirm) ────────────────────
+# ── WebSocket auth helpers ────────────────────────────────────────────────────
+
+def _verify_display_token(ws: WebSocket) -> bool:
+    display_token = settings.packing_board_display_token
+    if not display_token:
+        return False
+    provided = ws.query_params.get("token", "")
+    return secrets.compare_digest(provided.encode(), display_token.encode())
+
+
+async def _verify_ws_user(ws: WebSocket, required_roles: set) -> Optional[dict]:
+    token = ws.query_params.get("token", "")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        username = payload.get("sub")
+        if not username:
+            return None
+        user = await get_user_by_username(username)
+        if not user or not user.get("active", True):
+            return None
+        if user.get("is_super_admin"):
+            return user
+        if user.get("role") not in required_roles:
+            return None
+        return user
+    except Exception:
+        return None
+
+
+# ── Shared action service ─────────────────────────────────────────────────────
+# Used by both REST endpoints and WebSocket handlers to ensure audit logging
+# is consistent regardless of how an action is triggered.
+
+async def _do_assign_packer(order_id: str, packer_name: str, actor: dict) -> Optional[dict]:
+    result = await col("packing_board").find_one_and_update(
+        {"order_id": order_id},
+        {"$set": {
+            "packer_name": packer_name.upper(),
+            "status":      "packing",
+            "assigned_at": datetime.now(timezone.utc),
+        }},
+        return_document=True,
+    )
+    if not result:
+        return None
+    result.pop("_id", None)
+    await push_update(result)
+    await audit_log("packing.assigned", order_id, user=actor,
+                    detail={"packer": packer_name})
+    return result
+
+
+async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict) -> Optional[dict]:
+    entry = await col("packing_board").find_one({"order_id": order_id})
+    if not entry:
+        return None
+    ticks = entry.get("item_ticks", {})
+    ticks[sku] = ticked
+    all_done = all(ticks.values()) if ticks else False
+    update: dict = {"item_ticks": ticks}
+    if all_done:
+        update["status"]   = "ready"
+        update["ready_at"] = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": order_id},
+        {"$set": update},
+        return_document=True,
+    )
+    if not updated:
+        return None
+    updated.pop("_id", None)
+    await push_update(updated)
+    if all_done:
+        await audit_log("packing.items_complete", order_id, user=actor,
+                        detail={"packer": entry.get("packer_name")})
+    return updated
+
+
+async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Optional[dict]:
+    ts_field = {
+        "collected": "collected_at",
+        "cleared":   "cleared_at",
+        "ready":     "ready_at",
+    }.get(new_status)
+    update: dict = {"status": new_status}
+    if ts_field:
+        update[ts_field] = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": order_id},
+        {"$set": update},
+        return_document=True,
+    )
+    if not updated:
+        return None
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log(f"packing.{new_status}", order_id, user=actor)
+    return updated
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class BoardEntry(BaseModel):
     order_id:      str
     customer_name: str
     customer_city: str
-    items:         List[dict]       # [{name, sku, qty, location}]
+    items:         List[dict]
     total_units:   int
     inv_num:       str
     dn_num:        str
@@ -100,18 +210,16 @@ class AssignPacker(BaseModel):
 
 class UpdateStatus(BaseModel):
     order_id: str
-    status:   str     # queued / packing / ready / collected / cleared
+    status:   str
 
+
+# ── REST endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/queue")
 async def add_to_board(
     entry: BoardEntry,
     current_user: dict = Depends(require_admin),
 ):
-    """
-    Called automatically when a picking slip is confirmed.
-    Adds the order to the packing board and notifies all screens.
-    """
     now = datetime.now(timezone.utc)
     doc = {
         **entry.model_dump(),
@@ -123,18 +231,14 @@ async def add_to_board(
         "collected_at": None,
         "item_ticks":   {i["sku"]: False for i in entry.items},
     }
-
-    # Upsert — if order already on board, refresh it
     await col("packing_board").replace_one(
         {"order_id": entry.order_id},
         doc,
         upsert=True,
     )
-
     await push_update(doc)
     await audit_log("packing.queued", entry.order_id, user=current_user,
                     detail={"customer": entry.customer_name, "units": entry.total_units})
-
     return {"success": True, "order_id": entry.order_id}
 
 
@@ -143,26 +247,9 @@ async def assign_packer(
     body: AssignPacker,
     current_user: dict = Depends(require_admin),
 ):
-    """Supervisor assigns a packer to an order."""
-    now = datetime.now(timezone.utc)
-    result = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
-        {"$set": {
-            "packer_name": body.packer_name.upper(),
-            "status":      "packing",
-            "assigned_at": now,
-        }},
-        return_document=True,
-    )
+    result = await _do_assign_packer(body.order_id, body.packer_name, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="Order not on board")
-
-    # Strip MongoDB _id before broadcasting
-    result.pop("_id", None)
-    await push_update(result)
-    await audit_log("packing.assigned", body.order_id, user=current_user,
-                    detail={"packer": body.packer_name})
-
     return {"success": True, "packer": body.packer_name.upper()}
 
 
@@ -173,28 +260,10 @@ async def tick_item(
     ticked:   bool = True,
     current_user: dict = Depends(require_admin),
 ):
-    """Mark a single line item as picked on the board."""
-    entry = await col("packing_board").find_one({"order_id": order_id})
-    if not entry:
+    updated = await _do_tick_item(order_id, sku, ticked, current_user)
+    if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
-
-    ticks = entry.get("item_ticks", {})
-    ticks[sku] = ticked
-    all_done = all(ticks.values())
-
-    update: dict = {"item_ticks": ticks}
-    if all_done:
-        update["status"]   = "ready"
-        update["ready_at"] = datetime.now(timezone.utc)
-
-    updated = await col("packing_board").find_one_and_update(
-        {"order_id": order_id},
-        {"$set": update},
-        return_document=True,
-    )
-    updated.pop("_id", None)
-    await push_update(updated)
-
+    all_done = all(updated["item_ticks"].values()) if updated.get("item_ticks") else False
     return {"success": True, "all_done": all_done, "status": updated["status"]}
 
 
@@ -203,58 +272,25 @@ async def update_status(
     body: UpdateStatus,
     current_user: dict = Depends(require_admin),
 ):
-    """Manual status override — collected, cleared, etc."""
-    now = datetime.now(timezone.utc)
-    ts_field = {
-        "collected": "collected_at",
-        "cleared":   "cleared_at",
-        "ready":     "ready_at",
-    }.get(body.status)
-
-    update: dict = {"status": body.status}
-    if ts_field:
-        update[ts_field] = now
-
-    updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
-        {"$set": update},
-        return_document=True,
-    )
+    updated = await _do_update_status(body.order_id, body.status, current_user)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
-    updated.pop("_id", None)
-    await push_update(updated)
-
-    await audit_log(f"packing.{body.status}", body.order_id, user=current_user)
     return {"success": True}
 
 
 @router.get("/board")
-async def get_board(current_user: dict = Depends(require_admin)):
-    """REST fallback — returns current board state."""
+async def get_board(_: dict = Depends(require_admin)):
     return {"entries": await get_board_state()}
 
 
 @router.get("/packers")
-async def list_packers(current_user: dict = Depends(get_current_user)):
-    """Return configured packer names from settings."""
-    settings = await col("settings").find_one({"key": "packing_board"}, NO_ID)
-    packers = settings.get("packers", ["THEMBI", "SIPHO", "PRIYA", "RUAN", "ANELE"]) if settings else []
+async def list_packers(_: dict = Depends(get_current_user)):
+    """Return active packer user accounts."""
+    packers = await col("users").find(
+        {"role": "packer", "active": True},
+        {"_id": 0, "username": 1, "display_name": 1, "name": 1},
+    ).to_list(length=100)
     return {"packers": packers}
-
-
-@router.put("/packers")
-async def update_packers(
-    packers: List[str],
-    current_user: dict = Depends(require_admin),
-):
-    """Update the list of packer names shown in supervisor view."""
-    await col("settings").update_one(
-        {"key": "packing_board"},
-        {"$set": {"packers": [p.upper().strip() for p in packers if p.strip()]}},
-        upsert=True,
-    )
-    return {"success": True}
 
 
 # ── WebSocket endpoints ───────────────────────────────────────────────────────
@@ -262,13 +298,16 @@ async def update_packers(
 @router.websocket("/ws/board")
 async def websocket_board(ws: WebSocket):
     """
-    85" screen connection — receives updates, never sends.
-    No auth on this endpoint — it's a display-only public URL.
+    85" display screen — read-only.
+    Authenticated via PACKING_BOARD_DISPLAY_TOKEN env var passed as ?token=.
     """
+    await ws.accept()
+    if not _verify_display_token(ws):
+        await ws.close(code=4001, reason="Invalid display token")
+        return
     await manager.connect_screen(ws)
     try:
         while True:
-            # Keep alive — screens don't send messages
             await asyncio.sleep(30)
             await ws.send_text(json.dumps({"type": "ping"}))
     except (WebSocketDisconnect, Exception):
@@ -278,9 +317,14 @@ async def websocket_board(ws: WebSocket):
 @router.websocket("/ws/supervisor")
 async def websocket_supervisor(ws: WebSocket):
     """
-    Supervisor phone/tablet connection — receives AND sends updates.
-    Supervisor sends JSON actions: assign_packer, tick_item, update_status.
+    Supervisor phone/tablet — read + write.
+    Requires a valid warehouse_supervisor JWT passed as ?token=.
     """
+    await ws.accept()
+    user = await _verify_ws_user(ws, {"warehouse_supervisor"})
+    if not user:
+        await ws.close(code=4001, reason="Unauthorized")
+        return
     await manager.connect_supervisor(ws)
     try:
         while True:
@@ -288,46 +332,38 @@ async def websocket_supervisor(ws: WebSocket):
             try:
                 msg = json.loads(raw)
                 action = msg.get("action")
-
                 if action == "assign_packer":
-                    await col("packing_board").update_one(
-                        {"order_id": msg["order_id"]},
-                        {"$set": {
-                            "packer_name": msg["packer_name"].upper(),
-                            "status":      "packing",
-                            "assigned_at": datetime.now(timezone.utc),
-                        }},
-                    )
+                    await _do_assign_packer(msg["order_id"], msg["packer_name"], user)
                 elif action == "tick_item":
-                    entry = await col("packing_board").find_one({"order_id": msg["order_id"]})
-                    if entry:
-                        ticks = entry.get("item_ticks", {})
-                        ticks[msg["sku"]] = msg.get("ticked", True)
-                        all_done = all(ticks.values())
-                        update: dict = {"item_ticks": ticks}
-                        if all_done:
-                            update["status"]   = "ready"
-                            update["ready_at"] = datetime.now(timezone.utc)
-                        await col("packing_board").update_one(
-                            {"order_id": msg["order_id"]},
-                            {"$set": update},
-                        )
+                    await _do_tick_item(msg["order_id"], msg["sku"], msg.get("ticked", True), user)
                 elif action == "update_status":
-                    await col("packing_board").update_one(
-                        {"order_id": msg["order_id"]},
-                        {"$set": {"status": msg["status"]}},
-                    )
-
-                # Broadcast updated state to everyone
-                updated = await col("packing_board").find_one(
-                    {"order_id": msg.get("order_id", "")},
-                )
-                if updated:
-                    updated.pop("_id", None)
-                    await manager.broadcast({"type": "entry_update", "data": updated})
-
+                    await _do_update_status(msg["order_id"], msg["status"], user)
             except Exception as e:
                 print(f"⚠️  Supervisor WS error: {e}")
+    except WebSocketDisconnect:
+        manager.disconnect(ws)
 
+
+@router.websocket("/ws/packer")
+async def websocket_packer(ws: WebSocket):
+    """
+    Packer handheld — read + tick only.
+    Requires a valid packer JWT passed as ?token=.
+    """
+    await ws.accept()
+    user = await _verify_ws_user(ws, {"packer"})
+    if not user:
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+    await manager.connect_packer(ws)
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+                if msg.get("action") == "tick_item":
+                    await _do_tick_item(msg["order_id"], msg["sku"], msg.get("ticked", True), user)
+            except Exception as e:
+                print(f"⚠️  Packer WS error: {e}")
     except WebSocketDisconnect:
         manager.disconnect(ws)

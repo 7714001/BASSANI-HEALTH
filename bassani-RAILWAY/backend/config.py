@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     super_admin_username: str = ""
     super_admin_password: str = ""
+    packing_board_display_token: str = ""
 
     class Config:
         env_file = ".env"

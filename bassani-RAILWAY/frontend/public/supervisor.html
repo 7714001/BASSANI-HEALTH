@@ -25,6 +25,60 @@
     padding-bottom: 24px;
   }
 
+  /* ── Login screen ── */
+  .login-screen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  .login-screen.hidden { display: none; }
+  .login-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px 28px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .login-logo {
+    width: 48px; height: 48px;
+    background: var(--green);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+  }
+  .login-logo svg { width: 26px; height: 26px; }
+  .login-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .login-sub   { font-size: 13px; color: #64748b; margin-bottom: 28px; }
+  .login-label { font-size: 12px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing:.06em; margin-bottom: 6px; }
+  .login-input {
+    width: 100%; padding: 12px 14px; border-radius: 10px;
+    background: #1e293b; border: 1px solid #334155;
+    color: #fff; font-size: 15px; outline: none;
+    margin-bottom: 16px;
+    -webkit-appearance: none;
+  }
+  .login-input:focus { border-color: var(--green); }
+  .login-btn {
+    width: 100%; padding: 14px; border-radius: 12px;
+    background: var(--green); border: none; color: #fff;
+    font-size: 16px; font-weight: 700; cursor: pointer;
+    margin-top: 4px;
+  }
+  .login-btn:active { opacity: .85; }
+  .login-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .login-error {
+    background: rgba(220,38,38,.1); border: 1px solid rgba(220,38,38,.3);
+    border-radius: 10px; padding: 10px 14px;
+    font-size: 13px; color: #f87171; margin-bottom: 16px;
+    display: none;
+  }
+  .login-error.show { display: block; }
+
   /* ── Header ── */
   .header {
     background: var(--card);
@@ -34,8 +88,9 @@
     top: 0;
     z-index: 10;
   }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; }
   .header h1 { font-size: 18px; font-weight: 700; }
-  .header p  { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .header-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
   .live-pill {
     display: inline-flex;
     align-items: center;
@@ -49,6 +104,13 @@
   }
   .live-pill span { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .logout-btn {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+    font-size: 12px; font-weight: 600; padding: 6px 12px;
+    border-radius: 8px; cursor: pointer;
+    flex-shrink: 0;
+  }
+  .logout-btn:active { opacity: .8; }
 
   /* ── Stats row ── */
   .stats {
@@ -226,19 +288,48 @@
 </head>
 <body>
 
-<div class="header">
-  <h1>Bassani Health · Supervisor</h1>
-  <p>Assign packers · tick items · mark ready</p>
-  <div class="live-pill"><span></span> Live · <span id="conn-status">Connecting…</span></div>
+<!-- ── Login screen ── -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+        <path d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-.375c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v.375c0 .621.504 1.125 1.125 1.125z"/>
+      </svg>
+    </div>
+    <div class="login-title">Supervisor Login</div>
+    <div class="login-sub">Bassani Health · Packing Floor</div>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-label">Username</div>
+    <input class="login-input" id="login-username" type="text" autocomplete="username" autocapitalize="none" placeholder="your.username" />
+    <div class="login-label">Password</div>
+    <input class="login-input" id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
 </div>
 
-<div class="stats" id="stats-row">
-  <div class="stat-pill"><div class="stat-n" id="s-queued"  style="color:#94a3b8">0</div><div class="stat-l">Queued</div></div>
-  <div class="stat-pill"><div class="stat-n" id="s-packing" style="color:#fbbf24">0</div><div class="stat-l">Packing</div></div>
-  <div class="stat-pill"><div class="stat-n" id="s-ready"   style="color:#4ade80">0</div><div class="stat-l">Ready</div></div>
-</div>
+<!-- ── Main UI (hidden until logged in) ── -->
+<div id="main-ui" style="display:none">
 
-<div id="board-wrap"></div>
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <h1>Bassani Health · Supervisor</h1>
+        <div class="header-meta" id="logged-in-as">Assign packers · tick items · mark ready</div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()">Log out</button>
+    </div>
+    <div class="live-pill"><span></span> Live · <span id="conn-status">Connecting…</span></div>
+  </div>
+
+  <div class="stats" id="stats-row">
+    <div class="stat-pill"><div class="stat-n" id="s-queued"  style="color:#94a3b8">0</div><div class="stat-l">Queued</div></div>
+    <div class="stat-pill"><div class="stat-n" id="s-packing" style="color:#fbbf24">0</div><div class="stat-l">Packing</div></div>
+    <div class="stat-pill"><div class="stat-n" id="s-ready"   style="color:#4ade80">0</div><div class="stat-l">Ready</div></div>
+  </div>
+
+  <div id="board-wrap"></div>
+
+</div>
 
 <!-- Packer picker modal -->
 <div class="modal-ov" id="packer-modal">
@@ -254,12 +345,92 @@
 let orders = {};
 let ws = null;
 let pendingOrderId = null;
+let packers = [];  // populated from API after login
 
-const PACKERS = ['THEMBI','SIPHO','PRIYA','RUAN','ANELE','LERATO'];
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+function getToken()    { return sessionStorage.getItem('supervisor_token'); }
+function getUser()     { try { return JSON.parse(sessionStorage.getItem('supervisor_user')); } catch { return null; } }
+function clearSession(){ sessionStorage.removeItem('supervisor_token'); sessionStorage.removeItem('supervisor_user'); }
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-error');
+
+  err.classList.remove('show');
+  if (!username || !password) { showError('Please enter your username and password.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showError(data.detail || 'Login failed.'); return; }
+    if (data.user.role !== 'warehouse_supervisor' && !data.user.is_super_admin) {
+      showError('This page is for warehouse supervisors only.'); return;
+    }
+    sessionStorage.setItem('supervisor_token', data.access_token);
+    sessionStorage.setItem('supervisor_user', JSON.stringify(data.user));
+    enterBoard();
+  } catch {
+    showError('Could not reach the server. Please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+function doLogout() {
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  clearSession();
+  document.getElementById('main-ui').style.display = 'none';
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('login-password').value = '';
+}
+
+async function enterBoard() {
+  const user = getUser();
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('main-ui').style.display = 'block';
+  document.getElementById('logged-in-as').textContent =
+    `Logged in as: ${user?.name || user?.username || 'Supervisor'}`;
+  await loadPackers();
+  connect();
+}
+
+// ── Packers ───────────────────────────────────────────────────────────────────
+
+async function loadPackers() {
+  try {
+    const resp = await fetch('/api/packing/packers', {
+      headers: { 'Authorization': `Bearer ${getToken()}` },
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    packers = data.packers.map(p => p.display_name || p.name || p.username).filter(Boolean);
+  } catch { /* keep empty */ }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 function connect() {
+  const token = getToken();
+  if (!token) { doLogout(); return; }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/supervisor`);
+  ws = new WebSocket(`${proto}://${location.host}/api/packing/ws/supervisor?token=${token}`);
 
   ws.onopen = () => {
     document.getElementById('conn-status').textContent = 'Connected';
@@ -276,28 +447,41 @@ function connect() {
     render();
   };
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
     document.getElementById('conn-status').textContent = 'Reconnecting…';
+    if (e.code === 4001) {
+      // Token expired or invalid — back to login
+      clearSession();
+      doLogout();
+      showError('Your session has expired. Please sign in again.');
+      return;
+    }
     setTimeout(connect, 3000);
   };
+
   ws.onerror = () => ws.close();
 }
 
 function send(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+
+// ── Packer modal ──────────────────────────────────────────────────────────────
 
 function openPackerModal(orderId) {
   pendingOrderId = orderId;
   const o = orders[orderId];
-  document.getElementById('modal-order-label').textContent = `${orderId} · ${o?.customer_name || ''}`;
+  document.getElementById('modal-order-label').textContent =
+    `${orderId} · ${o?.customer_name || ''}`;
   const grid = document.getElementById('packer-grid');
-  grid.innerHTML = PACKERS.map(p => `
-    <button class="packer-btn ${o?.packer_name === p ? 'selected' : ''}" onclick="assignPacker('${p}')">
-      ${p}
-    </button>`).join('');
+  if (packers.length === 0) {
+    grid.innerHTML = '<p style="color:#64748b;font-size:13px;grid-column:1/-1">No active packers found. Create packer accounts in the admin portal.</p>';
+  } else {
+    grid.innerHTML = packers.map(p => `
+      <button class="packer-btn ${o?.packer_name === p ? 'selected' : ''}" onclick="assignPacker('${p}')">
+        ${p}
+      </button>`).join('');
+  }
   document.getElementById('packer-modal').classList.add('show');
 }
 
@@ -324,6 +508,8 @@ function markCollected(orderId) {
   send({ action: 'update_status', order_id: orderId, status: 'collected' });
 }
 
+// ── Render ────────────────────────────────────────────────────────────────────
+
 function render() {
   const list = Object.values(orders)
     .filter(o => o.status !== 'cleared')
@@ -343,7 +529,6 @@ function render() {
     return;
   }
 
-  // Group by status
   const sections = [
     { key: 'packing',   label: '🔵 Currently Packing' },
     { key: 'queued',    label: '⬜ Queued — assign a packer' },
@@ -408,39 +593,16 @@ function renderCard(o) {
   </div>`;
 }
 
-// Mock data for demo (no server)
-function loadMock() {
-  orders = {
-    'ORD-2026-127': {
-      order_id:'ORD-2026-127', customer_name:'Wellness Pharmacy', customer_city:'Johannesburg',
-      status:'packing', packer_name:'THEMBI', total_units:5, inv_num:'INV-34685',
-      notes:'Rush — customer waiting', is_reseller:true, reseller_name:"Joe's Distribution",
-      items:[{name:'Tincture 20ml THC',sku:'THC-TINC-20',qty:3,location:'Shelf A-3'},{name:'CBD Balm 50ml',sku:'TOP-BALM-50',qty:2,location:'Shelf E-2'}],
-      item_ticks:{'THC-TINC-20':true,'TOP-BALM-50':false},
-    },
-    'ORD-2026-128': {
-      order_id:'ORD-2026-128', customer_name:'Cape Med Dispensary', customer_city:'Cape Town',
-      status:'queued', packer_name:null, total_units:5, inv_num:'INV-34687',
-      notes:'', is_reseller:false, reseller_name:null,
-      items:[{name:'Vape Pen 500mg',sku:'VP-500-MNT',qty:5,location:'Shelf C-2'}],
-      item_ticks:{'VP-500-MNT':false},
-    },
-    'ORD-2026-129': {
-      order_id:'ORD-2026-129', customer_name:'Pretoria Health Hub', customer_city:'Pretoria',
-      status:'ready', packer_name:'SIPHO', total_units:8, inv_num:'INV-34688',
-      notes:'', is_reseller:false, reseller_name:null,
-      items:[{name:'Tincture 30ml CBD',sku:'CBD-TINC-30',qty:5,location:'Shelf A-4'},{name:'CBD Gummies x20',sku:'ED-GUMMY-10',qty:3,location:'Shelf D-1'}],
-      item_ticks:{'CBD-TINC-30':true,'ED-GUMMY-10':true},
-    },
-  };
-  document.getElementById('conn-status').textContent = 'Demo mode';
-  render();
-}
+// ── Init ──────────────────────────────────────────────────────────────────────
 
-try {
-  connect();
-  setTimeout(() => { if (Object.keys(orders).length === 0) loadMock(); }, 2000);
-} catch(e) { loadMock(); }
+document.getElementById('login-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// Resume session if token is still in storage
+if (getToken()) {
+  enterBoard();
+} // else login screen is already visible
 </script>
 </body>
 </html>
