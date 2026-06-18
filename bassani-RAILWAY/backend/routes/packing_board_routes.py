@@ -88,10 +88,10 @@ async def push_update(entry: dict):
 # ── WebSocket auth helpers ────────────────────────────────────────────────────
 
 def _verify_display_token(ws: WebSocket) -> bool:
-    display_token = settings.packing_board_display_token
+    display_token = settings.packing_board_display_token.strip()
     if not display_token:
         return False
-    provided = ws.query_params.get("token", "")
+    provided = ws.query_params.get("token", "").strip()
     return secrets.compare_digest(provided.encode(), display_token.encode())
 
 
