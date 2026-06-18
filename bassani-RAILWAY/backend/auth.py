@@ -22,6 +22,7 @@ ADMIN_ROLES = {"super_admin", "admin"}  # roles that access the main React porta
 
 # Default for newly created admin accounts — view-only on sensitive operations.
 DEFAULT_ADMIN_PERMISSIONS: dict = {
+    "products":    {"manage": False},
     "orders":      {"view": True,  "confirm": False, "cancel": False},
     "customers":   {"view": True,  "approve_onboarding": False, "reject_onboarding": False},
     "commission":  {"view": True,  "generate_statements": False, "mark_paid": False, "configure_tiers": False},
@@ -35,6 +36,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
 
 # Applied to existing admin users during migration — they had full access before.
 FULL_PERMISSIONS: dict = {
+    "products":    {"manage": True},
     "orders":      {"view": True,  "confirm": True,  "cancel": True},
     "customers":   {"view": True,  "approve_onboarding": True,  "reject_onboarding": True},
     "commission":  {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": True},

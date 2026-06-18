@@ -39,7 +39,7 @@ function fmt(n) {
   return new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
-export default function OrderView({ order: o, onClose, onConfirm, onCancel, confirming, cancelling, isAdmin }) {
+export default function OrderView({ order: o, onClose, onConfirm, onCancel, confirming, cancelling, isAdmin, canConfirmOrder = true, canCancelOrder = true }) {
   const printRef = useRef();
 
   const print = () => {
@@ -85,8 +85,8 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
   const stateColor = STATE_COLOR[o.state] || "#6b7280";
   const stateBg    = STATE_BG[o.state]    || "#f9fafb";
 
-  const canConfirm = isAdmin && o.state === "draft";
-  const canCancel  = isAdmin && o.state !== "cancel" && o.state !== "done";
+  const canConfirm = isAdmin && canConfirmOrder && o.state === "draft";
+  const canCancel  = isAdmin && canCancelOrder  && o.state !== "cancel" && o.state !== "done";
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-100 overflow-hidden">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { CheckCircle, XCircle, Clock, Eye } from "lucide-react";
+import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import {
@@ -48,7 +49,7 @@ function Section({ title, children }) {
 
 // ── Review modal ───────────────────────────────────────────────────────────────
 
-function ReviewModal({ app, onClose, onApprove, onReject }) {
+function ReviewModal({ app, onClose, onApprove, onReject, canApprove, canReject }) {
   const [rejectMode,   setRejectMode  ] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [loading,      setLoading     ] = useState(false);
@@ -115,7 +116,7 @@ function ReviewModal({ app, onClose, onApprove, onReject }) {
         </Section>
       </div>
 
-      {app.status === "pending" && (
+      {app.status === "pending" && (canApprove || canReject) && (
         <>
           {rejectMode ? (
             <div className="mt-4 space-y-3">
@@ -139,13 +140,17 @@ function ReviewModal({ app, onClose, onApprove, onReject }) {
             </div>
           ) : (
             <div className="mt-4 flex justify-between gap-2">
-              <button onClick={() => setRejectMode(true)}
-                className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg transition-colors">
-                Reject
-              </button>
-              <BtnPrimary onClick={handleApprove} loading={loading}>
-                Approve & Create Customer
-              </BtnPrimary>
+              {canReject && (
+                <button onClick={() => setRejectMode(true)}
+                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg transition-colors">
+                  Reject
+                </button>
+              )}
+              {canApprove && (
+                <BtnPrimary onClick={handleApprove} loading={loading}>
+                  Approve & Create Customer
+                </BtnPrimary>
+              )}
             </div>
           )}
         </>
@@ -157,6 +162,7 @@ function ReviewModal({ app, onClose, onApprove, onReject }) {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export default function CustomerApplications() {
+  const { can } = useAuth();
   const [applications, setApplications] = useState([]);
   const [total,        setTotal        ] = useState(0);
   const [loading,      setLoading      ] = useState(true);
@@ -282,6 +288,8 @@ export default function CustomerApplications() {
           onClose={() => setReviewing(null)}
           onApprove={approve}
           onReject={reject}
+          canApprove={can("customers.approve_onboarding")}
+          canReject={can("customers.reject_onboarding")}
         />
       )}
     </div>

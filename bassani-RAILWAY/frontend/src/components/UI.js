@@ -22,19 +22,19 @@ export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year:
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV = [
-  { label: "Dashboard",  path: "/",            icon: LayoutDashboard, section: "Main"      },
-  { label: "Products",   path: "/products",    icon: Package,         section: "Main"      },
-  { label: "Customers",     path: "/customers",     icon: Users,           section: "Main"      },
-  { label: "Applications",  path: "/applications",  icon: ClipboardCheck,  section: "Main", adminOnly: true },
-  { label: "Orders",     path: "/orders",      icon: ShoppingCart,    section: "Main"      },
-  { label: "Resellers",  path: "/resellers",   icon: DollarSign,      section: "Resellers" },
-  { label: "Commission", path: "/commission",  icon: Percent,         section: "Resellers" },
-  { label: "Invoices",   path: "/invoices",    icon: FileText,        section: "Finance"   },
-  { label: "Targets",    path: "/targets",     icon: Target,          section: "Finance"   },
-  { label: "Reports",    path: "/reports",     icon: BarChart3,       section: "Insights"  },
-  { label: "Healthcare", path: "/healthcare",  icon: Phone,           section: "Insights"  },
-  { label: "Scripts",    path: "/scripts",     icon: ScrollText,      section: "Insights"  },
-  { label: "Users",      path: "/users",       icon: UserCog,         section: "Admin"     },
+  { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },
+  { label: "Products",     path: "/products",    icon: Package,         section: "Main"      },
+  { label: "Customers",    path: "/customers",   icon: Users,           section: "Main",     permission: "customers.view"      },
+  { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view" },
+  { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
+  { label: "Resellers",    path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
+  { label: "Commission",   path: "/commission",  icon: Percent,         section: "Resellers",permission: "commission.view"     },
+  { label: "Invoices",     path: "/invoices",    icon: FileText,        section: "Finance",  permission: "invoices.view"       },
+  { label: "Targets",      path: "/targets",     icon: Target,          section: "Finance",  permission: "reports.view"        },
+  { label: "Reports",      path: "/reports",     icon: BarChart3,       section: "Insights", permission: "reports.view"        },
+  { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
+  { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
+  { label: "Users",        path: "/users",       icon: UserCog,         section: "Admin",    permission: "users.manage"        },
 ];
 
 const RESELLER_NAV = [
@@ -46,15 +46,18 @@ const RESELLER_NAV = [
 ];
 
 export function Sidebar() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, can } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { open, close } = useContext(SidebarContext);
 
   const isReseller = user?.role === "reseller";
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
-  // Hide adminOnly nav items from non-admin portal users (future-proofing)
-  const items      = rawItems.filter(i => !i.adminOnly || isAdmin);
+  const items      = rawItems.filter(i => {
+    if (i.adminOnly && !isAdmin) return false;
+    if (i.permission && isAdmin) return can(i.permission);
+    return true;
+  });
   const sections   = [...new Set(items.map((i) => i.section || ""))].filter(Boolean);
 
   const initials = (name) =>

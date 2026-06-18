@@ -15,6 +15,13 @@ import {
 
 const PERMISSION_GROUPS = [
   {
+    domain: "products",
+    label: "Products",
+    actions: [
+      { key: "manage", label: "Create, edit & archive products" },
+    ],
+  },
+  {
     domain: "orders",
     label: "Orders",
     actions: [
@@ -112,6 +119,20 @@ const EMPTY_PERMISSIONS = Object.fromEntries(
   ])
 );
 
+// Mirrors backend DEFAULT_ADMIN_PERMISSIONS — pre-selected when creating a new admin account.
+const DEFAULT_ADMIN_PERMS = {
+  products:   { manage: false },
+  orders:     { view: true,  confirm: false, cancel: false },
+  customers:  { view: true,  approve_onboarding: false, reject_onboarding: false },
+  commission: { view: true,  generate_statements: false, mark_paid: false, configure_tiers: false },
+  resellers:  { view: true,  manage: false },
+  invoices:   { view: true,  record_payment: false },
+  reports:    { view: true,  export: false },
+  healthcare: { view: true,  manage: false },
+  users:      { manage: false },
+  warehouse:  { view: false, supervise: false },
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Users() {
@@ -159,7 +180,7 @@ export default function Users() {
   const openCreate = () => {
     const defaultRole = isSuperAdmin ? "admin" : "warehouse_supervisor";
     setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole });
-    setCreatePerms({ ...EMPTY_PERMISSIONS });
+    setCreatePerms(defaultRole === "admin" ? { ...DEFAULT_ADMIN_PERMS } : { ...EMPTY_PERMISSIONS });
     setCreateModal(true);
   };
 
@@ -375,7 +396,11 @@ export default function Users() {
             <FormGroup label="Role">
               <Select
                 value={createForm.role}
-                onChange={e => setCreateForm({ ...createForm, role: e.target.value })}
+                onChange={e => {
+                  const role = e.target.value;
+                  setCreateForm({ ...createForm, role });
+                  setCreatePerms(role === "admin" ? { ...DEFAULT_ADMIN_PERMS } : { ...EMPTY_PERMISSIONS });
+                }}
               >
                 {availableRoles.map(r => (
                   <option key={r.value} value={r.value}>{r.label}</option>

@@ -16,7 +16,7 @@ import {
 
 
 export function Products() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const isReseller = user?.role === "reseller";
   const [products,   setProducts  ] = useState([]);
   const [total,      setTotal     ] = useState(0);
@@ -98,7 +98,7 @@ export function Products() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load}
-        actions={!isReseller && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
+        actions={can("products.manage") && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
@@ -114,7 +114,7 @@ export function Products() {
             { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
             { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=><span className="text-gray-500">{p.virtual_available??0}</span> },
-            ...(!isReseller ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
+            ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
           ]}
           data={products} loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
@@ -435,7 +435,7 @@ export function Customers() {
 // Orders view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Orders() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const isReseller = user?.role === "reseller";
 
   // ── List view state ───────────────────────────────────────────────────────
@@ -859,6 +859,8 @@ export function Orders() {
       <OrderView
         order={detail}
         isAdmin={!isReseller}
+        canConfirmOrder={can("orders.confirm")}
+        canCancelOrder={can("orders.cancel")}
         onClose={() => { setView("list"); setDetail(null); }}
         onConfirm={() => { confirm(detail.id); setView("list"); setDetail(null); }}
         onCancel={() => cancelOrder(detail.id)}
@@ -892,8 +894,8 @@ export function Orders() {
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
               (o.state==="draft"||o.state==="sale") ? (
                 <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                  {o.state==="draft" && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
-                  {o.state!=="cancel" && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                  {o.state==="draft" && can("orders.confirm") && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
+                  {o.state!=="cancel" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
                 </div>
               ) : null
             }]:[]),
@@ -913,6 +915,7 @@ export function Orders() {
 // Resellers view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Resellers() {
+  const { can } = useAuth();
   const navigate = useNavigate();
   const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
@@ -1027,7 +1030,7 @@ export function Resellers() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Resellers" subtitle="Distributors, agents and brokers" onRefresh={load}
-        actions={<BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
+        actions={can("resellers.manage") && <BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <DataTable
           columns={[
@@ -1037,7 +1040,7 @@ export function Resellers() {
             { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=>(
               <div className="flex gap-2">
                 <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/resellers/${r.id}`);}}>View</BtnSecondary>
-                <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary>
+                {can("resellers.manage") && <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(r);}}><Edit2 size={11}/>Edit</BtnSecondary>}
               </div>
             )},
           ]}
@@ -1345,6 +1348,7 @@ function ResellerCommissionView() {
 // Admin commission view — statements + tier settings
 // ─────────────────────────────────────────────────────────────────────────────
 function AdminCommissionView() {
+  const { can }    = useAuth();
   const today      = new Date();
   const [activeTab,   setActiveTab  ] = useState("statements");
   const [genYear,     setGenYear    ] = useState(today.getFullYear());
@@ -1476,9 +1480,11 @@ function AdminCommissionView() {
               </select>
               <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} min={2020} max={2040}
                 className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 w-24" />
-              <BtnPrimary size="sm" onClick={generate} loading={generating}>
-                {generating ? "Generating…" : "Generate"}
-              </BtnPrimary>
+              {can("commission.generate_statements") && (
+                <BtnPrimary size="sm" onClick={generate} loading={generating}>
+                  {generating ? "Generating…" : "Generate"}
+                </BtnPrimary>
+              )}
             </div>
           </div>
           <div className="ml-auto text-right">
@@ -1526,7 +1532,7 @@ function AdminCommissionView() {
                   className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
                   {expanded === s.id ? "Hide" : "Orders"}
                 </button>
-                {s.status === "pending" && (
+                {s.status === "pending" && can("commission.mark_paid") && (
                   <BtnPrimary size="sm" onClick={() => openPay(s)}>Mark Paid</BtnPrimary>
                 )}
               </div>
@@ -1596,10 +1602,12 @@ function AdminCommissionView() {
               </div>
             ))}
           </div>
-          <div className="px-5 py-4 border-t border-gray-50 flex justify-between">
-            <BtnSecondary onClick={resetTiers} disabled={tierSaving}>Reset to Defaults</BtnSecondary>
-            <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tier Rates</BtnPrimary>
-          </div>
+          {can("commission.configure_tiers") && (
+            <div className="px-5 py-4 border-t border-gray-50 flex justify-between">
+              <BtnSecondary onClick={resetTiers} disabled={tierSaving}>Reset to Defaults</BtnSecondary>
+              <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tier Rates</BtnPrimary>
+            </div>
+          )}
         </div>
       )}
 
@@ -1909,6 +1917,7 @@ function StatCardInline({ label, value, accent }) {
 // Healthcare onboarding view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Healthcare() {
+  const { can }    = useAuth();
   const [submissions, setSubmissions] = useState([]);
   const [stats,       setStats      ] = useState({});
   const [total,       setTotal      ] = useState(0);
@@ -1969,9 +1978,11 @@ export function Healthcare() {
               <Td className="text-xs text-gray-400">{s.submitted_at?.split("T")[0]}</Td>
               <Td><Badge status={s.status} /></Td>
               <Td onClick={e=>e.stopPropagation()}>
-                <Select value={s.status} onChange={e=>updateStatus(s.id,e.target.value)} onClick={e=>e.stopPropagation()} style={{fontSize:"11px",padding:"3px 8px",width:"auto"}}>
-                  {["pending","contacted","approved","declined"].map(st=><option key={st}>{st}</option>)}
-                </Select>
+                {can("healthcare.manage") ? (
+                  <Select value={s.status} onChange={e=>updateStatus(s.id,e.target.value)} onClick={e=>e.stopPropagation()} style={{fontSize:"11px",padding:"3px 8px",width:"auto"}}>
+                    {["pending","contacted","approved","declined"].map(st=><option key={st}>{st}</option>)}
+                  </Select>
+                ) : <span className="text-xs text-gray-400 capitalize">{s.status}</span>}
               </Td>
             </Tr>
           ))}
@@ -1997,8 +2008,8 @@ export function Healthcare() {
           {detail.additional_comments && <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 italic mb-4">"{detail.additional_comments}"</div>}
           <div className="flex justify-between items-center mt-2">
             <div className="flex gap-2">
-              {detail.status==="pending"&&<BtnPrimary size="sm" onClick={()=>updateStatus(detail.id,"approved")}>Approve</BtnPrimary>}
-              {(detail.status==="pending"||detail.status==="approved")&&<BtnSecondary size="sm" onClick={()=>updateStatus(detail.id,"contacted")}>Mark Contacted</BtnSecondary>}
+              {detail.status==="pending"&&can("healthcare.manage")&&<BtnPrimary size="sm" onClick={()=>updateStatus(detail.id,"approved")}>Approve</BtnPrimary>}
+              {(detail.status==="pending"||detail.status==="approved")&&can("healthcare.manage")&&<BtnSecondary size="sm" onClick={()=>updateStatus(detail.id,"contacted")}>Mark Contacted</BtnSecondary>}
               <a href={`mailto:${detail.email}`}><BtnSecondary size="sm">Send Email</BtnSecondary></a>
             </div>
             <BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary>
