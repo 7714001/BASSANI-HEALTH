@@ -1,104 +1,321 @@
 import { useState, useEffect } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { UserPlus, RefreshCw, KeyRound, PowerOff, Power, Copy, Check } from "lucide-react";
+import { useAuth } from "../AuthContext";
+import {
+  UserPlus, KeyRound, PowerOff, Power, Copy, Check,
+  ChevronDown, ChevronUp, ShieldCheck,
+} from "lucide-react";
 import {
   TopBar, Table, Tr, Td, Modal, FormGroup, Input, Select,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState,
 } from "../components/UI";
 
+// ── Permission configuration ──────────────────────────────────────────────────
+
+const PERMISSION_GROUPS = [
+  {
+    domain: "orders",
+    label: "Orders",
+    actions: [
+      { key: "view",    label: "View orders" },
+      { key: "confirm", label: "Confirm orders" },
+      { key: "cancel",  label: "Cancel orders" },
+    ],
+  },
+  {
+    domain: "customers",
+    label: "Customers & Onboarding",
+    actions: [
+      { key: "view",                label: "View customers" },
+      { key: "approve_onboarding",  label: "Approve onboarding applications" },
+      { key: "reject_onboarding",   label: "Reject onboarding applications" },
+    ],
+  },
+  {
+    domain: "commission",
+    label: "Commission",
+    actions: [
+      { key: "view",                label: "View statements" },
+      { key: "generate_statements", label: "Generate monthly statements" },
+      { key: "mark_paid",           label: "Mark statements as paid" },
+      { key: "configure_tiers",     label: "Configure commission tiers" },
+    ],
+  },
+  {
+    domain: "resellers",
+    label: "Resellers",
+    actions: [
+      { key: "view",   label: "View resellers" },
+      { key: "manage", label: "Create & edit resellers" },
+    ],
+  },
+  {
+    domain: "invoices",
+    label: "Invoices",
+    actions: [
+      { key: "view",           label: "View invoices" },
+      { key: "record_payment", label: "Record payments" },
+    ],
+  },
+  {
+    domain: "reports",
+    label: "Reports",
+    actions: [
+      { key: "view",   label: "View reports" },
+      { key: "export", label: "Export report data" },
+    ],
+  },
+  {
+    domain: "healthcare",
+    label: "Healthcare",
+    actions: [
+      { key: "view",   label: "View healthcare records" },
+      { key: "manage", label: "Manage healthcare records" },
+    ],
+  },
+  {
+    domain: "users",
+    label: "User Management",
+    actions: [
+      { key: "manage", label: "Create & edit staff accounts" },
+    ],
+  },
+  {
+    domain: "warehouse",
+    label: "Warehouse",
+    actions: [
+      { key: "view",      label: "View warehouse data" },
+      { key: "supervise", label: "Supervise packing floor" },
+    ],
+  },
+];
+
+const ROLE_OPTIONS = [
+  { value: "admin",               label: "Admin",               adminOnly: true  },
+  { value: "warehouse_supervisor", label: "Warehouse Supervisor", adminOnly: false },
+  { value: "packer",              label: "Packer",              adminOnly: false },
+];
+
+const ROLE_COLORS = {
+  super_admin:          "purple",
+  admin:                "blue",
+  warehouse_supervisor: "amber",
+  packer:               "green",
+  reseller:             "teal",
+};
+
+const EMPTY_PERMISSIONS = Object.fromEntries(
+  PERMISSION_GROUPS.map(g => [
+    g.domain,
+    Object.fromEntries(g.actions.map(a => [a.key, false])),
+  ])
+);
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function Users() {
+  const { user: currentUser } = useAuth();
+  const isSuperAdmin = currentUser?.is_super_admin;
+
   const [users,   setUsers  ] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Create user modal
+  // Create modal
   const [createModal, setCreateModal] = useState(false);
-  const [createForm,  setCreateForm ] = useState({ username: "", password: "", name: "", role: "admin" });
+  const [createForm,  setCreateForm ] = useState({
+    username: "", password: "", name: "", display_name: "", role: "admin",
+  });
+  const [createPerms, setCreatePerms] = useState({ ...EMPTY_PERMISSIONS });
 
   // Reset password modal
-  const [resetModal,   setResetModal  ] = useState(false);
-  const [resetTarget,  setResetTarget ] = useState(null);
-  const [resetPassword,setResetPassword] = useState("");
-  const [revealed,     setRevealed    ] = useState(null); // plain-text password shown once
-  const [copied,       setCopied      ] = useState(false);
+  const [resetModal,    setResetModal   ] = useState(false);
+  const [resetTarget,   setResetTarget  ] = useState(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [revealed,      setRevealed     ] = useState(null);
+  const [copied,        setCopied       ] = useState(false);
+
+  // Permissions edit modal
+  const [permsModal,  setPermsModal ] = useState(false);
+  const [permsTarget, setPermsTarget] = useState(null);
+  const [editPerms,   setEditPerms  ] = useState({});
+  const [expandedGroups, setExpandedGroups] = useState({});
 
   const load = async () => {
     setLoading(true);
-    try { const r = await api.get("/api/users/"); setUsers(r.data.users); }
-    catch { toast.error("Failed to load users"); }
-    finally { setLoading(false); }
+    try {
+      const r = await api.get("/api/users/");
+      setUsers(r.data.users);
+    } catch {
+      toast.error("Failed to load users");
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { load(); }, []);
 
-  // ── Create user ──────────────────────────────────────────────────────────────
+  // ── Create user ─────────────────────────────────────────────────────────────
+
+  const openCreate = () => {
+    const defaultRole = isSuperAdmin ? "admin" : "warehouse_supervisor";
+    setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole });
+    setCreatePerms({ ...EMPTY_PERMISSIONS });
+    setCreateModal(true);
+  };
+
   const createUser = async () => {
     if (!createForm.username || !createForm.password) return toast.error("Username and password required");
     if (createForm.password.length < 8) return toast.error("Password must be at least 8 characters");
     try {
-      await api.post("/api/users/", createForm);
-      toast.success("User created");
+      const body = { ...createForm };
+      if (createForm.role === "admin") body.permissions = createPerms;
+      if (createForm.role !== "packer") delete body.display_name;
+      await api.post("/api/users/", body);
+      toast.success("Account created");
       setCreateModal(false);
-      setCreateForm({ username: "", password: "", name: "", role: "admin" });
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Create failed");
+    }
   };
 
   // ── Reset password ───────────────────────────────────────────────────────────
-  const openReset = (u) => { setResetTarget(u); setResetPassword(""); setRevealed(null); setCopied(false); setResetModal(true); };
+
+  const openReset = (u) => {
+    setResetTarget(u);
+    setResetPassword("");
+    setRevealed(null);
+    setCopied(false);
+    setResetModal(true);
+  };
 
   const submitReset = async () => {
     if (resetPassword && resetPassword.length < 8) return toast.error("Password must be at least 8 characters");
     try {
-      const r = await api.post(`/api/users/${resetTarget.id}/reset-password`,
+      const r = await api.post(
+        `/api/users/${resetTarget.id}/reset-password`,
         resetPassword ? { new_password: resetPassword } : {}
       );
       setRevealed(r.data.new_password);
-    } catch (e) { toast.error(e.response?.data?.detail || "Reset failed"); }
-  };
-
-  const copyPassword = () => {
-    navigator.clipboard.writeText(revealed);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Reset failed");
+    }
   };
 
   const closeReset = () => { setResetModal(false); setRevealed(null); setResetTarget(null); load(); };
 
   // ── Toggle active ────────────────────────────────────────────────────────────
+
   const toggleActive = async (u) => {
-    const action = u.active ? "deactivate" : "reactivate";
-    const label  = u.active ? "Deactivate"  : "Reactivate";
-    if (u.active && !window.confirm(`${label} ${u.username}? They will no longer be able to log in.`)) return;
+    if (u.active && !window.confirm(`Deactivate ${u.username}? They will no longer be able to log in.`)) return;
     try {
       if (u.active) await api.delete(`/api/users/${u.id}`);
       else          await api.post(`/api/users/${u.id}/reactivate`);
-      toast.success(`${label}d`);
+      toast.success(u.active ? "Account deactivated" : "Account reactivated");
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || `${label} failed`); }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Action failed");
+    }
+  };
+
+  // ── Permissions editor ───────────────────────────────────────────────────────
+
+  const openPerms = (u) => {
+    const base = { ...EMPTY_PERMISSIONS };
+    const stored = u.permissions || {};
+    for (const g of PERMISSION_GROUPS) {
+      base[g.domain] = { ...base[g.domain], ...(stored[g.domain] || {}) };
+    }
+    setPermsTarget(u);
+    setEditPerms(base);
+    setExpandedGroups(Object.fromEntries(PERMISSION_GROUPS.map(g => [g.domain, true])));
+    setPermsModal(true);
+  };
+
+  const togglePerm = (domain, action) => {
+    setEditPerms(prev => ({
+      ...prev,
+      [domain]: { ...prev[domain], [action]: !prev[domain][action] },
+    }));
+  };
+
+  const toggleGroup = (domain) => {
+    const allOn = PERMISSION_GROUPS.find(g => g.domain === domain)
+      ?.actions.every(a => editPerms[domain]?.[a.key]);
+    setEditPerms(prev => ({
+      ...prev,
+      [domain]: Object.fromEntries(
+        PERMISSION_GROUPS.find(g => g.domain === domain).actions.map(a => [a.key, !allOn])
+      ),
+    }));
+  };
+
+  const savePerms = async () => {
+    try {
+      await api.put(`/api/users/${permsTarget.id}`, { permissions: editPerms });
+      toast.success("Permissions updated");
+      setPermsModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Save failed");
+    }
+  };
+
+  const setCreatePerm = (domain, action, value) => {
+    setCreatePerms(prev => ({ ...prev, [domain]: { ...prev[domain], [action]: value } }));
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  const availableRoles = ROLE_OPTIONS.filter(r => isSuperAdmin || !r.adminOnly);
+
+  const permSummary = (u) => {
+    if (u.is_super_admin) return "Full access";
+    if (!u.permissions) return "—";
+    const enabled = Object.values(u.permissions).flatMap(Object.values).filter(Boolean).length;
+    const total   = Object.values(u.permissions).flatMap(Object.values).length;
+    return `${enabled} / ${total} permissions`;
   };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="User Accounts" subtitle="Manage portal login accounts" onRefresh={load}
-        actions={<BtnPrimary onClick={() => setCreateModal(true)}><UserPlus size={14} />Add User</BtnPrimary>} />
+      <TopBar
+        title="User Accounts"
+        subtitle="Manage portal login accounts and permissions"
+        onRefresh={load}
+        actions={
+          <BtnPrimary onClick={openCreate}>
+            <UserPlus size={14} /> Add User
+          </BtnPrimary>
+        }
+      />
 
       <main className="flex-1 overflow-y-auto p-6">
         {loading ? <LoadingState /> : (
-          <Table headers={["Username", "Name", "Role", "Linked Reseller", "Status", "Actions"]}>
+          <Table headers={["Username", "Name", "Role", "Permissions", "Status", "Actions"]}>
             {users.length === 0 && (
               <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">No users found</td></tr>
             )}
             {users.map(u => (
               <Tr key={u.id}>
-                <Td><span className="font-mono text-sm font-medium text-gray-900">{u.username}</span></Td>
+                <Td>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-medium text-gray-900">{u.username}</span>
+                    {u.is_super_admin && (
+                      <span title="Super Admin" className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 rounded-full px-2 py-0.5">
+                        <ShieldCheck size={10} /> SUPER
+                      </span>
+                    )}
+                  </div>
+                </Td>
                 <Td>{u.name || <span className="text-gray-300">—</span>}</Td>
                 <Td>
-                  <Badge color={u.role === "admin" ? "blue" : "green"}>{u.role}</Badge>
+                  <Badge color={ROLE_COLORS[u.role] || "gray"}>
+                    {u.role?.replace(/_/g, " ")}
+                  </Badge>
                 </Td>
                 <Td>
-                  {u.reseller_name
-                    ? <span className="text-sm text-gray-700">{u.reseller_name}</span>
-                    : <span className="text-gray-300 text-sm">—</span>}
+                  <span className="text-xs text-gray-500">{permSummary(u)}</span>
                 </Td>
                 <Td>
                   <Badge color={u.active !== false ? "green" : "red"}>
@@ -106,14 +323,21 @@ export default function Users() {
                   </Badge>
                 </Td>
                 <Td>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
+                    {/* Only super_admin can edit permissions on admin accounts */}
+                    {isSuperAdmin && u.role === "admin" && !u.is_super_admin && (
+                      <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
+                        <ShieldCheck size={12} />
+                      </BtnSecondary>
+                    )}
                     <BtnSecondary size="sm" onClick={() => openReset(u)} title="Reset password">
                       <KeyRound size={12} />
                     </BtnSecondary>
-                    {u.active !== false
-                      ? <BtnDanger onClick={() => toggleActive(u)} title="Deactivate"><PowerOff size={12} /></BtnDanger>
-                      : <BtnSecondary size="sm" onClick={() => toggleActive(u)} title="Reactivate"><Power size={12} /></BtnSecondary>
-                    }
+                    {!u.is_super_admin && (
+                      u.active !== false
+                        ? <BtnDanger onClick={() => toggleActive(u)} title="Deactivate"><PowerOff size={12} /></BtnDanger>
+                        : <BtnSecondary size="sm" onClick={() => toggleActive(u)} title="Reactivate"><Power size={12} /></BtnSecondary>
+                    )}
                   </div>
                 </Td>
               </Tr>
@@ -122,32 +346,80 @@ export default function Users() {
         )}
       </main>
 
-      {/* Create user modal */}
+      {/* ── Create user modal ── */}
       {createModal && (
         <Modal title="Add User Account" onClose={() => setCreateModal(false)}>
           <div className="grid grid-cols-2 gap-3">
             <FormGroup label="Username" required>
-              <Input value={createForm.username}
+              <Input
+                value={createForm.username}
                 onChange={e => setCreateForm({ ...createForm, username: e.target.value.toLowerCase().replace(/\s/g, "") })}
-                placeholder="e.g. jane.admin" />
+                placeholder="e.g. jane.admin"
+              />
             </FormGroup>
             <FormGroup label="Full Name">
-              <Input value={createForm.name}
+              <Input
+                value={createForm.name}
                 onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
-                placeholder="Jane Smith" />
+                placeholder="Jane Smith"
+              />
             </FormGroup>
             <FormGroup label="Password" required>
-              <Input type="password" value={createForm.password}
+              <Input
+                type="password"
+                value={createForm.password}
                 onChange={e => setCreateForm({ ...createForm, password: e.target.value })}
-                placeholder="Min. 8 characters" />
+                placeholder="Min. 8 characters"
+              />
             </FormGroup>
             <FormGroup label="Role">
-              <Select value={createForm.role} onChange={e => setCreateForm({ ...createForm, role: e.target.value })}>
-                <option value="admin">Admin</option>
-                <option value="reseller">Reseller</option>
+              <Select
+                value={createForm.role}
+                onChange={e => setCreateForm({ ...createForm, role: e.target.value })}
+              >
+                {availableRoles.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
               </Select>
             </FormGroup>
+            {createForm.role === "packer" && (
+              <FormGroup label="Display Name" className="col-span-2">
+                <Input
+                  value={createForm.display_name}
+                  onChange={e => setCreateForm({ ...createForm, display_name: e.target.value.toUpperCase() })}
+                  placeholder="Shown on packing board, e.g. THEMBI"
+                />
+              </FormGroup>
+            )}
           </div>
+
+          {/* Permissions panel — only for admin role, only super_admin can set */}
+          {createForm.role === "admin" && (
+            <div className="mt-4 border border-gray-200 rounded-xl overflow-hidden">
+              <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-700">Permissions</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Defaults to view-only. Toggle to grant additional access.</p>
+              </div>
+              <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+                {PERMISSION_GROUPS.map(group => (
+                  <PermissionGroup
+                    key={group.domain}
+                    group={group}
+                    perms={createPerms[group.domain]}
+                    onToggle={(action) => setCreatePerm(group.domain, action, !createPerms[group.domain][action])}
+                    onToggleAll={() => {
+                      const allOn = group.actions.every(a => createPerms[group.domain][a.key]);
+                      setCreatePerms(prev => ({
+                        ...prev,
+                        [group.domain]: Object.fromEntries(group.actions.map(a => [a.key, !allOn])),
+                      }));
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCreateModal(false)}>Cancel</BtnSecondary>
             <BtnPrimary onClick={createUser}>Create Account</BtnPrimary>
@@ -155,7 +427,7 @@ export default function Users() {
         </Modal>
       )}
 
-      {/* Reset password modal */}
+      {/* ── Reset password modal ── */}
       {resetModal && resetTarget && (
         <Modal title={`Reset Password — ${resetTarget.username}`} onClose={closeReset}>
           {!revealed ? (
@@ -164,13 +436,16 @@ export default function Users() {
                 Enter a new password, or leave blank to generate a secure random one.
               </p>
               <FormGroup label="New Password (optional)">
-                <Input type="password" value={resetPassword}
+                <Input
+                  type="password"
+                  value={resetPassword}
                   onChange={e => setResetPassword(e.target.value)}
-                  placeholder="Leave blank to auto-generate" />
+                  placeholder="Leave blank to auto-generate"
+                />
               </FormGroup>
               <div className="flex justify-end gap-2 mt-4">
                 <BtnSecondary onClick={closeReset}>Cancel</BtnSecondary>
-                <BtnPrimary onClick={submitReset}><KeyRound size={13} />Reset Password</BtnPrimary>
+                <BtnPrimary onClick={submitReset}><KeyRound size={13} /> Reset Password</BtnPrimary>
               </div>
             </>
           ) : (
@@ -181,8 +456,10 @@ export default function Users() {
               </div>
               <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
                 <span className="font-mono text-sm flex-1 select-all text-gray-900">{revealed}</span>
-                <button onClick={copyPassword}
-                  className="text-bassani-600 hover:text-bassani-700 transition-colors">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(revealed); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                  className="text-bassani-600 hover:text-bassani-700 transition-colors"
+                >
                   {copied ? <Check size={15} /> : <Copy size={15} />}
                 </button>
               </div>
@@ -192,6 +469,89 @@ export default function Users() {
             </>
           )}
         </Modal>
+      )}
+
+      {/* ── Edit permissions modal ── */}
+      {permsModal && permsTarget && (
+        <Modal title={`Permissions — ${permsTarget.username}`} onClose={() => setPermsModal(false)}>
+          <p className="text-xs text-gray-500 mb-3">
+            Super admin always overrides these. Changes take effect immediately on next API call.
+          </p>
+          <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
+            <div className="divide-y divide-gray-100">
+              {PERMISSION_GROUPS.map(group => (
+                <PermissionGroup
+                  key={group.domain}
+                  group={group}
+                  perms={editPerms[group.domain]}
+                  expanded={expandedGroups[group.domain]}
+                  onExpand={() => setExpandedGroups(prev => ({ ...prev, [group.domain]: !prev[group.domain] }))}
+                  onToggle={(action) => togglePerm(group.domain, action)}
+                  onToggleAll={() => toggleGroup(group.domain)}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setPermsModal(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={savePerms}><ShieldCheck size={13} /> Save Permissions</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── PermissionGroup sub-component ─────────────────────────────────────────────
+
+function PermissionGroup({ group, perms = {}, expanded = true, onExpand, onToggle, onToggleAll }) {
+  const allOn = group.actions.every(a => perms[a.key]);
+  const anyOn = group.actions.some(a => perms[a.key]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 cursor-pointer select-none"
+        onClick={onExpand || (() => {})}>
+        <div className="flex items-center gap-3">
+          {/* Group toggle */}
+          <button
+            className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ${
+              allOn ? "bg-bassani-600" : anyOn ? "bg-bassani-300" : "bg-gray-200"
+            }`}
+            onClick={e => { e.stopPropagation(); onToggleAll(); }}
+            title={allOn ? "Disable all" : "Enable all"}
+          >
+            <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${
+              allOn ? "translate-x-4" : anyOn ? "translate-x-2" : "translate-x-0.5"
+            }`} />
+          </button>
+          <span className="text-xs font-semibold text-gray-700">{group.label}</span>
+        </div>
+        {onExpand && (
+          expanded ? <ChevronUp size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />
+        )}
+      </div>
+
+      {expanded && (
+        <div className="px-4 pb-2 pt-1 space-y-1">
+          {group.actions.map(action => (
+            <label key={action.key} className="flex items-center gap-3 py-1 cursor-pointer group">
+              <div
+                className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                  perms[action.key] ? "bg-bassani-600 border-bassani-600" : "bg-white border border-gray-300"
+                }`}
+                onClick={() => onToggle(action.key)}
+              >
+                {perms[action.key] && (
+                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10">
+                    <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </div>
+              <span className="text-xs text-gray-600 group-hover:text-gray-900">{action.label}</span>
+            </label>
+          ))}
+        </div>
       )}
     </div>
   );

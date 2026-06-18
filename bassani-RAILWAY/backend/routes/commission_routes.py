@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, date, timezone
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, require_permission
 from database import col, NO_ID
 from odoo_client import get_odoo_client
 
@@ -121,7 +121,7 @@ async def get_tiers(current_user: dict = Depends(get_current_user)):
 @router.put("/tiers")
 async def update_tiers(
     payload: TiersUpdate,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("commission.configure_tiers")),
 ):
     """
     Update commission rates for all 5 tiers.
@@ -152,7 +152,7 @@ async def update_tiers(
 
 
 @router.delete("/tiers/reset")
-async def reset_tiers(current_user: dict = Depends(require_admin)):
+async def reset_tiers(_: dict = Depends(require_permission("commission.configure_tiers"))):
     """Reset tier rates back to system defaults."""
     await col("settings").delete_one({"key": "commission_tiers"})
     return {"success": True, "tiers": DEFAULT_TIERS}
@@ -163,7 +163,7 @@ async def reset_tiers(current_user: dict = Depends(require_admin)):
 @router.post("/statements/generate")
 async def generate_statements(
     payload: GeneratePayload,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("commission.generate_statements")),
 ):
     """
     Generate (or re-generate) monthly commission statements for a given month.
@@ -316,7 +316,7 @@ async def get_statement(
 async def mark_statement_paid(
     stmt_id: str,
     payload: MarkPaidPayload,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("commission.mark_paid")),
 ):
     """
     Mark a monthly statement as paid and create an Odoo vendor bill.

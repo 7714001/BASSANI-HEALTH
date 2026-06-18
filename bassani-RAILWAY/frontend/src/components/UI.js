@@ -10,7 +10,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck,
+  ScrollText, Target, ClipboardCheck, ShieldCheck,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -46,13 +46,16 @@ const RESELLER_NAV = [
 ];
 
 export function Sidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { open, close } = useContext(SidebarContext);
 
-  const items = user?.role === "reseller" ? RESELLER_NAV : NAV;
-  const sections = [...new Set(items.map((i) => i.section || ""))].filter(Boolean);
+  const isReseller = user?.role === "reseller";
+  const rawItems   = isReseller ? RESELLER_NAV : NAV;
+  // Hide adminOnly nav items from non-admin portal users (future-proofing)
+  const items      = rawItems.filter(i => !i.adminOnly || isAdmin);
+  const sections   = [...new Set(items.map((i) => i.section || ""))].filter(Boolean);
 
   const initials = (name) =>
     name?.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "??";
@@ -78,7 +81,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-0.5">
-        {user?.role === "reseller" ? (
+        {isReseller ? (
           items.map((item) => <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate} />)
         ) : (
           sections.map((section) => (
@@ -99,8 +102,15 @@ export function Sidebar() {
             {initials(user?.username || "")}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-slate-200 text-xs font-medium truncate">{user?.username}</p>
-            <p className="text-slate-500 text-[10px] truncate capitalize">{user?.role}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-slate-200 text-xs font-medium truncate">{user?.name || user?.username}</p>
+              {user?.is_super_admin && (
+                <ShieldCheck size={10} className="text-purple-400 flex-shrink-0" title="Super Admin" />
+              )}
+            </div>
+            <p className="text-slate-500 text-[10px] truncate">
+              {user?.is_super_admin ? "Super Admin" : user?.role?.replace(/_/g, " ")}
+            </p>
           </div>
           <button onClick={logout} className="text-slate-500 hover:text-slate-300 transition-colors">
             <LogOut size={14} />

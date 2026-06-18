@@ -8,12 +8,21 @@ from auth import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _user_payload(user: dict) -> dict:
+    """Build the public user object returned by login and /me."""
+    return {
+        "id":            user["id"],
+        "username":      user["username"],
+        "role":          user.get("role", "reseller"),
+        "name":          user.get("name", ""),
+        "reseller_id":   user.get("reseller_id"),
+        "is_super_admin": bool(user.get("is_super_admin", False)),
+        "permissions":   user.get("permissions") or {},
+    }
+
+
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Login with username + password.
-    Returns a JWT token valid for 24 hours.
-    """
     user = await authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -25,23 +34,10 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "role": user.get("role", "reseller"),
-            "name": user.get("name", ""),
-            "reseller_id": user.get("reseller_id"),
-        },
+        "user": _user_payload(user),
     }
 
 
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
-    """Return the currently authenticated user (sans password)."""
-    return {
-        "id": current_user["id"],
-        "username": current_user["username"],
-        "role": current_user.get("role", "reseller"),
-        "name": current_user.get("name", ""),
-        "reseller_id": current_user.get("reseller_id"),
-    }
+    return _user_payload(current_user)

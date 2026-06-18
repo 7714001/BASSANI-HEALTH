@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 import uuid
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 
@@ -130,7 +130,7 @@ async def get_application(app_id: str, current_user: dict = Depends(get_current_
 
 
 @router.put("/{app_id}/approve")
-async def approve_application(app_id: str, current_user: dict = Depends(require_admin)):
+async def approve_application(app_id: str, current_user: dict = Depends(require_permission("customers.approve_onboarding"))):
     """
     Approve an onboarding application:
     1. Create res.partner in Odoo
@@ -197,7 +197,7 @@ async def approve_application(app_id: str, current_user: dict = Depends(require_
 async def reject_application(
     app_id: str,
     body:   RejectBody,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("customers.reject_onboarding")),
 ):
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:

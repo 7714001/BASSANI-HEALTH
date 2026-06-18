@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     reorder_alert_days:      int = 30
     require_2fa_admin: bool = False
     cors_origins: str = "*"
+    super_admin_username: str = ""
+    super_admin_password: str = ""
 
     class Config:
         env_file = ".env"

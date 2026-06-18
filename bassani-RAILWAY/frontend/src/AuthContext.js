@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import api from "./api";
 
 const AuthContext = createContext(null);
@@ -34,8 +34,27 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  /**
+   * Check whether the current user has a specific permission.
+   * Format: "domain.action"  e.g.  can("commission.mark_paid")
+   *
+   * Super admins always return true. Non-admin roles always return false.
+   * If the permission key doesn't exist, returns false (deny by default).
+   */
+  const can = useCallback((permission) => {
+    if (!user) return false;
+    if (user.is_super_admin) return true;
+    if (!["admin", "super_admin"].includes(user.role)) return false;
+
+    const [domain, action] = permission.split(".");
+    return Boolean(user.permissions?.[domain]?.[action]);
+  }, [user]);
+
+  /** True if the user is a super_admin or a regular admin (i.e. portal staff). */
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );

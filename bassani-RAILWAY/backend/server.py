@@ -1,10 +1,10 @@
 import os
-from fastapi import FastAPI, Depends
+from datetime import datetime, timezone
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from config import get_settings
-from auth import require_admin
+from auth import hash_password, FULL_PERMISSIONS
 
 settings = get_settings()
 
@@ -18,55 +18,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.on_event("startup")
-async def seed_default_users():
-    import bcrypt
+async def initialise_users():
+    """
+    On every startup:
+    1. Ensure a super admin account exists (from SUPER_ADMIN_USERNAME/PASSWORD env vars).
+    2. Migrate any existing admin users that predate the permissions system.
+
+    If env vars are not set and no super admin exists yet, the app logs a clear
+    warning but does not crash — existing accounts remain accessible.
+    """
     from database import col
-    count = await col("users").count_documents({})
-    if count > 0:
-        print(f"Users collection has {count} records — skipping seed")
-        return
-    await col("users").insert_many([
-        {
-            "username": "admin",
-            "password": bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode(),
-            "role": "admin",
-            "name": "Administrator",
-            "active": True,
-        },
-    ])
-    print("Default users seeded — change the admin password immediately")
+
+    sa_username = settings.super_admin_username.strip()
+    sa_password = settings.super_admin_password.strip()
+
+    if sa_username and sa_password:
+        existing = await col("users").find_one({"username": sa_username})
+        if existing:
+            # Ensure the account is flagged as super admin (idempotent on re-deploy)
+            await col("users").update_one(
+                {"username": sa_username},
+                {"$set": {
+                    "role": "super_admin",
+                    "is_super_admin": True,
+                    "active": True,
+                    "permissions": FULL_PERMISSIONS,
+                }},
+            )
+            print(f"[startup] Super admin '{sa_username}' verified.")
+        else:
+            await col("users").insert_one({
+                "username": sa_username,
+                "password": hash_password(sa_password),
+                "role": "super_admin",
+                "is_super_admin": True,
+                "name": "Super Admin",
+                "active": True,
+                "permissions": FULL_PERMISSIONS,
+                "created_at": datetime.now(timezone.utc),
+            })
+            print(f"[startup] Super admin '{sa_username}' created.")
+    else:
+        existing_sa = await col("users").find_one({"is_super_admin": True})
+        if existing_sa:
+            print("[startup] SUPER_ADMIN_USERNAME not set — using existing super admin.")
+        else:
+            count = await col("users").count_documents({})
+            if count == 0:
+                print(
+                    "[startup] WARNING: No users exist and SUPER_ADMIN_USERNAME/SUPER_ADMIN_PASSWORD "
+                    "are not set. Add these env vars to Railway and redeploy to create the super admin account."
+                )
+            else:
+                print(
+                    "[startup] WARNING: SUPER_ADMIN_USERNAME not set and no super admin account found. "
+                    "Set SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD in Railway env vars."
+                )
+
+    # Migration: give FULL_PERMISSIONS to any admin user that predates the permissions system
+    result = await col("users").update_many(
+        {"role": "admin", "permissions": {"$exists": False}},
+        {"$set": {"permissions": FULL_PERMISSIONS}},
+    )
+    if result.modified_count:
+        print(f"[startup] Migrated {result.modified_count} existing admin user(s) to full permissions.")
+
 
 @app.get("/health")
 def health():
     return JSONResponse({"status": "ok", "version": "2.0.0"})
 
-@app.get("/reset-admin")
-async def reset_admin(current_user: dict = Depends(require_admin)):
-    import bcrypt
-    from database import col
-    await col("users").update_one(
-        {"username": "admin"},
-        {"$set": {
-            "password": bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode(),
-            "role": "admin",
-            "name": "Administrator",
-            "active": True,
-        }},
-        upsert=True,
-    )
-    return {"status": "done", "message": "Admin user reset — change the password immediately"}
-
-@app.get("/debug-static")
-def debug_static():
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    result = {"static_dir": static_dir, "exists": os.path.exists(static_dir), "files": {}}
-    if os.path.exists(static_dir):
-        for root, dirs, files in os.walk(static_dir):
-            for f in files:
-                full = os.path.join(root, f)
-                result["files"][full.replace(static_dir, "")] = os.path.getsize(full)
-    return result
 
 from routes.auth_routes          import router as auth_router
 from routes.user_routes          import router as user_router
@@ -128,8 +151,6 @@ if os.path.exists(static_dir):
         file_path = os.path.join(static_dir, full_path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)
-        # index.html must never be cached — the hashed JS/CSS filenames inside it
-        # change on every build, so a stale index.html will load the old bundle.
         return FileResponse(
             os.path.join(static_dir, "index.html"),
             headers={

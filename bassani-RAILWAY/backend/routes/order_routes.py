@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_permission
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 
@@ -247,7 +247,7 @@ async def create_order(
 
 
 @router.put("/{order_id}/confirm")
-async def confirm_order(order_id: int, current_user: dict = Depends(require_admin)):
+async def confirm_order(order_id: int, current_user: dict = Depends(require_permission("orders.confirm"))):
     """
     Confirm a quotation. On success, three further steps run in sequence:
       1. Create + post the customer invoice (out_invoice) in Odoo
@@ -385,7 +385,7 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_admi
 
 
 @router.put("/{order_id}/cancel")
-async def cancel_order(order_id: int, current_user: dict = Depends(require_admin)):
+async def cancel_order(order_id: int, current_user: dict = Depends(require_permission("orders.cancel"))):
     """Cancel a sales order in Odoo and void the related commission record."""
     odoo = get_odoo_client()
     try:
