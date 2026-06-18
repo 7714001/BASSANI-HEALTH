@@ -37,7 +37,7 @@ async def initialise_users():
     if sa_username and sa_password:
         existing = await col("users").find_one({"username": sa_username})
         if existing:
-            # Ensure the account is flagged as super admin (idempotent on re-deploy)
+            # Sync credentials and role from env vars (idempotent on re-deploy)
             await col("users").update_one(
                 {"username": sa_username},
                 {"$set": {
@@ -45,6 +45,7 @@ async def initialise_users():
                     "is_super_admin": True,
                     "active": True,
                     "permissions": FULL_PERMISSIONS,
+                    "password": hash_password(sa_password),
                 }},
             )
             print(f"[startup] Super admin '{sa_username}' verified.")
