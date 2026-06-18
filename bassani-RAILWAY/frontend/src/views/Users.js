@@ -540,14 +540,15 @@ function PermissionGroup({ group, perms = {}, expanded = true, onExpand, onToggl
         <div className="flex items-center gap-3">
           {/* Group toggle */}
           <button
-            className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ${
+            type="button"
+            className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 overflow-hidden focus:outline-none ${
               allOn ? "bg-bassani-600" : anyOn ? "bg-bassani-300" : "bg-gray-200"
             }`}
             onClick={e => { e.stopPropagation(); onToggleAll(); }}
             title={allOn ? "Disable all" : "Enable all"}
           >
             <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${
-              allOn ? "translate-x-4" : anyOn ? "translate-x-2" : "translate-x-0.5"
+              allOn ? "translate-x-[17px]" : anyOn ? "translate-x-[9px]" : "translate-x-0.5"
             }`} />
           </button>
           <span className="text-xs font-semibold text-gray-700">{group.label}</span>
@@ -558,7 +559,7 @@ function PermissionGroup({ group, perms = {}, expanded = true, onExpand, onToggl
       </div>
 
       {expanded && (
-        <div className="px-4 pb-2 pt-1 space-y-1">
+        <div className="pr-4 pl-[44px] pb-2 pt-1 space-y-1">
           {group.actions.map(action => (
             <label key={action.key} className="flex items-center gap-3 py-1 cursor-pointer group">
               <div
