@@ -16,10 +16,10 @@ import secrets
 import asyncio
 import json
 import jwt
+from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timezone
 from auth import require_admin, get_current_user, get_user_by_username
 from config import get_settings
 from database import col, NO_ID
@@ -27,6 +27,15 @@ from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
 settings = get_settings()
+
+
+def _dumps(obj) -> str:
+    """json.dumps that handles MongoDB datetime objects."""
+    def _default(o):
+        if isinstance(o, datetime):
+            return o.isoformat()
+        raise TypeError(f"Not serializable: {type(o)}")
+    return json.dumps(obj, default=_default)
 
 
 # ── Connection manager ────────────────────────────────────────────────────────
@@ -39,15 +48,15 @@ class BoardManager:
 
     async def connect_screen(self, ws: WebSocket):
         self.screens.append(ws)
-        await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
 
     async def connect_supervisor(self, ws: WebSocket):
         self.supervisors.append(ws)
-        await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
 
     async def connect_packer(self, ws: WebSocket):
         self.packers.append(ws)
-        await ws.send_text(json.dumps({"type": "full_state", "data": await get_board_state()}))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
 
     def disconnect(self, ws: WebSocket):
         self.screens     = [c for c in self.screens     if c is not ws]
@@ -55,7 +64,7 @@ class BoardManager:
         self.packers     = [c for c in self.packers     if c is not ws]
 
     async def broadcast(self, message: dict):
-        payload = json.dumps(message)
+        payload = _dumps(message)
         dead = []
         for ws in self.screens + self.supervisors + self.packers:
             try:
@@ -297,7 +306,7 @@ async def list_packers(_: dict = Depends(get_current_user)):
 
 async def _ws_reject(ws: WebSocket, reason: str):
     """Send a JSON auth_error before closing — Railway's proxy strips custom close codes."""
-    await ws.send_text(json.dumps({"type": "auth_error", "reason": reason}))
+    await ws.send_text(_dumps({"type": "auth_error", "reason": reason}))
     await ws.close(code=4001)
 
 
@@ -311,12 +320,15 @@ async def websocket_board(ws: WebSocket):
     if not _verify_display_token(ws):
         await _ws_reject(ws, "invalid_token")
         return
-    await manager.connect_screen(ws)
     try:
+        await manager.connect_screen(ws)
         while True:
-            await asyncio.sleep(30)
-            await ws.send_text(json.dumps({"type": "ping"}))
-    except (WebSocketDisconnect, Exception):
+            await asyncio.sleep(15)
+            await ws.send_text(_dumps({"type": "ping"}))
+    except WebSocketDisconnect:
+        manager.disconnect(ws)
+    except Exception as e:
+        print(f"⚠️  Board WS error: {e}")
         manager.disconnect(ws)
 
 
