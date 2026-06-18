@@ -598,10 +598,28 @@ document.getElementById('login-password').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
 });
 
-// Resume session if token is still in storage
-if (getToken()) {
-  enterBoard();
-} // else login screen is already visible
+async function init() {
+  // Accept a token passed in the URL (e.g. from the React portal PackingFloorScreen)
+  const urlToken = new URLSearchParams(location.search).get('token');
+  if (urlToken && !getToken()) {
+    try {
+      const resp = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${urlToken}` },
+      });
+      if (resp.ok) {
+        const userData = await resp.json();
+        if (userData.role === 'warehouse_supervisor' || userData.is_super_admin) {
+          sessionStorage.setItem('supervisor_token', urlToken);
+          sessionStorage.setItem('supervisor_user', JSON.stringify(userData));
+        }
+      }
+    } catch { /* fall through to login screen */ }
+  }
+  if (getToken()) {
+    enterBoard();
+  }
+}
+init();
 </script>
 </body>
 </html>

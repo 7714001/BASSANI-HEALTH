@@ -409,9 +409,28 @@ document.getElementById('login-password').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
 });
 
-if (getToken()) {
-  enterBoard();
+async function init() {
+  // Accept a token passed in the URL (e.g. from the React portal PackingFloorScreen)
+  const urlToken = new URLSearchParams(location.search).get('token');
+  if (urlToken && !getToken()) {
+    try {
+      const resp = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${urlToken}` },
+      });
+      if (resp.ok) {
+        const userData = await resp.json();
+        if (userData.role === 'packer') {
+          sessionStorage.setItem('packer_token', urlToken);
+          sessionStorage.setItem('packer_user', JSON.stringify(userData));
+        }
+      }
+    } catch { /* fall through to login screen */ }
+  }
+  if (getToken()) {
+    enterBoard();
+  }
 }
+init();
 </script>
 </body>
 </html>

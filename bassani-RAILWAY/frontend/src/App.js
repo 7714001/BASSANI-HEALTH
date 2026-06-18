@@ -28,6 +28,11 @@ const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
 function PackingFloorScreen() {
   const { user, logout } = useAuth();
+  const token = localStorage.getItem("token");
+  const isSupervisor = user?.role === "warehouse_supervisor";
+  const boardUrl   = isSupervisor ? `/supervisor.html?token=${token}` : `/packer.html?token=${token}`;
+  const boardLabel = isSupervisor ? "Open Supervisor Board" : "Open Packing Board";
+
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8 text-center">
@@ -38,11 +43,19 @@ function PackingFloorScreen() {
         </div>
         <h1 className="text-lg font-bold text-gray-900 mb-1">Packing Floor Access</h1>
         <p className="text-sm text-gray-500 mb-1">
-          Logged in as <span className="font-semibold text-gray-700">{user?.name || user?.username}</span>
+          Logged in as <span className="font-semibold text-gray-700">{user?.name || user?.display_name || user?.username}</span>
         </p>
         <p className="text-xs text-gray-400 mb-6">
-          This account is configured for the packing floor. Use the board URL provided by your supervisor to access your workspace.
+          {isSupervisor
+            ? "Tap below to open the supervisor board on this device."
+            : "Tap below to open your packing view on this device."}
         </p>
+        <a
+          href={boardUrl}
+          className="block w-full py-2.5 rounded-xl bg-bassani-600 hover:bg-bassani-700 text-sm font-semibold text-white transition-colors mb-3"
+        >
+          {boardLabel}
+        </a>
         <button
           onClick={logout}
           className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-700 transition-colors"
