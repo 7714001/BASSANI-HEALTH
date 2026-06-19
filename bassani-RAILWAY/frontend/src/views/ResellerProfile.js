@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronDown, ShoppingCart, TrendingUp, Users, CreditCard,
-  FileText, Clock, Building2,
+  FileText, Clock, Building2, History,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
+import { useAuth } from "../AuthContext";
 import { Badge, BtnSecondary, LoadingState, fmtR, fmtDate } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
@@ -41,8 +42,10 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function ResellerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [data,    setData   ] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activity, setActivity] = useState([]);
 
   useEffect(() => {
     api.get(`/api/resellers/${id}/profile`)
@@ -50,6 +53,13 @@ export default function ResellerProfile() {
       .catch(() => { toast.error("Failed to load reseller profile"); navigate("/resellers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  useEffect(() => {
+    if (!can("audit.view")) return;
+    api.get("/api/audit/", { params: { reseller_id: id, limit: 50 } })
+      .then(r => setActivity(r.data.logs))
+      .catch(() => {});
+  }, [id, can]);
 
   if (loading) return <LoadingState />;
   if (!data)   return null;
@@ -261,6 +271,34 @@ export default function ResellerProfile() {
                   })}
                 </tbody>
               </table>
+            </Section>
+          )}
+
+          {/* Activity / audit trail */}
+          {can("audit.view") && (
+            <Section title={`Activity (${activity.length})`}>
+              {activity.length === 0 ? (
+                <p className="text-sm text-gray-400 px-5 py-4">No recorded activity for this reseller yet.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {activity.map((a, i) => (
+                    <div key={i} className="px-5 py-3 flex items-start gap-3">
+                      <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center shrink-0 mt-0.5">
+                        <History size={13} className="text-gray-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-gray-800">
+                          <span className="font-mono text-xs text-gray-500">{a.action}</span>
+                          {a.entity_label && <span className="text-gray-600"> — {a.entity_label}</span>}
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          {a.actor_username || "system"} · {a.created_at ? new Date(a.created_at).toLocaleString("en-ZA") : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Section>
           )}
 

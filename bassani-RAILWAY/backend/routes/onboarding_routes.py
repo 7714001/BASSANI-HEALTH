@@ -6,6 +6,7 @@ import uuid
 from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -79,6 +80,9 @@ async def submit_application(
         **application.model_dump(),
     }
     await col("customer_onboarding").insert_one(doc)
+    await audit_log("onboarding.submit", "customer_onboarding", ref,
+                    entity_label=application.company_name, user=current_user,
+                    reseller_id=reseller["id"])
     return {"success": True, "reference": ref}
 
 
@@ -190,6 +194,10 @@ async def approve_application(app_id: str, current_user: dict = Depends(require_
             "reviewed_by":     current_user.get("username", ""),
         }},
     )
+    await audit_log("onboarding.approve", "customer_onboarding", app_id,
+                    entity_label=app.get("company_name", ""), user=current_user,
+                    detail={"odoo_partner_id": partner_id},
+                    reseller_id=app.get("reseller_id"))
     return {"success": True, "odoo_partner_id": partner_id}
 
 
@@ -214,4 +222,8 @@ async def reject_application(
             "reviewed_by":      current_user.get("username", ""),
         }},
     )
+    await audit_log("onboarding.reject", "customer_onboarding", app_id,
+                    entity_label=app.get("company_name", ""), user=current_user,
+                    detail={"reason": body.reason},
+                    reseller_id=app.get("reseller_id"))
     return {"success": True}

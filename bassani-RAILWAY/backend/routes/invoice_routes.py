@@ -5,6 +5,7 @@ from datetime import date as date_type
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col, NO_ID
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -248,22 +249,24 @@ def create_invoice(
 
 
 @router.put("/{invoice_id}/post")
-def post_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
+async def post_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
     """Post/validate an invoice in Odoo."""
     odoo = get_odoo_client()
     try:
         odoo.execute("account.move", "action_post", [invoice_id])
+        await audit_log("invoice.post", "invoice", invoice_id, user=current_user)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
 @router.put("/{invoice_id}/reset")
-def reset_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
+async def reset_invoice(invoice_id: int, current_user: dict = Depends(require_admin)):
     """Reset a posted invoice back to draft."""
     odoo = get_odoo_client()
     try:
         odoo.execute("account.move", "button_draft", [invoice_id])
+        await audit_log("invoice.reset", "invoice", invoice_id, user=current_user)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -276,7 +279,7 @@ class PaymentRegister(BaseModel):
 
 
 @router.put("/{invoice_id}/pay")
-def register_payment(
+async def register_payment(
     invoice_id: int,
     body: PaymentRegister,
     current_user: dict = Depends(require_admin),
@@ -315,6 +318,8 @@ def register_payment(
             [[wizard_id]],
             {},
         )
+        await audit_log("invoice.pay", "invoice", invoice_id, user=current_user,
+                        detail={"amount": amount, "payment_date": payment_date, "journal_id": body.journal_id})
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

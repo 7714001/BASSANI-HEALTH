@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from auth import get_current_user, require_permission
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -243,6 +244,10 @@ async def create_order(
             {"$inc": {"total_sales": original_subtotal}},
         )
 
+    await audit_log("order.create", "order", odoo_order_id, entity_label=customer_name if order.reseller_id else "",
+                    user=current_user, after={"partner_id": effective_partner_id, "lines": len(order.order_line)},
+                    reseller_id=order.reseller_id)
+
     return {"success": True, "odoo_order_id": odoo_order_id}
 
 
@@ -376,6 +381,13 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_perm
     except Exception as e:
         print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
 
+    comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
+    await audit_log("order.confirm", "order", order_id,
+                    entity_label=order_data.get("name", "") if order_data else "",
+                    user=current_user,
+                    detail={"invoice_id": invoice_id, "invoice_name": invoice_name, "warnings": warnings},
+                    reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
+
     return {
         "success": True,
         "invoice_id": invoice_id,
@@ -393,6 +405,8 @@ async def cancel_order(order_id: int, current_user: dict = Depends(require_permi
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
+    comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
+
     # Void the commission record so it never appears in the payout queue
     await col("order_commissions").update_one(
         {"odoo_order_id": str(order_id), "payout_status": "pending"},
@@ -402,6 +416,8 @@ async def cancel_order(order_id: int, current_user: dict = Depends(require_permi
             "cancelled_by": current_user.get("username", "admin"),
         }},
     )
+    await audit_log("order.cancel", "order", order_id, user=current_user,
+                    reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
     return {"success": True}
 
 

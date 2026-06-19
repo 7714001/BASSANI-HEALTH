@@ -32,6 +32,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "healthcare":  {"view": True,  "manage": False},
     "users":       {"manage": False},
     "warehouse":   {"view": False, "supervise": False},
+    "audit":       {"view": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -46,6 +47,7 @@ FULL_PERMISSIONS: dict = {
     "healthcare":  {"view": True,  "manage": True},
     "users":       {"manage": True},
     "warehouse":   {"view": True,  "supervise": True},
+    "audit":       {"view": True},
 }
 
 

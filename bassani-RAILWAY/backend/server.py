@@ -86,6 +86,21 @@ async def initialise_users():
     if result.modified_count:
         print(f"[startup] Migrated {result.modified_count} existing admin user(s) to full permissions.")
 
+    # Migration: give every admin user the audit.view permission key (default false)
+    # so the Audit Trail panel renders correctly for accounts created before 0.6.
+    result = await col("users").update_many(
+        {"role": "admin", "permissions.audit": {"$exists": False}},
+        {"$set": {"permissions.audit": {"view": False}}},
+    )
+    if result.modified_count:
+        print(f"[startup] Added default audit.view=False to {result.modified_count} existing admin user(s).")
+
+    await col("audit_logs").create_index([("created_at", -1)])
+    await col("audit_logs").create_index([("entity_type", 1), ("entity_id", 1)])
+    await col("audit_logs").create_index([("actor_username", 1)])
+    await col("audit_logs").create_index([("action", 1)])
+    await col("audit_logs").create_index([("reseller_id", 1)])
+
 
 @app.get("/health")
 def health():

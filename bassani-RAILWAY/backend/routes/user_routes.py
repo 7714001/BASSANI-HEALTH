@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from auth import require_admin, hash_password, DEFAULT_ADMIN_PERMISSIONS, ALL_ROLES
 from database import col
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -129,6 +130,8 @@ async def create_user(
         doc["permissions"] = perms
 
     result = await col("users").insert_one(doc)
+    await audit_log("user.create", "user", str(result.inserted_id), entity_label=body.username,
+                    user=current_user, after={"role": body.role, "name": body.name})
     return {"success": True, "user_id": str(result.inserted_id)}
 
 
@@ -190,6 +193,11 @@ async def update_user(
 
     updates["updated_at"] = datetime.now(timezone.utc)
     await col("users").update_one({"_id": oid}, {"$set": updates})
+
+    before = {k: target.get(k) for k in updates if k != "updated_at"}
+    await audit_log("user.update", "user", user_id, entity_label=target.get("username", ""),
+                    user=current_user, before=before,
+                    after={k: v for k, v in updates.items() if k != "updated_at"})
     return {"success": True}
 
 
@@ -224,6 +232,8 @@ async def reset_password(
             "updated_at": datetime.now(timezone.utc),
         }},
     )
+    await audit_log("user.reset_password", "user", user_id, entity_label=target.get("username", ""),
+                    user=current_user)
     return {
         "success": True,
         "new_password": plain,
@@ -258,13 +268,15 @@ async def deactivate_user(
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
+    await audit_log("user.deactivate", "user", user_id, entity_label=target.get("username", ""),
+                    user=current_user)
     return {"success": True}
 
 
 @router.post("/{user_id}/reactivate")
 async def reactivate_user(
     user_id: str,
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
     """Re-enable a previously deactivated account."""
     try:
@@ -272,10 +284,14 @@ async def reactivate_user(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
+    target = await col("users").find_one({"_id": oid})
     result = await col("users").update_one(
         {"_id": oid},
         {"$set": {"active": True, "updated_at": datetime.now(timezone.utc)}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
+    await audit_log("user.reactivate", "user", user_id,
+                    entity_label=target.get("username", "") if target else "",
+                    user=current_user)
     return {"success": True}

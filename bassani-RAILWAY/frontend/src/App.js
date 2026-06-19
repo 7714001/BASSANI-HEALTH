@@ -15,6 +15,7 @@ import Commission from "./views/Commission";
 import Reports    from "./views/Reports";
 import Healthcare from "./views/Healthcare";
 import Users      from "./views/Users";
+import AuditTrail from "./views/AuditTrail";
 import Invoices         from "./views/Invoices";
 import CustomerProfile  from "./views/CustomerProfile";
 import Scripts          from "./views/Scripts";
@@ -156,6 +157,9 @@ export default function App() {
         } />
         <Route path="/users" element={
           <ProtectedRoute adminOnly><AppLayout><Users /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/audit" element={
+          <ProtectedRoute adminOnly><AppLayout><AuditTrail /></AppLayout></ProtectedRoute>
         } />
 
         {/* Catch-all */}

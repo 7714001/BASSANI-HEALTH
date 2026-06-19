@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from auth import get_current_user, require_admin
 from database import col, NO_ID
 from config import get_settings
+from middleware.audit import audit_log
 import uuid
 
 router = APIRouter(prefix="/api/healthcare", tags=["healthcare"])
@@ -273,6 +274,7 @@ async def update_submission_status(
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
         )
 
+    existing = await col("healthcare_professionals").find_one({"id": submission_id}, NO_ID)
     result = await col("healthcare_professionals").update_one(
         {"id": submission_id},
         {
@@ -286,6 +288,10 @@ async def update_submission_status(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Submission not found")
 
+    await audit_log("healthcare.status_update", "healthcare_professional", submission_id,
+                    entity_label=existing.get("name", "") if existing else "", user=current_user,
+                    before={"status": existing.get("status")} if existing else None,
+                    after={"status": update.status, "notes": update.notes})
     return {"success": True, "status": update.status}
 
 
@@ -295,7 +301,12 @@ async def delete_submission(
     current_user: dict = Depends(require_admin),
 ):
     """Hard delete a submission (POPIA compliance — on request). Admin only."""
+    existing = await col("healthcare_professionals").find_one({"id": submission_id}, NO_ID)
     result = await col("healthcare_professionals").delete_one({"id": submission_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Submission not found")
+    await audit_log("healthcare.delete", "healthcare_professional", submission_id,
+                    entity_label=existing.get("name", "") if existing else "",
+                    user=current_user, before=existing,
+                    detail={"reason": "POPIA deletion request"})
     return {"success": True, "message": "Submission permanently deleted"}

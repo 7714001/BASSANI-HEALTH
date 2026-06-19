@@ -6,6 +6,7 @@ from datetime import datetime, date, timezone
 from auth import get_current_user, require_admin, require_permission
 from database import col, NO_ID
 from odoo_client import get_odoo_client
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/commission", tags=["commission"])
 
@@ -133,6 +134,8 @@ async def update_tiers(
         if not (0 <= r <= 100):
             raise HTTPException(status_code=400, detail=f"Rate {r} is out of range — must be 0–100")
 
+    before = await get_tiers_config()
+
     updated = [
         {**DEFAULT_TIERS[i], "rate": round(payload.rates[i], 4)}
         for i in range(5)
@@ -148,13 +151,18 @@ async def update_tiers(
         }},
         upsert=True,
     )
+    await audit_log("commission.configure_tiers", "commission_tiers", "tiers",
+                    user=current_user, before=before, after=updated)
     return {"success": True, "tiers": updated}
 
 
 @router.delete("/tiers/reset")
-async def reset_tiers(_: dict = Depends(require_permission("commission.configure_tiers"))):
+async def reset_tiers(current_user: dict = Depends(require_permission("commission.configure_tiers"))):
     """Reset tier rates back to system defaults."""
+    before = await get_tiers_config()
     await col("settings").delete_one({"key": "commission_tiers"})
+    await audit_log("commission.reset_tiers", "commission_tiers", "tiers",
+                    user=current_user, before=before, after=DEFAULT_TIERS)
     return {"success": True, "tiers": DEFAULT_TIERS}
 
 
@@ -237,6 +245,11 @@ async def generate_statements(
             upsert=True,
         )
         generated.append(stmt)
+
+    await audit_log("commission.generate_statements", "commission_statement", f"{year}-{month:02d}",
+                    entity_label=month_label, user=current_user,
+                    detail={"generated": len(generated), "skipped_paid": skipped},
+                    reseller_id=payload.reseller_id)
 
     return {
         "generated":   len(generated),
@@ -392,6 +405,12 @@ async def mark_statement_paid(
             "payment_reference": payload.payment_reference or "",
         }},
     )
+
+    await audit_log("commission.mark_paid", "commission_statement", stmt_id,
+                    entity_label=f"{stmt['reseller_name']} · {stmt['month_label']}",
+                    user=current_user,
+                    detail={"amount": stmt["commission_amount"], "odoo_bill_id": bill_id, "warning": warning},
+                    reseller_id=stmt["reseller_id"])
 
     return {"success": True, "odoo_bill_id": bill_id, "warning": warning}
 

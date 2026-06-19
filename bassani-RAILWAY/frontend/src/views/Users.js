@@ -97,6 +97,13 @@ const PERMISSION_GROUPS = [
       { key: "supervise", label: "Supervise packing floor" },
     ],
   },
+  {
+    domain: "audit",
+    label: "Audit Trail",
+    actions: [
+      { key: "view", label: "View audit trail" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -132,6 +139,7 @@ const DEFAULT_ADMIN_PERMS = {
   healthcare: { view: true,  manage: false },
   users:      { manage: false },
   warehouse:  { view: false, supervise: false },
+  audit:      { view: false },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────

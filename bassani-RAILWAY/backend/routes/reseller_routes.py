@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from auth import get_current_user, require_admin, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/resellers", tags=["resellers"])
 
@@ -193,6 +194,9 @@ async def create_reseller(
         await col("users").delete_one({"_id": user_result.inserted_id})
         raise HTTPException(status_code=500, detail=f"Reseller creation failed — login account rolled back: {str(e)}")
 
+    await audit_log("reseller.create", "reseller", reseller_id, entity_label=reseller.name,
+                    user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": reseller.username},
+                    reseller_id=reseller_id)
     return {"success": True, "reseller_id": reseller_id, "user_id": user_id}
 
 
@@ -213,6 +217,12 @@ async def update_reseller(
 
     updates["updated_at"] = datetime.now(timezone.utc)
     await col("resellers").update_one({"id": reseller_id}, {"$set": updates})
+
+    before = {k: existing.get(k) for k in updates if k != "updated_at"}
+    await audit_log("reseller.update", "reseller", reseller_id, entity_label=existing.get("name", ""),
+                    user=current_user, before=before,
+                    after={k: v for k, v in updates.items() if k != "updated_at"},
+                    reseller_id=reseller_id)
     return {"success": True}
 
 
@@ -222,12 +232,16 @@ async def deactivate_reseller(
     current_user: dict = Depends(require_admin),
 ):
     """Soft-delete a reseller. Admin only."""
+    existing = await col("resellers").find_one({"id": reseller_id}, NO_ID)
     result = await col("resellers").update_one(
         {"id": reseller_id},
         {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Reseller not found")
+    await audit_log("reseller.delete", "reseller", reseller_id,
+                    entity_label=existing.get("name", "") if existing else "", user=current_user,
+                    reseller_id=reseller_id)
     return {"success": True, "message": "Reseller deactivated"}
 
 

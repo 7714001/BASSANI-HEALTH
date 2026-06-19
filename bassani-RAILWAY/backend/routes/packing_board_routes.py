@@ -143,8 +143,8 @@ async def _do_assign_packer(order_id: str, packer_name: str, actor: dict) -> Opt
         return None
     result.pop("_id", None)
     await push_update(result)
-    await audit_log("packing.assigned", order_id, user=actor,
-                    detail={"packer": packer_name})
+    await audit_log("packing.assigned", "packing_board", order_id, entity_label=order_id,
+                    user=actor, detail={"packer": packer_name})
     return result
 
 
@@ -169,8 +169,8 @@ async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict) -> O
     updated.pop("_id", None)
     await push_update(updated)
     if all_done:
-        await audit_log("packing.items_complete", order_id, user=actor,
-                        detail={"packer": entry.get("packer_name")})
+        await audit_log("packing.items_complete", "packing_board", order_id, entity_label=order_id,
+                        user=actor, detail={"packer": entry.get("packer_name")})
     return updated
 
 
@@ -192,7 +192,7 @@ async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Opti
         return None
     updated.pop("_id", None)
     await push_update(updated)
-    await audit_log(f"packing.{new_status}", order_id, user=actor)
+    await audit_log(f"packing.{new_status}", "packing_board", order_id, entity_label=order_id, user=actor)
     return updated
 
 
@@ -246,8 +246,8 @@ async def add_to_board(
         upsert=True,
     )
     await push_update(doc)
-    await audit_log("packing.queued", entry.order_id, user=current_user,
-                    detail={"customer": entry.customer_name, "units": entry.total_units})
+    await audit_log("packing.queued", "packing_board", entry.order_id, entity_label=entry.customer_name,
+                    user=current_user, detail={"customer": entry.customer_name, "units": entry.total_units})
     return {"success": True, "order_id": entry.order_id}
 
 

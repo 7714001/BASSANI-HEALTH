@@ -6,6 +6,7 @@ from auth import (
     get_current_user, Token
 )
 from database import col
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -38,6 +39,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         {"username": user["username"]},
         {"$set": {"last_login_at": datetime.now(timezone.utc)}},
     )
+    await audit_log("user.login", "user", user["id"], entity_label=user["username"], user=user,
+                    reseller_id=user.get("reseller_id"))
     return {
         "access_token": token,
         "token_type": "bearer",
