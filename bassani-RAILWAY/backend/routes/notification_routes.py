@@ -24,6 +24,8 @@ class NotificationPreferences(BaseModel):
     new_orders: bool = True
     commission_updates: bool = True
     system_announcements: bool = True
+    ticket_assigned: bool = True   # Phase 8 — a ticket was assigned to me
+    ticket_handoff: bool = True    # Phase 8 — a ticket I own changed stage
 
 class BroadcastMessage(BaseModel):
     title: str
@@ -79,6 +81,8 @@ async def subscribe(
         "new_orders": True,
         "commission_updates": True,
         "system_announcements": True,
+        "ticket_assigned": True,
+        "ticket_handoff": True,
     }
 
     await col("push_subscriptions").update_one(

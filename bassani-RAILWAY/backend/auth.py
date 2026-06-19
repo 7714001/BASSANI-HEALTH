@@ -207,3 +207,34 @@ def require_permission(permission: str) -> Callable:
         return current_user
 
     return _check
+
+
+def require_any_permission(*permissions: str) -> Callable:
+    """
+    Like require_permission(), but passes if the user has ANY of the given
+    permission strings — for data that multiple roles legitimately need to
+    see for different reasons (e.g. a Sales ticket is visible to both
+    `sales`, who drives it, and `finance`, who needs to find tickets
+    awaiting payment confirmation across all reps).
+
+    Usage:  Depends(require_any_permission("tickets.sales", "tickets.finance_confirm"))
+    """
+    async def _check(current_user: dict = Depends(get_current_user)) -> dict:
+        if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+            return current_user
+
+        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+        perms = current_user.get("permissions") or {}
+        for permission in permissions:
+            domain, action = permission.split(".", 1)
+            if perms.get(domain, {}).get(action, False):
+                return current_user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action",
+        )
+
+    return _check

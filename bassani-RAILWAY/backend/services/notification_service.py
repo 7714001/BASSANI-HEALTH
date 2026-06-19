@@ -112,6 +112,43 @@ async def notify_commission_update(
         print(f"⚠️  notify_commission_update failed: {e}")
 
 
+async def notify_ticket_assigned(ticket_type: str, customer_name: str, assigned_user_id: str):
+    """
+    Fire when a ticket is created/assigned to a specific staff member.
+    Notifies only that person.
+    """
+    try:
+        await _broadcast_to_users(
+            user_ids=[assigned_user_id],
+            preference_key="ticket_assigned",
+            title="New Ticket Assigned",
+            body=f"{ticket_type.title()} ticket for {customer_name}",
+            url="/tickets/sales",
+            notification_type="ticket_assigned",
+        )
+    except Exception as e:
+        print(f"⚠️  notify_ticket_assigned failed: {e}")
+
+
+async def notify_ticket_handoff(customer_name: str, outcome: str, assigned_user_id: str):
+    """
+    Fire when an Orders ticket reaches complete/incomplete/cancelled and
+    writes back to its parent Sales ticket — tells the assigned sales rep
+    immediately instead of them needing to poll for the outcome.
+    """
+    try:
+        await _broadcast_to_users(
+            user_ids=[assigned_user_id],
+            preference_key="ticket_handoff",
+            title="Order Update",
+            body=f"{customer_name}'s order is now '{outcome}' — check the ticket for details",
+            url="/tickets/sales",
+            notification_type="ticket_handoff",
+        )
+    except Exception as e:
+        print(f"⚠️  notify_ticket_handoff failed: {e}")
+
+
 async def notify_announcement(title: str, body: str, url: str = "/"):
     """
     Broadcast a system announcement to all users.

@@ -25,6 +25,8 @@ import Targets               from "./views/Targets";
 import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications  from "./views/CustomerApplications";
 import ResellerProfile       from "./views/ResellerProfile";
+import SalesTickets          from "./views/SalesTickets";
+import OrdersTickets         from "./views/OrdersTickets";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -164,6 +166,12 @@ export default function App() {
         } />
         <Route path="/warehouses" element={
           <ProtectedRoute adminOnly><AppLayout><Warehouses /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/tickets/sales" element={
+          <ProtectedRoute><AppLayout><SalesTickets /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/tickets/orders" element={
+          <ProtectedRoute><AppLayout><OrdersTickets /></AppLayout></ProtectedRoute>
         } />
 
         {/* Catch-all */}

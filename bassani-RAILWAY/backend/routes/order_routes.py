@@ -475,10 +475,35 @@ async def confirm_order(
                     "packed_at": None,
                     "ready_at": None,
                     "collected_at": None,
+                    "cancelled_at": None,
+                    "incomplete_at": None,
+                    "completed_at": None,
+                    "incomplete_reason": None,
+                    "qa_approved_by": None, "qa_approved_at": None,
+                    "rp_approved_by": None, "rp_approved_at": None,
                     "item_ticks": {i["sku"]: False for i in items},
                 }
                 await col("packing_board").replace_one({"order_id": str(order_id)}, doc, upsert=True)
                 await manager.broadcast({"type": "entry_update", "data": {**doc, "queued_at": now.isoformat()}})
+
+                # Phase 8.4 — hand off to the linked Sales ticket, if one exists.
+                # The Orders side has no separate collection (see packing_board
+                # above); orders_ticket_ref just flags that the handoff happened.
+                sales_ticket = await col("tickets").find_one(
+                    {"type": "sales", "order_id": order_id, "exit_status": None}
+                )
+                if sales_ticket:
+                    await col("tickets").update_one(
+                        {"_id": sales_ticket["_id"]},
+                        {
+                            "$set": {"status": "confirmed_wip", "orders_ticket_ref": str(order_id), "updated_at": now},
+                            "$push": {"stage_history": {
+                                "status": "confirmed_wip", "exit_status": None,
+                                "actor_id": None, "actor_name": "system",
+                                "at": now, "note": "Auto-linked to Orders on order confirmation",
+                            }},
+                        },
+                    )
     except Exception as e:
         print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
 

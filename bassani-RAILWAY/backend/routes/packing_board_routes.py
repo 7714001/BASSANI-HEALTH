@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from auth import require_admin, get_current_user, get_user_by_username
+from auth import require_admin, get_current_user, get_user_by_username, require_permission, ADMIN_ROLES
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
@@ -102,6 +102,42 @@ async def push_update(entry: dict):
     await manager.broadcast({"type": "entry_update", "data": entry}, warehouse_id=entry.get("warehouse_id"))
 
 
+async def _sync_sales_ticket(order_id: str, outcome: str, reason: Optional[str] = None):
+    """
+    Phase 8.4 — write an Orders outcome (complete/incomplete/cancelled) back
+    to the linked Sales ticket and notify the assigned sales rep. Best-effort
+    and silent if no Sales ticket exists for this order — a packing board
+    entry can exist without ever having gone through one (e.g. legacy orders
+    confirmed before Phase 8, or orders placed without a logged PO/RFQ).
+    """
+    try:
+        ticket = await col("tickets").find_one(
+            {"type": "sales", "order_id": int(order_id), "exit_status": None}
+        )
+        if not ticket:
+            return
+        now = datetime.now(timezone.utc)
+        updates: dict = {"updated_at": now}
+        if outcome == "incomplete":
+            updates["status"] = "incomplete"
+            updates["incomplete_reason"] = reason
+        else:  # complete | cancelled — terminal exit
+            updates["exit_status"] = outcome
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {"$set": updates, "$push": {"stage_history": {
+                "status": updates.get("status", ticket["status"]),
+                "exit_status": updates.get("exit_status"),
+                "actor_id": None, "actor_name": "system", "at": now,
+                "note": f"Orders ticket reached '{outcome}'" + (f": {reason}" if reason else ""),
+            }}},
+        )
+        from services.notification_service import notify_ticket_handoff
+        await notify_ticket_handoff(ticket.get("customer_name", ""), outcome, ticket.get("assigned_to"))
+    except Exception as e:
+        print(f"⚠️  Sales ticket sync failed for order {order_id}: {e}")
+
+
 # ── WebSocket auth helpers ────────────────────────────────────────────────────
 
 async def _verify_display_token(ws: WebSocket) -> Optional[int]:
@@ -112,6 +148,21 @@ async def _verify_display_token(ws: WebSocket) -> Optional[int]:
         return None
     record = await col("warehouse_display_tokens").find_one({"token": provided}, {"warehouse_id": 1})
     return record["warehouse_id"] if record else None
+
+
+# Phase 8.3 — roles that need read access to the board to do their job, even
+# though they don't hold a granular `warehouse.*` permission. Kept separate
+# from require_admin (coarse, all admins) and require_permission (granular,
+# tickets.* specific) since this is neither — just "can see the board".
+_BOARD_VIEW_ROLES = {"orders_clerk", "qa_manager", "responsible_pharmacist"}
+
+
+async def require_board_access(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("is_super_admin") or current_user.get("role") in ADMIN_ROLES:
+        return current_user
+    if current_user.get("role") in _BOARD_VIEW_ROLES:
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
 
 
 async def _verify_ws_user(ws: WebSocket, required_roles: set) -> Optional[dict]:
@@ -233,6 +284,20 @@ class UpdateStatus(BaseModel):
     status:   str
 
 
+class OrderIdBody(BaseModel):
+    order_id: str
+
+
+class IncompleteBody(BaseModel):
+    order_id: str
+    reason:   str
+
+
+class CancelBody(BaseModel):
+    order_id: str
+    reason:   Optional[str] = None
+
+
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/queue")
@@ -249,6 +314,12 @@ async def add_to_board(
         "packed_at":    None,
         "ready_at":     None,
         "collected_at": None,
+        "cancelled_at":   None,
+        "incomplete_at":  None,
+        "completed_at":   None,
+        "incomplete_reason": None,
+        "qa_approved_by": None, "qa_approved_at": None,
+        "rp_approved_by": None, "rp_approved_at": None,
         "item_ticks":   {i["sku"]: False for i in entry.items},
     }
     await col("packing_board").replace_one(
@@ -298,8 +369,141 @@ async def update_status(
     return {"success": True}
 
 
+@router.put("/qa-approve")
+async def qa_approve(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.qa_approve")),
+):
+    """QA Manager sign-off — required (alongside RP) before an entry can be
+    marked complete. Only valid once packing has finished (status='ready')."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] != "ready":
+        raise HTTPException(status_code=400, detail="Order isn't ready for inspection yet")
+
+    now = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"qa_approved_by": current_user.get("name") or current_user.get("username"), "qa_approved_at": now}},
+        return_document=True,
+    )
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.qa_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    return {"success": True}
+
+
+@router.put("/rp-approve")
+async def rp_approve(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.rp_approve")),
+):
+    """Responsible Pharmacist sign-off — required (alongside QA) before an
+    entry can be marked complete. Independent of QA's approval — neither
+    approves on the other's behalf."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] != "ready":
+        raise HTTPException(status_code=400, detail="Order isn't ready for inspection yet")
+
+    now = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"rp_approved_by": current_user.get("name") or current_user.get("username"), "rp_approved_at": now}},
+        return_document=True,
+    )
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.rp_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    return {"success": True}
+
+
+@router.put("/complete")
+async def complete_entry(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk's final close-out action — the explicit "I'm declaring
+    this ready" step the business described, taken only after both QA and RP
+    have independently signed off."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] != "ready":
+        raise HTTPException(status_code=400, detail="Order must be ready before it can be marked complete")
+    if not entry.get("qa_approved_at") or not entry.get("rp_approved_at"):
+        raise HTTPException(status_code=400, detail="Both QA and RP approval are required before marking complete")
+
+    now = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"status": "complete", "completed_at": now}},
+        return_document=True,
+    )
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.complete", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await _sync_sales_ticket(body.order_id, "complete")
+    return {"success": True}
+
+
+@router.put("/incomplete")
+async def mark_incomplete(
+    body: IncompleteBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk flags a partial/blocked order — always requires a reason
+    so Sales has something concrete to relay to the client."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] in ("collected", "cleared", "cancelled", "complete", "incomplete"):
+        raise HTTPException(status_code=400, detail=f"Order is already '{entry['status']}'")
+
+    now = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"status": "incomplete", "incomplete_at": now, "incomplete_reason": body.reason}},
+        return_document=True,
+    )
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.incomplete", "packing_board", body.order_id, entity_label=body.order_id,
+                    user=current_user, detail={"reason": body.reason})
+    await _sync_sales_ticket(body.order_id, "incomplete", body.reason)
+    return {"success": True}
+
+
+@router.put("/cancel")
+async def cancel_entry(
+    body: CancelBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk cancels an order before fulfilment completes."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] in ("collected", "cleared", "cancelled", "complete", "incomplete"):
+        raise HTTPException(status_code=400, detail=f"Order is already '{entry['status']}'")
+
+    now = datetime.now(timezone.utc)
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"status": "cancelled", "cancelled_at": now, "incomplete_reason": body.reason}},
+        return_document=True,
+    )
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.cancelled", "packing_board", body.order_id, entity_label=body.order_id,
+                    user=current_user, detail={"reason": body.reason})
+    await _sync_sales_ticket(body.order_id, "cancelled", body.reason)
+    return {"success": True}
+
+
 @router.get("/board")
-async def get_board(warehouse_id: Optional[int] = None, _: dict = Depends(require_admin)):
+async def get_board(warehouse_id: Optional[int] = None, _: dict = Depends(require_board_access)):
     return {"entries": await get_board_state(warehouse_id)}
 
 

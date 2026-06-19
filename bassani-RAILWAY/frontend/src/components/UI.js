@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ShieldCheck, History,
+  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -35,6 +35,8 @@ const NAV = [
   { label: "Reports",      path: "/reports",     icon: BarChart3,       section: "Insights", permission: "reports.view"        },
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
+  { label: "Sales Tickets", path: "/tickets/sales",  icon: Ticket, section: "Tickets", permissions: ["tickets.sales", "tickets.finance_confirm"] },
+  { label: "Orders Tickets",path: "/tickets/orders", icon: Ticket, section: "Tickets", permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Users",        path: "/users",       icon: UserCog,         section: "Admin",    permission: "users.manage"        },
   { label: "Warehouses",   path: "/warehouses",  icon: Warehouse,       section: "Admin",    permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",       icon: History,         section: "Admin",    permission: "audit.view"          },
@@ -60,6 +62,7 @@ export function Sidebar() {
     if (i.adminOnly && !isAdmin) return false;
     // Permission-gated items apply to admin-tier AND ticketing-role accounts
     // (resellers never reach here — they use RESELLER_NAV, which has none).
+    if (i.permissions) return i.permissions.some(p => can(p));
     if (i.permission) return can(i.permission);
     return true;
   });

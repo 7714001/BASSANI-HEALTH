@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | 8.1 complete — 2026-06-19 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–3 (8.1–8.5 code complete) — 2026-06-19 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -719,8 +719,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 8.1 roles/permissions code complete (staff accounts not yet created)  
-**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19  
+**Status:** 🟡 In Progress — 8.1–8.5 code complete; staff accounts not yet created; awaiting live testing  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19  
 
 ### Context
 Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
@@ -741,28 +741,28 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [ ] Create the 6 named staff accounts (Merveille, Tshidi, Kashi, Ragini, Cullen Grant, Rookshanna Hussain) — roles now exist in the Users admin page "Add User" dropdown; needs real usernames/initial passwords/emails decided with the business before creating, not invented
 
 #### 8.2 Sales Ticket (`tickets` collection, `type: "sales"`)
-- [ ] New MongoDB collection `tickets` — schema: `type, customer_id, order_id, invoice_id, orders_ticket_ref, status, exit_status, assigned_to, payment_confirmed_by, payment_confirmed_at, incomplete_reason, stage_history[], created_at, updated_at`
-- [ ] `status` enum: `open → quote → sale_order → invoice → confirmed_wip → ready_for_collection → incomplete`
-- [ ] `exit_status` (side-exit, reachable from multiple stages, not a fixed final step — mirrors how Odoo's own `sale.order` cancel works): `not_interested | cancelled | complete`
-- [ ] `POST /api/tickets` (create, type=sales), `PUT /api/tickets/{id}/stage` (transition + `stage_history` append), `GET /api/tickets?type=sales&assigned_to=...`
-- [ ] `PUT /api/tickets/{id}/confirm-payment` (finance only) — reads the linked invoice's Odoo `payment_state`/`amount_residual`; blocks with a clear message if Odoo shows no payment yet
-- [ ] Link ticket to Odoo `sale.order`/`account.move` as they're created during the lifecycle (`order_id`, `invoice_id`)
+- [x] New MongoDB collection `tickets` — schema: `type, customer_id, customer_name, order_id, invoice_id, orders_ticket_ref, status, exit_status, assigned_to, payment_confirmed_by, payment_confirmed_at, incomplete_reason, stage_history[], created_at, updated_at`
+- [x] `status` enum: `open → quote → sale_order → invoice → confirmed_wip → ready_for_collection → incomplete`
+- [x] `exit_status` (side-exit, reachable from multiple stages, not a fixed final step — mirrors how Odoo's own `sale.order` cancel works): `not_interested | cancelled | complete`
+- [x] `POST /api/tickets` (create, type=sales), `PUT /api/tickets/{id}/stage` (transition + `stage_history` append), `GET /api/tickets?status=&exit_status=&assigned_to=`, `GET /api/tickets/{id}`
+- [x] `PUT /api/tickets/{id}/confirm-payment` (finance only) — reads the linked invoice's Odoo `payment_state`/`amount_residual`; blocks with a clear message if Odoo shows no payment yet
+- [x] Link ticket to Odoo `sale.order`/`account.move` as they're created during the lifecycle — `order_id`/`invoice_id` attach via the same `PUT /stage` call that advances status, since linking naturally happens the moment that Odoo record exists
 
 #### 8.3 Orders Ticket (extend `packing_board`)
-- [ ] Add `cancelled`, `incomplete` to the packing board's `status` field; add `incomplete_reason`
-- [ ] Add QA/RP approval fields: `qa_approved_by`, `qa_approved_at`, `rp_approved_by`, `rp_approved_at` — both required before a `ready` entry can be marked `complete`
-- [ ] New endpoints: `PUT /api/packing-board/{id}/qa-approve`, `PUT /api/packing-board/{id}/rp-approve`, `PUT /api/packing-board/{id}/cancel`, `PUT /api/packing-board/{id}/incomplete` (role-gated to `qa_manager`/`responsible_pharmacist`/`orders_clerk` respectively)
-- [ ] No changes to existing `queued`/`packing`/`ready`/`collected` semantics or the WebSocket broadcast contract — purely additive
+- [x] Add `cancelled`, `incomplete`, `complete` to the packing board's `status` field; add `incomplete_reason`, `cancelled_at`, `incomplete_at`, `completed_at`
+- [x] Add QA/RP approval fields: `qa_approved_by`, `qa_approved_at`, `rp_approved_by`, `rp_approved_at` — both required before a `ready` entry can be marked `complete`
+- [x] New endpoints: `PUT /api/packing/qa-approve`, `PUT /api/packing/rp-approve`, `PUT /api/packing/complete`, `PUT /api/packing/incomplete`, `PUT /api/packing/cancel` (role-gated to `qa_manager`/`responsible_pharmacist`/`orders_clerk`/`orders_clerk`/`orders_clerk` respectively) — `complete` wasn't in the original task list but turned out to be necessary: it's the Orders Clerk's explicit final close-out action once both approvals exist, matching the business's "before they can state the order is complete" wording
+- [x] No changes to existing `queued`/`packing`/`ready`/`collected` semantics or the WebSocket broadcast contract — purely additive. `GET /board` now also accepts `orders_clerk`/`qa_manager`/`responsible_pharmacist` (previously admin-only)
 
 #### 8.4 Cross-Ticket Handoff & Notifications
-- [ ] When a Sales ticket reaches `confirmed_wip`, auto-create/link the corresponding Orders ticket (`orders_ticket_ref`) — reuses the existing auto-queue-to-packing-board behaviour already triggered on order confirmation
-- [ ] When the Orders ticket reaches `complete`/`incomplete`/`cancelled`, write the outcome back to the parent Sales ticket automatically and notify the assigned Sales rep — no manual polling required
-- [ ] Extend the existing push notification service (`notification_service.py`) with new preference keys: `ticket_assigned`, `ticket_handoff`
+- [x] When a Sales ticket's linked order is confirmed (`PUT /api/orders/{id}/confirm`), it auto-transitions to `confirmed_wip` and `orders_ticket_ref` is set — reuses the existing auto-queue-to-packing-board step already triggered there; matched by `order_id`, not a fixed final step
+- [x] When the Orders ticket (packing board entry) reaches `complete`/`incomplete`/`cancelled`, the outcome writes back to the parent Sales ticket automatically (`_sync_sales_ticket()`) and notifies the assigned Sales rep — no manual polling required. Best-effort and silent if no Sales ticket exists for that order (e.g. legacy orders)
+- [x] Extend the existing push notification service (`notification_service.py`) with new preference keys: `ticket_assigned`, `ticket_handoff` (default opt-in; backfilled onto existing subscriptions on startup)
 
 #### 8.5 UI
-- [ ] Sales Ticket view (new) — list + detail, stage timeline from `stage_history`, "Confirm Payment" action for finance, "Mark Not Interested/Cancelled/Complete" actions for sales
-- [ ] Orders Ticket view — extend the existing packing board UI with QA/RP approval actions and cancelled/incomplete states, rather than a separate screen
-- [ ] Each named role sees only tickets relevant to their permission domain
+- [x] Sales Ticket view (`frontend/src/views/SalesTickets.js`, route `/tickets/sales`) — list + detail modal, stage timeline from `stage_history`, "Confirm Payment" action for finance, "Mark Not Interested" + stage-advance form for sales
+- [x] Orders Ticket view (`frontend/src/views/OrdersTickets.js`, route `/tickets/orders`) — **new React view, not an extension of the existing packing board UI as originally planned.** Correction found during implementation: the existing packing board UI is the static `packing-board.html`/`supervisor.html`/`packer.html` pages under `frontend/public/`, built for the warehouse floor (display-token / role-JWT auth, not the React SPA) — there was no React-rendered board to extend. QA Manager/Responsible Pharmacist/Orders Clerk are React-portal (ticketing-role) accounts, so they needed a new SPA view hitting the same `/api/packing/*` REST endpoints instead
+- [x] Each named role sees only tickets relevant to their permission domain — both new Sidebar links (`Tickets` section) are gated by `permissions: [...]` (OR-matched against `can()`), a small generalisation of the existing single-`permission` nav filter; in-page action buttons are independently gated per action (e.g. an account with only `tickets.qa_approve` sees the QA approve button but not RP approve or complete/incomplete/cancel)
 
 ### Definition of Done
 - [ ] A PO/RFQ logged as a Sales ticket can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
@@ -774,6 +774,10 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 ### Notes
 > **Sub-deploy 1 (2026-06-19):** 8.1 Roles & Permissions. Rather than adding the 5 new roles to `ADMIN_ROLES` (which would have also granted them every `require_admin`-gated endpoint across the whole portal — products, customers, resellers, etc., not just tickets), `require_permission()`'s role-gate was broadened to `ADMIN_ROLES | TICKET_ROLES` specifically, leaving `require_admin`/`ADMIN_ROLES` itself untouched. Each ticket role gets exactly one fixed permission via `TICKET_ROLE_PERMISSIONS` — there's no per-user customisation panel for these roles, unlike `admin`. **Bug fixed along the way:** the Sidebar's nav-item filter (`frontend/src/components/UI.js`) only permission-checked items when `isAdmin` was true, falling through to "show everything" otherwise — harmless before now because the only non-admin, non-reseller roles (`warehouse_supervisor`/`packer`) never reached the Sidebar at all (intercepted earlier in `App.js`'s `ProtectedRoute`). The new ticket roles do reach it, so this would have shown them the full nav (Products, Customers, Resellers, Invoices, etc.) with every click failing on the backend's 403. Fixed by permission-checking unconditionally. **Known gap, not fixed:** changing an existing user's `role` via `PUT /api/users/{id}` doesn't recompute their `permissions` object — this was already true for promoting someone to `admin` before this change, not something newly introduced. Role changes should go through deactivate-and-recreate until that's addressed separately.
+
+> **Sub-deploy 2 (2026-06-19):** 8.2–8.4 backend (Sales ticket, Orders ticket extension, cross-handoff). New `backend/routes/ticket_routes.py` owns the `tickets` collection end-to-end. Added `require_any_permission()` to `auth.py` (sibling to `require_permission()`) since a Sales ticket legitimately needs to be visible to both `sales` (drives it) and `finance` (needs to find tickets awaiting payment confirmation across all reps) — a plain `sales`-role account only sees their own queue by default; finance/admin see everything unless they filter. `confirm-payment` reads the linked invoice's real Odoo `payment_state` rather than trusting a bare click, per the standing "Odoo is the financial source of truth" principle — blocks with a clear message if Odoo shows nothing recorded yet. On the Orders side, `packing_board_routes.py` gained 5 new endpoints (`qa-approve`, `rp-approve`, `complete`, `incomplete`, `cancel`) plus a `require_board_access()` helper so the 3 new operational roles can view the board without needing `require_admin` or a granular `warehouse.*` grant. The cross-ticket handoff is two one-way hooks, not a shared sync engine: order confirmation (`order_routes.py::confirm_order()`) auto-transitions any linked Sales ticket to `confirmed_wip`; the three new Orders terminal-state endpoints call `_sync_sales_ticket()` to write the outcome back and fire a push notification. Both are best-effort/silent if no matching ticket exists (e.g. legacy orders placed before Phase 8) — a missing link is expected, not an error.
+
+> **Sub-deploy 3 (2026-06-19):** 8.5 UI (SalesTickets + OrdersTickets React views). **Key discovery during implementation:** the original plan said "extend the existing packing board UI" for the Orders Ticket view — but the packing board has no React view. `frontend/public/` houses standalone `supervisor.html`/`packer.html`/`packing-board.html` pages with their own auth (display token / role JWT), purpose-built for warehouse floor screens. Those can't be extended as a React SPA view for ticket-role users who need portal-style nav and permissions. Built a new `OrdersTickets.js` instead, consuming the same `/api/packing/board` REST endpoint (REST polling, not WebSocket — ticket roles are desk users, not floor screens). `SalesTickets.js` includes debounced customer search for ticket creation, a full stage-advance form (status select, order_id/invoice_id linking, incomplete reason, note), stage history timeline, and finance payment-confirm section — all conditionally rendered based on `can()`. Sidebar's single-`permission` nav filter was generalised to also support a `permissions: [...]` array (OR semantics via `.some(p => can(p))`) to gate the Orders Tickets link on `tickets.orders OR tickets.qa_approve OR tickets.rp_approve` — necessary because three distinct roles share the same view. `PERMISSION_ROLES` constant in `AuthContext.js` moved to module level (not inside render scope) for stability. Both views added as non-`adminOnly` `ProtectedRoute`s in `App.js`. Notification service `url` updated from `/` to `/tickets/sales` for ticket-related pushes.
 
 ---
 
