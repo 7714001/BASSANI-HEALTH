@@ -86,7 +86,7 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
   const stateBg    = STATE_BG[o.state]    || "#f9fafb";
 
   const canConfirm = isAdmin && canConfirmOrder && o.state === "draft";
-  const canCancel  = isAdmin && canCancelOrder  && o.state !== "cancel" && o.state !== "done";
+  const canCancel  = isAdmin && canCancelOrder  && (o.state === "draft" || o.state === "sent");
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-100 overflow-hidden">

@@ -108,7 +108,7 @@ export function Products() {
         </div>
         <DataTable
           columns={[
-            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
+            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
             { id:"category", header:"Category", enableSorting:false, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
             { accessorKey:"list_price", header:"Sale Price", cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
             { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
@@ -564,12 +564,14 @@ export function Orders() {
   };
 
   // ── Cart operations ───────────────────────────────────────────────────────
+  // product.id is already the correct Odoo product.product (variant) id —
+  // the product list endpoint returns variants, not templates.
   const addToCart = (product) => {
-    const pid = product.product_variant_ids?.[0] ?? product.id;
+    const pid = product.id;
     setCart(prev => {
       const ex = prev.find(i => i.product_id === pid);
       if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
-      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0) }];
+      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.display_name || product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0) }];
     });
   };
 
@@ -580,10 +582,7 @@ export function Orders() {
     setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
   };
 
-  const cartItemFor = (product) => {
-    const pid = product.product_variant_ids?.[0] ?? product.id;
-    return cart.find(i => i.product_id === pid) || null;
-  };
+  const cartItemFor = (product) => cart.find(i => i.product_id === product.id) || null;
 
   // ── Submit order ──────────────────────────────────────────────────────────
   const submitOrder = async () => {
@@ -692,7 +691,7 @@ export function Orders() {
                         {/* Name + SKU + category */}
                         <div className="flex-1">
                           <div className="flex items-start justify-between gap-2">
-                            <p className="font-semibold text-gray-900 text-sm leading-snug">{p.name}</p>
+                            <p className="font-semibold text-gray-900 text-sm leading-snug">{p.display_name || p.name}</p>
                             {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
                           </div>
                           {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
@@ -895,7 +894,7 @@ export function Orders() {
               (o.state==="draft"||o.state==="sale") ? (
                 <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
                   {o.state==="draft" && can("orders.confirm") && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
-                  {o.state!=="cancel" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                  {o.state==="draft" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
                 </div>
               ) : null
             }]:[]),

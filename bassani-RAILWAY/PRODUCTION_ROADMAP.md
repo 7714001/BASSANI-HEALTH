@@ -14,7 +14,7 @@
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
 | 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6 complete — 2026-06-19 · 1.2/1.5 deferred to pre-launch |
 | 2 | Email Engine | 🔴 Not Started | — |
-| 3 | Core Odoo Integration | 🔴 Not Started | — |
+| 3 | Core Odoo Integration | 🟡 In Progress | 3.1, 3.5 complete (3.5 email pending) — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🔴 Not Started | — |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
@@ -385,17 +385,19 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Orders are commercially and fiscally correct, and are fulfilled from the correct physical stock location. All major Odoo sales workflows are supported.  
 **Estimate:** 2–3 weeks  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟡 In Progress — 3.1 and 3.5 complete (email on 3.5 blocked on Phase 2/Resend)  
+**Completed:** Sub-deploy 1 (3.5 Order Cancellation) — 2026-06-19 · Sub-deploy 2 (3.1 Product Variants) — 2026-06-19  
 
 ### Tasks
 
 #### 3.1 Product Variants
-- [ ] Switch product fetches from `product.template` to `product.product` (variants)
-- [ ] Fetch and expose variant attributes (size, format, dosage) per product
-- [ ] Update order line creation to use `product_id` (variant ID), not template ID
-- [ ] Update product list UI to show variant selector before adding to cart
-- [ ] Verify Odoo order lines reference correct variant `product.product` record
+- [x] Switch product fetches from `product.template` to `product.product` (variants) — `list_products`, `get_product`, `low_stock_products` in `product_routes.py` now query `product.product` directly; each variant is its own catalog row with its own `qty_available`/`virtual_available`/price
+- [x] Fetch and expose variant attributes (size, format, dosage) per product — added `display_name` (Odoo auto-appends the variant attribute differentiator in parentheses, e.g. "Tincture 20ml THC (30mg)") to `PRODUCT_FIELDS`; surfaced in both the Orders cart grid and admin Products table
+- [x] Update order line creation to use `product_id` (variant ID), not template ID — `addToCart`/`cartItemFor` in `Views.js` now use `product.id` directly (already the variant id); the old `product_variant_ids?.[0] ?? product.id` fallback (silently picking variant #0, with no way to choose another) is removed since it's no longer needed
+- [x] Update product list UI to show variant selector before adding to cart — **design decision:** rather than a dropdown picker nested inside one card, each variant now renders as its own separate catalog row/card (standard e-commerce pattern, much simpler than a nested selector). Confirmed with the business that existing multi-variant products in Odoo will now show as multiple catalog entries instead of one
+- [x] Verify Odoo order lines reference correct variant `product.product` record — `order_routes.py` already expected a variant id on `OrderLine.product_id` (pre-existing); the catalog now actually supplies one for every product, including multi-variant ones (previously only true by accident for single-variant products)
+
+> **Write-path design decision:** `create_product`/`update_product`/`archive_product` continue to operate on `product.template` under the hood — name, SKU, price, category, and description are treated as shared across all of a product's variants (no per-variant attribute-editing UI exists or was requested). `update_product`/`archive_product` resolve the given variant id to its parent template before writing; `create_product` returns the new variant id (not the template id) so it's immediately usable by the stock-set and order-line endpoints.
 
 #### 3.2 Tax Configuration
 - [ ] Remove hardcoded `15%` VAT from `order_routes.py`
@@ -417,12 +419,12 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Display "customer price" vs "list price" difference in cart if applicable
 
 #### 3.5 Order Cancellation
-- [ ] Implement `POST /api/orders/{id}/cancel` endpoint
-- [ ] Call `sale.order.action_cancel` in Odoo
-- [ ] Update MongoDB `order_commissions` record `payout_status` to `cancelled` on cancel
-- [ ] Only allow cancellation of orders in `draft` or `sent` state (not confirmed `sale`)
-- [ ] Show Cancel button in portal UI for eligible orders
-- [ ] Trigger cancellation email (Phase 2) from this endpoint
+- [x] Implement `PUT /api/orders/{id}/cancel` endpoint _(already existed prior to Phase 3 — implemented as PUT, not POST)_
+- [x] Call `sale.order.action_cancel` in Odoo
+- [x] Update MongoDB `order_commissions` record `payout_status` to `cancelled` on cancel
+- [x] Only allow cancellation of orders in `draft` or `sent` state (not confirmed `sale`) — backend now reads the order's Odoo state and returns 400 if not draft/sent; both the Orders list view and `OrderView.js` detail panel now hide the Cancel button for confirmed orders too (previously showed for `sale` state as well — a real behaviour change, confirmed orders can no longer be cancelled from the portal)
+- [x] Show Cancel button in portal UI for eligible orders _(button already existed but had no state restriction — fixed alongside the above)_
+- [ ] Trigger cancellation email — deferred to Phase 2 (blocked on Resend credentials)
 
 #### 3.6 Credit Limit Enforcement
 - [ ] Fetch `credit_limit` and `credit` from `res.partner` in Odoo on order confirm
@@ -443,11 +445,11 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Low-stock alerts and reports are computed per-warehouse, not company-wide
 
 ### Definition of Done
-- [ ] An order placed with a variant product creates the correct `product.product` line in Odoo (not template)
+- [x] An order placed with a variant product creates the correct `product.product` line in Odoo (not template)
 - [ ] VAT on invoice matches Odoo's tax configuration, not a hardcoded value
 - [ ] Attempting to order more units than are in stock returns a clear error before hitting Odoo
 - [ ] A customer with a pricelist sees their negotiated price in the cart
-- [ ] A draft order can be cancelled via the portal and disappears from the active order list
+- [x] A draft order can be cancelled via the portal and disappears from the active order list
 - [ ] An order for a customer over their credit limit is blocked or escalated
 - [ ] Switching the warehouse selector changes displayed stock counts to that location's figures only (verified against Odoo `stock.quant`)
 - [ ] An order placed under "Warehouse A" decrements Warehouse A's stock in Odoo, not Warehouse B's
@@ -455,7 +457,9 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] The packing board for Warehouse B does not show orders fulfilled from Warehouse A
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+> **Sub-deploy 1 (2026-06-19):** Order cancellation (3.5). The endpoint, Odoo call, and commission-voiding logic already existed before this phase — only a state guard and UI restriction were missing. Backend now reads the order's live Odoo `state` and rejects with 400 if it isn't `draft`/`sent`. **Behaviour change:** both `Views.js` (list view) and `OrderView.js` (detail panel) previously showed the Cancel button for confirmed (`sale`) orders too — that's now restricted to draft/sent only, matching the backend guard. Cancellation email intentionally not wired — deferred to Phase 2 once Resend credentials are available.
+
+> **Sub-deploy 2 (2026-06-19):** Product variants (3.1). Discovered the cart already silently resolved to `product_variant_ids[0]` before this phase — single-variant products were already ordering correctly. The real gap was multi-variant products: no way to choose a non-default variant, and the admin catalog / low-stock view / stock-adjustment screen all operated at template level, hiding per-variant stock and price differences. `product_routes.py` now reads/writes `product.product` for everything user-facing; `lst_price` (variant-level computed price) is normalised back to a `list_price` key in the API response so the frontend needed zero field-name changes. Confirmed with the business that multi-variant products already exist in the live Odoo catalog — they will now appear as separate rows (one per variant) in both the Orders cart and the admin Products table, each with independent stock/price, instead of one row hiding the variant split. No changes made to `forecast_routes.py`/`report_routes.py`/`stock_routes.py` — those stay company-wide/template-level until Phase 3.7 (multi-warehouse) addresses them together.
 
 ---
 

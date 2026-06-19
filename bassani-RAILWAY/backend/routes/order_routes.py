@@ -398,8 +398,19 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_perm
 
 @router.put("/{order_id}/cancel")
 async def cancel_order(order_id: int, current_user: dict = Depends(require_permission("orders.cancel"))):
-    """Cancel a sales order in Odoo and void the related commission record."""
+    """Cancel a sales order in Odoo and void the related commission record.
+    Only quotations (draft/sent) may be cancelled — a confirmed order already has
+    an invoice and possibly a packing board entry in flight, so it must be handled
+    manually rather than silently voided."""
     odoo = get_odoo_client()
+    rows = odoo.read("sale.order", [order_id], fields=["state"])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if rows[0]["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only quotations (not yet confirmed) can be cancelled this way",
+        )
     try:
         odoo.execute("sale.order", "action_cancel", [order_id])
     except Exception as e:
