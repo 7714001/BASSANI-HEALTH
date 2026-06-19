@@ -278,6 +278,70 @@ def get_product_stock(product_id: int, current_user: dict = Depends(get_current_
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/{product_id}/reservations")
+async def get_product_reservations(product_id: int, current_user: dict = Depends(require_admin)):
+    """
+    Explains the gap between On Hand and Forecasted stock: lists the open
+    (confirmed, not-yet-fully-delivered) sale orders currently reserving this
+    product, so an admin unfamiliar with Odoo's stock model can see exactly
+    where their stock went instead of just being told a number is lower.
+
+    Scoped to the caller's resolved warehouse when one is selected — company-wide
+    on "All warehouses", same as every other read in the multi-warehouse build.
+    Orders placed before warehouse_id existed on sale.order won't appear in a
+    warehouse-scoped view even though they may still hold stock (no way to
+    retroactively know which vault they drew from).
+    """
+    odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
+
+    domain = [
+        ("product_id", "=", product_id),
+        ("order_id.state", "in", ["sale", "done"]),
+    ]
+    if warehouse_id:
+        domain.append(("order_id.warehouse_id", "=", warehouse_id))
+
+    try:
+        lines = odoo.search_read(
+            "sale.order.line",
+            domain=domain,
+            fields=["order_id", "product_uom_qty", "qty_delivered"],
+            limit=500,
+        )
+        outstanding = [l for l in lines if l["product_uom_qty"] - l["qty_delivered"] > 0.001]
+        if not outstanding:
+            return {"reservations": [], "total_reserved": 0}
+
+        order_ids = list({l["order_id"][0] for l in outstanding})
+        orders = odoo.read("sale.order", order_ids, fields=["name", "partner_id", "date_order", "state"])
+        order_map = {o["id"]: o for o in orders}
+
+        reservations = []
+        for l in outstanding:
+            oid = l["order_id"][0]
+            order = order_map.get(oid)
+            if not order:
+                continue
+            qty_reserved = l["product_uom_qty"] - l["qty_delivered"]
+            reservations.append({
+                "order_id": oid,
+                "order_name": order["name"],
+                "customer_name": order["partner_id"][1] if order.get("partner_id") else "",
+                "date_order": order.get("date_order"),
+                "state": order["state"],
+                "qty_reserved": qty_reserved,
+            })
+
+        reservations.sort(key=lambda r: r["date_order"] or "", reverse=True)
+        return {
+            "reservations": reservations,
+            "total_reserved": sum(r["qty_reserved"] for r in reservations),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.post("/{product_id}/stock")
 async def set_stock_level(
     product_id: int,

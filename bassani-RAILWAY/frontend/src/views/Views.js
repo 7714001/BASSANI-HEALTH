@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, ChevronDown, Loader2 } from "lucide-react";
+import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch } from "lucide-react";
 import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -31,6 +31,27 @@ export function Products() {
   const [archivingId, setArchivingId] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
+
+  // Stock reservation drill-down — explains On Hand vs Forecasted gaps
+  const [reservationsModal,   setReservationsModal  ] = useState(false);
+  const [reservationsProduct,setReservationsProduct ] = useState(null);
+  const [reservations,       setReservations        ] = useState([]);
+  const [reservationsLoading,setReservationsLoading ] = useState(false);
+
+  const openReservations = async (p) => {
+    setReservationsProduct(p);
+    setReservationsModal(true);
+    setReservationsLoading(true);
+    try {
+      const r = await api.get(`/api/products/${p.id}/reservations`);
+      setReservations(r.data.reservations || []);
+    } catch {
+      toast.error("Failed to load stock reservations");
+      setReservations([]);
+    } finally {
+      setReservationsLoading(false);
+    }
+  };
 
   useEffect(() => {
     api.get("/api/products/categories")
@@ -113,7 +134,22 @@ export function Products() {
             { accessorKey:"list_price", header:"Sale Price", cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
             { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
             { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
-            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=><span className="text-gray-500">{p.virtual_available??0}</span> },
+            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=>{
+              const onHand = p.qty_available ?? 0;
+              const forecasted = p.virtual_available ?? 0;
+              const tiedUp = onHand - forecasted > 0.001;
+              return (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-gray-500">{forecasted}</span>
+                  {tiedUp && (
+                    <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="See which orders this stock is tied up in"
+                      className="text-amber-500 hover:text-amber-600 transition-colors">
+                      <PackageSearch size={13} />
+                    </button>
+                  )}
+                </span>
+              );
+            } },
             ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
           ]}
           data={products} loading={loading} total={total}
@@ -146,6 +182,33 @@ export function Products() {
           </div>
           <FormGroup label="Description"><Textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} placeholder="Short product description" /></FormGroup>
           <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>{editing ? "Save Product" : "Create Product"}</BtnPrimary></div>
+        </Modal>
+      )}
+      {reservationsModal && reservationsProduct && (
+        <Modal title={`Stock Tied Up — ${reservationsProduct.display_name || reservationsProduct.name}`} onClose={()=>setReservationsModal(false)}>
+          <p className="text-sm text-gray-500 mb-4">
+            On Hand: <span className="font-semibold text-gray-700">{reservationsProduct.qty_available ?? 0}</span>
+            {" · "}Forecasted: <span className="font-semibold text-gray-700">{reservationsProduct.virtual_available ?? 0}</span>
+            {" — the difference is reserved against these open orders:"}
+          </p>
+          {reservationsLoading && <LoadingState />}
+          {!reservationsLoading && reservations.length === 0 && (
+            <EmptyState message="No open orders found — the gap may be from older orders placed before warehouses were tracked, or stock reserved at a different warehouse." />
+          )}
+          {!reservationsLoading && reservations.length > 0 && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              {reservations.map(r => (
+                <div key={r.order_id} className="flex items-center justify-between px-4 py-2.5">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{r.order_name}</p>
+                    <p className="text-[11px] text-gray-400">{r.customer_name} · {fmtDate(r.date_order)}</p>
+                  </div>
+                  <span className="text-sm font-semibold text-amber-600">{r.qty_reserved}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setReservationsModal(false)}>Close</BtnSecondary></div>
         </Modal>
       )}
     </div>
