@@ -26,7 +26,7 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [user?.active_warehouse_id]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

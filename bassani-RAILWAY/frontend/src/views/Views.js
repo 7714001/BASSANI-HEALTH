@@ -50,7 +50,7 @@ export function Products() {
       setProducts(r.data.products); setTotal(r.data.total);
     } catch { toast.error("Failed to load products"); }
     finally { setLoading(false); }
-  }, [search, cat, pagination, sorting]);
+  }, [search, cat, pagination, sorting, user?.active_warehouse_id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1710,6 +1710,8 @@ export function Reports() {
     { key:"category-performance", label:"Category Performance" },
   ];
 
+  const { user } = useAuth();
+
   const load = async (key) => {
     setLoading(true);
     try { const r = await api.get(`/api/reports/${key}`); setData(r.data); }
@@ -1717,7 +1719,7 @@ export function Reports() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(activeReport); }, [activeReport]);
+  useEffect(() => { load(activeReport); }, [activeReport, user?.active_warehouse_id]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

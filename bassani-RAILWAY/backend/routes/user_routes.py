@@ -43,7 +43,7 @@ class PasswordReset(BaseModel):
     new_password: str
 
 class WarehouseSelect(BaseModel):
-    warehouse_id: int
+    warehouse_id: Optional[int] = None   # None = "All warehouses" (clears the active selection)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
