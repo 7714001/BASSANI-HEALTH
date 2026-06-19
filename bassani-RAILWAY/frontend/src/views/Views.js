@@ -37,6 +37,20 @@ export function Products() {
   const [reservationsProduct,setReservationsProduct ] = useState(null);
   const [reservations,       setReservations        ] = useState([]);
   const [reservationsLoading,setReservationsLoading ] = useState(false);
+  const [viewingOrder,       setViewingOrder        ] = useState(null);
+  const [viewingOrderId,     setViewingOrderId      ] = useState(null); // tracks which row is loading
+
+  const openReservationOrder = async (orderId) => {
+    setViewingOrderId(orderId);
+    try {
+      const r = await api.get(`/api/orders/${orderId}`);
+      setViewingOrder(r.data);
+    } catch {
+      toast.error("Failed to load order");
+    } finally {
+      setViewingOrderId(null);
+    }
+  };
 
   const openReservations = async (p) => {
     setReservationsProduct(p);
@@ -193,23 +207,36 @@ export function Products() {
           </p>
           {reservationsLoading && <LoadingState />}
           {!reservationsLoading && reservations.length === 0 && (
-            <EmptyState message="No open orders found — the gap may be from older orders placed before warehouses were tracked, or stock reserved at a different warehouse." />
+            <EmptyState message="No open orders found — the gap may be from stock reserved outside a sale order (e.g. a warehouse transfer), or a manual stock adjustment." />
           )}
           {!reservationsLoading && reservations.length > 0 && (
             <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
               {reservations.map(r => (
-                <div key={r.order_id} className="flex items-center justify-between px-4 py-2.5">
+                <button key={r.order_id} onClick={()=>openReservationOrder(r.order_id)} disabled={viewingOrderId===r.order_id}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-gray-50 transition-colors disabled:opacity-50">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{r.order_name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium text-bassani-700">{r.order_name}</p>
+                      {r.warehouse_name ? (
+                        <span className="text-[10px] text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">{r.warehouse_name}</span>
+                      ) : (
+                        <span title="This order has no warehouse recorded in Odoo at all" className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">no warehouse recorded</span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-gray-400">{r.customer_name} · {fmtDate(r.date_order)}</p>
                   </div>
-                  <span className="text-sm font-semibold text-amber-600">{r.qty_reserved}</span>
-                </div>
+                  <span className="text-sm font-semibold text-amber-600 flex-shrink-0 ml-3">
+                    {viewingOrderId===r.order_id ? <Loader2 size={14} className="animate-spin" /> : r.qty_reserved}
+                  </span>
+                </button>
               ))}
             </div>
           )}
           <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setReservationsModal(false)}>Close</BtnSecondary></div>
         </Modal>
+      )}
+      {viewingOrder && (
+        <OrderView order={viewingOrder} onClose={()=>setViewingOrder(null)} />
       )}
     </div>
   );

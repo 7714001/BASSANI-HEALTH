@@ -288,9 +288,12 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
 
     Scoped to the caller's resolved warehouse when one is selected — company-wide
     on "All warehouses", same as every other read in the multi-warehouse build.
-    Orders placed before warehouse_id existed on sale.order won't appear in a
-    warehouse-scoped view even though they may still hold stock (no way to
-    retroactively know which vault they drew from).
+    `warehouse_id` is a standard Odoo field that's normally always set (defaulted
+    from the salesperson/company default warehouse), so most orders will show a
+    real warehouse name. Orders with no `warehouse_id` at all (rare — only if
+    something bypassed Odoo's normal defaulting) are still included rather than
+    hidden, since silently dropping them would just relocate the "where did my
+    stock go" confusion instead of resolving it.
     """
     odoo = get_odoo_client()
     warehouse_id = await resolve_warehouse_id(current_user)
@@ -300,7 +303,7 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
         ("order_id.state", "in", ["sale", "done"]),
     ]
     if warehouse_id:
-        domain.append(("order_id.warehouse_id", "=", warehouse_id))
+        domain += ["|", ("order_id.warehouse_id", "=", warehouse_id), ("order_id.warehouse_id", "=", False)]
 
     try:
         lines = odoo.search_read(
@@ -314,7 +317,7 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
             return {"reservations": [], "total_reserved": 0}
 
         order_ids = list({l["order_id"][0] for l in outstanding})
-        orders = odoo.read("sale.order", order_ids, fields=["name", "partner_id", "date_order", "state"])
+        orders = odoo.read("sale.order", order_ids, fields=["name", "partner_id", "date_order", "state", "warehouse_id"])
         order_map = {o["id"]: o for o in orders}
 
         reservations = []
@@ -331,6 +334,7 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
                 "date_order": order.get("date_order"),
                 "state": order["state"],
                 "qty_reserved": qty_reserved,
+                "warehouse_name": order["warehouse_id"][1] if order.get("warehouse_id") else None,
             })
 
         reservations.sort(key=lambda r: r["date_order"] or "", reverse=True)
