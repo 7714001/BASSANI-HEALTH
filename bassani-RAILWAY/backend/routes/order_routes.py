@@ -6,7 +6,7 @@ from auth import get_current_user, require_permission
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
-from warehouse_context import resolve_warehouse_id
+from warehouse_context import resolve_warehouse_id, odoo_context
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -183,6 +183,11 @@ async def create_order(
     effective_partner_id = order.partner_id
     reseller_profile = None
 
+    # Resolved once — used both for the stock check below and to tag the order
+    # with the warehouse it should draw from (the reseller's assigned vault,
+    # staff's fixed vault, or the admin's active top-nav selection).
+    warehouse_id = await resolve_warehouse_id(current_user)
+
     if current_user.get("role") == "reseller":
         reseller_profile = await col("resellers").find_one(
             {"user_id": current_user["id"]}, NO_ID
@@ -192,6 +197,36 @@ async def create_order(
         if not order.partner_id or order.partner_id <= 0:
             raise HTTPException(status_code=400, detail="Select a customer to place the order for")
         order = order.model_copy(update={"reseller_id": reseller_profile["id"]})
+
+    # Stock check — block the whole order if any line exceeds what's actually
+    # available to promise (on-hand minus what's already reserved by other
+    # orders), scoped to the resolved warehouse. The cart already disables
+    # "Add to Order" for out-of-stock items, but this is the authoritative
+    # check: it covers direct API calls and stock that changed after the cart
+    # was loaded.
+    product_ids = [l.product_id for l in order.order_line]
+    try:
+        stock_rows = odoo.read(
+            "product.product", product_ids,
+            fields=["display_name", "virtual_available"],
+            context=odoo_context(warehouse_id),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error checking stock: {str(e)}")
+    stock_map = {p["id"]: p for p in stock_rows}
+
+    shortfalls = []
+    for l in order.order_line:
+        p = stock_map.get(l.product_id)
+        available = p["virtual_available"] if p else 0
+        if l.product_uom_qty > available:
+            name = p["display_name"] if p else f"Product #{l.product_id}"
+            shortfalls.append(f"{name} (requested {l.product_uom_qty:g}, only {available:g} available)")
+    if shortfalls:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough stock to fulfil this order: " + "; ".join(shortfalls),
+        )
 
     lines = [
         (0, 0, {
@@ -208,10 +243,6 @@ async def create_order(
         "order_line": lines,
         "note": order.note or "",
     }
-
-    # Tag the order with the warehouse it should draw stock from — the reseller's
-    # assigned vault, or the admin's active top-nav selection.
-    warehouse_id = await resolve_warehouse_id(current_user)
     if warehouse_id:
         vals["warehouse_id"] = warehouse_id
 

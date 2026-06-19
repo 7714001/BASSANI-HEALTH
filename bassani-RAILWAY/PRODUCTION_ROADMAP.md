@@ -385,8 +385,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Orders are commercially and fiscally correct, and are fulfilled from the correct physical stock location. All major Odoo sales workflows are supported.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 3.1 and 3.5 complete (email on 3.5 blocked on Phase 2/Resend)  
-**Completed:** Sub-deploy 1 (3.5 Order Cancellation) — 2026-06-19 · Sub-deploy 2 (3.1 Product Variants) — 2026-06-19  
+**Status:** 🟡 In Progress — 3.1, 3.3, 3.5, 3.7, 3.8 complete; 3.2, 3.4, 3.6 remain (email on 3.5 blocked on Phase 2/Resend)  
+**Completed:** Sub-deploy 1 (3.5 Order Cancellation) — 2026-06-19 · Sub-deploy 2 (3.1 Product Variants) — 2026-06-19 · Sub-deploy 3 (3.7 Multi-Warehouse) — 2026-06-19 · Sub-deploy 4 (audit/stock-set/switcher scoping) — 2026-06-19 · Sub-deploy 5 (3.8 follow-up) — 2026-06-19 · Sub-deploy 6 (3.3 Stock Availability) — 2026-06-19  
 
 ### Tasks
 
@@ -407,10 +407,10 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Test with a product that has a different tax rate to confirm dynamic behaviour
 
 #### 3.3 Stock Availability
-- [ ] Fetch `qty_available` (or `virtual_available`) from `product.product` before order submission
-- [ ] Block order if any line item quantity exceeds available stock
-- [ ] Display available stock count next to each product in the order UI
-- [ ] Handle zero-stock products gracefully (disable "Add to Cart", show "Out of Stock")
+- [x] Fetch `virtual_available` from `product.product` before order submission — `create_order()` re-checks stock server-side, scoped to the resolved warehouse, right before creating the Odoo order
+- [x] Block order if any line item quantity exceeds available stock — rejects with 400 and a clear per-product message (e.g. "Tincture 20ml THC (requested 10, only 3 available)") rather than a generic error; this is the authoritative check — it catches direct API calls and stock that changed after the cart was loaded, not just UI bypass
+- [x] Display available stock count next to each product in the order UI — already existed in the cart grid before this phase (`{virtual_available} available` badge)
+- [x] Handle zero-stock products gracefully (disable "Add to Cart", show "Out of Stock") — already existed in the cart grid before this phase
 
 #### 3.4 Pricelist Support
 - [ ] Fetch customer's assigned `property_product_pricelist` from `res.partner`
@@ -484,6 +484,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 > **Sub-deploy 4 (2026-06-19):** Product audit coverage + stock-set warehouse guard + warehouse-switcher page scoping + stock reservation visibility (3.8). Found during 3.7 live testing that product create/update/archive/stock-set had **zero audit logging** — fixed, with `product.stock_set` capturing `before`/`after` qty plus `warehouse_id`/`warehouse_name`. `set_stock_level()` now requires a specific warehouse selected (was silently guessing "the first Stock location it found" — same class of bug as the `return_routes.py` hardcoded location fixed in 3.7); frontend disables the stock field with an inline warning instead of failing at submit. Top-nav warehouse switcher (`TopBar`'s `showWarehouseSwitcher` prop) is now scoped to Products, Orders, Dashboard, and Reports only — the only pages it affects — instead of every admin page. New 3.8 reservations drill-down explains the most common point of confusion found during testing: On Hand vs Forecasted stock. Business goal driving this: the portal exists to help admins who aren't fluent in Odoo understand what their own Odoo configuration is telling them, so this kind of "explain the number, don't just show it" feature should be the default instinct going forward, not a one-off.
 
 > **Sub-deploy 5 (2026-06-19):** 3.8 follow-up, found during live testing — scoping reservations strictly to `order_id.warehouse_id = warehouse_id` showed "no orders found" for a newly selected warehouse, which initially looked like a data gap. Investigated with the business and confirmed it's correct behaviour, not a bug: `warehouse_id` is a standard Odoo field that's always defaulted on order creation, so pre-existing orders are correctly tagged to the warehouse that existed when they were placed — a brand-new second warehouse legitimately has zero order history until orders start being placed against it. Domain still defensively includes orders with a genuinely unset `warehouse_id` (rather than hiding them) for the rare case Odoo's default didn't apply, but the UI now shows each reservation's actual warehouse name rather than implying uncertainty that wasn't there. Also made each reservation row clickable, opening the existing `OrderView` overlay read-only (no `isAdmin` prop passed, so confirm/cancel don't render) so the admin can inspect the order without leaving the Products page.
+
+> **Sub-deploy 6 (2026-06-19):** Stock availability (3.3). `create_order()` now re-checks `virtual_available` for every line server-side, scoped to the resolved warehouse, immediately before creating the Odoo order — rejects with a clear per-product message ("X (requested 10, only 3 available)") if any line exceeds what's available to promise. This is the authoritative gate; the cart UI already disabled "Add to Order" for out-of-stock items and showed a stock count badge before this phase, but that's bypassable via direct API calls or simply by stock changing between page load and submit. No frontend changes were needed — the existing cart UX already covered the "display stock"/"handle zero-stock" half of this task.
 
 ---
 
