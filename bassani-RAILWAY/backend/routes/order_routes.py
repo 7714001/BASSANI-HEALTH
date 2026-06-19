@@ -28,10 +28,6 @@ class OrderCreate(BaseModel):
 class StatusUpdate(BaseModel):
     status: str                                 # Pending|Processing|Shipped|Delivered
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-VAT_RATE = 0.15
-
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -176,7 +172,13 @@ async def create_order(
     """
     Create a sale order in Odoo.
     Commission is calculated and stored in MongoDB alongside the Odoo order ID.
-    VAT (15%) is handled by Odoo's tax configuration.
+
+    Tax is intentionally never set on the order line payload below — Odoo's
+    `sale.order.line.tax_id` is a stored compute field (`@api.depends`, not
+    just an onchange), so it's resolved automatically from each product's own
+    `taxes_id`/fiscal position the moment the line is created via RPC, the
+    same as it would be from the Odoo UI. Overriding it here would risk
+    fighting Odoo's own tax/fiscal-position logic instead of trusting it.
     """
     odoo = get_odoo_client()
 

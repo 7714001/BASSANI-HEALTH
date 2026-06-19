@@ -36,9 +36,35 @@ class StockAdjustment(BaseModel):
 PRODUCT_FIELDS = [
     "id", "name", "display_name", "default_code", "type", "categ_id",
     "lst_price", "standard_price", "uom_id",
-    "qty_available", "virtual_available",
+    "qty_available", "virtual_available", "taxes_id",
     "description", "active", "product_tmpl_id",
 ]
+
+
+def _attach_tax_rates(odoo, products: list) -> None:
+    """
+    Resolve each product's real Odoo tax configuration (`taxes_id`, a
+    many2many to `account.tax`) into a single percentage rate, e.g. 15.0 —
+    so the Orders cart can show accurate VAT per product instead of a flat
+    15% assumption that's wrong for any zero-rated or differently-taxed item.
+
+    Mutates `products` in place; replaces the raw `taxes_id` list with the
+    resolved `tax_rate` number. Only percentage-type taxes are summed —
+    fixed-amount taxes are rare in this catalog and would need a different
+    UI treatment (a flat amount, not a %) if they ever show up.
+    """
+    tax_ids = {t for p in products for t in (p.get("taxes_id") or [])}
+    tax_map = {}
+    if tax_ids:
+        taxes = odoo.read("account.tax", list(tax_ids), fields=["amount", "amount_type"])
+        tax_map = {t["id"]: t for t in taxes}
+    for p in products:
+        rate = sum(
+            tax_map[t]["amount"]
+            for t in (p.pop("taxes_id", None) or [])
+            if tax_map.get(t, {}).get("amount_type") == "percent"
+        )
+        p["tax_rate"] = rate
 
 
 @router.get("/")
@@ -89,6 +115,7 @@ async def list_products(
         # Normalise lst_price → list_price so the frontend doesn't need to change
         for p in products:
             p["list_price"] = p.pop("lst_price", 0)
+        _attach_tax_rates(odoo, products)
         total = odoo.count("product.product", domain)
         return {"products": products, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
@@ -157,6 +184,7 @@ async def get_product(product_id: int, current_user: dict = Depends(get_current_
         if not records:
             raise HTTPException(status_code=404, detail="Product not found")
         records[0]["list_price"] = records[0].pop("lst_price", 0)
+        _attach_tax_rates(odoo, records)
         return records[0]
     except HTTPException:
         raise

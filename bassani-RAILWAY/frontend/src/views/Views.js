@@ -668,7 +668,7 @@ export function Orders() {
     setCart(prev => {
       const ex = prev.find(i => i.product_id === pid);
       if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
-      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.display_name || product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0) }];
+      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.display_name || product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0 }];
     });
   };
 
@@ -737,8 +737,12 @@ export function Orders() {
       if (aIn !== bIn) return aIn ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+  // VAT computed per line from each product's real Odoo tax configuration
+  // (resolved server-side in product_routes.py::_attach_tax_rates), not a
+  // flat assumption — a zero-rated or differently-taxed item would otherwise
+  // show the wrong total before the order is even submitted.
   const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  const cartVat      = cartSubtotal * 0.15;
+  const cartVat      = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit * ((i._taxRate ?? 0) / 100), 0);
   const cartTotal    = cartSubtotal + cartVat;
 
   const STATUSES = ["all","draft","sale","done","cancel"];
@@ -927,7 +931,7 @@ export function Orders() {
                     <span>{fmtR(cartSubtotal)}</span>
                   </div>
                   <div className="flex justify-between text-gray-500">
-                    <span>VAT (15%)</span>
+                    <span>VAT</span>
                     <span>{fmtR(cartVat)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
