@@ -7,6 +7,7 @@ from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context
+from credit import credit_status
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -230,6 +231,26 @@ async def create_order(
             detail="Not enough stock to fulfil this order: " + "; ".join(shortfalls),
         )
 
+    # Credit check — non-blocking here, since an order is just a quotation
+    # until an admin confirms it. Surfaces a warning early so the reseller/
+    # admin sees it before confirm time, where it becomes a hard gate.
+    order_subtotal = sum(l.product_uom_qty * l.price_unit for l in order.order_line)
+    credit_warning = None
+    credit_partner_name = ""
+    try:
+        partner_rows = odoo.read("res.partner", [effective_partner_id], fields=["name", "credit", "credit_limit"])
+        if partner_rows:
+            credit_partner_name = partner_rows[0].get("name", "")
+            status = credit_status(
+                partner_rows[0].get("credit") or 0,
+                partner_rows[0].get("credit_limit") or 0,
+                additional=order_subtotal,
+            )
+            if status["over_limit"]:
+                credit_warning = status
+    except Exception:
+        pass  # Non-fatal — credit info shouldn't block placing a quotation
+
     lines = [
         (0, 0, {
             "product_id": l.product_id,
@@ -288,11 +309,19 @@ async def create_order(
                     user=current_user, after={"partner_id": effective_partner_id, "lines": len(order.order_line)},
                     reseller_id=order.reseller_id)
 
-    return {"success": True, "odoo_order_id": odoo_order_id}
+    if credit_warning:
+        await audit_log("order.credit_warning", "order", odoo_order_id, entity_label=credit_partner_name,
+                        user=current_user, detail=credit_warning, reseller_id=order.reseller_id)
+
+    return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning}
 
 
 @router.put("/{order_id}/confirm")
-async def confirm_order(order_id: int, current_user: dict = Depends(require_permission("orders.confirm"))):
+async def confirm_order(
+    order_id: int,
+    override_credit: bool = Query(False),
+    current_user: dict = Depends(require_permission("orders.confirm")),
+):
     """
     Confirm a quotation. On success, three further steps run in sequence:
       1. Create + post the customer invoice (out_invoice) in Odoo
@@ -303,6 +332,37 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_perm
     """
     odoo = get_odoo_client()
     warnings: List[str] = []
+
+    # ── Step 0: Credit check — hard gate unless explicitly overridden ──────────
+    # Unlike the warning at order creation, this blocks: confirming commits to
+    # an invoice, so it's the point where being over limit actually matters.
+    try:
+        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not read order: {str(e)}")
+    if not pre_rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    partner = pre_rows[0].get("partner_id")
+    if partner:
+        partner_rows = odoo.read("res.partner", [partner[0]], fields=["credit", "credit_limit"])
+        if partner_rows:
+            status = credit_status(
+                partner_rows[0].get("credit") or 0,
+                partner_rows[0].get("credit_limit") or 0,
+                additional=pre_rows[0].get("amount_total") or 0,
+            )
+            if status["over_limit"] and not override_credit:
+                await audit_log("order.credit_block", "order", order_id, entity_label=partner[1],
+                                user=current_user, detail=status)
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"{partner[1]} is over their credit limit by R{status['shortfall']:.2f} "
+                           f"(credit R{status['credit']:.2f} of R{status['credit_limit']:.2f} limit). "
+                           "An admin must explicitly override to confirm this order.",
+                )
+            if status["over_limit"] and override_credit:
+                await audit_log("order.credit_override", "order", order_id, entity_label=partner[1],
+                                user=current_user, detail=status)
 
     # ── Step 1: Confirm (hard fail — nothing else runs if this fails) ──────────
     try:

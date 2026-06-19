@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from database import col, NO_ID
+from credit import credit_status
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -37,9 +38,18 @@ class CustomerUpdate(BaseModel):
 
 CUSTOMER_FIELDS = [
     "id", "name", "ref", "email", "phone", "street", "city", "zip",
-    "country_id", "customer_rank", "credit_limit",
+    "country_id", "customer_rank", "credit_limit", "credit",
     "property_payment_term_id", "active", "comment",
 ]
+
+
+def _attach_credit_hold(customers: list) -> None:
+    """Flags each customer with `credit_hold` (over their Odoo credit_limit
+    right now) so it can be shown in the portal without an extra round trip
+    per row — same `credit`/`credit_limit` fields order confirmation checks."""
+    for c in customers:
+        status = credit_status(c.get("credit") or 0, c.get("credit_limit") or 0)
+        c["credit_hold"] = status["over_limit"]
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -92,6 +102,7 @@ async def list_customers(
             for k, v in c.items():
                 if v is False and k != "active":
                     c[k] = None
+        _attach_credit_hold(customers)
         total = odoo.count("res.partner", domain)
 
         # Overlay ownership data so the admin can see which reseller created each account
@@ -127,6 +138,7 @@ async def customer_profile(
     for k, v in customer.items():
         if v is False and k != "active":
             customer[k] = None
+    _attach_credit_hold([customer])
 
     # All confirmed/done orders
     all_orders = odoo.search_read(
@@ -226,6 +238,7 @@ def get_customer(customer_id: int, current_user: dict = Depends(get_current_user
         records = odoo.read("res.partner", [customer_id], fields=CUSTOMER_FIELDS)
         if not records:
             raise HTTPException(status_code=404, detail="Customer not found")
+        _attach_credit_hold(records)
         return records[0]
     except HTTPException:
         raise

@@ -147,6 +147,11 @@ export function Products() {
             { id:"category", header:"Category", enableSorting:false, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
             { accessorKey:"list_price", header:"Sale Price", cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
             { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
+            { accessorKey:"tax_rate", header:"Tax", enableSorting:false, cell:({ row:{original:p} })=>
+              (p.tax_rate ?? 0) > 0
+                ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
+                : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
+            },
             { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=>{
               const onHand = p.qty_available ?? 0;
@@ -427,7 +432,14 @@ export function Customers() {
             { accessorKey:"email", header:"Contact", cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
             { accessorKey:"city", header:"City", cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
             { id:"s21", header:"Section 21", enableSorting:false, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
-            { accessorKey:"credit_limit", header:"Credit Limit", cell:({row:{original:c}})=><span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span> },
+            { accessorKey:"credit_limit", header:"Credit Limit", cell:({row:{original:c}})=>(
+              <div className="flex items-center gap-1.5">
+                <span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span>
+                {c.credit_hold && (
+                  <span title="Customer is currently over their credit limit" className="text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-1.5 py-0.5">Credit Hold</span>
+                )}
+              </div>
+            ) },
             { id:"terms", header:"Terms", enableSorting:false, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
             ...(!isReseller ? [
               { id:"createdBy", header:"Created By", enableSorting:false, cell:({row:{original:c}})=>
@@ -588,10 +600,10 @@ export function Orders() {
     } catch { /* keep showing basic data */ }
   };
 
-  const confirm = async (id) => {
+  const confirm = async (id, overrideCredit = false) => {
     setConfirming(s => new Set(s).add(id));
     try {
-      const { data } = await api.put(`/api/orders/${id}/confirm`);
+      const { data } = await api.put(`/api/orders/${id}/confirm`, null, { params: overrideCredit ? { override_credit: true } : {} });
       if (data.invoice_name) {
         toast.success(`Order confirmed · Invoice ${data.invoice_name} created`);
       } else {
@@ -602,6 +614,15 @@ export function Orders() {
       }
       load();
     } catch (e) {
+      if (e.response?.status === 402) {
+        // Customer is over their credit limit — offer an explicit override instead
+        // of just failing, since the admin may have a good reason to proceed anyway.
+        setConfirming(s => { const n = new Set(s); n.delete(id); return n; });
+        if (window.confirm(`${e.response.data.detail}\n\nConfirm anyway?`)) {
+          await confirm(id, true);
+        }
+        return;
+      }
       toast.error(e.response?.data?.detail || "Failed to confirm order");
     } finally {
       setConfirming(s => { const n = new Set(s); n.delete(id); return n; });
@@ -711,8 +732,14 @@ export function Orders() {
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: orderNote,
       };
-      await api.post("/api/orders/", payload);
+      const { data } = await api.post("/api/orders/", payload);
       toast.success("Order placed successfully");
+      if (data.credit_warning) {
+        toast(
+          `⚠️ ${selectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
+          { duration: 10000 }
+        );
+      }
       setView("list");
       load();
     } catch (e) {

@@ -96,6 +96,11 @@ export default function CustomerProfile() {
                     {isSection21 && (
                       <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full font-medium">Section 21</span>
                     )}
+                    {c.credit_hold && (
+                      <span title="Over their Odoo credit limit — order confirmation requires an admin override" className="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                        <AlertCircle size={11} />Credit Hold
+                      </span>
+                    )}
                     {ownership?.reseller_name && (
                       <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">
                         Via {ownership.reseller_name}
