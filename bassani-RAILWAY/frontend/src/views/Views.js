@@ -24,9 +24,11 @@ export function Products() {
   const [search,     setSearch    ] = useState("");
   const [cat,        setCat       ] = useState("all");
   const [categories, setCategories] = useState([]);
+  const [uoms,        setUoms       ] = useState([]);
+  const [taxes,       setTaxes      ] = useState([]);
   const [modal,       setModal      ] = useState(false);
   const [editing,     setEditing    ] = useState(null);
-  const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"" });
+  const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"", uom_id:"", tax_id:"" });
   const [saving,      setSaving     ] = useState(false);
   const [archivingId, setArchivingId] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -71,6 +73,12 @@ export function Products() {
     api.get("/api/products/categories")
       .then(r => setCategories(r.data.categories || []))
       .catch(() => {});
+    api.get("/api/products/uoms")
+      .then(r => setUoms(r.data.uoms || []))
+      .catch(() => {});
+    api.get("/api/products/taxes")
+      .then(r => setTaxes(r.data.taxes || []))
+      .catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -91,8 +99,8 @@ export function Products() {
 
   const stockColor = (qty) => qty <= 0 ? "text-red-600 font-semibold" : qty < 10 ? "text-amber-600 font-semibold" : "text-bassani-700 font-semibold";
 
-  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"" }); setModal(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"" }); setModal(true); };
+  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"" }); setModal(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"", uom_id:p.uom_id?.[0]||"", tax_id:p.tax_id||"" }); setModal(true); };
 
   const save = async () => {
     if (!form.name) return toast.error("Product name required");
@@ -103,6 +111,8 @@ export function Products() {
         list_price:     parseFloat(form.list_price)     || 0,
         standard_price: parseFloat(form.standard_price) || 0,
         categ_id:       form.categ_id ? parseInt(form.categ_id) : undefined,
+        uom_id:         form.uom_id   ? parseInt(form.uom_id)   : undefined,
+        tax_id:         form.tax_id   ? parseInt(form.tax_id)   : undefined,
       };
       let productId;
       if (editing) {
@@ -186,6 +196,17 @@ export function Products() {
               <option value="">— Select category —</option>
               {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </Select></FormGroup>
+            <FormGroup label="Unit of Measure"><Select value={form.uom_id} onChange={e=>setForm({...form,uom_id:parseInt(e.target.value)||""})}>
+              <option value="">— Select unit —</option>
+              {uoms.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select></FormGroup>
+            <FormGroup label="Tax">
+              <Select value={form.tax_id} onChange={e=>setForm({...form,tax_id:parseInt(e.target.value)||""})}>
+                <option value="">— No tax —</option>
+                {taxes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+              <p className="text-[11px] text-gray-400 mt-1">Customer Tax — applies to every variant of this product.</p>
+            </FormGroup>
             <FormGroup label="Sale Price (ZAR)"><Input type="number" value={form.list_price} onChange={e=>setForm({...form,list_price:e.target.value})} placeholder="450.00" /></FormGroup>
             <FormGroup label="Cost (ZAR)"><Input type="number" value={form.standard_price} onChange={e=>setForm({...form,standard_price:e.target.value})} placeholder="200.00" /></FormGroup>
             <FormGroup label={editing ? `Stock Quantity (current: ${editing.qty_available ?? 0})` : "Initial Stock"} className="sm:col-span-2">

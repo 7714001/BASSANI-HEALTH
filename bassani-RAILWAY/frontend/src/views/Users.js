@@ -104,20 +104,41 @@ const PERMISSION_GROUPS = [
       { key: "view", label: "View audit trail" },
     ],
   },
+  {
+    domain: "tickets",
+    label: "Tickets (Phase 8)",
+    actions: [
+      { key: "sales",           label: "Sales ticket queue" },
+      { key: "orders",          label: "Orders ticket queue" },
+      { key: "finance_confirm", label: "Confirm payment received" },
+      { key: "qa_approve",      label: "QA approval" },
+      { key: "rp_approve",      label: "Responsible Pharmacist approval" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
-  { value: "admin",               label: "Admin",               adminOnly: true  },
-  { value: "warehouse_supervisor", label: "Warehouse Supervisor", adminOnly: false },
-  { value: "packer",              label: "Packer",              adminOnly: false },
+  { value: "admin",                   label: "Admin",                       adminOnly: true  },
+  { value: "warehouse_supervisor",    label: "Warehouse Supervisor",        adminOnly: false },
+  { value: "packer",                  label: "Packer",                      adminOnly: false },
+  { value: "sales",                   label: "Sales (ticket queue)",        adminOnly: false },
+  { value: "orders_clerk",            label: "Orders Clerk (ticket queue)", adminOnly: false },
+  { value: "finance",                 label: "Finance",                     adminOnly: false },
+  { value: "qa_manager",              label: "QA Manager",                  adminOnly: false },
+  { value: "responsible_pharmacist",  label: "Responsible Pharmacist",      adminOnly: false },
 ];
 
 const ROLE_COLORS = {
-  super_admin:          "purple",
-  admin:                "blue",
-  warehouse_supervisor: "amber",
-  packer:               "green",
-  reseller:             "teal",
+  super_admin:             "purple",
+  admin:                   "blue",
+  warehouse_supervisor:    "amber",
+  packer:                  "green",
+  reseller:                "teal",
+  sales:                   "pink",
+  orders_clerk:            "amber",
+  finance:                 "indigo",
+  qa_manager:              "orange",
+  responsible_pharmacist:  "orange",
 };
 
 const EMPTY_PERMISSIONS = Object.fromEntries(
@@ -140,6 +161,7 @@ const DEFAULT_ADMIN_PERMS = {
   users:      { manage: false },
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
+  tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -356,6 +378,11 @@ export default function Users() {
     if (u.role === "warehouse_supervisor")  return "Packing floor — supervisor";
     if (u.role === "packer")                return "Packing floor — packer";
     if (u.role === "reseller")              return "Reseller portal";
+    if (u.role === "sales")                  return "Sales ticket queue";
+    if (u.role === "orders_clerk")           return "Orders ticket queue";
+    if (u.role === "finance")                return "Finance — payment confirmation";
+    if (u.role === "qa_manager")             return "QA approval";
+    if (u.role === "responsible_pharmacist") return "RP approval";
     if (!u.permissions)                     return "—";
     const enabled = Object.values(u.permissions).flatMap(Object.values).filter(Boolean).length;
     const total   = Object.values(u.permissions).flatMap(Object.values).length;
@@ -389,6 +416,11 @@ export default function Users() {
               { value: "admin",                label: "Admin" },
               { value: "warehouse_supervisor", label: "Supervisor" },
               { value: "packer",               label: "Packer" },
+              { value: "sales",                  label: "Sales" },
+              { value: "orders_clerk",           label: "Orders Clerk" },
+              { value: "finance",                label: "Finance" },
+              { value: "qa_manager",             label: "QA Manager" },
+              { value: "responsible_pharmacist", label: "RP" },
             ].map(r => (
               <FilterPill key={r.value} label={r.label} active={roleFilter === r.value}
                 onClick={() => setRoleFilter(r.value)} />

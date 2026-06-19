@@ -19,6 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | 8.1 complete — 2026-06-19 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -29,6 +30,7 @@
 These govern every decision made during implementation. Do not deviate from them.
 
 - **Odoo is the financial source of truth.** Every invoice, payment, vendor bill, credit note, and order must originate in or be confirmed by Odoo. The portal never becomes a parallel ledger.
+- **The portal is the intended main point of access, not Odoo directly.** Odoo stays the single source of truth (the data), but the portal should grow toward full operational coverage of Odoo's day-to-day capability for this business — product/customer/order management, stock, tax, credit, etc. — so admins log into Odoo itself only in an emergency or when the portal genuinely lacks a capability, not as routine practice. (Confirmed with the business 2026-06-19.) Every field-parity gap found going forward (e.g. an Odoo field shown but not editable in the portal) should be treated as in-scope, not "Odoo-only by design," unless there's a specific reason to keep it Odoo-only (e.g. fiscal/compliance-sensitive operations).
 - **MongoDB handles portal-layer concerns only.** Reseller profiles, commission records, ownership mappings, onboarding, audit logs, and settings belong in MongoDB.
 - **All commission payments must produce an Odoo vendor bill.** No statement can be marked paid without a corresponding `account.move` in Odoo.
 - **Everything runs on Railway.** No external services beyond Resend (email API), Sentry (error monitoring), and Cloudflare (CDN/backups). No new infrastructure without explicit decision.
@@ -386,7 +388,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Orders are commercially and fiscally correct, and are fulfilled from the correct physical stock location. All major Odoo sales workflows are supported.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟡 In Progress — 3.1, 3.2 (code complete, 2 items need live verification), 3.3, 3.5, 3.6, 3.7, 3.8 complete; 3.4 deferred (pricelists not in use), email on 3.5 blocked on Phase 2/Resend  
-**Completed:** Sub-deploy 1 (3.5 Order Cancellation) — 2026-06-19 · Sub-deploy 2 (3.1 Product Variants) — 2026-06-19 · Sub-deploy 3 (3.7 Multi-Warehouse) — 2026-06-19 · Sub-deploy 4 (audit/stock-set/switcher scoping) — 2026-06-19 · Sub-deploy 5 (3.8 follow-up) — 2026-06-19 · Sub-deploy 6 (3.3 Stock Availability) — 2026-06-19 · Sub-deploy 7 (3.2 Tax Configuration) — 2026-06-19 · Sub-deploy 8 (3.6 Credit Limit Enforcement) — 2026-06-19  
+**Completed:** Sub-deploy 1 (3.5 Order Cancellation) — 2026-06-19 · Sub-deploy 2 (3.1 Product Variants) — 2026-06-19 · Sub-deploy 3 (3.7 Multi-Warehouse) — 2026-06-19 · Sub-deploy 4 (audit/stock-set/switcher scoping) — 2026-06-19 · Sub-deploy 5 (3.8 follow-up) — 2026-06-19 · Sub-deploy 6 (3.3 Stock Availability) — 2026-06-19 · Sub-deploy 7 (3.2 Tax Configuration) — 2026-06-19 · Sub-deploy 8 (3.6 Credit Limit Enforcement) — 2026-06-19 · Sub-deploy 9 (product form field-parity: category-edit bug, UOM/Tax editing) — 2026-06-19  
 
 ### Tasks
 
@@ -397,7 +399,9 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Update product list UI to show variant selector before adding to cart — **design decision:** rather than a dropdown picker nested inside one card, each variant now renders as its own separate catalog row/card (standard e-commerce pattern, much simpler than a nested selector). Confirmed with the business that existing multi-variant products in Odoo will now show as multiple catalog entries instead of one
 - [x] Verify Odoo order lines reference correct variant `product.product` record — `order_routes.py` already expected a variant id on `OrderLine.product_id` (pre-existing); the catalog now actually supplies one for every product, including multi-variant ones (previously only true by accident for single-variant products)
 
-> **Write-path design decision:** `create_product`/`update_product`/`archive_product` continue to operate on `product.template` under the hood — name, SKU, price, category, and description are treated as shared across all of a product's variants (no per-variant attribute-editing UI exists or was requested). `update_product`/`archive_product` resolve the given variant id to its parent template before writing; `create_product` returns the new variant id (not the template id) so it's immediately usable by the stock-set and order-line endpoints.
+> **Write-path design decision:** `create_product`/`update_product`/`archive_product` continue to operate on `product.template` under the hood — name, SKU, price, category, description, UOM, and tax are treated as shared across all of a product's variants (no per-variant attribute-editing UI exists or was requested). `update_product`/`archive_product` resolve the given variant id to its parent template before writing; `create_product` returns the new variant id (not the template id) so it's immediately usable by the stock-set and order-line endpoints.
+
+> **Bug fixed 2026-06-19:** `ProductUpdate` never declared `categ_id`, so the edit form's Category dropdown was silently dropped on save (Pydantic v2 ignores undeclared fields rather than erroring) — looked like a working field in the UI but never wrote anything. Fixed by adding `categ_id` (and `uom_id`, `tax_id`) to `ProductUpdate`. Found while auditing full Odoo field parity on the product form per the new standing goal that this portal should expose ~all of Odoo's day-to-day product capability so admins rarely need to open Odoo directly.
 
 #### 3.2 Tax Configuration
 - [x] Remove hardcoded `15%` VAT from `order_routes.py` — turned out to be a dead constant (`VAT_RATE`, never referenced) plus a *display-only* `cartVat = cartSubtotal * 0.15` in the Orders cart preview; deleted/replaced both. Order creation itself never sent a hardcoded rate to Odoo — see below.
@@ -406,6 +410,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Verify invoice VAT calculation matches Odoo's computed tax — **needs live verification**, can't be confirmed without real data: open a posted invoice in both the portal and Odoo directly and confirm the VAT line matches.
 - [ ] Test with a product that has a different tax rate to confirm dynamic behaviour — **needs live verification**: assign a zero-rated or different-percentage tax to one product in Odoo, then confirm the Orders cart shows the correct (non-15%) VAT for that line specifically.
 - [x] Admin Products table now shows a **Tax** column (the resolved `tax_rate` per product, or "No tax set" if `taxes_id` is empty in Odoo) — lets an admin see exactly what's configured without opening Odoo, and was the direct answer to a live bug report (an R40 product showing R48 VAT — i.e. `tax_rate` resolving to 120%, meaning *something* in that product's Odoo "Customer Taxes" field is misconfigured/stacked; this column surfaces that immediately instead of requiring a trip into Odoo to spot it)
+- [x] Admins can set/change a product's Customer Tax directly from the product create/edit form — no Odoo trip needed. New `GET /api/products/taxes` lists available `account.tax` (sale-use) records; `ProductCreate`/`ProductUpdate` write `taxes_id` as the proper Odoo m2m command (`[(6, 0, [tax_id])]`), single-select since this catalog only ever assigns one Customer Tax per product in practice
 
 > **How Odoo actually models this (confirmed with the business 2026-06-19):** `taxes_id` ("Customer Taxes") lives on the product **template**, not the variant — same as name/price/category/description, so every variant of a product shares one tax configuration; there's no native per-variant tax override in Odoo. There's a second layer — **Fiscal Positions** on `res.partner`, which can remap a customer's taxes (e.g. tax-exempt, export, different jurisdiction) — but **confirmed not in use** for this business, so the cart's tax preview (product-level only, no fiscal-position resolution) is accurate as-is. Revisit only if fiscal positions come into use later.
 
@@ -496,6 +501,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 > **Sub-deploy 7 (2026-06-19):** Tax configuration (3.2). Investigated before writing anything — the "hardcoded 15% VAT" turned out to be two separate things, not one bug: a dead `VAT_RATE` constant in `order_routes.py` (never referenced anywhere) and a *display-only* `cartSubtotal * 0.15` in the Orders cart preview. Order creation itself was already correct — Odoo's `sale.order.line.tax_id` is a stored compute field that resolves automatically from the product's own tax config on RPC `create()`, the same as the Odoo UI, so no authoritative code needed to change. The real fix: `product_routes.py` now fetches `taxes_id` and resolves it to a real `tax_rate` percentage per product (new `_attach_tax_rates()` helper, batched `account.tax` lookup); the cart computes VAT per line from that instead of a flat 15%, so a zero-rated or differently-taxed product shows the correct number *before* the order is even submitted. **Two checklist items still need you to verify against live Odoo data** — they can't be confirmed without it: (1) that a posted invoice's VAT in the portal matches Odoo's own figure, (2) that a product with a non-15% tax actually shows that rate in the cart, not 15%.
 
 > **Sub-deploy 8 (2026-06-19):** Credit limit enforcement (3.6). Confirmed with the business first that pricelists (3.4) aren't in use, so that item is deferred rather than built speculatively — moved straight to this instead. New `backend/credit.py::credit_status()` is the single shared check (mirrors the `warehouse_context.py` pattern from 3.7) used in three places: order creation (non-blocking warning — an order is just a quotation), order confirmation (hard 402 block unless `?override_credit=true`), and the customer list/profile (`credit_hold` badge, computed from Odoo's real `credit`/`credit_limit` fields rather than the customer profile's pre-existing invoice-residual estimate, which is still shown separately for collections detail). Frontend catches the 402 on confirm and prompts the admin with the exact shortfall before retrying with the override — not just a dead-end error. Audit logging deliberately covers only the three events that carry information (`order.credit_warning`, `order.credit_block`, `order.credit_override`) rather than every routine check, consistent with how the rest of this app's audit trail is used.
+
+> **Sub-deploy 9 (2026-06-19):** Product form field-parity pass, triggered by the user asking "are we showing all fields aligned with Odoo?" while investigating the VAT bug above. Audit found: Category was shown in the edit form but silently dropped on save (`ProductUpdate` never declared `categ_id` — Pydantic v2 ignores undeclared fields instead of erroring); UOM was settable at create but had no edit path or UI control at all; Tax had no edit capability anywhere. Fixed all three together: `ProductUpdate`/`ProductCreate` now declare `categ_id`, `uom_id`, `tax_id`; new `GET /api/products/uoms` and `GET /api/products/taxes` lookup endpoints feed two new dropdowns on the product form; `taxes_id` is written to Odoo using the explicit m2m replace command (`[(6, 0, [id])]`) for version-safety. This is the first deploy under the newly-stated standing goal (below) that the portal should expose Odoo's day-to-day product/order capability directly, not just read it.
 
 ---
 
@@ -705,6 +712,68 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 ### Notes
 > _(Add implementation notes, decisions, or issues encountered here)_
+
+---
+
+## Phase 8 — Order Workflow & Ticketing System
+
+**Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
+**Estimate:** 2–3 weeks  
+**Status:** 🟡 In Progress — 8.1 roles/permissions code complete (staff accounts not yet created)  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19  
+
+### Context
+Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
+
+**Design decisions (confirmed 2026-06-19):**
+- **Portal-native tickets, not inbound email automation.** Staff keep using sales@/orders@ exactly as today — no risk of disrupting existing customer communication. Tickets are created/updated manually in the portal when a PO/RFQ lands. Inbound email parsing (would require a new vendor — Resend doesn't support inbound — plus threading logic) is explicitly deferred; revisit only once this workflow itself is proven.
+- **Sales ticket = new `tickets` MongoDB collection.** Nothing in the system currently models the Open→Quote→Sale Order→Invoice→Payment→WIP→Ready/Incomplete→Complete/Cancelled lifecycle; Odoo's own `sale.order.state` (draft/sent/sale/done/cancel) is necessary but not sufficient — it has no concept of "Not Interested," "50% Payment Received," or "Ready for Collection."
+- **Orders ticket = the existing `packing_board` document, extended — not a second collection.** The packing board already implements `queued → packing → ready → collected` with live WebSocket updates to packer/supervisor screens; that *is* the Orders ticket for most of its life. Building a parallel tracker risks the two drifting out of sync. Adding `cancelled`/`incomplete` statuses plus QA/RP approval fields is additive — no existing field, status, or WS broadcast behaviour changes.
+- **Finance's "50% Payment Received" confirmation reads Odoo's real invoice `payment_state`/`amount_residual`** rather than being a disconnected checkbox — consistent with the standing principle that Odoo is the financial source of truth. If Odoo shows no payment yet, the portal blocks confirmation and tells finance to register it in Odoo first.
+- **New roles map 1:1 to named staff**, each scoped to a new narrow permission domain on the existing granular-permission system (no new auth mechanism): Merveille → `sales` (`tickets.sales`), Tshidi → `orders_clerk` (`tickets.orders`), Kashi & Ragini → `finance` (`tickets.finance_confirm`), Cullen Grant → `qa_manager` (`tickets.qa_approve`), Rookshanna Hussain → `responsible_pharmacist` (`tickets.rp_approve`).
+- Incomplete always requires a free-text reason (so Sales has something concrete to relay to the client). QA and RP approvals are independent — neither can approve on the other's behalf.
+
+### Tasks
+
+#### 8.1 Roles & Permissions
+- [x] Add `sales`, `orders_clerk`, `finance`, `qa_manager`, `responsible_pharmacist` to `ALL_ROLES` (`backend/auth.py`)
+- [x] Add corresponding permission domains (`tickets.sales`, `tickets.orders`, `tickets.finance_confirm`, `tickets.qa_approve`, `tickets.rp_approve`) to the existing granular permission system — each new role gets exactly one fixed permission (the role IS the permission, no per-user customisation); `admin`-tier accounts can additionally be granted any of these domains for oversight, same as every other domain
+- [ ] Create the 6 named staff accounts (Merveille, Tshidi, Kashi, Ragini, Cullen Grant, Rookshanna Hussain) — roles now exist in the Users admin page "Add User" dropdown; needs real usernames/initial passwords/emails decided with the business before creating, not invented
+
+#### 8.2 Sales Ticket (`tickets` collection, `type: "sales"`)
+- [ ] New MongoDB collection `tickets` — schema: `type, customer_id, order_id, invoice_id, orders_ticket_ref, status, exit_status, assigned_to, payment_confirmed_by, payment_confirmed_at, incomplete_reason, stage_history[], created_at, updated_at`
+- [ ] `status` enum: `open → quote → sale_order → invoice → confirmed_wip → ready_for_collection → incomplete`
+- [ ] `exit_status` (side-exit, reachable from multiple stages, not a fixed final step — mirrors how Odoo's own `sale.order` cancel works): `not_interested | cancelled | complete`
+- [ ] `POST /api/tickets` (create, type=sales), `PUT /api/tickets/{id}/stage` (transition + `stage_history` append), `GET /api/tickets?type=sales&assigned_to=...`
+- [ ] `PUT /api/tickets/{id}/confirm-payment` (finance only) — reads the linked invoice's Odoo `payment_state`/`amount_residual`; blocks with a clear message if Odoo shows no payment yet
+- [ ] Link ticket to Odoo `sale.order`/`account.move` as they're created during the lifecycle (`order_id`, `invoice_id`)
+
+#### 8.3 Orders Ticket (extend `packing_board`)
+- [ ] Add `cancelled`, `incomplete` to the packing board's `status` field; add `incomplete_reason`
+- [ ] Add QA/RP approval fields: `qa_approved_by`, `qa_approved_at`, `rp_approved_by`, `rp_approved_at` — both required before a `ready` entry can be marked `complete`
+- [ ] New endpoints: `PUT /api/packing-board/{id}/qa-approve`, `PUT /api/packing-board/{id}/rp-approve`, `PUT /api/packing-board/{id}/cancel`, `PUT /api/packing-board/{id}/incomplete` (role-gated to `qa_manager`/`responsible_pharmacist`/`orders_clerk` respectively)
+- [ ] No changes to existing `queued`/`packing`/`ready`/`collected` semantics or the WebSocket broadcast contract — purely additive
+
+#### 8.4 Cross-Ticket Handoff & Notifications
+- [ ] When a Sales ticket reaches `confirmed_wip`, auto-create/link the corresponding Orders ticket (`orders_ticket_ref`) — reuses the existing auto-queue-to-packing-board behaviour already triggered on order confirmation
+- [ ] When the Orders ticket reaches `complete`/`incomplete`/`cancelled`, write the outcome back to the parent Sales ticket automatically and notify the assigned Sales rep — no manual polling required
+- [ ] Extend the existing push notification service (`notification_service.py`) with new preference keys: `ticket_assigned`, `ticket_handoff`
+
+#### 8.5 UI
+- [ ] Sales Ticket view (new) — list + detail, stage timeline from `stage_history`, "Confirm Payment" action for finance, "Mark Not Interested/Cancelled/Complete" actions for sales
+- [ ] Orders Ticket view — extend the existing packing board UI with QA/RP approval actions and cancelled/incomplete states, rather than a separate screen
+- [ ] Each named role sees only tickets relevant to their permission domain
+
+### Definition of Done
+- [ ] A PO/RFQ logged as a Sales ticket can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
+- [ ] Confirming "50% Payment Received" is blocked if Odoo's invoice shows no payment yet
+- [ ] Handing a Sales ticket to Orders auto-creates the linked Orders ticket/packing board entry — no manual re-entry of order details
+- [ ] An Orders ticket cannot reach Complete without both QA and RP approval recorded independently
+- [ ] An Orders ticket marked Incomplete or Cancelled automatically updates and notifies the originating Sales ticket, with a reason visible to Sales
+- [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role
+
+### Notes
+> **Sub-deploy 1 (2026-06-19):** 8.1 Roles & Permissions. Rather than adding the 5 new roles to `ADMIN_ROLES` (which would have also granted them every `require_admin`-gated endpoint across the whole portal — products, customers, resellers, etc., not just tickets), `require_permission()`'s role-gate was broadened to `ADMIN_ROLES | TICKET_ROLES` specifically, leaving `require_admin`/`ADMIN_ROLES` itself untouched. Each ticket role gets exactly one fixed permission via `TICKET_ROLE_PERMISSIONS` — there's no per-user customisation panel for these roles, unlike `admin`. **Bug fixed along the way:** the Sidebar's nav-item filter (`frontend/src/components/UI.js`) only permission-checked items when `isAdmin` was true, falling through to "show everything" otherwise — harmless before now because the only non-admin, non-reseller roles (`warehouse_supervisor`/`packer`) never reached the Sidebar at all (intercepted earlier in `App.js`'s `ProtectedRoute`). The new ticket roles do reach it, so this would have shown them the full nav (Products, Customers, Resellers, Invoices, etc.) with every click failing on the backend's 403. Fixed by permission-checking unconditionally. **Known gap, not fixed:** changing an existing user's `role` via `PUT /api/users/{id}` doesn't recompute their `permissions` object — this was already true for promoting someone to `admin` before this change, not something newly introduced. Role changes should go through deactivate-and-recreate until that's addressed separately.
 
 ---
 

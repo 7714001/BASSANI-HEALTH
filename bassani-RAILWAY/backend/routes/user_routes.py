@@ -5,7 +5,10 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS, ALL_ROLES
+from auth import (
+    require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS,
+    ALL_ROLES, TICKET_ROLES, TICKET_ROLE_PERMISSIONS,
+)
 from database import col
 from middleware.audit import audit_log
 
@@ -15,7 +18,7 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 SUPER_ADMIN_ONLY_ROLES = {"admin", "super_admin"}
 
 # Roles that appear in the main portal (warehouse/packer roles are separate HTML pages)
-PORTAL_ROLES = {"admin", "warehouse_supervisor", "packer"}
+PORTAL_ROLES = {"admin", "warehouse_supervisor", "packer"} | TICKET_ROLES
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -57,6 +60,9 @@ def _permissions_for_new_role(role: str, supplied: Optional[dict]) -> Optional[d
     """Return the permissions dict to store, or None for roles that don't use it."""
     if role == "admin":
         return supplied if supplied else DEFAULT_ADMIN_PERMISSIONS
+    if role in TICKET_ROLES:
+        # Fixed, not user-customisable — the role IS the permission.
+        return TICKET_ROLE_PERMISSIONS[role]
     # warehouse_supervisor and packer access is role-gated at the packing board layer,
     # not via this permissions object — store nothing so the portal summary shows correctly.
     return None

@@ -19,13 +19,17 @@ class ProductCreate(BaseModel):
     type: str = "product"                       # product | consu | service
     description: Optional[str] = None
     uom_id: Optional[int] = None                # Unit of measure (for grams etc.)
+    tax_id: Optional[int] = None                # Customer Tax (account.tax), single select
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
     default_code: Optional[str] = None
+    categ_id: Optional[int] = None
     list_price: Optional[float] = None
     standard_price: Optional[float] = None
     description: Optional[str] = None
+    uom_id: Optional[int] = None
+    tax_id: Optional[int] = None
     active: Optional[bool] = None
 
 class StockAdjustment(BaseModel):
@@ -49,9 +53,12 @@ def _attach_tax_rates(odoo, products: list) -> None:
     15% assumption that's wrong for any zero-rated or differently-taxed item.
 
     Mutates `products` in place; replaces the raw `taxes_id` list with the
-    resolved `tax_rate` number. Only percentage-type taxes are summed —
-    fixed-amount taxes are rare in this catalog and would need a different
-    UI treatment (a flat amount, not a %) if they ever show up.
+    resolved `tax_rate` number, plus `tax_id` (the first assigned tax's id,
+    used to pre-select the Tax dropdown on the edit form — this catalog only
+    ever assigns a single Customer Tax per product in practice). Only
+    percentage-type taxes are summed into `tax_rate` — fixed-amount taxes are
+    rare in this catalog and would need a different UI treatment (a flat
+    amount, not a %) if they ever show up.
     """
     tax_ids = {t for p in products for t in (p.get("taxes_id") or [])}
     tax_map = {}
@@ -59,12 +66,14 @@ def _attach_tax_rates(odoo, products: list) -> None:
         taxes = odoo.read("account.tax", list(tax_ids), fields=["amount", "amount_type"])
         tax_map = {t["id"]: t for t in taxes}
     for p in products:
+        ids = p.pop("taxes_id", None) or []
         rate = sum(
             tax_map[t]["amount"]
-            for t in (p.pop("taxes_id", None) or [])
+            for t in ids
             if tax_map.get(t, {}).get("amount_type") == "percent"
         )
         p["tax_rate"] = rate
+        p["tax_id"] = ids[0] if ids else None
 
 
 @router.get("/")
@@ -174,6 +183,40 @@ async def low_stock_products(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/taxes")
+def list_taxes(current_user: dict = Depends(get_current_user)):
+    """Available Odoo Customer Taxes — populates the Tax dropdown on the product form."""
+    odoo = get_odoo_client()
+    try:
+        taxes = odoo.search_read(
+            "account.tax",
+            domain=[("type_tax_use", "=", "sale"), ("active", "=", True)],
+            fields=["id", "name", "amount", "amount_type"],
+            limit=100,
+            order="amount asc",
+        )
+        return {"taxes": taxes}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/uoms")
+def list_uoms(current_user: dict = Depends(get_current_user)):
+    """Available Odoo Units of Measure — populates the UOM dropdown on the product form."""
+    odoo = get_odoo_client()
+    try:
+        uoms = odoo.search_read(
+            "uom.uom",
+            domain=[("active", "=", True)],
+            fields=["id", "name", "category_id"],
+            limit=200,
+            order="name asc",
+        )
+        return {"uoms": uoms}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.get("/{product_id}")
 async def get_product(product_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single product variant by its Odoo product.product ID."""
@@ -220,12 +263,17 @@ async def create_product(
     if product.uom_id:
         vals["uom_id"] = product.uom_id
 
+    audit_after = dict(vals)
+    if product.tax_id:
+        vals["taxes_id"] = [(6, 0, [product.tax_id])]
+        audit_after["tax_id"] = product.tax_id
+
     try:
         template_id = odoo.create("product.template", vals)
         templates = odoo.read("product.template", [template_id], fields=["product_variant_ids"])
         variant_id = templates[0]["product_variant_ids"][0]
         await audit_log("product.create", "product", variant_id, entity_label=product.name,
-                        user=current_user, after=vals)
+                        user=current_user, after=audit_after)
         return {"success": True, "product_id": variant_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -239,15 +287,18 @@ async def update_product(
 ):
     """
     Update a product variant in Odoo. Admin only.
-    Name/SKU/price/category are template-level in this catalog (no per-variant
-    overrides are exposed here), so the variant id is resolved to its parent
-    template and the write happens there — editing any variant of a multi-variant
-    product updates the fields shared by all its siblings.
+    Name/SKU/price/category/UOM/tax are template-level in this catalog (no
+    per-variant overrides are exposed here), so the variant id is resolved to
+    its parent template and the write happens there — editing any variant of
+    a multi-variant product updates the fields shared by all its siblings.
     """
     odoo = get_odoo_client()
-    vals = {k: v for k, v in product.model_dump().items() if v is not None}
-    if not vals:
+    after = {k: v for k, v in product.model_dump().items() if v is not None}
+    if not after:
         raise HTTPException(status_code=400, detail="No fields to update")
+    vals = dict(after)
+    if "tax_id" in vals:
+        vals["taxes_id"] = [(6, 0, [vals.pop("tax_id")])]
     try:
         variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id", "name"])
         if not variants:
@@ -255,7 +306,7 @@ async def update_product(
         template_id = variants[0]["product_tmpl_id"][0]
         odoo.write("product.template", [template_id], vals)
         await audit_log("product.update", "product", product_id, entity_label=variants[0].get("name", ""),
-                        user=current_user, after=vals)
+                        user=current_user, after=after)
         return {"success": True}
     except HTTPException:
         raise

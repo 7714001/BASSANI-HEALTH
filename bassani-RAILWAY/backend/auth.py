@@ -17,8 +17,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 # Used by require_permission() and as defaults when creating/migrating users.
 # Structure mirrors the permissions object stored on each admin user document.
 
-ALL_ROLES = {"super_admin", "admin", "warehouse_supervisor", "packer", "reseller"}
+ALL_ROLES = {
+    "super_admin", "admin", "warehouse_supervisor", "packer", "reseller",
+    # Phase 8 ticketing roles — each maps 1:1 to a named staff member and a
+    # single fixed ticket permission (see TICKET_ROLE_PERMISSIONS below).
+    "sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist",
+}
 ADMIN_ROLES = {"super_admin", "admin"}  # roles that access the main React portal
+TICKET_ROLES = {"sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"}
 
 # Default for newly created admin accounts — view-only on sensitive operations.
 DEFAULT_ADMIN_PERMISSIONS: dict = {
@@ -33,6 +39,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "users":       {"manage": False},
     "warehouse":   {"view": False, "supervise": False},
     "audit":       {"view": False},
+    "tickets":     {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -48,6 +55,17 @@ FULL_PERMISSIONS: dict = {
     "users":       {"manage": True},
     "warehouse":   {"view": True,  "supervise": True},
     "audit":       {"view": True},
+    "tickets":     {"sales": True, "orders": True, "finance_confirm": True, "qa_approve": True, "rp_approve": True},
+}
+
+# Each ticketing role gets exactly one fixed permission — the role IS the
+# permission, so unlike "admin" there's no per-user customisation panel.
+TICKET_ROLE_PERMISSIONS: dict = {
+    "sales":                  {"tickets": {"sales": True}},
+    "orders_clerk":           {"tickets": {"orders": True}},
+    "finance":                {"tickets": {"finance_confirm": True}},
+    "qa_manager":             {"tickets": {"qa_approve": True}},
+    "responsible_pharmacist": {"tickets": {"rp_approve": True}},
 }
 
 
@@ -155,8 +173,10 @@ def require_permission(permission: str) -> Callable:
 
     Usage:  current_user: dict = Depends(require_permission("commission.mark_paid"))
 
-    Super admins bypass all checks. Regular admins are evaluated against their
-    stored permissions object. Any other role is rejected with 403.
+    Super admins bypass all checks. Regular admins and the narrow ticketing
+    roles (sales/orders_clerk/finance/qa_manager/responsible_pharmacist) are
+    evaluated against their stored permissions object. Any other role is
+    rejected with 403.
 
     Permission string format: "<domain>.<action>", e.g. "orders.confirm".
     """
@@ -165,8 +185,9 @@ def require_permission(permission: str) -> Callable:
         if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
             return current_user
 
-        # Only admin-role users reach the permission check
-        if current_user.get("role") not in ADMIN_ROLES:
+        # Only admin-tier and ticketing-role users reach the permission check —
+        # ticketing roles never gain require_admin access, just this narrower gate.
+        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied",

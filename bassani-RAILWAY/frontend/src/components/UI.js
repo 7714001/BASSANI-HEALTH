@@ -58,7 +58,9 @@ export function Sidebar() {
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
   const items      = rawItems.filter(i => {
     if (i.adminOnly && !isAdmin) return false;
-    if (i.permission && isAdmin) return can(i.permission);
+    // Permission-gated items apply to admin-tier AND ticketing-role accounts
+    // (resellers never reach here — they use RESELLER_NAV, which has none).
+    if (i.permission) return can(i.permission);
     return true;
   });
   const sections   = [...new Set(items.map((i) => i.section || ""))].filter(Boolean);
@@ -519,6 +521,8 @@ const COLOR_STYLES = {
   purple: "bg-purple-100 text-purple-700",
   orange: "bg-orange-50 text-orange-700",
   teal:   "bg-teal-50 text-teal-700",
+  pink:   "bg-pink-50 text-pink-700",
+  indigo: "bg-indigo-50 text-indigo-700",
 };
 
 export function Badge({ status, label, color, children }) {

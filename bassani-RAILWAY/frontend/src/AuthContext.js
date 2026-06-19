@@ -3,6 +3,10 @@ import api from "./api";
 
 const AuthContext = createContext(null);
 
+// Roles evaluated against their stored `permissions` object — mirrors
+// backend auth.py's ADMIN_ROLES | TICKET_ROLES gate in require_permission().
+const PERMISSION_ROLES = ["admin", "super_admin", "sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"];
+
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,13 +48,14 @@ export function AuthProvider({ children }) {
    * Check whether the current user has a specific permission.
    * Format: "domain.action"  e.g.  can("commission.mark_paid")
    *
-   * Super admins always return true. Non-admin roles always return false.
-   * If the permission key doesn't exist, returns false (deny by default).
+   * Super admins always return true. Roles outside PERMISSION_ROLES (e.g.
+   * reseller) always return false. If the permission key doesn't exist,
+   * returns false (deny by default).
    */
   const can = useCallback((permission) => {
     if (!user) return false;
     if (user.is_super_admin) return true;
-    if (!["admin", "super_admin"].includes(user.role)) return false;
+    if (!PERMISSION_ROLES.includes(user.role)) return false;
 
     const [domain, action] = permission.split(".");
     return Boolean(user.permissions?.[domain]?.[action]);
