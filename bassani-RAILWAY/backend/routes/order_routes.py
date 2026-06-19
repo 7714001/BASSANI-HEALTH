@@ -274,6 +274,58 @@ async def create_order(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
+    # Auto-create a Sales ticket — unified pipeline: every portal order (reseller
+    # or staff) enters the ticket workflow so the team processes everything in one
+    # place. Best-effort / non-blocking: a failure here never blocks the order.
+    try:
+        _ticket_customer_name = credit_partner_name  # set by credit check above
+        if not _ticket_customer_name:
+            try:
+                _p = odoo.read("res.partner", [effective_partner_id], fields=["name"])
+                _ticket_customer_name = _p[0]["name"] if _p else ""
+            except Exception:
+                pass
+        _now_t = datetime.now(timezone.utc)
+        _role = current_user.get("role", "")
+        _assigned = current_user["id"] if _role == "sales" else None
+        _assigned_name = (
+            (current_user.get("name") or current_user.get("username"))
+            if _assigned else None
+        )
+        _note = (
+            f"Portal order — reseller {order.reseller_id}"
+            if order.reseller_id
+            else f"Portal order — {_role} ({current_user.get('username', '')})"
+        )
+        await col("tickets").insert_one({
+            "type": "sales",
+            "source": "portal",
+            "customer_id": effective_partner_id,
+            "customer_name": _ticket_customer_name,
+            "order_id": odoo_order_id,
+            "invoice_id": None,
+            "orders_ticket_ref": None,
+            "status": "sale_order",
+            "exit_status": None,
+            "assigned_to": _assigned,
+            "assigned_to_name": _assigned_name,
+            "payment_confirmed_by": None,
+            "payment_confirmed_at": None,
+            "incomplete_reason": None,
+            "stage_history": [{
+                "status": "sale_order",
+                "exit_status": None,
+                "actor_id": current_user["id"],
+                "actor_name": current_user.get("name") or current_user.get("username") or "unknown",
+                "at": _now_t,
+                "note": _note,
+            }],
+            "created_at": _now_t,
+            "updated_at": _now_t,
+        })
+    except Exception as _te:
+        print(f"⚠️  Auto-ticket creation failed for order {odoo_order_id}: {_te}")
+
     # Record order for commission tracking — amount calculated at month-end via tier bands
     if order.reseller_id:
         reseller = await col("resellers").find_one({"id": order.reseller_id}, NO_ID)

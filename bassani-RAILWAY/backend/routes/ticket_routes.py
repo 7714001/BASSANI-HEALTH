@@ -46,6 +46,7 @@ class TicketStageUpdate(BaseModel):
     invoice_id: Optional[int] = None
     incomplete_reason: Optional[str] = None
     note: Optional[str] = None
+    assigned_to: Optional[str] = None   # empty string = unassign; user id = assign
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -77,8 +78,14 @@ async def create_ticket(
         raise HTTPException(status_code=404, detail="Customer not found")
 
     now = datetime.now(timezone.utc)
+    _assignee_id = body.assigned_to or current_user["id"]
+    _assignee_name = current_user.get("name") or current_user.get("username") or "unknown"
+    if body.assigned_to and body.assigned_to != current_user["id"]:
+        _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1})
+        _assignee_name = (_au.get("name") or _au.get("username")) if _au else body.assigned_to
     doc = {
         "type": "sales",
+        "source": "direct",
         "customer_id": body.customer_id,
         "customer_name": customers[0]["name"],
         "order_id": None,
@@ -86,7 +93,8 @@ async def create_ticket(
         "orders_ticket_ref": None,
         "status": "open",
         "exit_status": None,
-        "assigned_to": body.assigned_to or current_user["id"],
+        "assigned_to": _assignee_id,
+        "assigned_to_name": _assignee_name,
         "payment_confirmed_by": None,
         "payment_confirmed_at": None,
         "incomplete_reason": None,
@@ -126,7 +134,9 @@ async def list_tickets(
     if assigned_to:
         query["assigned_to"] = assigned_to
     elif current_user.get("role") == "sales":
-        query["assigned_to"] = current_user["id"]
+        # Sales users see their own queue plus unassigned tickets (portal orders
+        # placed by resellers/admins that haven't been claimed yet).
+        query["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}]
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
@@ -174,8 +184,9 @@ async def update_ticket_stage(
         raise HTTPException(status_code=400, detail=f"Invalid status '{body.status}'")
     if body.exit_status and body.exit_status not in EXIT_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid exit_status '{body.exit_status}'")
-    if not body.status and not body.exit_status and body.order_id is None and body.invoice_id is None:
-        raise HTTPException(status_code=400, detail="Nothing to update — provide status, exit_status, order_id, or invoice_id")
+    if (not body.status and not body.exit_status and body.order_id is None
+            and body.invoice_id is None and body.assigned_to is None):
+        raise HTTPException(status_code=400, detail="Nothing to update — provide status, exit_status, order_id, invoice_id, or assigned_to")
     if body.status == "incomplete" and not body.incomplete_reason:
         raise HTTPException(status_code=400, detail="incomplete_reason is required when marking a ticket incomplete")
 
@@ -191,18 +202,25 @@ async def update_ticket_stage(
         updates["invoice_id"] = body.invoice_id
     if body.incomplete_reason:
         updates["incomplete_reason"] = body.incomplete_reason
+    if body.assigned_to is not None:
+        updates["assigned_to"] = body.assigned_to or None
+        if body.assigned_to:
+            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1})
+            updates["assigned_to_name"] = (_au.get("name") or _au.get("username")) if _au else None
+        else:
+            updates["assigned_to_name"] = None
 
-    history_entry = {
-        "status": body.status or ticket["status"],
-        "exit_status": body.exit_status,
-        "actor_id": current_user["id"], "actor_name": _actor(current_user),
-        "at": now, "note": body.note,
-    }
+    mongo_ops: dict = {"$set": updates}
+    # Only append to stage timeline for actual stage changes, not silent assignment
+    if body.status or body.exit_status or body.note:
+        mongo_ops["$push"] = {"stage_history": {
+            "status": body.status or ticket["status"],
+            "exit_status": body.exit_status,
+            "actor_id": current_user["id"], "actor_name": _actor(current_user),
+            "at": now, "note": body.note,
+        }}
 
-    await col("tickets").update_one(
-        {"_id": oid},
-        {"$set": updates, "$push": {"stage_history": history_entry}},
-    )
+    await col("tickets").update_one({"_id": oid}, mongo_ops)
     await audit_log(
         "ticket.stage", "ticket", ticket_id, entity_label=ticket.get("customer_name", ""),
         user=current_user,

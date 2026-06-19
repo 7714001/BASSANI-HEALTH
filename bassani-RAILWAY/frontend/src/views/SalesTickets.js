@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, CreditCard, XCircle, CheckCircle2, Clock } from "lucide-react";
+import { Plus, CreditCard, XCircle, CheckCircle2, Clock, UserPlus } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, Badge, LoadingState, EmptyState, fmtDate,
@@ -26,7 +26,7 @@ const EXIT_COLOR = { not_interested: "gray", cancelled: "red", complete: "green"
 const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "incomplete"];
 
 export default function SalesTickets() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canDrive   = can("tickets.sales");
   const canFinance = can("tickets.finance_confirm");
 
@@ -120,6 +120,15 @@ export default function SalesTickets() {
     finally { setSaving(false); }
   };
 
+  const assignToMe = async (ticketId) => {
+    try {
+      await api.put(`/api/tickets/${ticketId}/stage`, { assigned_to: user.id });
+      toast.success("Ticket assigned to you");
+      if (detail?.id === ticketId) setDetail(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Assignment failed"); }
+  };
+
   const confirmPayment = async () => {
     setSaving(true);
     try {
@@ -133,7 +142,7 @@ export default function SalesTickets() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Sales Tickets" subtitle="PO/RFQ → Quote → Sale Order → Invoice → Payment → Complete" onRefresh={load}
-        actions={canDrive && <BtnPrimary onClick={openCreate}><Plus size={14} />New Ticket</BtnPrimary>} />
+        actions={canDrive && <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         {loading ? <LoadingState /> : tickets.length === 0 ? (
           <EmptyState message="No sales tickets yet." />
@@ -142,11 +151,23 @@ export default function SalesTickets() {
             data={tickets}
             onRowClick={openDetail}
             columns={[
-              { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: t } }) => <span className="font-medium text-gray-900">{t.customer_name}</span> },
+              { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: t } }) => (
+                <div>
+                  <p className="font-medium text-gray-900">{t.customer_name}</p>
+                  <Badge color={t.source === "portal" ? "blue" : "gray"} className="mt-0.5">
+                    {t.source === "portal" ? "Portal Order" : "Direct Inquiry"}
+                  </Badge>
+                </div>
+              )},
               { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
                 t.exit_status
                   ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                   : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+              },
+              { id: "assigned", header: "Assigned To", cell: ({ row: { original: t } }) =>
+                t.assigned_to_name
+                  ? <span className="text-xs text-gray-600">{t.assigned_to_name}</span>
+                  : <span className="text-xs text-amber-500 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>
               },
               { id: "payment", header: "Payment", cell: ({ row: { original: t } }) =>
                 t.payment_confirmed_at
@@ -161,7 +182,7 @@ export default function SalesTickets() {
 
       {/* ── Create modal ── */}
       {createModal && (
-        <Modal title="New Sales Ticket" onClose={() => setCreateModal(false)}>
+        <Modal title="New Direct Inquiry" onClose={() => setCreateModal(false)}>
           <FormGroup label="Customer" required>
             {selectedCustomer ? (
               <div className="flex items-center justify-between bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
@@ -197,12 +218,25 @@ export default function SalesTickets() {
       {/* ── Detail modal ── */}
       {detail && (
         <Modal title={detail.customer_name} onClose={() => setDetail(null)}>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 flex-wrap mb-2">
             {detail.exit_status
               ? <Badge color={EXIT_COLOR[detail.exit_status]}>{EXIT_LABEL[detail.exit_status]}</Badge>
               : <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>}
+            <Badge color={detail.source === "portal" ? "blue" : "gray"}>
+              {detail.source === "portal" ? "Portal Order" : "Direct Inquiry"}
+            </Badge>
             {detail.order_id && <span className="text-xs text-gray-400">Order #{detail.order_id}</span>}
             {detail.invoice_id && <span className="text-xs text-gray-400">Invoice #{detail.invoice_id}</span>}
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            {detail.assigned_to_name
+              ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span></span>
+              : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
+            {!detail.assigned_to && canDrive && (
+              <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
+                <UserPlus size={12} />Assign to me
+              </BtnSecondary>
+            )}
           </div>
 
           {!detail.exit_status && canDrive && (
