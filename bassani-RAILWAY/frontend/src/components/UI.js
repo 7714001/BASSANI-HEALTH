@@ -1,14 +1,15 @@
-import { useRef, createContext, useContext } from "react";
+import { useRef, useState, useEffect, createContext, useContext } from "react";
 import {
   useReactTable, getCoreRowModel, getPaginationRowModel,
   getSortedRowModel, flexRender,
 } from "@tanstack/react-table";
 import { useAuth } from "../AuthContext";
+import api from "../api";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, Users, ShoppingCart,
   DollarSign, Percent, BarChart3, Phone, FileText,
-  LogOut, Bell, RefreshCw, UserCog, Loader2,
+  LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ShieldCheck, History,
 } from "lucide-react";
@@ -35,6 +36,7 @@ const NAV = [
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
   { label: "Users",        path: "/users",       icon: UserCog,         section: "Admin",    permission: "users.manage"        },
+  { label: "Warehouses",   path: "/warehouses",  icon: Warehouse,       section: "Admin",    permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",       icon: History,         section: "Admin",    permission: "audit.view"          },
 ];
 
@@ -145,6 +147,34 @@ function NavItem({ item, pathname, navigate }) {
 }
 
 // ── Top bar ───────────────────────────────────────────────────────────────────
+function WarehouseSwitcher() {
+  const { user, isAdmin, setActiveWarehouse } = useAuth();
+  const [warehouses, setWarehouses] = useState([]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get("/api/warehouses/").then((r) => setWarehouses(r.data.warehouses || [])).catch(() => {});
+  }, [isAdmin]);
+
+  if (!isAdmin || warehouses.length === 0) return null;
+
+  return (
+    <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">
+      <Warehouse size={13} className="text-gray-400" />
+      <select
+        value={user?.active_warehouse_id || ""}
+        onChange={(e) => setActiveWarehouse(e.target.value ? parseInt(e.target.value) : null)}
+        className="bg-transparent outline-none text-xs text-gray-700 max-w-[140px]"
+      >
+        <option value="">All warehouses</option>
+        {warehouses.map((w) => (
+          <option key={w.id} value={w.id}>{w.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = true }) {
   const { toggle } = useContext(SidebarContext);
   return (
@@ -160,6 +190,7 @@ export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = tr
         </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
+        <WarehouseSwitcher />
         <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${odooConnected ? "bg-bassani-50 text-bassani-700" : "bg-red-50 text-red-600"}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
           {odooConnected ? "Odoo synced" : "Odoo offline"}

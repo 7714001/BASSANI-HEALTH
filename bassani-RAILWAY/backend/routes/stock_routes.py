@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
+from warehouse_context import resolve_warehouse_id
 
 router = APIRouter(prefix="/api/stock", tags=["stock"])
 
@@ -17,17 +18,25 @@ class StockAdjustment(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/levels")
-def stock_levels(
+async def stock_levels(
     location_id: Optional[int] = None,
     limit: int = Query(100, le=500),
     offset: int = 0,
     current_user: dict = Depends(get_current_user),
 ):
-    """Current stock levels across all internal locations."""
+    """Current stock levels — defaults to the caller's resolved warehouse
+    (their assigned vault, or the admin's active selection) unless an explicit
+    location_id override is given."""
     odoo = get_odoo_client()
     domain = [("location_id.usage", "=", "internal"), ("quantity", ">", 0)]
     if location_id:
         domain.append(("location_id", "=", location_id))
+    else:
+        warehouse_id = await resolve_warehouse_id(current_user)
+        if warehouse_id:
+            wh = odoo.read("stock.warehouse", [warehouse_id], fields=["lot_stock_id"])
+            if wh and wh[0].get("lot_stock_id"):
+                domain.append(("location_id", "child_of", wh[0]["lot_stock_id"][0]))
     try:
         quants = odoo.search_read(
             "stock.quant",
@@ -45,13 +54,20 @@ def stock_levels(
 
 
 @router.get("/locations")
-def stock_locations(current_user: dict = Depends(get_current_user)):
-    """All internal warehouse locations."""
+async def stock_locations(current_user: dict = Depends(get_current_user)):
+    """Internal warehouse locations — scoped to the caller's resolved warehouse
+    when one is set, otherwise all internal locations."""
     odoo = get_odoo_client()
+    domain = [("usage", "=", "internal"), ("active", "=", True)]
+    warehouse_id = await resolve_warehouse_id(current_user)
+    if warehouse_id:
+        wh = odoo.read("stock.warehouse", [warehouse_id], fields=["lot_stock_id"])
+        if wh and wh[0].get("lot_stock_id"):
+            domain.append(("id", "child_of", wh[0]["lot_stock_id"][0]))
     try:
         locations = odoo.search_read(
             "stock.location",
-            domain=[("usage", "=", "internal"), ("active", "=", True)],
+            domain=domain,
             fields=["id", "name", "complete_name"],
             limit=200,
         )

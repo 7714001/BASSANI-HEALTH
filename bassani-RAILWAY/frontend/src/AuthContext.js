@@ -34,6 +34,12 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  /** Admin/super_admin self-service: switch which warehouse the portal is scoped to. */
+  const setActiveWarehouse = async (warehouseId) => {
+    const { data } = await api.put("/api/users/me/warehouse", { warehouse_id: warehouseId });
+    setUser((u) => ({ ...u, active_warehouse_id: data.active_warehouse_id }));
+  };
+
   /**
    * Check whether the current user has a specific permission.
    * Format: "domain.action"  e.g.  can("commission.mark_paid")
@@ -54,7 +60,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin, setActiveWarehouse }}>
       {children}
     </AuthContext.Provider>
   );

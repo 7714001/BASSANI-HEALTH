@@ -3,18 +3,23 @@ from fastapi import APIRouter, Depends
 from datetime import datetime, timezone, timedelta
 from auth import require_admin, get_current_user
 from odoo_client import odoo_execute_kw
+from warehouse_context import resolve_warehouse_id, odoo_context
 
 router = APIRouter(prefix="/api/forecast", tags=["forecast"])
 
 @router.get("/")
-async def demand_forecast(weeks_history: int = 12, _: dict = Depends(get_current_user)):
+async def demand_forecast(weeks_history: int = 12, current_user: dict = Depends(get_current_user)):
     """
     For each product, calculate:
     - Average weekly sales velocity
     - Days until stockout at current rate
     - Recommended reorder quantity
+
+    Stock levels are scoped to the caller's resolved warehouse, so forecasts
+    reflect the vault they actually reorder for.
     """
     since = (datetime.now(timezone.utc) - timedelta(weeks=weeks_history)).strftime("%Y-%m-%d")
+    warehouse_id = await resolve_warehouse_id(current_user)
 
     # Get confirmed order lines from Odoo
     lines = odoo_execute_kw("sale.order.line", "search_read",
@@ -24,7 +29,8 @@ async def demand_forecast(weeks_history: int = 12, _: dict = Depends(get_current
     # Get current stock
     products = odoo_execute_kw("product.template","search_read",
         [[["type","=","product"],["active","=",True]]],
-        {"fields":["id","name","qty_available","virtual_available"],"limit":200})
+        {"fields":["id","name","qty_available","virtual_available"],"limit":200,
+         **({"context": odoo_context(warehouse_id)} if warehouse_id else {})})
 
     prod_map = {p["id"]: p for p in products}
 
@@ -68,7 +74,7 @@ async def demand_forecast(weeks_history: int = 12, _: dict = Depends(get_current
     }
 
 @router.get("/alerts")
-async def forecast_alerts(_: dict = Depends(get_current_user)):
+async def forecast_alerts(current_user: dict = Depends(get_current_user)):
     """Quick list of products needing attention within 14 days."""
-    r = await demand_forecast(12, _)
+    r = await demand_forecast(12, current_user)
     return {"alerts": r["alerts"], "critical_count": len(r["critical"])}

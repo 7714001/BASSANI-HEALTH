@@ -916,10 +916,11 @@ export function Orders() {
 export function Resellers() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", warehouse_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
+  const [warehouses,         setWarehouses        ] = useState([]);
   const [modal,              setModal             ] = useState(false);
   const [form,               setForm              ] = useState(BLANK_FORM);
   const [customerSearch,     setCustomerSearch    ] = useState("");
@@ -929,7 +930,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,          setEditModal         ] = useState(false);
   const [editingId,          setEditingId         ] = useState(null);
-  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
   const [saving,             setSaving            ] = useState(false);
   const [editSaving,         setEditSaving        ] = useState(false);
 
@@ -940,6 +941,9 @@ export function Resellers() {
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get("/api/warehouses/").then(r => setWarehouses(r.data.warehouses || [])).catch(() => {});
+  }, []);
 
   // Load customers whenever dropdown is open — debounce only when typing
   useEffect(() => {
@@ -988,6 +992,7 @@ export function Resellers() {
   const openEdit = (r) => {
     setEditForm({
       name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
+      warehouse_id: r.warehouse_id || "",
       company_reg_number: r.company_reg_number || "",
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
       bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
@@ -1001,7 +1006,9 @@ export function Resellers() {
     if (!editForm.name) return toast.error("Name required");
     setEditSaving(true);
     try {
-      await api.put(`/api/resellers/${editingId}`, editForm);
+      const payload = { ...editForm };
+      payload.warehouse_id = payload.warehouse_id ? parseInt(payload.warehouse_id) : null;
+      await api.put(`/api/resellers/${editingId}`, payload);
       toast.success("Reseller updated");
       setEditModal(false);
       load();
@@ -1018,6 +1025,8 @@ export function Resellers() {
       const payload = { ...form };
       if (payload.odoo_partner_id) payload.odoo_partner_id = parseInt(payload.odoo_partner_id);
       else delete payload.odoo_partner_id;
+      if (payload.warehouse_id) payload.warehouse_id = parseInt(payload.warehouse_id);
+      else delete payload.warehouse_id;
       await api.post("/api/resellers/", payload);
       toast.success("Reseller created");
       setModal(false);
@@ -1113,6 +1122,13 @@ export function Resellers() {
             <FormGroup label="Contact Person"><Input value={form.contact_person} onChange={e=>setForm({...form,contact_person:e.target.value})} /></FormGroup>
             <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
             <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></FormGroup>
+            <FormGroup label="Warehouse" className="sm:col-span-2">
+              <Select value={form.warehouse_id} onChange={e=>setForm({...form,warehouse_id:e.target.value})}>
+                <option value="">— No warehouse assigned —</option>
+                {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+              </Select>
+              <p className="text-[11px] text-gray-400 mt-1">This reseller's orders will draw stock from the selected warehouse.</p>
+            </FormGroup>
           </div>
 
           {/* Section 3 — Portal login */}
@@ -1165,6 +1181,12 @@ export function Resellers() {
             <FormGroup label="Contact Person"><Input value={editForm.contact_person} onChange={e=>setEditForm({...editForm,contact_person:e.target.value})} /></FormGroup>
             <FormGroup label="Email"><Input value={editForm.email} onChange={e=>setEditForm({...editForm,email:e.target.value})} /></FormGroup>
             <FormGroup label="Phone"><Input value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})} /></FormGroup>
+            <FormGroup label="Warehouse" className="sm:col-span-2">
+              <Select value={editForm.warehouse_id} onChange={e=>setEditForm({...editForm,warehouse_id:e.target.value})}>
+                <option value="">— No warehouse assigned —</option>
+                {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+              </Select>
+            </FormGroup>
           </div>
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>

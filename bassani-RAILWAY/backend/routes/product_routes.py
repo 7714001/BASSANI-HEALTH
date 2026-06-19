@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
+from warehouse_context import resolve_warehouse_id, odoo_context
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -40,7 +41,7 @@ PRODUCT_FIELDS = [
 
 
 @router.get("/")
-def list_products(
+async def list_products(
     search: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = Query(50, le=200),
@@ -54,6 +55,10 @@ def list_products(
     template level — so each sellable SKU (e.g. each dosage/size) appears as
     its own row with its own stock and price, and the id returned is already
     the correct product.product id for order line creation.
+
+    qty_available/virtual_available are scoped to the caller's resolved
+    warehouse (their assigned vault, or the admin's active selection) so
+    resellers/staff see stock for the warehouse their orders actually draw from.
     """
     _SORTABLE = {"name", "default_code", "list_price", "standard_price", "qty_available"}
     sort_by  = sort_by  if sort_by  in _SORTABLE          else "name"
@@ -68,6 +73,8 @@ def list_products(
     if category and category != "all":
         domain.append(("categ_id.name", "ilike", category))
 
+    warehouse_id = await resolve_warehouse_id(current_user)
+
     try:
         products = odoo.search_read(
             "product.product",
@@ -76,6 +83,7 @@ def list_products(
             limit=limit,
             offset=offset,
             order=f"{sort_by} {sort_dir}",
+            context=odoo_context(warehouse_id),
         )
         # Normalise lst_price → list_price so the frontend doesn't need to change
         for p in products:
@@ -113,11 +121,13 @@ def list_categories(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/low-stock")
-def low_stock_products(current_user: dict = Depends(get_current_user)):
+async def low_stock_products(current_user: dict = Depends(get_current_user)):
     """Return variants where qty_available is below a threshold — checked
     per-variant so one low-stock dosage doesn't hide behind a sibling
-    variant's healthy stock count."""
+    variant's healthy stock count. Scoped to the caller's resolved warehouse
+    so the alert reflects the vault they actually pack from."""
     odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
     try:
         products = odoo.search_read(
             "product.product",
@@ -129,6 +139,7 @@ def low_stock_products(current_user: dict = Depends(get_current_user)):
             fields=["id", "name", "display_name", "default_code", "qty_available", "categ_id", "uom_id"],
             limit=50,
             order="name asc",
+            context=odoo_context(warehouse_id),
         )
         return {"products": products, "total": len(products)}
     except Exception as e:
@@ -136,11 +147,12 @@ def low_stock_products(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/{product_id}")
-def get_product(product_id: int, current_user: dict = Depends(get_current_user)):
+async def get_product(product_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single product variant by its Odoo product.product ID."""
     odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
     try:
-        records = odoo.read("product.product", [product_id], fields=PRODUCT_FIELDS)
+        records = odoo.read("product.product", [product_id], fields=PRODUCT_FIELDS, context=odoo_context(warehouse_id))
         if not records:
             raise HTTPException(status_code=404, detail="Product not found")
         records[0]["list_price"] = records[0].pop("lst_price", 0)

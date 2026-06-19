@@ -5,6 +5,7 @@ import calendar as _cal
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from database import col, NO_ID
+from warehouse_context import resolve_warehouse_id, odoo_context
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -49,6 +50,8 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     today = date.today()
     month_start = first_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
     month_end = last_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
+    warehouse_id = await resolve_warehouse_id(current_user)
+    ctx = odoo_context(warehouse_id)
 
     try:
         total_products = odoo.count(
@@ -57,7 +60,8 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
         )
         low_stock = odoo.count(
             "product.template",
-            [("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)]
+            [("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
+            context=ctx,
         )
         low_stock_products = odoo.search_read(
             "product.template",
@@ -65,6 +69,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             fields=["id", "name", "qty_available", "uom_id", "categ_id"],
             limit=5,
             order="name asc",
+            context=ctx,
         )
 
         # ── Reseller dashboard ────────────────────────────────────────────────
@@ -545,16 +550,18 @@ def best_customers(
 # ── Dead Stock ────────────────────────────────────────────────────────────────
 
 @router.get("/dead-stock")
-def dead_stock(
+async def dead_stock(
     days_threshold: int = Query(60),
     current_user: dict = Depends(require_admin),
 ):
     """
     Products that haven't moved in `days_threshold` days.
     Pulls from Odoo stock moves to find last sale date per product.
+    Stock levels are scoped to the caller's resolved warehouse.
     """
     odoo = get_odoo_client()
     cutoff = (date.today() - timedelta(days=days_threshold)).strftime("%Y-%m-%d")
+    warehouse_id = await resolve_warehouse_id(current_user)
 
     try:
         # Products with stock
@@ -563,6 +570,7 @@ def dead_stock(
             domain=[("type", "=", "product"), ("qty_available", ">", 0), ("active", "=", True)],
             fields=["id", "name", "default_code", "qty_available", "categ_id", "uom_id"],
             limit=500,
+            context=odoo_context(warehouse_id),
         )
 
         # Recent order lines (within threshold)

@@ -23,6 +23,8 @@ def _user_payload(user: dict) -> dict:
         "reseller_id":   user.get("reseller_id"),
         "is_super_admin": bool(user.get("is_super_admin", False)),
         "permissions":   user.get("permissions") or {},
+        "warehouse_id":        user.get("warehouse_id"),
+        "active_warehouse_id": user.get("active_warehouse_id"),
     }
 
 

@@ -116,6 +116,10 @@ async def initialise_users():
     await col("audit_logs").create_index([("action", 1)])
     await col("audit_logs").create_index([("reseller_id", 1)])
 
+    await col("warehouse_display_tokens").create_index([("warehouse_id", 1)], unique=True)
+    await col("warehouse_display_tokens").create_index([("token", 1)], unique=True)
+    await col("packing_board").create_index([("warehouse_id", 1)])
+
     # Deactivate the legacy "admin" / "admin123" account that predates the
     # credential overhaul (Phase 0.1) — it may still exist in older databases.
     legacy_admin = await col("users").find_one({"username": "admin", "role": "admin"})
@@ -156,6 +160,7 @@ from routes.script_routes        import router as script_router
 from routes.onboarding_routes    import router as onboarding_router
 from routes.target_routes        import router as target_router
 from routes.packing_board_routes import router as packing_board_router
+from routes.warehouse_routes      import router as warehouse_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -164,6 +169,7 @@ for router in [
     aged_debtors_router, payment_router, audit_router, batch_router,
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
+    warehouse_router,
 ]:
     app.include_router(router)
 

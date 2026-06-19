@@ -2,17 +2,17 @@
 Packing Board — real-time WebSocket hub.
 
 Connections (all require token auth):
-  wss://host/api/packing/ws/board?token=<PACKING_BOARD_DISPLAY_TOKEN>   ← 85" screen
+  wss://host/api/packing/ws/board?token=<per-warehouse display token>   ← 85" screen
   wss://host/api/packing/ws/supervisor?token=<supervisor_jwt>             ← supervisor phone
   wss://host/api/packing/ws/packer?token=<packer_jwt>                    ← packer handheld
 
-All connected clients receive the full board state on connect,
-then incremental updates as orders change.
+Every connection is scoped to exactly one warehouse (the screen's token maps to
+one warehouse; the supervisor/packer's fixed `warehouse_id`) — board state and
+broadcasts are filtered so a vault never sees another vault's queue.
 
 Board state lives in MongoDB `packing_board` collection so it
 survives server restarts.
 """
-import secrets
 import asyncio
 import json
 import jwt
@@ -42,31 +42,36 @@ def _dumps(obj) -> str:
 
 class BoardManager:
     def __init__(self):
-        self.screens:     list[WebSocket] = []
-        self.supervisors: list[WebSocket] = []
-        self.packers:     list[WebSocket] = []
+        self.screens:     list[tuple[WebSocket, Optional[int]]] = []
+        self.supervisors: list[tuple[WebSocket, Optional[int]]] = []
+        self.packers:     list[tuple[WebSocket, Optional[int]]] = []
 
-    async def connect_screen(self, ws: WebSocket):
-        self.screens.append(ws)
-        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
+    async def connect_screen(self, ws: WebSocket, warehouse_id: Optional[int]):
+        self.screens.append((ws, warehouse_id))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state(warehouse_id)}))
 
-    async def connect_supervisor(self, ws: WebSocket):
-        self.supervisors.append(ws)
-        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
+    async def connect_supervisor(self, ws: WebSocket, warehouse_id: Optional[int]):
+        self.supervisors.append((ws, warehouse_id))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state(warehouse_id)}))
 
-    async def connect_packer(self, ws: WebSocket):
-        self.packers.append(ws)
-        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state()}))
+    async def connect_packer(self, ws: WebSocket, warehouse_id: Optional[int]):
+        self.packers.append((ws, warehouse_id))
+        await ws.send_text(_dumps({"type": "full_state", "data": await get_board_state(warehouse_id)}))
 
     def disconnect(self, ws: WebSocket):
-        self.screens     = [c for c in self.screens     if c is not ws]
-        self.supervisors = [c for c in self.supervisors if c is not ws]
-        self.packers     = [c for c in self.packers     if c is not ws]
+        self.screens     = [c for c in self.screens     if c[0] is not ws]
+        self.supervisors = [c for c in self.supervisors if c[0] is not ws]
+        self.packers     = [c for c in self.packers     if c[0] is not ws]
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict, warehouse_id: Optional[int] = None):
+        """Deliver to every connection, unless `warehouse_id` is given — then
+        skip connections scoped to a *different* warehouse. Connections with no
+        warehouse (e.g. a super_admin testing a role JWT) always receive."""
         payload = _dumps(message)
         dead = []
-        for ws in self.screens + self.supervisors + self.packers:
+        for ws, ws_wh in self.screens + self.supervisors + self.packers:
+            if warehouse_id is not None and ws_wh is not None and ws_wh != warehouse_id:
+                continue
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -80,10 +85,13 @@ manager = BoardManager()
 
 # ── Board state helpers ───────────────────────────────────────────────────────
 
-async def get_board_state() -> list:
+async def get_board_state(warehouse_id: Optional[int] = None) -> list:
+    query: dict = {"status": {"$ne": "cleared"}}
+    if warehouse_id is not None:
+        query["warehouse_id"] = warehouse_id
     entries = await (
         col("packing_board")
-        .find({"status": {"$ne": "cleared"}}, NO_ID)
+        .find(query, NO_ID)
         .sort("queued_at", 1)
         .to_list(length=100)
     )
@@ -91,17 +99,19 @@ async def get_board_state() -> list:
 
 
 async def push_update(entry: dict):
-    await manager.broadcast({"type": "entry_update", "data": entry})
+    await manager.broadcast({"type": "entry_update", "data": entry}, warehouse_id=entry.get("warehouse_id"))
 
 
 # ── WebSocket auth helpers ────────────────────────────────────────────────────
 
-def _verify_display_token(ws: WebSocket) -> bool:
-    display_token = settings.packing_board_display_token.strip()
-    if not display_token:
-        return False
+async def _verify_display_token(ws: WebSocket) -> Optional[int]:
+    """Validate ?token= against the Mongo-stored per-warehouse display token.
+    Returns the matched warehouse_id, or None if invalid/missing."""
     provided = ws.query_params.get("token", "").strip()
-    return secrets.compare_digest(provided.encode(), display_token.encode())
+    if not provided:
+        return None
+    record = await col("warehouse_display_tokens").find_one({"token": provided}, {"warehouse_id": 1})
+    return record["warehouse_id"] if record else None
 
 
 async def _verify_ws_user(ws: WebSocket, required_roles: set) -> Optional[dict]:
@@ -200,6 +210,7 @@ async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Opti
 
 class BoardEntry(BaseModel):
     order_id:      str
+    warehouse_id:  Optional[int] = None
     customer_name: str
     customer_city: str
     items:         List[dict]
@@ -288,8 +299,8 @@ async def update_status(
 
 
 @router.get("/board")
-async def get_board(_: dict = Depends(require_admin)):
-    return {"entries": await get_board_state()}
+async def get_board(warehouse_id: Optional[int] = None, _: dict = Depends(require_admin)):
+    return {"entries": await get_board_state(warehouse_id)}
 
 
 @router.get("/packers")
@@ -314,14 +325,15 @@ async def _ws_reject(ws: WebSocket, reason: str):
 async def websocket_board(ws: WebSocket):
     """
     85" display screen — read-only.
-    Authenticated via PACKING_BOARD_DISPLAY_TOKEN env var passed as ?token=.
+    Authenticated via a per-warehouse display token (Mongo-stored) passed as ?token=.
     """
     await ws.accept()
-    if not _verify_display_token(ws):
+    warehouse_id = await _verify_display_token(ws)
+    if warehouse_id is None:
         await _ws_reject(ws, "invalid_token")
         return
     try:
-        await manager.connect_screen(ws)
+        await manager.connect_screen(ws, warehouse_id)
         while True:
             await asyncio.sleep(15)
             await ws.send_text(_dumps({"type": "ping"}))
@@ -343,7 +355,7 @@ async def websocket_supervisor(ws: WebSocket):
     if not user:
         await _ws_reject(ws, "unauthorized")
         return
-    await manager.connect_supervisor(ws)
+    await manager.connect_supervisor(ws, user.get("warehouse_id"))
     try:
         while True:
             raw = await ws.receive_text()
@@ -373,7 +385,7 @@ async def websocket_packer(ws: WebSocket):
     if not user:
         await _ws_reject(ws, "unauthorized")
         return
-    await manager.connect_packer(ws)
+    await manager.connect_packer(ws, user.get("warehouse_id"))
     try:
         while True:
             raw = await ws.receive_text()

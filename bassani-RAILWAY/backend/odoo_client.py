@@ -55,20 +55,29 @@ def odoo_read(model, ids, fields=None):
     return odoo(model, "read", [ids], {"fields": fields or []})
 
 class OdooClient:
-    def search_read(self, model, domain=None, fields=None, limit=100, offset=0, order=""):
+    def search_read(self, model, domain=None, fields=None, limit=100, offset=0, order="", context=None):
         kwargs = {"fields": fields or [], "limit": limit, "offset": offset}
         if order:
             kwargs["order"] = order
+        if context:
+            kwargs["context"] = context
         return odoo(model, "search_read", [domain or []], kwargs)
 
-    def read(self, model, ids, fields=None):
-        return odoo(model, "read", [ids], {"fields": fields or []})
+    def read(self, model, ids, fields=None, context=None):
+        kwargs = {"fields": fields or []}
+        if context:
+            kwargs["context"] = context
+        return odoo(model, "read", [ids], kwargs)
 
-    def search(self, model, domain=None, limit=100):
-        return odoo(model, "search", [domain or []], {"limit": limit})
+    def search(self, model, domain=None, limit=100, context=None):
+        kwargs = {"limit": limit}
+        if context:
+            kwargs["context"] = context
+        return odoo(model, "search", [domain or []], kwargs)
 
-    def count(self, model, domain=None):
-        return odoo(model, "search_count", [domain or []])
+    def count(self, model, domain=None, context=None):
+        kwargs = {"context": context} if context else {}
+        return odoo(model, "search_count", [domain or []], kwargs)
 
     def create(self, model, vals):
         return odoo(model, "create", [vals])

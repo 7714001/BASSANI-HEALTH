@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import require_admin, hash_password, DEFAULT_ADMIN_PERMISSIONS, ALL_ROLES
+from auth import require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS, ALL_ROLES
 from database import col
 from middleware.audit import audit_log
 
@@ -27,6 +27,7 @@ class UserCreate(BaseModel):
     name: str = ""
     email: Optional[str] = None
     display_name: Optional[str] = None   # shown on packing board (packer role)
+    warehouse_id: Optional[int] = None   # required for warehouse_supervisor/packer — which vault they work
     permissions: Optional[dict] = None   # only applied when role == "admin"
 
 class UserUpdate(BaseModel):
@@ -35,10 +36,14 @@ class UserUpdate(BaseModel):
     display_name: Optional[str] = None
     role: Optional[str] = None
     active: Optional[bool] = None
+    warehouse_id: Optional[int] = None
     permissions: Optional[dict] = None   # only super_admin may set this
 
 class PasswordReset(BaseModel):
     new_password: str
+
+class WarehouseSelect(BaseModel):
+    warehouse_id: int
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -58,6 +63,25 @@ def _permissions_for_new_role(role: str, supplied: Optional[dict]) -> Optional[d
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.put("/me/warehouse")
+async def set_active_warehouse(
+    body: WarehouseSelect,
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin/super_admin self-service: switch which warehouse the portal top-nav
+    selector scopes stock/product/order reads to. Drives `active_warehouse_id`
+    on the user's own document — distinct from the fixed `warehouse_id` assigned
+    to warehouse_supervisor/packer accounts."""
+    if current_user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Only admin accounts can switch warehouses")
+
+    await col("users").update_one(
+        {"_id": ObjectId(current_user["id"])},
+        {"$set": {"active_warehouse_id": body.warehouse_id}},
+    )
+    return {"success": True, "active_warehouse_id": body.warehouse_id}
+
 
 @router.get("/")
 async def list_users(
@@ -124,6 +148,8 @@ async def create_user(
         doc["email"] = body.email.lower().strip()
     if body.display_name:
         doc["display_name"] = body.display_name
+    if body.role in ("warehouse_supervisor", "packer") and body.warehouse_id:
+        doc["warehouse_id"] = body.warehouse_id
 
     perms = _permissions_for_new_role(body.role, body.permissions)
     if perms:
@@ -172,6 +198,8 @@ async def update_user(
         updates["display_name"] = body.display_name
     if body.active is not None:
         updates["active"] = body.active
+    if body.warehouse_id is not None:
+        updates["warehouse_id"] = body.warehouse_id
 
     if body.role is not None:
         if body.role not in ALL_ROLES or body.role == "super_admin":

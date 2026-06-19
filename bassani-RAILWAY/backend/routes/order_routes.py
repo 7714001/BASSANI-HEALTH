@@ -6,6 +6,7 @@ from auth import get_current_user, require_permission
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
+from warehouse_context import resolve_warehouse_id
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -208,6 +209,12 @@ async def create_order(
         "note": order.note or "",
     }
 
+    # Tag the order with the warehouse it should draw stock from — the reseller's
+    # assigned vault, or the admin's active top-nav selection.
+    warehouse_id = await resolve_warehouse_id(current_user)
+    if warehouse_id:
+        vals["warehouse_id"] = warehouse_id
+
     try:
         odoo_order_id = odoo.create("sale.order", vals)
     except Exception as e:
@@ -276,7 +283,7 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_perm
         rows = odoo.read(
             "sale.order",
             [order_id],
-            fields=["name", "partner_id", "picking_ids", "note"],
+            fields=["name", "partner_id", "picking_ids", "note", "warehouse_id"],
         )
         order_data = rows[0] if rows else None
     except Exception as e:
@@ -358,6 +365,7 @@ async def confirm_order(order_id: int, current_user: dict = Depends(require_perm
                 now = datetime.now(timezone.utc)
                 doc = {
                     "order_id": str(order_id),
+                    "warehouse_id": order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
                     "customer_name": partner_name,
                     "customer_city": "",
                     "items": items,

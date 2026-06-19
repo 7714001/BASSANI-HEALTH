@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
   UserPlus, KeyRound, PowerOff, Power, Copy, Check,
-  ChevronDown, ChevronUp, ShieldCheck,
+  ChevronDown, ChevronUp, ShieldCheck, Warehouse,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
@@ -153,13 +153,24 @@ export default function Users() {
   const [search,       setSearch      ] = useState("");
   const [roleFilter,   setRoleFilter  ] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [warehouses,   setWarehouses  ] = useState([]);
+
+  useEffect(() => {
+    api.get("/api/warehouses/").then(r => setWarehouses(r.data.warehouses || [])).catch(() => {});
+  }, []);
+  const warehouseName = (id) => warehouses.find(w => w.id === id)?.name || null;
 
   // Create modal
   const [createModal, setCreateModal] = useState(false);
   const [createForm,  setCreateForm ] = useState({
-    username: "", password: "", name: "", email: "", display_name: "", role: "admin",
+    username: "", password: "", name: "", email: "", display_name: "", role: "admin", warehouse_id: "",
   });
   const [createPerms, setCreatePerms] = useState({ ...EMPTY_PERMISSIONS });
+
+  // Assign warehouse modal (warehouse_supervisor / packer roles)
+  const [warehouseModal,  setWarehouseModal ] = useState(false);
+  const [warehouseTarget, setWarehouseTarget] = useState(null);
+  const [warehouseValue,  setWarehouseValue ] = useState("");
 
   // Reset password modal
   const [resetModal,    setResetModal   ] = useState(false);
@@ -191,7 +202,7 @@ export default function Users() {
 
   const openCreate = () => {
     const defaultRole = isSuperAdmin ? "admin" : "warehouse_supervisor";
-    setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole });
+    setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole, warehouse_id: "" });
     setCreatePerms(defaultRole === "admin" ? { ...DEFAULT_ADMIN_PERMS } : { ...EMPTY_PERMISSIONS });
     setCreateModal(true);
   };
@@ -203,12 +214,38 @@ export default function Users() {
       const body = { ...createForm };
       if (createForm.role === "admin") body.permissions = createPerms;
       if (createForm.role !== "packer") delete body.display_name;
+      if (["warehouse_supervisor", "packer"].includes(createForm.role) && createForm.warehouse_id) {
+        body.warehouse_id = parseInt(createForm.warehouse_id);
+      } else {
+        delete body.warehouse_id;
+      }
       await api.post("/api/users/", body);
       toast.success("Account created");
       setCreateModal(false);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Create failed");
+    }
+  };
+
+  // ── Assign warehouse (supervisor/packer) ───────────────────────────────────
+
+  const openWarehouse = (u) => {
+    setWarehouseTarget(u);
+    setWarehouseValue(u.warehouse_id || "");
+    setWarehouseModal(true);
+  };
+
+  const saveWarehouse = async () => {
+    try {
+      await api.put(`/api/users/${warehouseTarget.id}`, {
+        warehouse_id: warehouseValue ? parseInt(warehouseValue) : null,
+      });
+      toast.success("Warehouse assignment updated");
+      setWarehouseModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Update failed");
     }
   };
 
@@ -417,6 +454,18 @@ export default function Users() {
               ),
             },
             {
+              id: "warehouse",
+              header: "Warehouse",
+              enableSorting: false,
+              cell: ({ row: { original: u } }) => (
+                ["warehouse_supervisor", "packer"].includes(u.role)
+                  ? (warehouseName(u.warehouse_id)
+                      ? <span className="text-xs text-gray-600">{warehouseName(u.warehouse_id)}</span>
+                      : <span className="text-xs text-amber-600 italic">Unassigned</span>)
+                  : <span className="text-gray-300">—</span>
+              ),
+            },
+            {
               id: "status",
               header: "Status",
               enableSorting: false,
@@ -445,6 +494,11 @@ export default function Users() {
                   {isSuperAdmin && u.role === "admin" && !u.is_super_admin && (
                     <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
                       <ShieldCheck size={12} />
+                    </BtnSecondary>
+                  )}
+                  {["warehouse_supervisor", "packer"].includes(u.role) && (
+                    <BtnSecondary size="sm" onClick={() => openWarehouse(u)} title="Assign warehouse">
+                      <Warehouse size={12} />
                     </BtnSecondary>
                   )}
                   <BtnSecondary size="sm" onClick={() => openReset(u)} title="Reset password">
@@ -517,6 +571,20 @@ export default function Users() {
                   onChange={e => setCreateForm({ ...createForm, display_name: e.target.value.toUpperCase() })}
                   placeholder="Shown on packing board, e.g. THEMBI"
                 />
+              </FormGroup>
+            )}
+            {["warehouse_supervisor", "packer"].includes(createForm.role) && (
+              <FormGroup label="Warehouse" className="col-span-2">
+                <Select
+                  value={createForm.warehouse_id}
+                  onChange={e => setCreateForm({ ...createForm, warehouse_id: e.target.value })}
+                >
+                  <option value="">— Select warehouse —</option>
+                  {warehouses.map(w => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </Select>
+                <p className="text-[11px] text-gray-400 mt-1">Which vault this account's packing board is scoped to.</p>
               </FormGroup>
             )}
           </div>
@@ -596,6 +664,27 @@ export default function Users() {
               </div>
             </>
           )}
+        </Modal>
+      )}
+
+      {/* ── Assign warehouse modal ── */}
+      {warehouseModal && warehouseTarget && (
+        <Modal title={`Assign Warehouse — ${warehouseTarget.username}`} onClose={() => setWarehouseModal(false)}>
+          <p className="text-sm text-gray-500 mb-4">
+            Determines which vault's packing board and stock this account works against.
+          </p>
+          <FormGroup label="Warehouse">
+            <Select value={warehouseValue} onChange={e => setWarehouseValue(e.target.value)}>
+              <option value="">— Unassigned —</option>
+              {warehouses.map(w => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </Select>
+          </FormGroup>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setWarehouseModal(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={saveWarehouse}><Warehouse size={13} /> Save</BtnPrimary>
+          </div>
         </Modal>
       )}
 
