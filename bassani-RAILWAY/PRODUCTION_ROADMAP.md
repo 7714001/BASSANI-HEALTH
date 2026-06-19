@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-19  
-**Overall Status:** 🟡 Pre-Production — Phase 0 complete (incl. 0.6 audit trail foundation), Phase 1 next  
+**Overall Status:** 🟡 Pre-Production — Phase 0 complete, Phase 1 in progress (CORS + 2FA deferred to pre-launch)  
 
 ---
 
@@ -12,7 +12,7 @@
 | Phase | Name | Status | Completed |
 |-------|------|--------|-----------|
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
-| 1 | Security Hardening | 🔴 Not Started | — |
+| 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6 complete — 2026-06-19 · 1.2/1.5 deferred to pre-launch |
 | 2 | Email Engine | 🔴 Not Started | — |
 | 3 | Core Odoo Integration | 🔴 Not Started | — |
 | 4 | Commission Engine Hardening | 🔴 Not Started | — |
@@ -268,17 +268,18 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Goal:** Safe to expose to real users. No known exploitable vulnerabilities.  
 **Estimate:** 1–3 days  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟡 In Progress — 1.1, 1.3, 1.4, 1.6 complete; 1.2 and 1.5 deferred until production domain/SSL are finalised  
+**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19  
 
 ### Tasks
 
 #### 1.1 JWT Secret Enforcement
-- [ ] Add startup check in `server.py` — fail with clear error if `JWT_SECRET == "change-me-in-production"`
-- [ ] Document minimum requirements: 32+ character random string
-- [ ] Update `.env.example` with `JWT_SECRET=<run: openssl rand -base64 48>`
+- [x] Add startup check in `server.py` — fail with clear error if `JWT_SECRET == "change-me-in-production"`
+- [x] Document minimum requirements: 32+ character random string
+- [x] Update `.env.example` with `JWT_SECRET=<run: openssl rand -base64 48>` _(file didn't exist — created)_
 
-#### 1.2 CORS Lockdown
+#### 1.2 CORS Lockdown — Deferred
+> **Deferred until the production domain and SSL are finalised** (decided 2026-06-19). Locking `CORS_ORIGINS` to a domain that doesn't exist yet would break every deployed environment, including ongoing testing. Revisit immediately once the domain is live.
 - [ ] Replace `allow_origins=["*"]` in `server.py` with `settings.cors_origins_list()`
 - [ ] Set `CORS_ORIGINS=https://yourdomain.com` in Railway environment variables
 - [ ] Verify preflight requests work correctly on frontend after change
@@ -287,33 +288,34 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Remove hardcoded admin seed from `server.py` startup event _(completed in Phase 0.1)_
 - [x] Replace with env-var provisioned super admin: `SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_PASSWORD` _(completed in Phase 0.1 — note: implemented as `super_admin` role, not plain `admin`)_
 - [x] Startup event is idempotent — safe to re-run on every deploy; creates account on first run, syncs credentials on subsequent runs _(completed in Phase 0.1, password sync bug fixed in sub-deploy 2)_
-- [ ] Deactivate or delete the legacy `admin / admin123` account from the Users UI — old account still exists in MongoDB from before the credential overhaul
+- [x] Deactivate the legacy `admin / admin123` account — startup migration now finds `{username: "admin", role: "admin"}` (excluding super_admin) and sets `active: False` automatically on every deploy, idempotent, reversible via the Users UI
 
 #### 1.4 Login Rate Limiting
-- [ ] Add `slowapi` to `requirements.txt`
-- [ ] Apply rate limiter to `POST /api/auth/login` — 5 requests per 15 minutes per IP
-- [ ] Return `429 Too Many Requests` with `Retry-After` header on breach
-- [ ] Apply rate limiter to `POST /api/healthcare/onboarding` — 10 per hour per IP
+- [x] Add `slowapi` to `requirements.txt`
+- [x] Apply rate limiter to `POST /api/auth/login` — 5 requests per 15 minutes per IP
+- [x] Return `429 Too Many Requests` with `Retry-After` header on breach _(slowapi's default handler sets this)_
+- [x] Apply rate limiter to `POST /api/healthcare/onboarding` — 10 per hour per IP
 
-#### 1.5 2FA Enforcement for Admins
+#### 1.5 2FA Enforcement for Admins — Deferred
+> **Deferred alongside 1.2** (decided 2026-06-19). Forcing a 2FA setup prompt on every admin login would add friction to active testing of Phases 2–7. Revisit at the same time as the CORS lockdown, right before go-live.
 - [ ] Set `require_2fa_admin=True` in config (infrastructure already exists via `pyotp`)
 - [ ] Enforce 2FA setup prompt on first admin login after flag is enabled
 - [ ] Verify admin cannot bypass 2FA by going directly to protected routes
 
 #### 1.6 Cleanup
-- [ ] Remove `/debug-static` endpoint from `server.py`
-- [ ] Ensure FastAPI runs with `debug=False` in production
-- [ ] Verify error responses return generic messages (no stack traces) to clients
+- [x] Remove `/debug-static` endpoint from `server.py` _(already removed in commit `2fae93a`, prior to this phase)_
+- [x] Ensure FastAPI runs with `debug=False` in production _(default — never set to `True` anywhere; uvicorn start command has no `--reload`)_
+- [x] Verify error responses return generic messages (no stack traces) to clients _(no custom exception handlers exist beyond slowapi's rate-limit handler; FastAPI's defaults apply)_
 
 ### Definition of Done
-- [ ] Cannot log in as admin with `admin123` on any deployed environment
-- [ ] Browser console shows no CORS errors from the correct domain
-- [ ] Login attempt #6 returns 429 within the 15-minute window
-- [ ] Admin without 2FA configured is prompted on login
-- [ ] Application startup fails immediately if JWT secret is default value
+- [x] Cannot log in as admin with `admin123` on any deployed environment _(legacy account auto-deactivated on startup)_
+- [ ] Browser console shows no CORS errors from the correct domain _(deferred with 1.2)_
+- [x] Login attempt #6 returns 429 within the 15-minute window
+- [ ] Admin without 2FA configured is prompted on login _(deferred with 1.5)_
+- [x] Application startup fails immediately if JWT secret is default value
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+> **Sub-deploy 1 (2026-06-19):** Implemented the four items with no domain/SSL dependency. Backend: startup `RuntimeError` if `JWT_SECRET` is still the placeholder; new `backend/rate_limit.py` holds a shared `slowapi.Limiter` (avoids a circular import between `server.py` and the route modules) wired into `/api/auth/login` (5/15min) and `/api/healthcare/onboarding` (10/hour); startup migration deactivates any `{username: "admin", role: "admin"}` account found, matching the exact legacy seed from commit `5965ef4`. Created `backend/.env.example` (didn't exist before). 1.2 (CORS) and 1.5 (2FA) explicitly deferred — see notes above — to avoid blocking domain-dependent and testing-friction work; tracked here so they aren't forgotten before go-live.
 
 ---
 

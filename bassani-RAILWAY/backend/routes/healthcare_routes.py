@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone
@@ -6,6 +6,7 @@ from auth import get_current_user, require_admin
 from database import col, NO_ID
 from config import get_settings
 from middleware.audit import audit_log
+from rate_limit import limiter
 import uuid
 
 router = APIRouter(prefix="/api/healthcare", tags=["healthcare"])
@@ -153,7 +154,9 @@ async def send_team_notification(submission: dict):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/onboarding")
+@limiter.limit("10/hour")
 async def submit_onboarding(
+    request: Request,
     submission: HealthcareProfessionalSubmit,
     background_tasks: BackgroundTasks,
 ):

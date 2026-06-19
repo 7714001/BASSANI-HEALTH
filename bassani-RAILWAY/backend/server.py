@@ -3,12 +3,27 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from config import get_settings
 from auth import hash_password, FULL_PERMISSIONS
+from rate_limit import limiter
 
 settings = get_settings()
 
+# Fail fast — refuse to start with the placeholder JWT secret. A default secret
+# means anyone can forge a valid token for any user, including super_admin.
+if settings.jwt_secret == "change-me-in-production":
+    raise RuntimeError(
+        "JWT_SECRET is still the placeholder value. Set a real secret "
+        "(32+ random characters) via the JWT_SECRET environment variable "
+        "before starting. Generate one with: openssl rand -base64 48"
+    )
+
 app = FastAPI(title="Bassani Health Internal ERP", version="2.0.0")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,6 +115,16 @@ async def initialise_users():
     await col("audit_logs").create_index([("actor_username", 1)])
     await col("audit_logs").create_index([("action", 1)])
     await col("audit_logs").create_index([("reseller_id", 1)])
+
+    # Deactivate the legacy "admin" / "admin123" account that predates the
+    # credential overhaul (Phase 0.1) — it may still exist in older databases.
+    legacy_admin = await col("users").find_one({"username": "admin", "role": "admin"})
+    if legacy_admin and not legacy_admin.get("is_super_admin") and legacy_admin.get("active", True):
+        await col("users").update_one(
+            {"_id": legacy_admin["_id"]},
+            {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}},
+        )
+        print("[startup] Deactivated legacy 'admin' account — superseded by the super admin/permissions system.")
 
 
 @app.get("/health")
