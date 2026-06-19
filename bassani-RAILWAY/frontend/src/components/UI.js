@@ -175,7 +175,7 @@ function WarehouseSwitcher() {
   );
 }
 
-export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = true }) {
+export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = true, showWarehouseSwitcher = false }) {
   const { toggle } = useContext(SidebarContext);
   return (
     <header className="bg-white border-b border-gray-100 px-4 sm:px-6 py-3.5 flex items-center justify-between flex-shrink-0 gap-3">
@@ -190,7 +190,7 @@ export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = tr
         </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
-        <WarehouseSwitcher />
+        {showWarehouseSwitcher && <WarehouseSwitcher />}
         <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${odooConnected ? "bg-bassani-50 text-bassani-700" : "bg-red-50 text-red-600"}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
           {odooConnected ? "Odoo synced" : "Odoo offline"}

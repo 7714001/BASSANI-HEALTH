@@ -30,7 +30,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Dashboard" subtitle="Overview of your business" onRefresh={load} />
+      <TopBar title="Dashboard" subtitle="Overview of your business" onRefresh={load} showWarehouseSwitcher />
       <main className="flex-1 overflow-y-auto p-6">
         {loading && <LoadingState />}
         {error   && <ErrorState message={error} onRetry={load} />}

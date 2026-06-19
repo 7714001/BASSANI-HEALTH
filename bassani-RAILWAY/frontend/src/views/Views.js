@@ -97,7 +97,7 @@ export function Products() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load}
+      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher
         actions={can("products.manage") && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
@@ -133,8 +133,15 @@ export function Products() {
             </Select></FormGroup>
             <FormGroup label="Sale Price (ZAR)"><Input type="number" value={form.list_price} onChange={e=>setForm({...form,list_price:e.target.value})} placeholder="450.00" /></FormGroup>
             <FormGroup label="Cost (ZAR)"><Input type="number" value={form.standard_price} onChange={e=>setForm({...form,standard_price:e.target.value})} placeholder="200.00" /></FormGroup>
-            <FormGroup label={editing ? `Stock Quantity (current: ${editing.qty_available ?? 0})` : "Initial Stock"}>
-              <Input type="number" min="0" value={form.stock_qty} onChange={e=>setForm({...form,stock_qty:e.target.value})} placeholder={editing ? "Leave blank to keep current" : "0"} />
+            <FormGroup label={editing ? `Stock Quantity (current: ${editing.qty_available ?? 0})` : "Initial Stock"} className="sm:col-span-2">
+              <Input type="number" min="0" value={form.stock_qty} disabled={!user?.active_warehouse_id}
+                onChange={e=>setForm({...form,stock_qty:e.target.value})}
+                placeholder={!user?.active_warehouse_id ? "Select a warehouse in the top nav first" : editing ? "Leave blank to keep current" : "0"} />
+              {!user?.active_warehouse_id && (
+                <p className="text-[11px] text-amber-600 mt-1">
+                  Select a specific warehouse in the top-nav switcher to set stock — it can't be assigned while "All warehouses" is selected.
+                </p>
+              )}
             </FormGroup>
           </div>
           <FormGroup label="Description"><Textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} placeholder="Short product description" /></FormGroup>
@@ -652,6 +659,7 @@ export function Orders() {
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar title="Place New Order"
           subtitle="Select a customer and add products"
+          showWarehouseSwitcher
           actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
 
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
@@ -872,7 +880,7 @@ export function Orders() {
   // ── List view ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load}
+      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher
         actions={<BtnPrimary onClick={openCart}><Plus size={14}/>Place Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
@@ -1723,7 +1731,7 @@ export function Reports() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Reports & Analytics" subtitle="Live data from Odoo" onRefresh={()=>load(activeReport)} />
+      <TopBar title="Reports & Analytics" subtitle="Live data from Odoo" onRefresh={()=>load(activeReport)} showWarehouseSwitcher />
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col sm:flex-row gap-4 sm:gap-5">
         {/* Report nav */}
         <div className="sm:w-44 sm:flex-shrink-0">

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, odoo_context
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -164,7 +165,7 @@ async def get_product(product_id: int, current_user: dict = Depends(get_current_
 
 
 @router.post("/")
-def create_product(
+async def create_product(
     product: ProductCreate,
     current_user: dict = Depends(require_admin),
 ):
@@ -195,13 +196,15 @@ def create_product(
         template_id = odoo.create("product.template", vals)
         templates = odoo.read("product.template", [template_id], fields=["product_variant_ids"])
         variant_id = templates[0]["product_variant_ids"][0]
+        await audit_log("product.create", "product", variant_id, entity_label=product.name,
+                        user=current_user, after=vals)
         return {"success": True, "product_id": variant_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
 @router.put("/{product_id}")
-def update_product(
+async def update_product(
     product_id: int,
     product: ProductUpdate,
     current_user: dict = Depends(require_admin),
@@ -218,11 +221,13 @@ def update_product(
     if not vals:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:
-        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id"])
+        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id", "name"])
         if not variants:
             raise HTTPException(status_code=404, detail="Product not found")
         template_id = variants[0]["product_tmpl_id"][0]
         odoo.write("product.template", [template_id], vals)
+        await audit_log("product.update", "product", product_id, entity_label=variants[0].get("name", ""),
+                        user=current_user, after=vals)
         return {"success": True}
     except HTTPException:
         raise
@@ -231,7 +236,7 @@ def update_product(
 
 
 @router.delete("/{product_id}")
-def archive_product(
+async def archive_product(
     product_id: int,
     current_user: dict = Depends(require_admin),
 ):
@@ -240,11 +245,13 @@ def archive_product(
     that was clicked — matching the existing single-product semantics."""
     odoo = get_odoo_client()
     try:
-        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id"])
+        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id", "name"])
         if not variants:
             raise HTTPException(status_code=404, detail="Product not found")
         template_id = variants[0]["product_tmpl_id"][0]
         odoo.write("product.template", [template_id], {"active": False})
+        await audit_log("product.archive", "product", product_id, entity_label=variants[0].get("name", ""),
+                        user=current_user)
         return {"success": True, "message": "Product archived"}
     except HTTPException:
         raise
@@ -272,47 +279,45 @@ def get_product_stock(product_id: int, current_user: dict = Depends(get_current_
 
 
 @router.post("/{product_id}/stock")
-def set_stock_level(
+async def set_stock_level(
     product_id: int,
     body: StockAdjustment,
     current_user: dict = Depends(require_admin),
 ):
     """
-    Set the on-hand stock for a product variant via Odoo inventory adjustment.
-    Finds the main internal location, then writes inventory_quantity on
-    stock.quant and applies the adjustment.
+    Set the on-hand stock for a product variant via Odoo inventory adjustment,
+    in the admin's currently selected warehouse.
+
+    Requires a specific warehouse to be selected (not "All warehouses") —
+    stock has to land in one physical place, and guessing which one risks
+    silently dirtying the wrong vault's figures.
     """
     odoo = get_odoo_client()
     variant_id = product_id
 
-    # Find the main internal stock location (WH/Stock preferred, else first internal)
-    locs = odoo.search_read(
-        "stock.location",
-        domain=[("usage", "=", "internal"), ("active", "=", True), ("name", "ilike", "Stock")],
-        fields=["id", "complete_name"],
-        limit=1,
-        order="id asc",
-    )
-    if not locs:
-        locs = odoo.search_read(
-            "stock.location",
-            domain=[("usage", "=", "internal"), ("active", "=", True)],
-            fields=["id", "complete_name"],
-            limit=1,
-            order="id asc",
+    warehouse_id = await resolve_warehouse_id(current_user)
+    if not warehouse_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a specific warehouse in the top-nav switcher before setting stock — "
+                   "stock cannot be assigned while \"All warehouses\" is selected.",
         )
-    if not locs:
-        raise HTTPException(status_code=400, detail="No internal stock location found in Odoo")
-    location_id = locs[0]["id"]
+
+    warehouses = odoo.read("stock.warehouse", [warehouse_id], fields=["name", "lot_stock_id"])
+    if not warehouses or not warehouses[0].get("lot_stock_id"):
+        raise HTTPException(status_code=400, detail="Selected warehouse has no stock location configured in Odoo")
+    location_id = warehouses[0]["lot_stock_id"][0]
+    warehouse_name = warehouses[0]["name"]
 
     try:
         # Find existing quant for this product+location or create one
         quants = odoo.search_read(
             "stock.quant",
             domain=[("product_id", "=", variant_id), ("location_id", "=", location_id)],
-            fields=["id"],
+            fields=["id", "quantity"],
             limit=1,
         )
+        previous_qty = quants[0]["quantity"] if quants else 0
         if quants:
             quant_id = quants[0]["id"]
             odoo.write("stock.quant", [quant_id], {"inventory_quantity": body.qty})
@@ -325,6 +330,13 @@ def set_stock_level(
 
         # Apply the inventory adjustment (creates the stock move)
         odoo.execute("stock.quant", "action_apply_inventory", [quant_id])
-        return {"success": True, "quant_id": quant_id, "location_id": location_id}
+
+        await audit_log(
+            "product.stock_set", "product", variant_id,
+            user=current_user,
+            before={"qty": previous_qty, "warehouse_id": warehouse_id, "warehouse_name": warehouse_name},
+            after={"qty": body.qty, "warehouse_id": warehouse_id, "warehouse_name": warehouse_name},
+        )
+        return {"success": True, "quant_id": quant_id, "location_id": location_id, "warehouse_id": warehouse_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
