@@ -35,6 +35,23 @@ class ProductUpdate(BaseModel):
 class StockAdjustment(BaseModel):
     qty: float
 
+class CategoryCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+
+class UOMCreate(BaseModel):
+    name: str
+    category_id: int
+    factor: float = 1.0
+    uom_type: str = "bigger"    # reference | bigger | smaller
+
+class UOMUpdate(BaseModel):
+    name: str
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 PRODUCT_FIELDS = [
@@ -133,28 +150,60 @@ async def list_products(
 
 @router.get("/categories")
 def list_categories(current_user: dict = Depends(get_current_user)):
-    """
-    Return unique product categories derived from active storable products.
-    Keys match the exact categ_id display name on each product — used to ensure
-    commission rate keys align with what the cart sees at order time.
-    """
+    """All product.category records from Odoo — used for the category dropdown and the
+    Categories management page. Reading directly (not derived from products) so new
+    categories appear immediately, before any products are assigned to them."""
     odoo = get_odoo_client()
     try:
-        products = odoo.search_read(
-            "product.product",
-            domain=[("type", "=", "consu"), ("active", "=", True)],
-            fields=["categ_id"],
-            limit=2000,
+        categories = odoo.search_read(
+            "product.category",
+            domain=[],
+            fields=["id", "name", "complete_name", "parent_id"],
+            limit=500,
+            order="complete_name asc",
         )
-        seen: dict = {}
-        for p in products:
-            if p.get("categ_id") and p["categ_id"] is not False:
-                cat_id, cat_name = p["categ_id"]
-                seen[cat_id] = cat_name
-        categories = sorted([{"id": k, "name": v} for k, v in seen.items()], key=lambda x: x["name"])
         return {"categories": categories}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/categories")
+def create_category(
+    body: CategoryCreate,
+    current_user: dict = Depends(require_admin),
+):
+    odoo = get_odoo_client()
+    try:
+        vals: dict = {"name": body.name}
+        if body.parent_id:
+            vals["parent_id"] = body.parent_id
+        cat_id = odoo.create("product.category", vals)
+        return {"success": True, "id": cat_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.put("/categories/{category_id}")
+def update_category(
+    category_id: int,
+    body: CategoryUpdate,
+    current_user: dict = Depends(require_admin),
+):
+    odoo = get_odoo_client()
+    try:
+        vals: dict = {}
+        if body.name is not None:
+            vals["name"] = body.name
+        if body.parent_id is not None:
+            vals["parent_id"] = body.parent_id if body.parent_id else False
+        if not vals:
+            raise HTTPException(status_code=400, detail="Nothing to update")
+        odoo.execute("product.category", "write", [[category_id], vals])
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
 @router.get("/low-stock")
@@ -200,6 +249,24 @@ def list_taxes(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/uom-categories")
+def list_uom_categories(current_user: dict = Depends(get_current_user)):
+    """UOM category groups (e.g. Unit, Weight, Volume) — used to populate the
+    category picker when creating a new unit of measure."""
+    odoo = get_odoo_client()
+    try:
+        cats = odoo.search_read(
+            "uom.category",
+            domain=[],
+            fields=["id", "name"],
+            limit=100,
+            order="name asc",
+        )
+        return {"uom_categories": cats}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.get("/uoms")
 def list_uoms(current_user: dict = Depends(get_current_user)):
     """Available Odoo Units of Measure — populates the UOM dropdown on the product form."""
@@ -215,6 +282,51 @@ def list_uoms(current_user: dict = Depends(get_current_user)):
         return {"uoms": uoms}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/uoms")
+def create_uom(
+    body: UOMCreate,
+    current_user: dict = Depends(require_admin),
+):
+    odoo = get_odoo_client()
+    try:
+        uom_id = odoo.create("uom.uom", {
+            "name": body.name,
+            "category_id": body.category_id,
+            "factor": body.factor,
+            "uom_type": body.uom_type,
+        })
+        return {"success": True, "id": uom_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.put("/uoms/{uom_id}")
+def update_uom(
+    uom_id: int,
+    body: UOMUpdate,
+    current_user: dict = Depends(require_admin),
+):
+    odoo = get_odoo_client()
+    try:
+        odoo.execute("uom.uom", "write", [[uom_id], {"name": body.name}])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.put("/uoms/{uom_id}/archive")
+def archive_uom(
+    uom_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    odoo = get_odoo_client()
+    try:
+        odoo.execute("uom.uom", "write", [[uom_id], {"active": False}])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
 @router.get("/{product_id}")

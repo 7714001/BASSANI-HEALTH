@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket,
+  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket, Tag, Ruler,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -24,7 +24,11 @@ export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year:
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV = [
   { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },
-  { label: "Products",     path: "/products",    icon: Package,         section: "Main"      },
+  { label: "Products", icon: Package, section: "Main", children: [
+    { label: "Product Listing",  path: "/products",             icon: Package },
+    { label: "Categories",       path: "/catalogue/categories", icon: Tag,   permission: "products.manage" },
+    { label: "Units of Measure", path: "/catalogue/uom",        icon: Ruler, permission: "products.manage" },
+  ]},
   { label: "Customers",    path: "/customers",   icon: Users,           section: "Main",     permission: "customers.view"      },
   { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view" },
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
@@ -60,6 +64,7 @@ export function Sidebar() {
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
   const items      = rawItems.filter(i => {
     if (i.adminOnly && !isAdmin) return false;
+    if (i.children) return true; // NavGroup filters its own children
     // Permission-gated items apply to admin-tier AND ticketing-role accounts
     // (resellers never reach here — they use RESELLER_NAV, which has none).
     if (i.permissions) return i.permissions.some(p => can(p));
@@ -98,9 +103,11 @@ export function Sidebar() {
           sections.map((section) => (
             <div key={section}>
               <p className="text-slate-600 text-[10px] font-bold uppercase tracking-widest px-2 pt-4 pb-1.5">{section}</p>
-              {items.filter((i) => i.section === section).map((item) => (
-                <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate} />
-              ))}
+              {items.filter((i) => i.section === section).map((item) =>
+                item.children
+                  ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
+                  : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate} />
+              )}
             </div>
           ))
         )}
@@ -148,6 +155,45 @@ function NavItem({ item, pathname, navigate }) {
       <Icon size={15} />
       {item.label}
     </button>
+  );
+}
+
+function NavGroup({ group, pathname, navigate }) {
+  const { can } = useAuth();
+  const Icon = group.icon;
+  const visibleChildren = group.children.filter(c => {
+    if (c.permission) return can(c.permission);
+    return true;
+  });
+  const isAnyChildActive = visibleChildren.some(
+    c => pathname === c.path || (c.path !== "/" && pathname.startsWith(c.path))
+  );
+  const [open, setOpen] = useState(isAnyChildActive);
+
+  if (visibleChildren.length === 0) return null;
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all border-l-2 ${
+          isAnyChildActive
+            ? "bg-slate-800 text-white border-bassani-600 font-medium"
+            : "text-slate-400 border-transparent hover:text-white hover:bg-slate-800"
+        }`}
+      >
+        <Icon size={15} />
+        <span className="flex-1 text-left">{group.label}</span>
+        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {open && (
+        <div className="ml-3 mt-0.5 mb-0.5 border-l border-slate-700 pl-2 space-y-0.5">
+          {visibleChildren.map(child => (
+            <NavItem key={child.path} item={child} pathname={pathname} navigate={navigate} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
