@@ -102,6 +102,22 @@ async def list_orders(
             order["reseller_id"] = comm_data["reseller_id"] if comm_data else None
             order["reseller_name"] = comm_data.get("reseller_name", "") if comm_data else ""
 
+        # Batch-fetch linked Sales tickets so the Orders table can show pipeline status
+        order_ids = [o["id"] for o in orders]
+        ticket_map: dict = {}
+        if order_ids:
+            async for t in col("tickets").find(
+                {"order_id": {"$in": order_ids}, "type": "sales"},
+                {"order_id": 1, "status": 1, "exit_status": 1},
+            ):
+                ticket_map[t["order_id"]] = {
+                    "id": str(t["_id"]),
+                    "status": t.get("exit_status") or t.get("status"),
+                    "exit_status": t.get("exit_status"),
+                }
+        for order in orders:
+            order["linked_ticket"] = ticket_map.get(order["id"])
+
         return {"orders": orders, "total": total}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

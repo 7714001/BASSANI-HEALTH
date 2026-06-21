@@ -11,12 +11,12 @@ existing `packing_board` document, extended in Phase 8.3. See
 `packing_board_routes.py` and the `orders_ticket_ref` field below.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
 from auth import require_permission, require_any_permission
-from odoo_client import get_odoo_client
+from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
@@ -47,6 +47,26 @@ class TicketStageUpdate(BaseModel):
     incomplete_reason: Optional[str] = None
     note: Optional[str] = None
     assigned_to: Optional[str] = None   # empty string = unassign; user id = assign
+
+
+class TicketOrderLine(BaseModel):
+    product_id: int
+    product_uom_qty: float
+    price_unit: float
+    name: Optional[str] = ""
+
+
+class TicketOrderCreate(BaseModel):
+    order_line: List[TicketOrderLine]
+    warehouse_id: Optional[int] = None
+    note: Optional[str] = ""
+
+
+class TicketDepositRegister(BaseModel):
+    amount: float
+    date: str           # YYYY-MM-DD
+    journal_id: int
+    note: Optional[str] = ""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -140,6 +160,26 @@ async def list_tickets(
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
+
+
+@router.get("/payment-journals")
+async def list_payment_journals(
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Return Odoo bank/cash journals for the deposit registration modal."""
+    odoo = get_odoo_client()
+    try:
+        journals = odoo.search_read(
+            "account.journal",
+            domain=[["type", "in", ["bank", "cash"]]],
+            fields=["id", "name", "type"],
+            limit=50,
+            order="name asc",
+        )
+        return {"journals": journals}
+    except Exception as e:
+        print(f"⚠️  payment-journals: {e}")
+        return {"journals": []}
 
 
 @router.get("/{ticket_id}")
@@ -282,3 +322,260 @@ async def confirm_payment(
         user=current_user, detail={"payment_state": invoice["payment_state"], "amount_residual": invoice["amount_residual"]},
     )
     return {"success": True, "payment_state": invoice["payment_state"]}
+
+
+@router.post("/{ticket_id}/create-order")
+async def create_order_from_ticket(
+    ticket_id: str,
+    body: TicketOrderCreate,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """
+    Build a draft Odoo sale.order from a direct inquiry ticket.
+    Customer is locked to the ticket's customer_id — no override possible.
+    On success, ticket advances to 'quote' and order_id is linked.
+    Does NOT create a second ticket (the existing one is the tracker).
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="This ticket already has a linked order — cancel it first to rebuild")
+    if not body.order_line:
+        raise HTTPException(status_code=400, detail="At least one product line is required")
+
+    odoo = get_odoo_client()
+    lines = [
+        (0, 0, {
+            "product_id": l.product_id,
+            "product_uom_qty": l.product_uom_qty,
+            "price_unit": round(l.price_unit, 2),
+            **({"name": l.name} if l.name else {}),
+        })
+        for l in body.order_line
+    ]
+    vals: dict = {
+        "partner_id": ticket["customer_id"],
+        "order_line": lines,
+        "note": body.note or "",
+    }
+    if body.warehouse_id:
+        vals["warehouse_id"] = body.warehouse_id
+
+    try:
+        odoo_order_id = odoo.create("sale.order", vals)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {"order_id": odoo_order_id, "status": "quote", "updated_at": now},
+            "$push": {"stage_history": {
+                "status": "quote", "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now, "note": f"Quote built — Odoo order #{odoo_order_id} created (draft)",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.create_order", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        after={"order_id": odoo_order_id, "status": "quote"},
+    )
+    return {"success": True, "odoo_order_id": odoo_order_id}
+
+
+@router.post("/{ticket_id}/cancel-order")
+async def cancel_order_from_ticket(
+    ticket_id: str,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """
+    Cancel the linked Odoo draft order and close the ticket as 'cancelled'.
+    Only works on draft/sent quotations — confirmed orders must be cancelled
+    in Odoo directly (they have posted invoices and packing board entries).
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order on this ticket")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order = rows[0]
+    if order["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Order {order['name']} is already confirmed — cancel it directly in Odoo "
+                "(it has a posted invoice and may have a packing board entry)."
+            ),
+        )
+
+    try:
+        odoo.execute("sale.order", "action_cancel", [order_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo cancel failed: {str(e)}")
+
+    # Void any commission record so it never appears in payout queue
+    await col("order_commissions").update_one(
+        {"odoo_order_id": str(order_id), "payout_status": "pending"},
+        {"$set": {
+            "payout_status": "cancelled",
+            "cancelled_at": datetime.now(timezone.utc),
+            "cancelled_by": current_user.get("username", ""),
+        }},
+    )
+
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {"exit_status": "cancelled", "updated_at": now},
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": "cancelled",
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now, "note": f"Quote cancelled — Odoo order {order['name']} cancelled",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.cancel_order", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"order_id": order_id, "order_name": order["name"]},
+    )
+    return {"success": True}
+
+
+@router.post("/{ticket_id}/register-deposit")
+async def register_deposit(
+    ticket_id: str,
+    body: TicketDepositRegister,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """
+    Register a deposit payment against the linked sale order from the portal:
+      1. Create a fixed-amount down payment invoice via Odoo's advance payment wizard
+      2. Post the invoice (account.move → action_post)
+      3. Register and reconcile payment via account.payment.register wizard
+      4. Stamp payment_confirmed_by/at + link invoice_id on the ticket
+
+    Keeps Odoo as the financial source of truth — nothing is bypassed.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build the quote first")
+    if ticket.get("payment_confirmed_at"):
+        raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+
+    # Step 1: Create fixed-amount down payment invoice via Odoo wizard
+    try:
+        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id}
+        wizard_id = odoo_call(
+            "sale.advance.payment.inv", "create",
+            [{"advance_payment_method": "fixed", "fixed_amount": body.amount}],
+            {"context": ctx},
+        )
+        odoo_call(
+            "sale.advance.payment.inv", "create_invoices",
+            [[wizard_id]],
+            {"context": ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
+
+    # Resolve the new invoice (highest ID among this order's invoices)
+    try:
+        order_data = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+        inv_ids = order_data[0].get("invoice_ids", []) if order_data else []
+        if not inv_ids:
+            raise HTTPException(status_code=502, detail="Deposit invoice was not created in Odoo — check Odoo configuration")
+        invoice_id = max(inv_ids)
+        odoo.execute("account.move", "action_post", [invoice_id])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to post deposit invoice: {str(e)}")
+
+    # Step 2: Register and reconcile payment via Odoo wizard
+    try:
+        pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id]}
+        pay_wizard_id = odoo_call(
+            "account.payment.register", "create",
+            [{
+                "amount": body.amount,
+                "journal_id": body.journal_id,
+                "payment_date": body.date,
+            }],
+            {"context": pay_ctx},
+        )
+        odoo_call(
+            "account.payment.register", "action_create_payments",
+            [[pay_wizard_id]],
+            {"context": pay_ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+
+    # Stamp ticket
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_confirmed_by": current_user["id"],
+                "payment_confirmed_at": now,
+                "invoice_id": invoice_id,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now,
+                "note": body.note or f"Deposit registered — R{body.amount:,.2f} via journal {body.journal_id}",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.register_deposit", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
+    )
+    return {"success": True, "invoice_id": invoice_id}

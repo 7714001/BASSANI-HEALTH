@@ -1040,6 +1040,17 @@ export function Orders() {
             { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
             { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
             { id:"invoice", header:"Payment", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
+            ...(!isReseller?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, cell:({row:{original:o}})=>{
+              const t = o.linked_ticket;
+              if (!t) return <span className="text-xs text-gray-300">—</span>;
+              const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
+              const EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
+              const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
+              const STATUS_LABEL = { open:"Open", quote:"Quote", sale_order:"Sale Order", invoice:"Invoice", confirmed_wip:"WIP", ready_for_collection:"Ready", incomplete:"Incomplete" };
+              return t.exit_status
+                ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
+                : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
+            }}]:[]),
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
               (o.state==="draft"||o.state==="sale") ? (
                 <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
