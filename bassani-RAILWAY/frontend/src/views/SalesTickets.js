@@ -322,20 +322,34 @@ export default function SalesTickets() {
     setDetail(null);
     setView("quote-builder");
 
-    // Load products + warehouses only once; reuse on subsequent opens
+    // Load products + warehouses only once; reuse on subsequent opens.
+    // Products endpoint has le=200 constraint — request exactly 200.
+    // Use allSettled so a warehouse permission error doesn't block products.
     if (quoteProducts.length === 0) {
       setQuoteProductsLoading(true);
       try {
-        const [prodRes, whRes] = await Promise.all([
-          api.get("/api/products/", { params: { limit: 500 } }),
+        const [prodResult, whResult] = await Promise.allSettled([
+          api.get("/api/products/", { params: { limit: 200 } }),
           api.get("/api/warehouses/"),
         ]);
-        setQuoteProducts(prodRes.data.products || []);
-        const whs = whRes.data.warehouses || [];
-        setQuoteWarehouses(whs);
-        if (whs.length > 0) setQuoteWarehouseId(String(whs[0].id));
-      } catch { toast.error("Failed to load products"); }
-      finally { setQuoteProductsLoading(false); }
+
+        if (prodResult.status === "fulfilled") {
+          setQuoteProducts(prodResult.value.data.products || []);
+        } else {
+          console.error("Quote builder — products load failed:", prodResult.reason);
+          toast.error(prodResult.reason?.response?.data?.detail || "Failed to load products");
+        }
+
+        if (whResult.status === "fulfilled") {
+          const whs = whResult.value.data.warehouses || [];
+          setQuoteWarehouses(whs);
+          if (whs.length > 0) setQuoteWarehouseId(String(whs[0].id));
+        } else {
+          console.warn("Quote builder — warehouses load failed (non-fatal):", whResult.reason);
+        }
+      } finally {
+        setQuoteProductsLoading(false);
+      }
     }
   };
 
