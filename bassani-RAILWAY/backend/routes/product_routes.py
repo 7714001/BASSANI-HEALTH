@@ -252,7 +252,8 @@ def list_taxes(current_user: dict = Depends(get_current_user)):
 @router.get("/uom-categories")
 def list_uom_categories(current_user: dict = Depends(get_current_user)):
     """UOM category groups (e.g. Unit, Weight, Volume) — used to populate the
-    category picker when creating a new unit of measure."""
+    category picker when creating a new unit of measure. Returns empty list when
+    UOM is not enabled in Odoo rather than raising an error."""
     odoo = get_odoo_client()
     try:
         cats = odoo.search_read(
@@ -264,12 +265,14 @@ def list_uom_categories(current_user: dict = Depends(get_current_user)):
         )
         return {"uom_categories": cats}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+        print(f"⚠️  uom-categories fetch failed (UOM may be disabled in Odoo): {e}")
+        return {"uom_categories": []}
 
 
 @router.get("/uoms")
 def list_uoms(current_user: dict = Depends(get_current_user)):
-    """Available Odoo Units of Measure — populates the UOM dropdown on the product form."""
+    """Available Odoo Units of Measure — populates the UOM dropdown on the product form.
+    Returns empty list when UOM is not enabled in Odoo rather than raising an error."""
     odoo = get_odoo_client()
     try:
         uoms = odoo.search_read(
@@ -281,7 +284,8 @@ def list_uoms(current_user: dict = Depends(get_current_user)):
         )
         return {"uoms": uoms}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+        print(f"⚠️  uoms fetch failed (UOM may be disabled in Odoo): {e}")
+        return {"uoms": []}
 
 
 @router.post("/uoms")

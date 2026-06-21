@@ -25,9 +25,9 @@ export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year:
 const NAV = [
   { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },
   { label: "Products", icon: Package, section: "Main", children: [
-    { label: "Product Listing",  path: "/products",             icon: Package },
-    { label: "Categories",       path: "/catalogue/categories", icon: Tag,   permission: "products.manage" },
-    { label: "Units of Measure", path: "/catalogue/uom",        icon: Ruler, permission: "products.manage" },
+    { label: "Catalogue",   path: "/products",             icon: Package },
+    { label: "Categories",  path: "/catalogue/categories", icon: Tag,   permission: "products.manage" },
+    { label: "UOM",         path: "/catalogue/uom",        icon: Ruler, permission: "products.manage" },
   ]},
   { label: "Customers",    path: "/customers",   icon: Users,           section: "Main",     permission: "customers.view"      },
   { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view" },
@@ -146,14 +146,14 @@ function NavItem({ item, pathname, navigate }) {
   return (
     <button
       onClick={() => { navigate(item.path); close(); }}
-      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all border-l-2 ${
+      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all border-l-2 overflow-hidden ${
         isActive
           ? "bg-slate-800 text-white border-bassani-600 font-medium"
           : "text-slate-400 border-transparent hover:text-white hover:bg-slate-800"
       }`}
     >
-      <Icon size={15} />
-      {item.label}
+      <Icon size={15} className="flex-shrink-0" />
+      <span className="truncate">{item.label}</span>
     </button>
   );
 }
@@ -176,15 +176,15 @@ function NavGroup({ group, pathname, navigate }) {
     <div>
       <button
         onClick={() => setOpen(v => !v)}
-        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all border-l-2 ${
+        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all border-l-2 overflow-hidden ${
           isAnyChildActive
             ? "bg-slate-800 text-white border-bassani-600 font-medium"
             : "text-slate-400 border-transparent hover:text-white hover:bg-slate-800"
         }`}
       >
-        <Icon size={15} />
-        <span className="flex-1 text-left">{group.label}</span>
-        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        <Icon size={15} className="flex-shrink-0" />
+        <span className="flex-1 text-left truncate">{group.label}</span>
+        {open ? <ChevronUp size={12} className="flex-shrink-0" /> : <ChevronDown size={12} className="flex-shrink-0" />}
       </button>
       {open && (
         <div className="ml-3 mt-0.5 mb-0.5 border-l border-slate-700 pl-2 space-y-0.5">
