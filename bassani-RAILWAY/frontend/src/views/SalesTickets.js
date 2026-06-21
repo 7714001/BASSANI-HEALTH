@@ -5,7 +5,7 @@
 // editable description and price, running totals — the quote looks like a
 // quote before it's even sent.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -35,21 +35,33 @@ const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_w
 const PRE_CONFIRM = new Set(["open", "quote", "sale_order", "invoice"]);
 
 // ── Line item row ─────────────────────────────────────────────────────────────
-// Self-contained so each row manages its own product-search dropdown without
-// the parent holding per-line ephemeral search state.
-function LineRow({ line, products, onUpdate, onRemove, autoFocus }) {
-  const [prodSearch, setProdSearch] = useState(line._product_label || "");
+// Each row fires its own debounced Odoo search so results are always live and
+// catalogue size is never a constraint (no preload, no 200-item cap).
+function LineRow({ line, onUpdate, onRemove, autoFocus }) {
+  const [prodSearch, setProdSearch]     = useState(line._product_label || "");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searching, setSearching]       = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const debounceRef = useRef(null);
 
-  const filtered = prodSearch.length >= 1
-    ? products
-        .filter(p => {
-          const q = prodSearch.toLowerCase();
-          return (p.display_name || p.name).toLowerCase().includes(q) ||
-                 (p.default_code || "").toLowerCase().includes(q);
-        })
-        .slice(0, 8)
-    : [];
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = prodSearch.trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await api.get("/api/products/", { params: { search: q, limit: 10 } });
+        setSearchResults(r.data.products || []);
+        setDropdownOpen(true);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [prodSearch]);
 
   const selectProduct = (p) => {
     const label = p.display_name || p.name;
@@ -58,7 +70,7 @@ function LineRow({ line, products, onUpdate, onRemove, autoFocus }) {
     onUpdate({
       product_id:       p.id,
       _product_label:   label,
-      name:             label,          // description resets to product name on product change
+      name:             label,
       price_unit:       p.list_price || 0,
       _tax_rate:        p.tax_rate   || 0,
       _sku:             p.default_code || "",
@@ -81,18 +93,25 @@ function LineRow({ line, products, onUpdate, onRemove, autoFocus }) {
           autoFocus={autoFocus}
           value={prodSearch}
           onChange={e => {
-            setProdSearch(e.target.value);
-            setDropdownOpen(true);
-            if (!e.target.value) onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
+            const v = e.target.value;
+            setProdSearch(v);
+            if (!v) {
+              setSearchResults([]);
+              setDropdownOpen(false);
+              onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
+            }
           }}
-          onFocus={() => { if (filtered.length > 0) setDropdownOpen(true); }}
+          onFocus={() => { if (searchResults.length > 0) setDropdownOpen(true); }}
           onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
           placeholder="Type product name or SKU…"
           className="w-full text-sm bg-transparent border-0 focus:outline-none placeholder-gray-300"
         />
-        {dropdownOpen && filtered.length > 0 && (
+        {searching && (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
+        )}
+        {dropdownOpen && searchResults.length > 0 && (
           <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
-            {filtered.map(p => (
+            {searchResults.map(p => (
               <button
                 key={p.id}
                 onMouseDown={() => selectProduct(p)}
@@ -297,8 +316,6 @@ export default function SalesTickets() {
 
   // ── Quote Builder ─────────────────────────────────────────────────────────
   const [quoteTicket, setQuoteTicket]           = useState(null);
-  const [quoteProducts, setQuoteProducts]       = useState([]);
-  const [quoteProductsLoading, setQuoteProductsLoading] = useState(false);
   const [quoteLines, setQuoteLines]             = useState([]);
   const [quoteWarehouses, setQuoteWarehouses]   = useState([]);
   const [quoteWarehouseId, setQuoteWarehouseId] = useState("");
@@ -322,33 +339,16 @@ export default function SalesTickets() {
     setDetail(null);
     setView("quote-builder");
 
-    // Load products + warehouses only once; reuse on subsequent opens.
-    // Products endpoint has le=200 constraint — request exactly 200.
-    // Use allSettled so a warehouse permission error doesn't block products.
-    if (quoteProducts.length === 0) {
-      setQuoteProductsLoading(true);
+    // Warehouses are small — load once and reuse. Products are fetched
+    // per-row on demand (see LineRow) so no preload is needed here.
+    if (quoteWarehouses.length === 0) {
       try {
-        const [prodResult, whResult] = await Promise.allSettled([
-          api.get("/api/products/", { params: { limit: 200 } }),
-          api.get("/api/warehouses/"),
-        ]);
-
-        if (prodResult.status === "fulfilled") {
-          setQuoteProducts(prodResult.value.data.products || []);
-        } else {
-          console.error("Quote builder — products load failed:", prodResult.reason);
-          toast.error(prodResult.reason?.response?.data?.detail || "Failed to load products");
-        }
-
-        if (whResult.status === "fulfilled") {
-          const whs = whResult.value.data.warehouses || [];
-          setQuoteWarehouses(whs);
-          if (whs.length > 0) setQuoteWarehouseId(String(whs[0].id));
-        } else {
-          console.warn("Quote builder — warehouses load failed (non-fatal):", whResult.reason);
-        }
-      } finally {
-        setQuoteProductsLoading(false);
+        const r = await api.get("/api/warehouses/");
+        const whs = r.data.warehouses || [];
+        setQuoteWarehouses(whs);
+        if (whs.length > 0) setQuoteWarehouseId(String(whs[0].id));
+      } catch {
+        console.warn("Quote builder — warehouses load failed (non-fatal)");
       }
     }
   };
@@ -516,47 +516,42 @@ export default function SalesTickets() {
 
             {/* ── Line items ── */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              {quoteProductsLoading ? (
-                <div className="py-16"><LoadingState /></div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b-2 border-gray-100">
-                      <th className="text-left p-3 pl-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
-                      <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Description</th>
-                      <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
-                      <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Unit Price</th>
-                      <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-16">Tax</th>
-                      <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Subtotal</th>
-                      <th className="w-8" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {quoteLines.map(line => (
-                      <LineRow
-                        key={line._id}
-                        line={line}
-                        products={quoteProducts}
-                        onUpdate={(updates) => updateLine(line._id, updates)}
-                        onRemove={() => removeLine(line._id)}
-                        autoFocus={line._id === lastAddedId}
-                      />
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t border-gray-50">
-                      <td colSpan={7} className="p-2 pl-3">
-                        <button
-                          onClick={addLine}
-                          className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium px-2 py-1.5 rounded-lg hover:bg-bassani-50 transition-colors"
-                        >
-                          <Plus size={14} />Add a line
-                        </button>
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              )}
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b-2 border-gray-100">
+                    <th className="text-left p-3 pl-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                    <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Description</th>
+                    <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
+                    <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Unit Price</th>
+                    <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-16">Tax</th>
+                    <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Subtotal</th>
+                    <th className="w-8" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {quoteLines.map(line => (
+                    <LineRow
+                      key={line._id}
+                      line={line}
+                      onUpdate={(updates) => updateLine(line._id, updates)}
+                      onRemove={() => removeLine(line._id)}
+                      autoFocus={line._id === lastAddedId}
+                    />
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-gray-50">
+                    <td colSpan={7} className="p-2 pl-3">
+                      <button
+                        onClick={addLine}
+                        className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium px-2 py-1.5 rounded-lg hover:bg-bassani-50 transition-colors"
+                      >
+                        <Plus size={14} />Add a line
+                      </button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
 
             {/* ── Notes + Totals ── */}

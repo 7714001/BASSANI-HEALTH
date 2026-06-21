@@ -120,7 +120,7 @@ async def list_products(
     domain = [("type", "=", "consu"), ("active", "=", True)]
 
     if search:
-        domain.append(("name", "ilike", search))
+        domain += ["|", ("name", "ilike", search), ("default_code", "ilike", search)]
 
     # Category filter using Odoo's categ_id.name
     if category and category != "all":
