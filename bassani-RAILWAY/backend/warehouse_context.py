@@ -27,7 +27,14 @@ async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
     return None
 
 
-def odoo_context(warehouse_id: Optional[int]) -> Optional[dict]:
-    """Odoo `context` kwarg that scopes qty_available/virtual_available reads
-    to a specific warehouse. Returns None when unscoped (company-wide totals)."""
-    return {"warehouse": warehouse_id} if warehouse_id else None
+def odoo_context(warehouse_id: Optional[int], company_id: Optional[int] = None) -> Optional[dict]:
+    """Odoo `context` kwarg that scopes stock quantities and fiscal rules to a
+    specific warehouse/company. Without company_id, Odoo sums across all
+    companies the service account can access — wrong in multi-company setups."""
+    ctx: dict = {}
+    if warehouse_id:
+        ctx["warehouse"] = warehouse_id
+    if company_id:
+        ctx["company_id"] = company_id
+        ctx["allowed_company_ids"] = [company_id]
+    return ctx if ctx else None

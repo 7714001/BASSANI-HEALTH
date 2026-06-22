@@ -62,35 +62,69 @@ PRODUCT_FIELDS = [
 ]
 
 
-def _attach_tax_rates(odoo, products: list) -> None:
-    """
-    Resolve each product's real Odoo tax configuration (`taxes_id`, a
-    many2many to `account.tax`) into a single percentage rate, e.g. 15.0 —
-    so the Orders cart can show accurate VAT per product instead of a flat
-    15% assumption that's wrong for any zero-rated or differently-taxed item.
+def _get_company_id(odoo, warehouse_id: Optional[int]) -> Optional[int]:
+    """Return the Odoo company that owns this warehouse.
+    Used to scope tax lookups and stock computed fields to the correct entity
+    in a multi-company setup — without this, Odoo sums across all companies."""
+    if not warehouse_id:
+        return None
+    try:
+        wh = odoo.read("stock.warehouse", [warehouse_id], fields=["company_id"])
+        if wh and wh[0].get("company_id"):
+            return wh[0]["company_id"][0]
+    except Exception:
+        pass
+    return None
 
-    Mutates `products` in place; replaces the raw `taxes_id` list with the
-    resolved `tax_rate` number, plus `tax_id` (the first assigned tax's id,
-    used to pre-select the Tax dropdown on the edit form — this catalog only
-    ever assigns a single Customer Tax per product in practice). Only
-    percentage-type taxes are summed into `tax_rate` — fixed-amount taxes are
-    rare in this catalog and would need a different UI treatment (a flat
-    amount, not a %) if they ever show up.
+
+def _attach_tax_rates(odoo, products: list, company_id: Optional[int] = None) -> None:
+    """Resolve each product's taxes_id into a single percentage rate.
+
+    In a multi-company Odoo setup, taxes_id carries one tax record per company
+    (e.g. 8 companies × 15% = 120% if naively summed). When company_id is
+    provided we filter to only that company's taxes before summing. When it is
+    not provided (all-warehouses view) we deduplicate by (amount, amount_type)
+    so identical rates from multiple companies are counted only once.
     """
     tax_ids = {t for p in products for t in (p.get("taxes_id") or [])}
-    tax_map = {}
+    tax_map: dict = {}
     if tax_ids:
-        taxes = odoo.read("account.tax", list(tax_ids), fields=["amount", "amount_type"])
+        if company_id:
+            taxes = odoo.search_read(
+                "account.tax",
+                domain=[("id", "in", list(tax_ids)), ("company_id", "=", company_id)],
+                fields=["id", "amount", "amount_type"],
+                limit=200,
+            )
+        else:
+            taxes = odoo.read("account.tax", list(tax_ids), fields=["amount", "amount_type"])
         tax_map = {t["id"]: t for t in taxes}
+
     for p in products:
         ids = p.pop("taxes_id", None) or []
-        rate = sum(
-            tax_map[t]["amount"]
-            for t in ids
-            if tax_map.get(t, {}).get("amount_type") == "percent"
-        )
+        applicable = [t for t in ids if t in tax_map]
+
+        if company_id:
+            rate = sum(
+                tax_map[t]["amount"]
+                for t in applicable
+                if tax_map[t].get("amount_type") == "percent"
+            )
+        else:
+            # Deduplicate identical rates from multi-company duplicates
+            seen: set = set()
+            rate = 0.0
+            for t in applicable:
+                tax = tax_map[t]
+                if tax.get("amount_type") != "percent":
+                    continue
+                key = (tax["amount"], tax["amount_type"])
+                if key not in seen:
+                    seen.add(key)
+                    rate += tax["amount"]
+
         p["tax_rate"] = rate
-        p["tax_id"] = ids[0] if ids else None
+        p["tax_id"] = applicable[0] if applicable else None
 
 
 @router.get("/")
@@ -127,6 +161,7 @@ async def list_products(
         domain.append(("categ_id.name", "ilike", category))
 
     warehouse_id = await resolve_warehouse_id(current_user)
+    company_id = _get_company_id(odoo, warehouse_id)
 
     try:
         products = odoo.search_read(
@@ -136,12 +171,12 @@ async def list_products(
             limit=limit,
             offset=offset,
             order=f"{sort_by} {sort_dir}",
-            context=odoo_context(warehouse_id),
+            context=odoo_context(warehouse_id, company_id),
         )
         # Normalise lst_price → list_price so the frontend doesn't need to change
         for p in products:
             p["list_price"] = p.pop("lst_price", 0)
-        _attach_tax_rates(odoo, products)
+        _attach_tax_rates(odoo, products, company_id)
         total = odoo.count("product.product", domain)
         return {"products": products, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
@@ -338,12 +373,13 @@ async def get_product(product_id: int, current_user: dict = Depends(get_current_
     """Get a single product variant by its Odoo product.product ID."""
     odoo = get_odoo_client()
     warehouse_id = await resolve_warehouse_id(current_user)
+    company_id = _get_company_id(odoo, warehouse_id)
     try:
-        records = odoo.read("product.product", [product_id], fields=PRODUCT_FIELDS, context=odoo_context(warehouse_id))
+        records = odoo.read("product.product", [product_id], fields=PRODUCT_FIELDS, context=odoo_context(warehouse_id, company_id))
         if not records:
             raise HTTPException(status_code=404, detail="Product not found")
         records[0]["list_price"] = records[0].pop("lst_price", 0)
-        _attach_tax_rates(odoo, records)
+        _attach_tax_rates(odoo, records, company_id)
         return records[0]
     except HTTPException:
         raise
