@@ -876,7 +876,7 @@ export default function SalesTickets() {
             >
               <option value="">— Select —</option>
               {depositJournals.map(j => (
-                <option key={j.id} value={j.id}>{j.name} ({j.type})</option>
+                <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
               ))}
             </Select>
           </FormGroup>
