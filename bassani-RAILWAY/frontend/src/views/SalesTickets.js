@@ -74,6 +74,8 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
       price_unit:       p.list_price || 0,
       _tax_rate:        p.tax_rate   || 0,
       _sku:             p.default_code || "",
+      _stock:           Math.max(0, Math.floor(p.virtual_available || 0)),
+      product_uom_qty:  1,
     });
   };
 
@@ -157,15 +159,35 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
       </td>
 
       {/* ── Qty ── */}
-      <td className="p-2 w-20">
-        <input
-          type="number"
-          min="0.001"
-          step="1"
-          value={line.product_uom_qty}
-          onChange={e => onUpdate({ product_uom_qty: parseFloat(e.target.value) || 1 })}
-          className="w-full text-sm text-center border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-bassani-300 bg-white"
-        />
+      <td className="p-2 w-24">
+        {(() => {
+          const maxQty = line._stock > 0 ? line._stock : null;
+          const atMax  = maxQty !== null && line.product_uom_qty >= maxQty;
+          const overMax = maxQty !== null && line.product_uom_qty > maxQty;
+          return (
+            <div>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                max={maxQty ?? undefined}
+                value={line.product_uom_qty}
+                onChange={e => {
+                  const v = parseFloat(e.target.value) || 1;
+                  onUpdate({ product_uom_qty: maxQty ? Math.min(v, maxQty) : v });
+                }}
+                className={`w-full text-sm text-center border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 bg-white ${
+                  overMax  ? "border-red-400 focus:ring-red-300 text-red-600" :
+                  atMax    ? "border-amber-300 focus:ring-amber-300" :
+                             "border-gray-200 focus:ring-bassani-300"
+                }`}
+              />
+              {atMax && (
+                <p className="text-[10px] text-amber-500 text-center mt-0.5 leading-none">max available</p>
+              )}
+            </div>
+          );
+        })()}
       </td>
 
       {/* ── Unit Price ── */}
@@ -340,7 +362,7 @@ export default function SalesTickets() {
     _id: Date.now() + Math.random(),
     product_id: null, _product_label: "",
     name: "", product_uom_qty: 1,
-    price_unit: 0, _tax_rate: 0, _sku: "",
+    price_unit: 0, _tax_rate: 0, _sku: "", _stock: 0,
   });
 
   const openQuoteBuilder = async (ticket) => {
@@ -512,14 +534,20 @@ export default function SalesTickets() {
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>
                   {quoteWarehouses.length > 0 ? (
+                    <>
                     <Select
                       value={quoteWarehouseId}
                       onChange={e => setQuoteWarehouseId(e.target.value)}
+                      disabled={hasValidLines}
                     >
                       {quoteWarehouses.map(w => (
                         <option key={w.id} value={w.id}>{w.name}</option>
                       ))}
                     </Select>
+                    {hasValidLines && (
+                      <p className="text-[10px] text-gray-400 mt-1">Locked — remove all lines to change warehouse</p>
+                    )}
+                    </>
                   ) : (
                     <p className="text-sm text-gray-400">Default warehouse</p>
                   )}
