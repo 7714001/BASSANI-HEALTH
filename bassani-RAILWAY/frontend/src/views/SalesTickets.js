@@ -414,6 +414,7 @@ export default function SalesTickets() {
   const [quoteNote, setQuoteNote]               = useState("");
   const [quoteSaving, setQuoteSaving]           = useState(false);
   const [lastAddedId, setLastAddedId]           = useState(null);
+  const [quoteMode, setQuoteMode]               = useState("create"); // "create" | "edit"
 
   const newLine = () => ({
     _id: Date.now() + Math.random(),
@@ -428,6 +429,7 @@ export default function SalesTickets() {
     setQuoteLines([firstLine]);
     setLastAddedId(firstLine._id);
     setQuoteNote("");
+    setQuoteMode("create");
     setView("quote-builder");
 
     if (quoteWarehouses.length === 0) {
@@ -440,6 +442,24 @@ export default function SalesTickets() {
         console.warn("Quote builder — warehouses load failed (non-fatal)");
       }
     }
+  };
+
+  const openQuoteEdit = () => {
+    const lines = (detailOrder?.lines || []).map(l => ({
+      _id: Date.now() + Math.random(),
+      product_id:      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
+      _product_label:  l.name,
+      name:            l.name,
+      product_uom_qty: l.product_uom_qty,
+      price_unit:      l.price_unit,
+      _tax_rate: 0, _sku: "", _stock: 0,
+    }));
+    setQuoteTicket(detail);
+    setQuoteLines(lines.length > 0 ? lines : [newLine()]);
+    setLastAddedId(null);
+    setQuoteNote("");
+    setQuoteMode("edit");
+    setView("quote-builder");
   };
 
   const addLine = () => {
@@ -470,24 +490,32 @@ export default function SalesTickets() {
 
   const submitQuote = async () => {
     const validLines = quoteLines.filter(l => l.product_id);
-    if (validLines.length === 0) return toast.error("Add at least one product before creating the quote");
+    if (validLines.length === 0) return toast.error("Add at least one product before saving");
     setQuoteSaving(true);
     const tid = quoteTicket?.id;
+    const linePayload = validLines.map(l => ({
+      product_id: l.product_id, product_uom_qty: l.product_uom_qty,
+      price_unit: l.price_unit, name: l.name,
+    }));
     try {
-      await api.post(`/api/tickets/${tid}/create-order`, {
-        order_line: validLines.map(l => ({
-          product_id:      l.product_id,
-          product_uom_qty: l.product_uom_qty,
-          price_unit:      l.price_unit,
-          name:            l.name,
-        })),
-        warehouse_id: quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
-        note:         quoteNote || undefined,
-      });
-      toast.success("Quote created in Odoo — ticket advanced to Quote stage");
+      if (quoteMode === "edit") {
+        await api.put(`/api/tickets/${tid}/update-order`, {
+          order_line: linePayload,
+          note: quoteNote || undefined,
+        });
+        toast.success("Quote updated in Odoo");
+      } else {
+        await api.post(`/api/tickets/${tid}/create-order`, {
+          order_line: linePayload,
+          warehouse_id: quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
+          note: quoteNote || undefined,
+        });
+        toast.success("Quote created in Odoo — ticket advanced to Quote stage");
+      }
+      setQuoteMode("create");
       setView("detail");
       refreshDetail(tid);
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create quote"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to save quote"); }
     finally { setQuoteSaving(false); }
   };
 
@@ -728,6 +756,18 @@ export default function SalesTickets() {
                   {!detail.exit_status && (
                     <div className="space-y-3">
 
+                      {/* Edit Quote */}
+                      {detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                          <p className="text-xs text-gray-400 mb-3">
+                            Revise the quote — add, remove, or adjust lines before the customer confirms.
+                          </p>
+                          <BtnSecondary onClick={openQuoteEdit} className="w-full justify-center">
+                            <ShoppingCart size={13} />Edit Quote
+                          </BtnSecondary>
+                        </div>
+                      )}
+
                       {/* Cancel Quote */}
                       {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
                         <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
@@ -768,8 +808,8 @@ export default function SalesTickets() {
                         </div>
                       )}
 
-                      {/* Not Interested — sales clerk closes ticket after customer declines quote */}
-                      {detail.order_id && canDrive && (
+                      {/* Not Interested — client went cold before a quote was even built */}
+                      {!detail.order_id && canDrive && (
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
                           <p className="text-xs text-gray-400 mb-3">
                             Customer declined the quote? Close this ticket as not interested.
@@ -921,7 +961,7 @@ export default function SalesTickets() {
                 loading={quoteSaving}
                 disabled={!hasValidLines || quoteSaving}
               >
-                Create Quote in Odoo →
+                {quoteMode === "edit" ? "Update Quote in Odoo →" : "Create Quote in Odoo →"}
               </BtnPrimary>
             </div>
           }
@@ -934,8 +974,12 @@ export default function SalesTickets() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
               <div className="flex items-start justify-between mb-5">
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-gray-900">QUOTATION</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Draft — not yet confirmed in Odoo</p>
+                  <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+                    {quoteMode === "edit" ? "EDIT QUOTATION" : "QUOTATION"}
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {quoteMode === "edit" ? "Revising live draft in Odoo" : "Draft — not yet confirmed in Odoo"}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-0.5">Date</p>
@@ -950,7 +994,9 @@ export default function SalesTickets() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>
-                  {quoteWarehouses.length > 0 ? (
+                  {quoteMode === "edit" ? (
+                    <p className="text-sm text-gray-400 italic">Locked to existing order</p>
+                  ) : quoteWarehouses.length > 0 ? (
                     <>
                     <Select
                       value={quoteWarehouseId}

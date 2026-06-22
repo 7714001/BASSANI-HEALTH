@@ -63,6 +63,11 @@ class TicketOrderCreate(BaseModel):
     note: Optional[str] = ""
 
 
+class TicketOrderUpdate(BaseModel):
+    order_line: List[TicketOrderLine]
+    note: Optional[str] = ""
+
+
 class TicketDepositRegister(BaseModel):
     amount: float
     date: str           # YYYY-MM-DD
@@ -495,6 +500,103 @@ async def cancel_order_from_ticket(
         detail={"order_id": order_id, "order_name": order["name"]},
     )
     return {"success": True}
+
+
+@router.put("/{ticket_id}/update-order")
+async def update_order_from_ticket(
+    ticket_id: str,
+    body: TicketOrderUpdate,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """
+    Replace line items on an existing draft/sent Odoo sale.order.
+    The order must still be in quotation state — confirmed orders are locked
+    in Odoo and cannot be edited here. Replaces all lines atomically:
+    unlink existing, create new. Logs to ticket timeline and audit trail.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order on this ticket")
+    if not body.order_line:
+        raise HTTPException(status_code=400, detail="At least one product line is required")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "order_line", "company_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order = rows[0]
+    if order["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Order {order['name']} is already confirmed — lines are locked. "
+                "Cancel the order in Odoo first if a revision is needed."
+            ),
+        )
+
+    _co = order.get("company_id")
+    company_id = _co[0] if _co else None
+    ctx = company_context(company_id) or None
+
+    # Replace lines atomically: unlink all existing, then create the new set
+    existing_line_ids = order.get("order_line") or []
+    if existing_line_ids:
+        try:
+            odoo.unlink("sale.order.line", existing_line_ids)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error unlinking lines: {str(e)}")
+
+    try:
+        for l in body.order_line:
+            line_vals = {
+                "order_id": order_id,
+                "product_id": l.product_id,
+                "product_uom_qty": l.product_uom_qty,
+                "price_unit": round(l.price_unit, 2),
+            }
+            if l.name:
+                line_vals["name"] = l.name
+            odoo.create("sale.order.line", line_vals, context=ctx)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error writing lines: {str(e)}")
+
+    now = datetime.now(timezone.utc)
+    n = len(body.order_line)
+    timeline_note = f"Quote revised — {n} line{'s' if n != 1 else ''} (Odoo {order['name']})"
+    if body.note:
+        timeline_note += f". {body.note}"
+
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {"updated_at": now},
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now, "note": timeline_note,
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.update_order", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        after={"order_id": order_id, "line_count": n},
+    )
+    return {"success": True, "odoo_order_id": order_id}
 
 
 @router.post("/{ticket_id}/register-deposit")

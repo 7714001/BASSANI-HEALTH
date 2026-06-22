@@ -787,6 +787,17 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 **Design decision — deposit is optional before confirm:** For resellers on credit terms, the admin can confirm the order without a deposit being registered first. For direct inquiry customers requiring a 50% deposit, finance registers it first and then the admin confirms. The portal does not enforce the deposit before confirm — that's a business-process decision, not a technical gate.
 
+#### 8.7 — Quote Edit
+
+**Goal:** Allow a sales clerk to revise an existing draft/sent quotation without cancelling and rebuilding it — a common B2B scenario where a customer comes back requesting line item changes before confirming.
+
+- [x] `PUT /api/tickets/{id}/update-order` — replaces all lines on the linked Odoo `sale.order` atomically (unlink existing `sale.order.line` records, create new set). Only allowed on `draft`/`sent` state orders; returns 400 if already confirmed. Resolves company context from the order's `company_id` (same multi-company pattern as `create-order`). Appends a "Quote revised — N lines" entry to the ticket timeline and writes to the audit trail. Requires `tickets.sales`.
+- [x] **Edit Quote** button on ticket detail page — shown when `detailOrder.state` is `draft` or `sent` (ground-truth Odoo state, not ticket status). Opens the quote builder pre-populated with current Odoo order lines. Warehouse field shows "Locked to existing order" (cannot change warehouse without cancelling the order).
+- [x] Quote builder gains a `quoteMode` flag (`"create"` | `"edit"`). In edit mode: header shows "EDIT QUOTATION / Revising live draft in Odoo", submit button shows "Update Quote in Odoo →", warehouse selector is hidden. On save, calls `update-order` instead of `create-order`. On return, refreshes the detail page so the updated order document renders immediately.
+- [x] Three-way paper trail: portal timeline entry, portal audit log (`ticket.update_order`), Odoo's native order chatter (line changes appear in Odoo automatically via XML-RPC write).
+
+**Design decision — replace-all vs delta patch:** Unlinking all lines and recreating is simpler and produces the same end state. A delta patch (diff old vs new, only write changes) would be more Odoo-idiomatic but adds significant complexity for no user-facing benefit. Replace-all is the correct choice at this stage.
+
 #### 8.5 UI
 - [x] Sales Ticket view (`frontend/src/views/SalesTickets.js`, route `/tickets/sales`) — list + detail modal, stage timeline from `stage_history`, "Confirm Payment" action for finance, "Mark Not Interested" + stage-advance form for sales
 - [x] Orders Ticket view (`frontend/src/views/OrdersTickets.js`, route `/tickets/orders`) — **new React view, not an extension of the existing packing board UI as originally planned.** Correction found during implementation: the existing packing board UI is the static `packing-board.html`/`supervisor.html`/`packer.html` pages under `frontend/public/`, built for the warehouse floor (display-token / role-JWT auth, not the React SPA) — there was no React-rendered board to extend. QA Manager/Responsible Pharmacist/Orders Clerk are React-portal (ticketing-role) accounts, so they needed a new SPA view hitting the same `/api/packing/*` REST endpoints instead
