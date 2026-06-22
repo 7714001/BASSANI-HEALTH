@@ -13,6 +13,33 @@ from typing import Optional
 from database import col
 
 
+def get_company_id(odoo_client, warehouse_id: Optional[int]) -> Optional[int]:
+    """Return the Odoo company_id that owns this warehouse.
+
+    Required whenever creating a new Odoo record (sale.order, account.move,
+    account.payment) so the service account's default company does not override
+    the correct entity in a multi-company setup.  Always call this before any
+    odoo.create() or wizard call that involves a specific warehouse.
+    """
+    if not warehouse_id:
+        return None
+    try:
+        wh = odoo_client.read("stock.warehouse", [warehouse_id], fields=["company_id"])
+        if wh and wh[0].get("company_id"):
+            return wh[0]["company_id"][0]
+    except Exception:
+        pass
+    return None
+
+
+def company_context(company_id: Optional[int]) -> dict:
+    """Odoo context dict that scopes a create/wizard call to the correct company.
+    Merge this into any existing context dict before passing to Odoo."""
+    if not company_id:
+        return {}
+    return {"company_id": company_id, "allowed_company_ids": [company_id]}
+
+
 async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
     role = current_user.get("role")
     if role in ("warehouse_supervisor", "packer"):

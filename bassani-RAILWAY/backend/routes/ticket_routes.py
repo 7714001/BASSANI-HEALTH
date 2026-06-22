@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from auth import require_permission, require_any_permission
 from odoo_client import get_odoo_client, odoo as odoo_call
+from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
@@ -519,9 +520,15 @@ async def register_deposit(
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
 
+    # Resolve the order's company so wizard calls create records in the correct entity
+    _order_co = odoo.read("sale.order", [order_id], fields=["company_id"])
+    _co = _order_co[0].get("company_id") if _order_co else None
+    order_company_id = _co[0] if _co else None
+    _cctx = company_context(order_company_id)
+
     # Step 1: Create fixed-amount down payment invoice via Odoo wizard
     try:
-        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id}
+        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
         wizard_id = odoo_call(
             "sale.advance.payment.inv", "create",
             [{"advance_payment_method": "fixed", "fixed_amount": body.amount}],
@@ -550,7 +557,7 @@ async def register_deposit(
 
     # Step 2: Register and reconcile payment via Odoo wizard
     try:
-        pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id]}
+        pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
         pay_wizard_id = odoo_call(
             "account.payment.register", "create",
             [{

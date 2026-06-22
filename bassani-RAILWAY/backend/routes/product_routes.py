@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
-from warehouse_context import resolve_warehouse_id, odoo_context
+from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
 from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -60,21 +60,6 @@ PRODUCT_FIELDS = [
     "qty_available", "virtual_available", "taxes_id",
     "description", "active", "product_tmpl_id",
 ]
-
-
-def _get_company_id(odoo, warehouse_id: Optional[int]) -> Optional[int]:
-    """Return the Odoo company that owns this warehouse.
-    Used to scope tax lookups and stock computed fields to the correct entity
-    in a multi-company setup — without this, Odoo sums across all companies."""
-    if not warehouse_id:
-        return None
-    try:
-        wh = odoo.read("stock.warehouse", [warehouse_id], fields=["company_id"])
-        if wh and wh[0].get("company_id"):
-            return wh[0]["company_id"][0]
-    except Exception:
-        pass
-    return None
 
 
 def _attach_tax_rates(odoo, products: list, company_id: Optional[int] = None) -> None:
@@ -161,7 +146,7 @@ async def list_products(
         domain.append(("categ_id.name", "ilike", category))
 
     warehouse_id = await resolve_warehouse_id(current_user)
-    company_id = _get_company_id(odoo, warehouse_id)
+    company_id = get_company_id(odoo, warehouse_id)
 
     try:
         products = odoo.search_read(
@@ -373,7 +358,7 @@ async def get_product(product_id: int, current_user: dict = Depends(get_current_
     """Get a single product variant by its Odoo product.product ID."""
     odoo = get_odoo_client()
     warehouse_id = await resolve_warehouse_id(current_user)
-    company_id = _get_company_id(odoo, warehouse_id)
+    company_id = get_company_id(odoo, warehouse_id)
     try:
         records = odoo.read("product.product", [product_id], fields=PRODUCT_FIELDS, context=odoo_context(warehouse_id, company_id))
         if not records:

@@ -6,7 +6,7 @@ from auth import get_current_user, require_permission
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
-from warehouse_context import resolve_warehouse_id, odoo_context
+from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -277,6 +277,8 @@ async def create_order(
         for l in order.order_line
     ]
 
+    cid = get_company_id(odoo, warehouse_id)
+
     vals = {
         "partner_id": effective_partner_id,
         "order_line": lines,
@@ -286,7 +288,7 @@ async def create_order(
         vals["warehouse_id"] = warehouse_id
 
     try:
-        odoo_order_id = odoo.create("sale.order", vals)
+        odoo_order_id = odoo.create("sale.order", vals, context=company_context(cid) or None)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
@@ -405,11 +407,13 @@ async def confirm_order(
     # Unlike the warning at order creation, this blocks: confirming commits to
     # an invoice, so it's the point where being over limit actually matters.
     try:
-        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total"])
+        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "company_id", "warehouse_id"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not read order: {str(e)}")
     if not pre_rows:
         raise HTTPException(status_code=404, detail="Order not found")
+    _co = pre_rows[0].get("company_id")
+    order_company_id = _co[0] if _co else None
     partner = pre_rows[0].get("partner_id")
     if partner:
         partner_rows = odoo.read("res.partner", [partner[0]], fields=["credit", "credit_limit"])
@@ -456,7 +460,10 @@ async def confirm_order(
     try:
         # Use the advance payment wizard — the only public XML-RPC route for
         # creating invoices from a sale order (_create_invoices is private).
-        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id}
+        ctx = {
+            "active_ids": [order_id], "active_model": "sale.order", "active_id": order_id,
+            **company_context(order_company_id),
+        }
         wizard_id = odoo_call(
             "sale.advance.payment.inv", "create",
             [{"advance_payment_method": "delivered"}],

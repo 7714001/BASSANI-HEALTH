@@ -38,6 +38,7 @@ These govern every decision made during implementation. Do not deviate from them
 - **Everything runs on Railway.** No external services beyond Resend (email API), Sentry (error monitoring), and Cloudflare (CDN/backups). No new infrastructure without explicit decision.
 - **Background tasks do not block API responses.** Emails, notifications, and non-critical writes always fire via `BackgroundTasks`.
 - **Every admin action is audit-logged.** Every state change on a financial record captures actor, timestamp, IP, and before/after values.
+- **All Odoo reads and writes are warehouse- and company-scoped.** Bassani operates across multiple warehouses belonging to different Odoo companies. Every stock read (`qty_available`, `virtual_available`), tax lookup (`taxes_id`), and record creation (`sale.order`, `account.move`, `account.payment`) must be scoped to the resolved warehouse's company — passing `company_id` and `allowed_company_ids` in context for creates/wizards, and filtering tax lookups by `company_id`. Without this, Odoo returns cross-company totals for reads and raises company-consistency errors on writes. The shared helpers `get_company_id()` and `company_context()` in `warehouse_context.py` are the single implementation point — any new endpoint that touches Odoo stock, pricing, or financial records must use them. (Identified and fixed 2026-06-22.)
 
 ---
 
