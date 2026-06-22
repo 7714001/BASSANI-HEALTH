@@ -240,9 +240,9 @@ async def low_stock_products(current_user: dict = Depends(get_current_user)):
             domain=[
                 ("is_storable", "=", True),
                 ("active", "=", True),
-                ("qty_available", "<", 10),
+                ("virtual_available", "<", 10),
             ],
-            fields=["id", "name", "display_name", "default_code", "qty_available", "categ_id", "uom_id"],
+            fields=["id", "name", "display_name", "default_code", "virtual_available", "categ_id", "uom_id"],
             limit=50,
             order="name asc",
             context=odoo_context(warehouse_id),

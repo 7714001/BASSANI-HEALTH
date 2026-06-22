@@ -59,14 +59,14 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             [("type", "in", ["product", "consu"]), ("active", "=", True)]
         )
         low_stock = odoo.count(
-            "product.template",
-            [("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
+            "product.product",
+            [("type", "=", "product"), ("virtual_available", "<", 10), ("active", "=", True)],
             context=ctx,
         )
         low_stock_products = odoo.search_read(
-            "product.template",
-            domain=[("type", "=", "product"), ("qty_available", "<", 10), ("active", "=", True)],
-            fields=["id", "name", "qty_available", "uom_id", "categ_id"],
+            "product.product",
+            domain=[("type", "=", "product"), ("virtual_available", "<", 10), ("active", "=", True)],
+            fields=["id", "name", "virtual_available", "uom_id", "categ_id"],
             limit=5,
             order="name asc",
             context=ctx,
@@ -564,11 +564,11 @@ async def dead_stock(
     warehouse_id = await resolve_warehouse_id(current_user)
 
     try:
-        # Products with stock
+        # Products with stock (per-variant so cross-variant aggregation can't hide shortages)
         products = odoo.search_read(
-            "product.template",
-            domain=[("type", "=", "product"), ("qty_available", ">", 0), ("active", "=", True)],
-            fields=["id", "name", "default_code", "qty_available", "categ_id", "uom_id"],
+            "product.product",
+            domain=[("type", "=", "product"), ("virtual_available", ">", 0), ("active", "=", True)],
+            fields=["id", "name", "default_code", "virtual_available", "categ_id", "uom_id"],
             limit=500,
             context=odoo_context(warehouse_id),
         )
@@ -597,7 +597,7 @@ async def dead_stock(
                     "product_name": p["name"],
                     "sku": p.get("default_code", ""),
                     "category": p["categ_id"][1] if p.get("categ_id") else "",
-                    "stock": p["qty_available"],
+                    "stock": p["virtual_available"],
                     "uom": p["uom_id"][1] if p.get("uom_id") else "units",
                     "status": "never_sold" if p["id"] not in recently_sold_ids else "slow_moving",
                 })

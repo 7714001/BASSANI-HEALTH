@@ -251,8 +251,8 @@ export default function Dashboard() {
                             <p className="text-xs font-medium text-gray-800 leading-none">{p.name}</p>
                             <p className="text-[10px] text-gray-400 mt-0.5">{p.categ_id?.[1]}</p>
                           </div>
-                          <span className={`text-xs font-semibold ${p.qty_available <= 0 ? "text-red-600" : "text-amber-600"}`}>
-                            {p.qty_available} {p.uom_id?.[1] || "units"}
+                          <span className={`text-xs font-semibold ${p.virtual_available <= 0 ? "text-red-600" : "text-amber-600"}`}>
+                            {p.virtual_available} {p.uom_id?.[1] || "units"}
                           </span>
                         </div>
                       ))}
