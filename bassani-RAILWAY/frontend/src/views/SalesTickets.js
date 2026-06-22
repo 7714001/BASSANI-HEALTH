@@ -110,7 +110,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
         )}
         {dropdownOpen && searchResults.length > 0 && (
-          <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
+          <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
             {searchResults.map(p => (
               <button
                 key={p.id}
@@ -515,7 +515,7 @@ export default function SalesTickets() {
             </div>
 
             {/* ── Line items ── */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
               <table className="w-full">
                 <thead>
                   <tr className="border-b-2 border-gray-100">
