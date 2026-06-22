@@ -415,6 +415,21 @@ export default function SalesTickets() {
   const [quoteSaving, setQuoteSaving]           = useState(false);
   const [lastAddedId, setLastAddedId]           = useState(null);
   const [quoteMode, setQuoteMode]               = useState("create"); // "create" | "edit"
+  const [quoteCustomer, setQuoteCustomer]               = useState(null); // {id, name} — edit mode only
+  const [quoteCustomerSearch, setQuoteCustomerSearch]   = useState("");
+  const [quoteCustomerResults, setQuoteCustomerResults] = useState([]);
+  const [quoteCustomerEditing, setQuoteCustomerEditing] = useState(false);
+
+  useEffect(() => {
+    if (quoteMode !== "edit" || quoteCustomerSearch.length < 2) { setQuoteCustomerResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get("/api/customers/search", { params: { q: quoteCustomerSearch, limit: 8 } });
+        setQuoteCustomerResults(r.data.customers || []);
+      } catch { setQuoteCustomerResults([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [quoteCustomerSearch, quoteMode]);
 
   const newLine = () => ({
     _id: Date.now() + Math.random(),
@@ -454,6 +469,15 @@ export default function SalesTickets() {
       price_unit:      l.price_unit,
       _tax_rate: 0, _sku: "", _stock: 0,
     }));
+    // Init customer from the live Odoo order, not the stale ticket field
+    const currentCustomer = {
+      id:   Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : null,
+      name: detailOrder?.partner_detail?.name || (Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[1] : ""),
+    };
+    setQuoteCustomer(currentCustomer);
+    setQuoteCustomerSearch("");
+    setQuoteCustomerResults([]);
+    setQuoteCustomerEditing(false);
     setQuoteTicket(detail);
     setQuoteLines(lines.length > 0 ? lines : [newLine()]);
     setLastAddedId(null);
@@ -501,6 +525,7 @@ export default function SalesTickets() {
       if (quoteMode === "edit") {
         await api.put(`/api/tickets/${tid}/update-order`, {
           order_line: linePayload,
+          customer_id: quoteCustomer?.id || undefined,
           note: quoteNote || undefined,
         });
         toast.success("Quote updated in Odoo");
@@ -952,7 +977,7 @@ export default function SalesTickets() {
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
         <TopBar
           title="Quote Builder"
-          subtitle={quoteTicket?.customer_name}
+          subtitle={quoteMode === "edit" ? (quoteCustomer?.name || quoteTicket?.customer_name) : quoteTicket?.customer_name}
           actions={
             <div className="flex items-center gap-2">
               <BtnSecondary onClick={() => setView("detail")}>← Back to Ticket</BtnSecondary>
@@ -989,8 +1014,57 @@ export default function SalesTickets() {
               <div className="pt-5 border-t border-gray-100 grid grid-cols-2 gap-8">
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Bill To</p>
-                  <p className="text-base font-semibold text-gray-900">{quoteTicket?.customer_name}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Customer locked — from ticket</p>
+                  {quoteMode === "edit" ? (
+                    quoteCustomerEditing ? (
+                      <div className="space-y-1.5">
+                        <Input
+                          value={quoteCustomerSearch}
+                          onChange={e => setQuoteCustomerSearch(e.target.value)}
+                          placeholder="Search customers…"
+                          autoFocus
+                        />
+                        {quoteCustomerResults.length > 0 && (
+                          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-36 overflow-y-auto">
+                            {quoteCustomerResults.map(c => (
+                              <button
+                                key={c.id}
+                                onClick={() => {
+                                  setQuoteCustomer(c);
+                                  setQuoteCustomerEditing(false);
+                                  setQuoteCustomerSearch("");
+                                  setQuoteCustomerResults([]);
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+                              >
+                                {c.name}{c.city && <span className="text-xs text-gray-400"> — {c.city}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          onClick={() => { setQuoteCustomerEditing(false); setQuoteCustomerSearch(""); setQuoteCustomerResults([]); }}
+                          className="text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-base font-semibold text-gray-900">{quoteCustomer?.name}</p>
+                        <button
+                          onClick={() => setQuoteCustomerEditing(true)}
+                          className="text-xs text-bassani-600 hover:text-bassani-700 mt-0.5"
+                        >
+                          Change customer
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    <div>
+                      <p className="text-base font-semibold text-gray-900">{quoteTicket?.customer_name}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">Customer locked — from ticket</p>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>

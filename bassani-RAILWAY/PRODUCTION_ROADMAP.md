@@ -796,6 +796,8 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Quote builder gains a `quoteMode` flag (`"create"` | `"edit"`). In edit mode: header shows "EDIT QUOTATION / Revising live draft in Odoo", submit button shows "Update Quote in Odoo →", warehouse selector is hidden. On save, calls `update-order` instead of `create-order`. On return, refreshes the detail page so the updated order document renders immediately.
 - [x] Three-way paper trail: portal timeline entry, portal audit log (`ticket.update_order`), Odoo's native order chatter (line changes appear in Odoo automatically via XML-RPC write).
 
+- [x] **Customer change in edit mode** — the "Bill To" field in the quote builder shows the live Odoo customer (from `detailOrder`, not the stale ticket field). A "Change customer" link opens an inline debounced search. If a different customer is selected, `update-order` calls `odoo.write("sale.order", [id], {"partner_id": new_id})` and syncs `customer_id` / `customer_name` on the ticket document. The backend only writes if the partner actually changed (compares against `partner_id` on the fetched order). Timeline entry notes the customer change (e.g. "Quote revised — 3 lines | Customer changed to Acme Ltd").
+
 **Design decision — replace-all vs delta patch:** Unlinking all lines and recreating is simpler and produces the same end state. A delta patch (diff old vs new, only write changes) would be more Odoo-idiomatic but adds significant complexity for no user-facing benefit. Replace-all is the correct choice at this stage.
 
 #### 8.5 UI

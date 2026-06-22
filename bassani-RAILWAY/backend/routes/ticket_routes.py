@@ -65,6 +65,7 @@ class TicketOrderCreate(BaseModel):
 
 class TicketOrderUpdate(BaseModel):
     order_line: List[TicketOrderLine]
+    customer_id: Optional[int] = None   # if provided, updates partner_id on the Odoo order
     note: Optional[str] = ""
 
 
@@ -532,7 +533,7 @@ async def update_order_from_ticket(
     odoo = get_odoo_client()
 
     try:
-        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "order_line", "company_id"])
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "order_line", "company_id", "partner_id"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not rows:
@@ -550,6 +551,27 @@ async def update_order_from_ticket(
     _co = order.get("company_id")
     company_id = _co[0] if _co else None
     ctx = company_context(company_id) or None
+
+    # Optionally update the customer if one was provided and differs from current
+    ticket_field_updates: dict = {}
+    customer_note = ""
+    if body.customer_id:
+        current_partner_id = order["partner_id"][0] if order.get("partner_id") else None
+        if body.customer_id != current_partner_id:
+            try:
+                partners = odoo.read("res.partner", [body.customer_id], fields=["name"])
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Odoo error fetching customer: {str(e)}")
+            if not partners:
+                raise HTTPException(status_code=404, detail="Customer not found in Odoo")
+            new_customer_name = partners[0]["name"]
+            try:
+                odoo.write("sale.order", [order_id], {"partner_id": body.customer_id})
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Odoo error updating customer: {str(e)}")
+            ticket_field_updates["customer_id"] = body.customer_id
+            ticket_field_updates["customer_name"] = new_customer_name
+            customer_note = f" | Customer changed to {new_customer_name}"
 
     # Replace lines atomically: unlink all existing, then create the new set
     existing_line_ids = order.get("order_line") or []
@@ -575,14 +597,15 @@ async def update_order_from_ticket(
 
     now = datetime.now(timezone.utc)
     n = len(body.order_line)
-    timeline_note = f"Quote revised — {n} line{'s' if n != 1 else ''} (Odoo {order['name']})"
+    timeline_note = f"Quote revised — {n} line{'s' if n != 1 else ''} (Odoo {order['name']}){customer_note}"
     if body.note:
         timeline_note += f". {body.note}"
 
+    mongo_set = {"updated_at": now, **ticket_field_updates}
     await col("tickets").update_one(
         {"_id": oid},
         {
-            "$set": {"updated_at": now},
+            "$set": mongo_set,
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
@@ -592,9 +615,9 @@ async def update_order_from_ticket(
     )
     await audit_log(
         "ticket.update_order", "ticket", ticket_id,
-        entity_label=ticket.get("customer_name", ""),
+        entity_label=ticket_field_updates.get("customer_name", ticket.get("customer_name", "")),
         user=current_user,
-        after={"order_id": order_id, "line_count": n},
+        after={"order_id": order_id, "line_count": n, **ticket_field_updates},
     )
     return {"success": True, "odoo_order_id": order_id}
 
