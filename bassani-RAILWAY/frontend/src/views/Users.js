@@ -106,13 +106,14 @@ const PERMISSION_GROUPS = [
   },
   {
     domain: "tickets",
-    label: "Tickets (Phase 8)",
+    label: "Tickets",
     actions: [
       { key: "sales",           label: "Sales ticket queue" },
       { key: "orders",          label: "Orders ticket queue" },
       { key: "finance_confirm", label: "Confirm payment received" },
       { key: "qa_approve",      label: "QA approval" },
       { key: "rp_approve",      label: "Responsible Pharmacist approval" },
+      { key: "manage",          label: "Override ticket stage manually (admin only)" },
     ],
   },
 ];
@@ -161,7 +162,7 @@ const DEFAULT_ADMIN_PERMS = {
   users:      { manage: false },
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
-  tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false },
+  tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────

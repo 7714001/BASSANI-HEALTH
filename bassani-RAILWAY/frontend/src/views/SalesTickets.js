@@ -244,6 +244,7 @@ export default function SalesTickets() {
   const { can, user } = useAuth();
   const canDrive   = can("tickets.sales");
   const canFinance = can("tickets.finance_confirm");
+  const canManage  = can("tickets.manage");
 
   // ── List state ────────────────────────────────────────────────────────────
   const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
@@ -727,18 +728,6 @@ export default function SalesTickets() {
                   {!detail.exit_status && (
                     <div className="space-y-3">
 
-                      {/* Build Quote */}
-                      {!detail.order_id && detail.source === "direct" && canDrive && (
-                        <div className="bg-bassani-50 border border-bassani-200 rounded-2xl p-4">
-                          <p className="text-xs text-bassani-700 mb-3">
-                            Build the quote — opens the document builder to add products line by line.
-                          </p>
-                          <BtnPrimary onClick={() => openQuoteBuilder(detail)} className="w-full justify-center">
-                            <ShoppingCart size={13} />Build Quote
-                          </BtnPrimary>
-                        </div>
-                      )}
-
                       {/* Cancel Quote */}
                       {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
                         <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
@@ -779,10 +768,26 @@ export default function SalesTickets() {
                         </div>
                       )}
 
-                      {/* Stage advance */}
-                      {canDrive && (
+                      {/* Not Interested — sales clerk closes ticket after customer declines quote */}
+                      {detail.order_id && canDrive && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                          <p className="text-xs text-gray-400 mb-3">
+                            Customer declined the quote? Close this ticket as not interested.
+                          </p>
+                          <BtnSecondary
+                            onClick={() => markExit("not_interested")}
+                            disabled={saving}
+                            className="w-full justify-center text-xs"
+                          >
+                            <XCircle size={12} />Not Interested
+                          </BtnSecondary>
+                        </div>
+                      )}
+
+                      {/* Stage override — admin/super_admin only */}
+                      {canManage && (
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Move Stage</p>
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Override Stage</p>
                           <FormGroup label="Stage">
                             <Select value={stageForm.status} onChange={e => setStageForm({ ...stageForm, status: e.target.value })}>
                               {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
@@ -812,18 +817,9 @@ export default function SalesTickets() {
                               placeholder="Optional note for the timeline"
                             />
                           </FormGroup>
-                          <div className="flex gap-2">
-                            <BtnSecondary
-                              onClick={() => markExit("not_interested")}
-                              disabled={saving}
-                              className="flex-1 justify-center text-xs"
-                            >
-                              <XCircle size={12} />Not Interested
-                            </BtnSecondary>
-                            <BtnPrimary onClick={advance} loading={saving} className="flex-1 justify-center">
-                              Save
-                            </BtnPrimary>
-                          </div>
+                          <BtnPrimary onClick={advance} loading={saving} className="w-full justify-center">
+                            Save
+                          </BtnPrimary>
                         </div>
                       )}
                     </div>

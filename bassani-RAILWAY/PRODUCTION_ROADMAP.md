@@ -740,6 +740,7 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - **Orders ticket = the existing `packing_board` document, extended — not a second collection.** The packing board already implements `queued → packing → ready → collected` with live WebSocket updates. Adding `cancelled`/`incomplete` statuses plus QA/RP approval fields is additive.
 - **Finance's "50% Payment Received" confirmation reads Odoo's real invoice `payment_state`/`amount_residual`** — consistent with the Odoo-as-financial-source-of-truth principle. If Odoo shows no payment, the portal blocks confirmation.
 - **New roles map 1:1 to named staff**: Merveille → `sales` (`tickets.sales`), Tshidi → `orders_clerk` (`tickets.orders`), Kashi & Ragini → `finance` (`tickets.finance_confirm`), Cullen Grant → `qa_manager` (`tickets.qa_approve`), Rookshanna Hussain → `responsible_pharmacist` (`tickets.rp_approve`).
+- **`tickets.manage` permission** gates the manual "Override Stage" form on the ticket detail page. `super_admin` always has it; `admin` accounts can be granted it explicitly. No other role receives it. The ticket pipeline advances organically via clerk actions (building a quote, registering a deposit, etc.) — the override form exists only to correct mistakes or unblock edge cases. Clerks see the info and action cards but never the stage selector.
 - Incomplete always requires a free-text reason. QA and RP approvals are independent.
 
 ### Tasks
