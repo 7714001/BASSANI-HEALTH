@@ -675,6 +675,13 @@ export default function SalesTickets() {
                                 <p className="text-xs text-gray-400">VAT: {detailOrder.partner_detail.vat}</p>
                               )}
                             </div>
+                            <div>
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>
+                              <p className="text-sm font-semibold text-gray-900">
+                                {Array.isArray(detailOrder.warehouse_id) ? detailOrder.warehouse_id[1] : "—"}
+                              </p>
+                              <p className="text-xs text-gray-400 mt-0.5">Stock deducted from this location</p>
+                            </div>
                           </div>
                         </div>
 

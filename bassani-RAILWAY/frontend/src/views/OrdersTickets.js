@@ -198,6 +198,10 @@ export default function OrdersTickets() {
                               <span className="font-medium text-gray-700">{detail.packer_name}</span>
                             </div>
                           )}
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-400 uppercase font-semibold tracking-wide">Warehouse</span>
+                            <span className="font-medium text-gray-700">{detail.warehouse_name || "—"}</span>
+                          </div>
                         </div>
                       </div>
                     </div>

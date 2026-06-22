@@ -35,7 +35,7 @@ class StatusUpdate(BaseModel):
 ORDER_FIELDS = [
     "id", "name", "partner_id", "date_order", "amount_untaxed",
     "amount_tax", "amount_total", "state", "invoice_status",
-    "order_line", "note", "user_id",
+    "order_line", "note", "user_id", "warehouse_id",
 ]
 
 
@@ -533,7 +533,8 @@ async def confirm_order(
                 now = datetime.now(timezone.utc)
                 doc = {
                     "order_id": str(order_id),
-                    "warehouse_id": order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
+                    "warehouse_id":   order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
+                    "warehouse_name": order_data["warehouse_id"][1] if order_data.get("warehouse_id") else None,
                     "customer_name": partner_name,
                     "customer_city": "",
                     "items": items,
