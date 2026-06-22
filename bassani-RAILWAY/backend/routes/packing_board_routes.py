@@ -502,6 +502,72 @@ async def cancel_entry(
     return {"success": True}
 
 
+@router.get("/entry/{order_id}")
+async def get_entry(order_id: str, _: dict = Depends(require_board_access)):
+    entry = await col("packing_board").find_one({"order_id": order_id}, NO_ID)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return entry
+
+
+@router.put("/mark-packing")
+async def mark_packing(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk: advance a queued order to packing."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] != "queued":
+        raise HTTPException(status_code=400, detail="Order must be queued before marking as packing")
+    updated = await _do_update_status(body.order_id, "packing", current_user)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    return {"success": True}
+
+
+@router.put("/mark-ready")
+async def mark_ready(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk: advance a packing order to ready for inspection."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] != "packing":
+        raise HTTPException(status_code=400, detail="Order must be packing before marking as ready")
+    updated = await _do_update_status(body.order_id, "ready", current_user)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    return {"success": True}
+
+
+@router.put("/override-status")
+async def override_status(
+    body: UpdateStatus,
+    current_user: dict = Depends(require_permission("tickets.manage")),
+):
+    """Admin override — set any status directly (tickets.manage permission required)."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    updated = await col("packing_board").find_one_and_update(
+        {"order_id": body.order_id},
+        {"$set": {"status": body.status}},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    updated.pop("_id", None)
+    await push_update(updated)
+    await audit_log("packing.override_status", "packing_board", body.order_id,
+                    entity_label=body.order_id, user=current_user,
+                    detail={"from": entry["status"], "to": body.status})
+    return {"success": True}
+
+
 @router.get("/board")
 async def get_board(warehouse_id: Optional[int] = None, _: dict = Depends(require_board_access)):
     return {"entries": await get_board_state(warehouse_id)}

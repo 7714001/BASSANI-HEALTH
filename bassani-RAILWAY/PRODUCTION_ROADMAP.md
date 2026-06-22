@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-06-19  
+**Last Updated:** 2026-06-22  
 **Overall Status:** 🟡 Pre-Production — Phase 0 complete, Phase 1 in progress (CORS + 2FA deferred to pre-launch)  
 
 ---
@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–4 (8.1–8.6 code complete) — 2026-06-21 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–5 (8.1–8.8 code complete) — 2026-06-22 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -722,8 +722,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 8.1–8.6 code complete; sub-deploys 1–4 done; staff accounts not yet created  
-**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19  
+**Status:** 🟡 In Progress — 8.1–8.8 code complete; sub-deploys 1–5 done; staff accounts not yet created  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22  
 
 ### Context
 Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
@@ -801,9 +801,29 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 **Design decision — replace-all vs delta patch:** Unlinking all lines and recreating is simpler and produces the same end state. A delta patch (diff old vs new, only write changes) would be more Odoo-idiomatic but adds significant complexity for no user-facing benefit. Replace-all is the correct choice at this stage.
 
 #### 8.5 UI
-- [x] Sales Ticket view (`frontend/src/views/SalesTickets.js`, route `/tickets/sales`) — list + detail modal, stage timeline from `stage_history`, "Confirm Payment" action for finance, "Mark Not Interested" + stage-advance form for sales
-- [x] Orders Ticket view (`frontend/src/views/OrdersTickets.js`, route `/tickets/orders`) — **new React view, not an extension of the existing packing board UI as originally planned.** Correction found during implementation: the existing packing board UI is the static `packing-board.html`/`supervisor.html`/`packer.html` pages under `frontend/public/`, built for the warehouse floor (display-token / role-JWT auth, not the React SPA) — there was no React-rendered board to extend. QA Manager/Responsible Pharmacist/Orders Clerk are React-portal (ticketing-role) accounts, so they needed a new SPA view hitting the same `/api/packing/*` REST endpoints instead
+- [x] Sales Ticket view (`frontend/src/views/SalesTickets.js`, route `/tickets/sales`) — upgraded in 8.6/8.7 to a three-view full-page flow (list → detail → quote-builder); see 8.6 and 8.7 for full detail
+- [x] Orders Ticket view (`frontend/src/views/OrdersTickets.js`, route `/tickets/orders`) — **new React view, not an extension of the existing packing board UI as originally planned.** Correction found during implementation: the existing packing board UI is the static `packing-board.html`/`supervisor.html`/`packer.html` pages under `frontend/public/`, built for the warehouse floor (display-token / role-JWT auth, not the React SPA) — there was no React-rendered board to extend. QA Manager/Responsible Pharmacist/Orders Clerk are React-portal (ticketing-role) accounts, so they needed a new SPA view hitting the same `/api/packing/*` REST endpoints instead. Upgraded to full-page detail in 8.8 — see below
 - [x] Each named role sees only tickets relevant to their permission domain — both new Sidebar links (`Tickets` section) are gated by `permissions: [...]` (OR-matched against `can()`), a small generalisation of the existing single-`permission` nav filter; in-page action buttons are independently gated per action (e.g. an account with only `tickets.qa_approve` sees the QA approve button but not RP approve or complete/incomplete/cancel)
+
+#### 8.8 — Orders Tickets Full-Page Detail (Strictly Linear Pipeline)
+
+**Goal:** Match the full-page detail pattern introduced for Sales Tickets (8.6) on the Orders side, with strictly linear role-gated pipeline advancement so no stage can be skipped accidentally.
+
+**Pipeline (strictly enforced — each step only shows for the right role at the right state):**
+- `queued` → Orders Clerk: "Mark as Packing"
+- `packing` → Orders Clerk: "Mark as Ready" or "Mark Incomplete" (with reason)
+- `ready` → QA Manager: "QA Approve" (independently); RP: "RP Approve" (independently); Orders Clerk: "Mark Complete" (only once both approved) or "Mark Incomplete"
+- `tickets.manage`: Override Stage dropdown (any status, audit-logged)
+
+- [x] `GET /api/packing/entry/{order_id}` — single packing board entry lookup (board access required); used by the detail page to load and refresh without needing the full board list
+- [x] `PUT /api/packing/mark-packing` — queued → packing (`tickets.orders` required; 400 if not queued)
+- [x] `PUT /api/packing/mark-ready` — packing → ready (`tickets.orders` required; 400 if not packing)
+- [x] `PUT /api/packing/override-status` — set any status directly (`tickets.manage` required); audit-logged with `from`/`to` values
+- [x] `OrdersTickets.js` — full rewrite. Two-view flow: list | detail (no quote-builder needed — Orders tickets are fulfilment-only). Left panel shows the full order document: customer, PS/invoice/DN numbers, packer, items table with per-item tick status (from `item_ticks`), notes, and incomplete reason block. Right sidebar: status chip + key timestamps, QA/RP approval status cards, role-gated action cards (see pipeline above), Override Stage form for `tickets.manage`
+- [x] `refreshDetail(order_id)` pattern — every action stays on the detail page and refreshes in place (same architecture as Sales Tickets `refreshDetail`); list silently updates in background
+- [x] Incomplete reason modal overlays the detail page (same pattern as deposit modal in Sales Tickets)
+
+**Design decision — strictly linear:** Packing → Ready → Complete cannot be skipped or reversed by the orders_clerk. The floor board (WebSocket packer app) and the portal orders clerk now share the same linear status model. Mark Incomplete is available at `packing` or `ready` (but not `queued`) since there is nothing yet to flag incomplete at queue time.
 
 ### Definition of Done
 - [ ] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
@@ -823,6 +843,8 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 > **Sub-deploy 5 (2026-06-21):** 8.6 Direct inquiry quote builder + portal deposit registration. Every gap that previously required Merveille or finance to open Odoo is now covered in the portal. `ticket_routes.py` gained three new action endpoints (`create-order`, `cancel-order`, `register-deposit`) plus a `payment-journals` lookup used by the deposit modal. The down payment invoice + payment registration flow mirrors the wizard sequence Odoo uses internally (`sale.advance.payment.inv` to create the invoice, `account.payment.register` to post and reconcile the payment) — both are XML-RPC calls, keeping Odoo as the financial source of truth. `GET /api/orders/` now batch-queries the `tickets` collection and attaches `linked_ticket` to each row so the Orders table shows pipeline status at a glance. On the frontend, the Sales Ticket detail modal gained three conditional action panels: Build Quote (full-page document-style builder), Cancel Quote (confirm dialog, only on pre-confirm stages), and Register Deposit (amount, date, journal). The quote builder uses **per-row debounced live Odoo search** (300ms, name + SKU) rather than a preloaded product list — no catalogue size cap, results are always live from Odoo. `GET /api/products/` search parameter extended to match `default_code` (SKU) as well as name via an Odoo OR domain. Deposit is optional before order confirmation — credit-term resellers don't need one.
 
 > **Sub-deploy 4 (2026-06-19):** Unified pipeline — every portal order auto-creates a Sales ticket. Key realisation: the ticket system was initially designed as a separate layer for mailbox inquiries, but the correct model is that it IS the processing pipeline for all orders, regardless of source. Changes: `create_order()` now inserts a `tickets` document (best-effort, non-blocking) immediately after the Odoo order is created — `source: "portal"`, `status: "sale_order"`, `order_id` already linked, `assigned_to` set to the creating user if they hold `tickets.sales`, otherwise `null`. `GET /api/tickets` updated so `sales`-role users see their own queue plus all unassigned tickets. `PUT /api/tickets/{id}/stage` extended with `assigned_to` support so a sales rep can claim an unassigned ticket from the queue. `SalesTickets.js` updated with a source badge (Portal Order / Direct Inquiry), assignment display, "Assign to me" button on unassigned tickets, and "New Direct Inquiry" label on the manual create button (portal orders no longer need manual ticket creation). `POST /api/tickets` (manual create) now stamps `source: "direct"` — this path remains for the pre-portal-order inquiry phase.
+
+> **Sub-deploy 6 (2026-06-22):** 8.8 Orders Tickets full-page detail with strictly linear pipeline. `OrdersTickets.js` completely rewritten from a modal-based view to the same two-view (list | detail) full-page pattern used by Sales Tickets. Left panel renders the packing board entry as a document: customer info, reference numbers (PS/invoice/DN), packer, items table with per-item tick status from `item_ticks`, notes, and inline incomplete reason alert. Right sidebar shows status + key timestamps, QA/RP approval cards, and role-gated action cards enforcing the linear `queued → packing → ready → complete` pipeline — `canOrders` only sees the action for the current stage (no ability to skip); `canQa`/`canRp` only see their approve button when `status === "ready"` and they haven't approved yet; `canManage` gets an override dropdown for any status. `refreshDetail()` keeps the user on the detail page after every action. Incomplete reason opens as a modal overlay (same pattern as Sales Tickets' deposit modal). Backend gained four new endpoints: `GET /entry/{order_id}` (single-entry fetch, board access), `PUT /mark-packing` (tickets.orders, from queued only), `PUT /mark-ready` (tickets.orders, from packing only), `PUT /override-status` (tickets.manage, any status, audit-logged with from/to).
 
 > **Sub-deploy 3 (2026-06-19):** 8.5 UI (SalesTickets + OrdersTickets React views). **Key discovery during implementation:** the original plan said "extend the existing packing board UI" for the Orders Ticket view — but the packing board has no React view. `frontend/public/` houses standalone `supervisor.html`/`packer.html`/`packing-board.html` pages with their own auth (display token / role JWT), purpose-built for warehouse floor screens. Those can't be extended as a React SPA view for ticket-role users who need portal-style nav and permissions. Built a new `OrdersTickets.js` instead, consuming the same `/api/packing/board` REST endpoint (REST polling, not WebSocket — ticket roles are desk users, not floor screens). `SalesTickets.js` includes debounced customer search for ticket creation, a full stage-advance form (status select, order_id/invoice_id linking, incomplete reason, note), stage history timeline, and finance payment-confirm section — all conditionally rendered based on `can()`. Sidebar's single-`permission` nav filter was generalised to also support a `permissions: [...]` array (OR semantics via `.some(p => can(p))`) to gate the Orders Tickets link on `tickets.orders OR tickets.qa_approve OR tickets.rp_approve` — necessary because three distinct roles share the same view. `PERMISSION_ROLES` constant in `AuthContext.js` moved to module level (not inside render scope) for stability. Both views added as non-`adminOnly` `ProtectedRoute`s in `App.js`. Notification service `url` updated from `/` to `/tickets/sales` for ticket-related pushes.
 
