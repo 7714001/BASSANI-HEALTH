@@ -351,6 +351,21 @@ async def create_order_from_ticket(
         raise HTTPException(status_code=400, detail="At least one product line is required")
 
     odoo = get_odoo_client()
+
+    # Resolve the warehouse's company so the order is created in the correct
+    # Odoo entity. Without this, Odoo uses the service account's default company
+    # which may differ from the warehouse's company — causing a cross-company error.
+    company_id = None
+    if body.warehouse_id:
+        try:
+            wh = odoo.read("stock.warehouse", [body.warehouse_id], fields=["company_id"])
+            if wh and wh[0].get("company_id"):
+                company_id = wh[0]["company_id"][0]
+        except Exception:
+            pass
+
+    create_context = {"company_id": company_id, "allowed_company_ids": [company_id]} if company_id else None
+
     lines = [
         (0, 0, {
             "product_id": l.product_id,
@@ -369,7 +384,7 @@ async def create_order_from_ticket(
         vals["warehouse_id"] = body.warehouse_id
 
     try:
-        odoo_order_id = odoo.create("sale.order", vals)
+        odoo_order_id = odoo.create("sale.order", vals, context=create_context)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 

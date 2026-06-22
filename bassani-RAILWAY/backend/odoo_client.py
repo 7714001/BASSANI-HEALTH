@@ -79,7 +79,9 @@ class OdooClient:
         kwargs = {"context": context} if context else {}
         return odoo(model, "search_count", [domain or []], kwargs)
 
-    def create(self, model, vals):
+    def create(self, model, vals, context=None):
+        if context:
+            return odoo(model, "create", [vals], {"context": context})
         return odoo(model, "create", [vals])
 
     def write(self, model, ids, vals):
