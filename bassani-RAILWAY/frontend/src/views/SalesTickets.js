@@ -1,9 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Sales Tickets — Phase 8.5 / 8.6
-// Includes a full-page, document-style Quote Builder so the sales team works
-// the same way they do in Odoo: one product line at a time, inline search,
-// editable description and price, running totals — the quote looks like a
-// quote before it's even sent.
+// Sales Tickets — Phase 8.5 / 8.6 / 8.7
+// Three-view flow: list → detail (full page) → quote-builder (full page)
+// The detail page embeds the live Odoo order document alongside ticket actions,
+// keeping the sales clerk in one place for the entire inquiry-to-payment cycle.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../AuthContext";
@@ -19,7 +18,7 @@ import {
 } from "../components/UI";
 
 const fmtR = (n) =>
-  `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const STATUS_LABEL = {
   open: "Open (RFQ)", quote: "Quote", sale_order: "Sale Order", invoice: "Invoice",
@@ -33,6 +32,13 @@ const EXIT_LABEL  = { not_interested: "Not Interested", cancelled: "Cancelled", 
 const EXIT_COLOR  = { not_interested: "gray", cancelled: "red", complete: "green" };
 const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "incomplete"];
 const PRE_CONFIRM = new Set(["open", "quote", "sale_order", "invoice"]);
+
+const ORDER_STATE_LABEL = {
+  draft: "Quotation", sent: "Quotation Sent", sale: "Sale Order", done: "Locked", cancel: "Cancelled",
+};
+const ORDER_STATE_COLOR = {
+  draft: "gray", sent: "amber", sale: "blue", done: "green", cancel: "red",
+};
 
 // ── Line item row ─────────────────────────────────────────────────────────────
 // Each row fires its own debounced Odoo search so results are always live and
@@ -240,7 +246,7 @@ export default function SalesTickets() {
   const canFinance = can("tickets.finance_confirm");
 
   // ── List state ────────────────────────────────────────────────────────────
-  const [view, setView]       = useState("list"); // "list" | "quote-builder"
+  const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -289,32 +295,81 @@ export default function SalesTickets() {
     finally { setCreating(false); }
   };
 
-  // ── Detail modal ──────────────────────────────────────────────────────────
-  const [detail, setDetail] = useState(null);
-  const [stageForm, setStageForm] = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
-  const [saving, setSaving] = useState(false);
+  // ── Detail page state ─────────────────────────────────────────────────────
+  const [detail, setDetail]             = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailOrder, setDetailOrder]   = useState(null);
+  const [detailOrderLoading, setDetailOrderLoading] = useState(false);
+  const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
+  const [saving, setSaving]             = useState(false);
 
   const openDetail = async (t) => {
+    setDetail(null);
+    setDetailOrder(null);
+    setDetailLoading(true);
+    setView("detail");
     try {
       const r = await api.get(`/api/tickets/${t.id}`);
-      setDetail(r.data);
-      setStageForm({ status: r.data.status, order_id: r.data.order_id || "", invoice_id: r.data.invoice_id || "", note: "", incomplete_reason: "" });
-    } catch { toast.error("Failed to load ticket"); }
+      const ticket = r.data;
+      setDetail(ticket);
+      setStageForm({
+        status: ticket.status, order_id: ticket.order_id || "",
+        invoice_id: ticket.invoice_id || "", note: "", incomplete_reason: "",
+      });
+      if (ticket.order_id) {
+        setDetailOrderLoading(true);
+        try {
+          const or = await api.get(`/api/orders/${ticket.order_id}`);
+          setDetailOrder(or.data);
+        } catch { /* non-fatal — show fallback */ }
+        finally { setDetailOrderLoading(false); }
+      }
+    } catch {
+      toast.error("Failed to load ticket");
+      setView("list");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  // Refresh in-place after actions — stays on detail page
+  const refreshDetail = async (ticketId) => {
+    try {
+      const r = await api.get(`/api/tickets/${ticketId}`);
+      const ticket = r.data;
+      setDetail(ticket);
+      setStageForm({
+        status: ticket.status, order_id: ticket.order_id || "",
+        invoice_id: ticket.invoice_id || "", note: "", incomplete_reason: "",
+      });
+      if (ticket.order_id) {
+        setDetailOrderLoading(true);
+        try {
+          const or = await api.get(`/api/orders/${ticket.order_id}`);
+          setDetailOrder(or.data);
+        } catch { setDetailOrder(null); }
+        finally { setDetailOrderLoading(false); }
+      } else {
+        setDetailOrder(null);
+      }
+    } catch { toast.error("Failed to refresh ticket"); }
+    load(); // silently refresh list in background
   };
 
   const advance = async () => {
     if (stageForm.status === "incomplete" && !stageForm.incomplete_reason)
       return toast.error("A reason is required when marking incomplete");
     setSaving(true);
+    const tid = detail.id;
     try {
       const body = { note: stageForm.note || undefined };
       if (stageForm.status !== detail.status) body.status = stageForm.status;
       if (stageForm.order_id)          body.order_id          = parseInt(stageForm.order_id);
       if (stageForm.invoice_id)        body.invoice_id        = parseInt(stageForm.invoice_id);
       if (stageForm.incomplete_reason) body.incomplete_reason = stageForm.incomplete_reason;
-      await api.put(`/api/tickets/${detail.id}/stage`, body);
+      await api.put(`/api/tickets/${tid}/stage`, body);
       toast.success("Ticket updated");
-      setDetail(null); load();
+      refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Update failed"); }
     finally { setSaving(false); }
   };
@@ -325,7 +380,7 @@ export default function SalesTickets() {
     try {
       await api.put(`/api/tickets/${detail.id}/stage`, { exit_status });
       toast.success("Ticket closed");
-      setDetail(null); load();
+      setDetail(null); setView("list"); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Update failed"); }
     finally { setSaving(false); }
   };
@@ -334,17 +389,18 @@ export default function SalesTickets() {
     try {
       await api.put(`/api/tickets/${ticketId}/stage`, { assigned_to: user.id });
       toast.success("Ticket assigned to you");
-      if (detail?.id === ticketId) setDetail(null);
-      load();
+      if (detail?.id === ticketId) refreshDetail(ticketId);
+      else load();
     } catch (e) { toast.error(e.response?.data?.detail || "Assignment failed"); }
   };
 
   const confirmPayment = async () => {
     setSaving(true);
+    const tid = detail.id;
     try {
-      const r = await api.put(`/api/tickets/${detail.id}/confirm-payment`);
+      const r = await api.put(`/api/tickets/${tid}/confirm-payment`);
       toast.success(`Payment confirmed (Odoo: ${r.data.payment_state})`);
-      setDetail(null); load();
+      refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not confirm payment"); }
     finally { setSaving(false); }
   };
@@ -371,11 +427,8 @@ export default function SalesTickets() {
     setQuoteLines([firstLine]);
     setLastAddedId(firstLine._id);
     setQuoteNote("");
-    setDetail(null);
     setView("quote-builder");
 
-    // Warehouses are small — load once and reuse. Products are fetched
-    // per-row on demand (see LineRow) so no preload is needed here.
     if (quoteWarehouses.length === 0) {
       try {
         const r = await api.get("/api/warehouses/");
@@ -399,7 +452,7 @@ export default function SalesTickets() {
 
   const removeLine = (id) =>
     setQuoteLines(prev => {
-      if (prev.length === 1) return [newLine()]; // always keep at least one row
+      if (prev.length === 1) return [newLine()];
       return prev.filter(l => l._id !== id);
     });
 
@@ -409,7 +462,7 @@ export default function SalesTickets() {
     try {
       await api.post(`/api/tickets/${detail.id}/cancel-order`);
       toast.success("Quote cancelled");
-      setDetail(null); load();
+      setDetail(null); setView("list"); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Cancel failed"); }
     finally { setSaving(false); }
   };
@@ -418,8 +471,9 @@ export default function SalesTickets() {
     const validLines = quoteLines.filter(l => l.product_id);
     if (validLines.length === 0) return toast.error("Add at least one product before creating the quote");
     setQuoteSaving(true);
+    const tid = quoteTicket?.id;
     try {
-      await api.post(`/api/tickets/${quoteTicket.id}/create-order`, {
+      await api.post(`/api/tickets/${tid}/create-order`, {
         order_line: validLines.map(l => ({
           product_id:      l.product_id,
           product_uom_qty: l.product_uom_qty,
@@ -430,8 +484,8 @@ export default function SalesTickets() {
         note:         quoteNote || undefined,
       });
       toast.success("Quote created in Odoo — ticket advanced to Quote stage");
-      setView("list");
-      load();
+      setView("detail");
+      refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to create quote"); }
     finally { setQuoteSaving(false); }
   };
@@ -466,8 +520,9 @@ export default function SalesTickets() {
     if (!depositForm.amount || !depositForm.date || !depositForm.journal_id)
       return toast.error("Amount, date and payment method are required");
     setDepositSaving(true);
+    const tid = detail.id;
     try {
-      await api.post(`/api/tickets/${detail.id}/register-deposit`, {
+      await api.post(`/api/tickets/${tid}/register-deposit`, {
         amount:     parseFloat(depositForm.amount),
         date:       depositForm.date,
         journal_id: parseInt(depositForm.journal_id),
@@ -475,8 +530,7 @@ export default function SalesTickets() {
       });
       toast.success("Deposit registered and invoice created in Odoo");
       setDepositModal(false);
-      setDetail(null);
-      load();
+      refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
     finally { setDepositSaving(false); }
   };
@@ -489,6 +543,373 @@ export default function SalesTickets() {
   const today         = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" });
 
 
+  // ── Detail — full-page ticket view ────────────────────────────────────────
+  if (view === "detail") {
+    const orderStateLabel = ORDER_STATE_LABEL[detailOrder?.state] || "—";
+    const orderStateColor = ORDER_STATE_COLOR[detailOrder?.state] || "gray";
+
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+        <TopBar
+          title={detail?.customer_name || "Loading…"}
+          subtitle={
+            detail
+              ? detail.exit_status
+                ? EXIT_LABEL[detail.exit_status]
+                : (STATUS_LABEL[detail.status] || detail.status)
+              : ""
+          }
+          actions={
+            <BtnSecondary onClick={() => { setDetail(null); setDetailOrder(null); setView("list"); }}>
+              ← Back to Tickets
+            </BtnSecondary>
+          }
+        />
+
+        {detailLoading || !detail ? (
+          <div className="flex-1 flex items-center justify-center"><LoadingState /></div>
+        ) : (
+          <main className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+
+                {/* ── Left: Order document (2/3 width) ── */}
+                <div className="lg:col-span-2 space-y-4">
+                  {detail.order_id ? (
+                    detailOrderLoading ? (
+                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-12">
+                        <LoadingState />
+                      </div>
+                    ) : detailOrder ? (
+                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+
+                        {/* Document header */}
+                        <div className="p-6 border-b border-gray-100">
+                          <div className="flex items-start justify-between mb-5">
+                            <div>
+                              <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+                                {orderStateLabel.toUpperCase()}
+                              </h2>
+                              <p className="text-sm font-mono text-gray-400 mt-0.5">{detailOrder.name}</p>
+                            </div>
+                            <div className="text-right">
+                              <Badge color={orderStateColor}>{orderStateLabel}</Badge>
+                              <p className="text-xs text-gray-400 mt-1.5">
+                                {detailOrder.date_order
+                                  ? new Date(detailOrder.date_order).toLocaleDateString("en-ZA", {
+                                      day: "2-digit", month: "short", year: "numeric",
+                                    })
+                                  : "—"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-50">
+                            <div>
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Bill To</p>
+                              <p className="text-sm font-semibold text-gray-900">
+                                {detailOrder.partner_detail?.name || detailOrder.partner_id?.[1] || "—"}
+                              </p>
+                              {detailOrder.partner_detail?.street && (
+                                <p className="text-xs text-gray-400 mt-0.5">{detailOrder.partner_detail.street}</p>
+                              )}
+                              {(detailOrder.partner_detail?.city || detailOrder.partner_detail?.zip) && (
+                                <p className="text-xs text-gray-400">
+                                  {[detailOrder.partner_detail.city, detailOrder.partner_detail.zip].filter(Boolean).join(", ")}
+                                </p>
+                              )}
+                              {detailOrder.partner_detail?.vat && (
+                                <p className="text-xs text-gray-400">VAT: {detailOrder.partner_detail.vat}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Line items table */}
+                        <table className="w-full">
+                          <thead>
+                            <tr className="border-b border-gray-100 bg-slate-50/50">
+                              <th className="text-left p-3 pl-6 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                              <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
+                              <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Unit Price</th>
+                              <th className="text-right p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Subtotal</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(detailOrder.lines || []).map((line, i) => (
+                              <tr key={i} className="border-b border-gray-50 hover:bg-slate-50/30">
+                                <td className="p-3 pl-6">
+                                  <p className="text-sm font-medium text-gray-900">{line.name || line.product_id?.[1]}</p>
+                                </td>
+                                <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
+                                <td className="p-3 text-right text-sm text-gray-600">{fmtR(line.price_unit)}</td>
+                                <td className="p-3 pr-6 text-right text-sm font-semibold text-gray-900">{fmtR(line.price_subtotal)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+
+                        {/* Totals */}
+                        <div className="p-6 border-t border-gray-100 flex justify-end">
+                          <div className="w-60 space-y-2">
+                            <div className="flex justify-between text-sm text-gray-600">
+                              <span>Subtotal</span>
+                              <span className="font-medium">{fmtR(detailOrder.amount_untaxed)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm text-gray-400">
+                              <span>Tax</span>
+                              <span>{fmtR(detailOrder.amount_tax)}</span>
+                            </div>
+                            <div className="pt-3 border-t border-gray-100 flex justify-between">
+                              <span className="text-base font-bold text-gray-900">Total</span>
+                              <span className="text-base font-bold text-bassani-700">{fmtR(detailOrder.amount_total)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
+                        <p className="text-sm text-gray-400">Order #{detail.order_id} — could not load from Odoo.</p>
+                        <p className="text-xs text-gray-300 mt-1">The ticket data above is still accurate.</p>
+                      </div>
+                    )
+                  ) : (
+                    /* No order yet */
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-14 flex flex-col items-center justify-center gap-3">
+                      <ShoppingCart size={36} className="text-gray-200" />
+                      <p className="text-sm font-medium text-gray-300">No quote built yet</p>
+                      {detail.source === "direct" && canDrive && !detail.exit_status && (
+                        <div className="mt-2">
+                          <BtnPrimary onClick={() => openQuoteBuilder(detail)}>
+                            <ShoppingCart size={14} />Build Quote
+                          </BtnPrimary>
+                        </div>
+                      )}
+                      {detail.source === "portal" && (
+                        <p className="text-xs text-gray-300 mt-1">Portal order — quote placed by the customer</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Right sidebar: info + actions + timeline ── */}
+                <div className="space-y-4">
+
+                  {/* Ticket info */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {detail.exit_status
+                        ? <Badge color={EXIT_COLOR[detail.exit_status]}>{EXIT_LABEL[detail.exit_status]}</Badge>
+                        : <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>}
+                      <Badge color={detail.source === "portal" ? "blue" : "gray"}>
+                        {detail.source === "portal" ? "Portal Order" : "Direct Inquiry"}
+                      </Badge>
+                    </div>
+                    {detail.order_id   && <p className="text-xs text-gray-400">Odoo Order #{detail.order_id}</p>}
+                    {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                    {detail.payment_confirmed_at && (
+                      <p className="text-xs text-green-600 flex items-center gap-1">
+                        <CheckCircle2 size={12} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
+                      </p>
+                    )}
+                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                      {detail.assigned_to_name
+                        ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span></span>
+                        : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
+                      {!detail.assigned_to && canDrive && (
+                        <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
+                          <UserPlus size={12} />Assign to me
+                        </BtnSecondary>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  {!detail.exit_status && (
+                    <div className="space-y-3">
+
+                      {/* Build Quote */}
+                      {!detail.order_id && detail.source === "direct" && canDrive && (
+                        <div className="bg-bassani-50 border border-bassani-200 rounded-2xl p-4">
+                          <p className="text-xs text-bassani-700 mb-3">
+                            Build the quote — opens the document builder to add products line by line.
+                          </p>
+                          <BtnPrimary onClick={() => openQuoteBuilder(detail)} className="w-full justify-center">
+                            <ShoppingCart size={13} />Build Quote
+                          </BtnPrimary>
+                        </div>
+                      )}
+
+                      {/* Cancel Quote */}
+                      {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
+                        <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+                          <p className="text-xs text-red-700 mb-3">
+                            Customer rejected? Cancel the draft quote and close this ticket.
+                          </p>
+                          <BtnSecondary
+                            onClick={cancelQuote}
+                            disabled={saving}
+                            className="w-full justify-center border-red-200 text-red-600 hover:bg-red-100"
+                          >
+                            <Ban size={13} />Cancel Quote
+                          </BtnSecondary>
+                        </div>
+                      )}
+
+                      {/* Register Deposit */}
+                      {detail.order_id && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+                          <p className="text-xs text-amber-700 mb-3">
+                            Register the 50% deposit — creates a down payment invoice and records payment in Odoo.
+                          </p>
+                          <BtnPrimary onClick={openDepositModal} className="w-full justify-center">
+                            <DollarSign size={13} />Register Deposit
+                          </BtnPrimary>
+                        </div>
+                      )}
+
+                      {/* Confirm Payment */}
+                      {detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+                          <p className="text-xs text-amber-700 mb-3">
+                            Confirm "Payment Received" — checks Odoo's real invoice payment status.
+                          </p>
+                          <BtnPrimary onClick={confirmPayment} loading={saving} className="w-full justify-center">
+                            <CreditCard size={13} />Confirm Payment
+                          </BtnPrimary>
+                        </div>
+                      )}
+
+                      {/* Stage advance */}
+                      {canDrive && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Move Stage</p>
+                          <FormGroup label="Stage">
+                            <Select value={stageForm.status} onChange={e => setStageForm({ ...stageForm, status: e.target.value })}>
+                              {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                            </Select>
+                          </FormGroup>
+                          <div className="grid grid-cols-2 gap-2">
+                            <FormGroup label="Order ID">
+                              <Input type="number" value={stageForm.order_id} onChange={e => setStageForm({ ...stageForm, order_id: e.target.value })} placeholder="Odoo id" />
+                            </FormGroup>
+                            <FormGroup label="Invoice ID">
+                              <Input type="number" value={stageForm.invoice_id} onChange={e => setStageForm({ ...stageForm, invoice_id: e.target.value })} placeholder="Odoo id" />
+                            </FormGroup>
+                          </div>
+                          {stageForm.status === "incomplete" && (
+                            <FormGroup label="Reason" required>
+                              <Input
+                                value={stageForm.incomplete_reason}
+                                onChange={e => setStageForm({ ...stageForm, incomplete_reason: e.target.value })}
+                                placeholder="Why incomplete?"
+                              />
+                            </FormGroup>
+                          )}
+                          <FormGroup label="Note">
+                            <Input
+                              value={stageForm.note}
+                              onChange={e => setStageForm({ ...stageForm, note: e.target.value })}
+                              placeholder="Optional note for the timeline"
+                            />
+                          </FormGroup>
+                          <div className="flex gap-2">
+                            <BtnSecondary
+                              onClick={() => markExit("not_interested")}
+                              disabled={saving}
+                              className="flex-1 justify-center text-xs"
+                            >
+                              <XCircle size={12} />Not Interested
+                            </BtnSecondary>
+                            <BtnPrimary onClick={advance} loading={saving} className="flex-1 justify-center">
+                              Save
+                            </BtnPrimary>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Timeline */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Timeline</p>
+                    <div className="space-y-2.5 max-h-80 overflow-y-auto">
+                      {(detail.stage_history || []).length === 0 ? (
+                        <p className="text-xs text-gray-300">No history yet.</p>
+                      ) : (
+                        (detail.stage_history || []).slice().reverse().map((h, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs">
+                            <Clock size={12} className="text-gray-300 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-gray-700">
+                                <span className="font-medium">{h.actor_name}</span>
+                                {" "}→ {h.exit_status ? EXIT_LABEL[h.exit_status] : (STATUS_LABEL[h.status] || h.status)}
+                              </p>
+                              {h.note && <p className="text-gray-400 mt-0.5">{h.note}</p>}
+                              <p className="text-gray-300 mt-0.5">{fmtDate(h.at)}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </main>
+        )}
+
+        {/* Deposit modal overlays the detail page */}
+        {depositModal && (
+          <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
+            <p className="text-xs text-gray-500 mb-4">
+              Creates a down payment invoice in Odoo and registers payment against it — Odoo remains the financial source of truth.
+            </p>
+            <FormGroup label="Amount (ZAR)" required>
+              <Input
+                type="number" step="0.01" min="0.01"
+                value={depositForm.amount}
+                onChange={e => setDepositForm(f => ({ ...f, amount: e.target.value }))}
+                placeholder="e.g. 15000.00"
+                autoFocus
+              />
+            </FormGroup>
+            <FormGroup label="Payment Date" required>
+              <Input
+                type="date"
+                value={depositForm.date}
+                onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))}
+              />
+            </FormGroup>
+            <FormGroup label="Payment Method" required>
+              <Select
+                value={depositForm.journal_id}
+                onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}
+              >
+                <option value="">— Select —</option>
+                {depositJournals.map(j => (
+                  <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
+                ))}
+              </Select>
+            </FormGroup>
+            <FormGroup label="Note">
+              <Input
+                value={depositForm.note}
+                onChange={e => setDepositForm(f => ({ ...f, note: e.target.value }))}
+                placeholder="e.g. EFT received 2026-06-21"
+              />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+
   // ── Quote Builder — full-page document view ───────────────────────────────
   if (view === "quote-builder") {
     return (
@@ -498,7 +919,7 @@ export default function SalesTickets() {
           subtitle={quoteTicket?.customer_name}
           actions={
             <div className="flex items-center gap-2">
-              <BtnSecondary onClick={() => setView("list")}>← Back to Tickets</BtnSecondary>
+              <BtnSecondary onClick={() => setView("detail")}>← Back to Ticket</BtnSecondary>
               <BtnPrimary
                 onClick={submitQuote}
                 loading={quoteSaving}
@@ -639,7 +1060,7 @@ export default function SalesTickets() {
   }
 
 
-  // ── List + modals view ────────────────────────────────────────────────────
+  // ── List + create modal ───────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
@@ -720,176 +1141,6 @@ export default function SalesTickets() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCreateModal(false)} disabled={creating}>Cancel</BtnSecondary>
             <BtnPrimary onClick={createTicket} loading={creating}>Create Ticket</BtnPrimary>
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Detail modal ── */}
-      {detail && (
-        <Modal title={detail.customer_name} onClose={() => setDetail(null)}>
-
-          {/* Header chips */}
-          <div className="flex items-center gap-2 flex-wrap mb-2">
-            {detail.exit_status
-              ? <Badge color={EXIT_COLOR[detail.exit_status]}>{EXIT_LABEL[detail.exit_status]}</Badge>
-              : <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>}
-            <Badge color={detail.source === "portal" ? "blue" : "gray"}>
-              {detail.source === "portal" ? "Portal Order" : "Direct Inquiry"}
-            </Badge>
-            {detail.order_id   && <span className="text-xs text-gray-400">Order #{detail.order_id}</span>}
-            {detail.invoice_id && <span className="text-xs text-gray-400">Invoice #{detail.invoice_id}</span>}
-          </div>
-
-          {/* Assignment */}
-          <div className="flex items-center justify-between mb-4">
-            {detail.assigned_to_name
-              ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span></span>
-              : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
-            {!detail.assigned_to && canDrive && (
-              <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
-                <UserPlus size={12} />Assign to me
-              </BtnSecondary>
-            )}
-          </div>
-
-          {/* ── Build Quote ── */}
-          {!detail.exit_status && !detail.order_id && detail.source === "direct" && canDrive && (
-            <div className="border border-dashed border-bassani-300 bg-bassani-50 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
-              <p className="text-xs text-bassani-700">Ready to build the quote? Opens the document builder — add products line by line, just like Odoo.</p>
-              <BtnPrimary size="sm" onClick={() => openQuoteBuilder(detail)}>
-                <ShoppingCart size={13} />Build Quote
-              </BtnPrimary>
-            </div>
-          )}
-
-          {/* ── Cancel Quote ── */}
-          {!detail.exit_status && detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
-            <div className="border border-red-200 bg-red-50 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
-              <p className="text-xs text-red-700">Customer rejected? Cancel the draft quote and close this ticket.</p>
-              <BtnSecondary size="sm" onClick={cancelQuote} disabled={saving}
-                className="text-red-600 border-red-200 hover:bg-red-100 shrink-0">
-                <Ban size={13} />Cancel Quote
-              </BtnSecondary>
-            </div>
-          )}
-
-          {/* ── Stage advance form ── */}
-          {!detail.exit_status && canDrive && (
-            <div className="border border-gray-200 rounded-xl p-3 space-y-3 mb-4">
-              <div className="grid grid-cols-2 gap-3">
-                <FormGroup label="Stage">
-                  <Select value={stageForm.status} onChange={e => setStageForm({ ...stageForm, status: e.target.value })}>
-                    {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-                  </Select>
-                </FormGroup>
-                <FormGroup label="Linked Order ID">
-                  <Input type="number" value={stageForm.order_id} onChange={e => setStageForm({ ...stageForm, order_id: e.target.value })} placeholder="Odoo sale.order id" />
-                </FormGroup>
-                <FormGroup label="Linked Invoice ID">
-                  <Input type="number" value={stageForm.invoice_id} onChange={e => setStageForm({ ...stageForm, invoice_id: e.target.value })} placeholder="Odoo account.move id" />
-                </FormGroup>
-                {stageForm.status === "incomplete" && (
-                  <FormGroup label="Reason" required className="col-span-2">
-                    <Input value={stageForm.incomplete_reason} onChange={e => setStageForm({ ...stageForm, incomplete_reason: e.target.value })} placeholder="Why is this incomplete?" />
-                  </FormGroup>
-                )}
-              </div>
-              <FormGroup label="Note">
-                <Input value={stageForm.note} onChange={e => setStageForm({ ...stageForm, note: e.target.value })} placeholder="Optional note for the timeline" />
-              </FormGroup>
-              <div className="flex justify-end gap-2">
-                <BtnSecondary onClick={() => markExit("not_interested")} disabled={saving}><XCircle size={13} />Not Interested</BtnSecondary>
-                <BtnPrimary onClick={advance} loading={saving}>Save</BtnPrimary>
-              </div>
-            </div>
-          )}
-
-          {/* ── Register Deposit — finance, has order, no invoice yet ── */}
-          {!detail.exit_status && detail.order_id && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
-            <div className="border border-amber-200 bg-amber-50 rounded-xl p-3 mb-4 flex items-center justify-between gap-3">
-              <p className="text-xs text-amber-700">Register the 50% deposit — creates a down payment invoice and records payment in Odoo.</p>
-              <BtnPrimary onClick={openDepositModal}>
-                <DollarSign size={13} />Register Deposit
-              </BtnPrimary>
-            </div>
-          )}
-
-          {/* ── Confirm Payment (fallback — invoice already manually linked) ── */}
-          {!detail.exit_status && detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
-            <div className="border border-amber-200 bg-amber-50 rounded-xl p-3 mb-4 flex items-center justify-between gap-3">
-              <p className="text-xs text-amber-700">Confirm "Payment Received" — checks Odoo's real invoice payment status.</p>
-              <BtnPrimary onClick={confirmPayment} loading={saving}><CreditCard size={13} />Confirm Payment</BtnPrimary>
-            </div>
-          )}
-
-          {detail.payment_confirmed_at && (
-            <p className="text-xs text-green-600 mb-4 flex items-center gap-1">
-              <CheckCircle2 size={12} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
-            </p>
-          )}
-
-          {/* ── Timeline ── */}
-          <p className="text-xs font-semibold text-gray-500 mb-2">Timeline</p>
-          <div className="space-y-2 max-h-56 overflow-y-auto">
-            {(detail.stage_history || []).slice().reverse().map((h, i) => (
-              <div key={i} className="flex items-start gap-2 text-xs">
-                <Clock size={12} className="text-gray-300 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-gray-700">
-                    <span className="font-medium">{h.actor_name}</span> → {h.exit_status ? EXIT_LABEL[h.exit_status] : (STATUS_LABEL[h.status] || h.status)}
-                  </p>
-                  {h.note && <p className="text-gray-400">{h.note}</p>}
-                  <p className="text-gray-300">{fmtDate(h.at)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Register Deposit modal ── */}
-      {depositModal && (
-        <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
-          <p className="text-xs text-gray-500 mb-4">
-            Creates a down payment invoice in Odoo and registers payment against it — Odoo remains the financial source of truth.
-          </p>
-          <FormGroup label="Amount (ZAR)" required>
-            <Input
-              type="number" step="0.01" min="0.01"
-              value={depositForm.amount}
-              onChange={e => setDepositForm(f => ({ ...f, amount: e.target.value }))}
-              placeholder="e.g. 15000.00"
-              autoFocus
-            />
-          </FormGroup>
-          <FormGroup label="Payment Date" required>
-            <Input
-              type="date"
-              value={depositForm.date}
-              onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))}
-            />
-          </FormGroup>
-          <FormGroup label="Payment Method" required>
-            <Select
-              value={depositForm.journal_id}
-              onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}
-            >
-              <option value="">— Select —</option>
-              {depositJournals.map(j => (
-                <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
-              ))}
-            </Select>
-          </FormGroup>
-          <FormGroup label="Note">
-            <Input
-              value={depositForm.note}
-              onChange={e => setDepositForm(f => ({ ...f, note: e.target.value }))}
-              placeholder="e.g. EFT received 2026-06-21"
-            />
-          </FormGroup>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
           </div>
         </Modal>
       )}
