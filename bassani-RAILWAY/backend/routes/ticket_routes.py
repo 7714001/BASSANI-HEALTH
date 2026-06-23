@@ -759,9 +759,17 @@ async def register_deposit(
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
 
-    # Resolve the order's company so wizard calls create records in the correct entity
-    _order_co = odoo.read("sale.order", [order_id], fields=["company_id"])
-    _co = _order_co[0].get("company_id") if _order_co else None
+    # Resolve the order's company and validate it is confirmed before running the wizard
+    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name"])
+    if not _order_co:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    _order_row = _order_co[0]
+    if _order_row.get("state") != "sale":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order {_order_row.get('name')} must be confirmed before registering a deposit (current state: {_order_row.get('state')})",
+        )
+    _co = _order_row.get("company_id")
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
 

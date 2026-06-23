@@ -874,7 +874,7 @@ export default function SalesTickets() {
                           </button>
                         )}
 
-                        {detail.order_id && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        {detail.order_id && detailOrder?.state === "sale" && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
                           <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
                           </button>
