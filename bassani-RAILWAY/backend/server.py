@@ -1,6 +1,9 @@
 import os
+import uuid
+import time
+import logging
 from datetime import datetime, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -8,6 +11,10 @@ from slowapi.errors import RateLimitExceeded
 from config import get_settings
 from auth import hash_password, FULL_PERMISSIONS
 from rate_limit import limiter
+from logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -19,6 +26,15 @@ if settings.jwt_secret == "change-me-in-production":
         "(32+ random characters) via the JWT_SECRET environment variable "
         "before starting. Generate one with: openssl rand -base64 48"
     )
+
+import sentry_sdk
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        traces_sample_rate=0.0,   # errors only — no performance tracing quota used
+        send_default_pii=False,
+    )
+    logger.info("sentry_initialised")
 
 app = FastAPI(title="Bassani Health Internal ERP", version="2.0.0")
 
@@ -34,15 +50,47 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every request with timing and best-effort user identification."""
+    request_id = str(uuid.uuid4())[:8]
+    start = time.monotonic()
+
+    user_id = "anonymous"
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            from jose import jwt as jose_jwt
+            payload = jose_jwt.decode(
+                auth[7:], settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+                options={"verify_exp": False},
+            )
+            user_id = payload.get("sub", "unknown")
+            sentry_sdk.set_user({"id": user_id, "username": payload.get("username", "unknown")})
+        except Exception:
+            pass
+
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000)
+
+    logger.info("http_request", extra={
+        "request_id": request_id,
+        "method": request.method,
+        "path": request.url.path,
+        "status_code": response.status_code,
+        "duration_ms": duration_ms,
+        "user_id": user_id,
+    })
+    return response
+
+
 @app.on_event("startup")
 async def initialise_users():
     """
     On every startup:
     1. Ensure a super admin account exists (from SUPER_ADMIN_USERNAME/PASSWORD env vars).
     2. Migrate any existing admin users that predate the permissions system.
-
-    If env vars are not set and no super admin exists yet, the app logs a clear
-    warning but does not crash — existing accounts remain accessible.
     """
     from database import col
 
@@ -52,7 +100,6 @@ async def initialise_users():
     if sa_username and sa_password:
         existing = await col("users").find_one({"username": sa_username})
         if existing:
-            # Sync credentials and role from env vars (idempotent on re-deploy)
             await col("users").update_one(
                 {"username": sa_username},
                 {"$set": {
@@ -63,7 +110,7 @@ async def initialise_users():
                     "password": hash_password(sa_password),
                 }},
             )
-            print(f"[startup] Super admin '{sa_username}' verified.")
+            logger.info("startup_super_admin_verified", extra={"username": sa_username})
         else:
             await col("users").insert_one({
                 "username": sa_username,
@@ -75,40 +122,33 @@ async def initialise_users():
                 "permissions": FULL_PERMISSIONS,
                 "created_at": datetime.now(timezone.utc),
             })
-            print(f"[startup] Super admin '{sa_username}' created.")
+            logger.info("startup_super_admin_created", extra={"username": sa_username})
     else:
         existing_sa = await col("users").find_one({"is_super_admin": True})
         if existing_sa:
-            print("[startup] SUPER_ADMIN_USERNAME not set — using existing super admin.")
+            logger.info("startup_super_admin_found")
         else:
             count = await col("users").count_documents({})
             if count == 0:
-                print(
-                    "[startup] WARNING: No users exist and SUPER_ADMIN_USERNAME/SUPER_ADMIN_PASSWORD "
-                    "are not set. Add these env vars to Railway and redeploy to create the super admin account."
-                )
+                logger.warning("startup_no_users_no_env_vars",
+                               extra={"hint": "Set SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD in Railway"})
             else:
-                print(
-                    "[startup] WARNING: SUPER_ADMIN_USERNAME not set and no super admin account found. "
-                    "Set SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD in Railway env vars."
-                )
+                logger.warning("startup_no_super_admin",
+                               extra={"hint": "Set SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD in Railway"})
 
-    # Migration: give FULL_PERMISSIONS to any admin user that predates the permissions system
     result = await col("users").update_many(
         {"role": "admin", "permissions": {"$exists": False}},
         {"$set": {"permissions": FULL_PERMISSIONS}},
     )
     if result.modified_count:
-        print(f"[startup] Migrated {result.modified_count} existing admin user(s) to full permissions.")
+        logger.info("startup_migrated_admin_permissions", extra={"count": result.modified_count})
 
-    # Migration: give every admin user the audit.view permission key (default false)
-    # so the Audit Trail panel renders correctly for accounts created before 0.6.
     result = await col("users").update_many(
         {"role": "admin", "permissions.audit": {"$exists": False}},
         {"$set": {"permissions.audit": {"view": False}}},
     )
     if result.modified_count:
-        print(f"[startup] Added default audit.view=False to {result.modified_count} existing admin user(s).")
+        logger.info("startup_migrated_audit_permission", extra={"count": result.modified_count})
 
     await col("audit_logs").create_index([("created_at", -1)])
     await col("audit_logs").create_index([("entity_type", 1), ("entity_id", 1)])
@@ -125,29 +165,53 @@ async def initialise_users():
     await col("tickets").create_index([("order_id", 1)])
     await col("tickets").create_index([("updated_at", -1)])
 
-    # Migration: backfill the two new Phase 8 notification preference keys for
-    # subscriptions created before they existed, defaulting to opted-in.
     result = await col("push_subscriptions").update_many(
         {"preferences.ticket_assigned": {"$exists": False}},
         {"$set": {"preferences.ticket_assigned": True, "preferences.ticket_handoff": True}},
     )
     if result.modified_count:
-        print(f"[startup] Added Phase 8 ticket notification preferences to {result.modified_count} existing subscription(s).")
+        logger.info("startup_migrated_push_preferences", extra={"count": result.modified_count})
 
-    # Deactivate the legacy "admin" / "admin123" account that predates the
-    # credential overhaul (Phase 0.1) — it may still exist in older databases.
     legacy_admin = await col("users").find_one({"username": "admin", "role": "admin"})
     if legacy_admin and not legacy_admin.get("is_super_admin") and legacy_admin.get("active", True):
         await col("users").update_one(
             {"_id": legacy_admin["_id"]},
             {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}},
         )
-        print("[startup] Deactivated legacy 'admin' account — superseded by the super admin/permissions system.")
+        logger.info("startup_deactivated_legacy_admin")
 
 
 @app.get("/health")
-def health():
-    return JSONResponse({"status": "ok", "version": "2.0.0"})
+async def health():
+    from database import col
+    from odoo_client import get_odoo_client
+
+    result: dict = {
+        "status": "healthy",
+        "version": "2.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "services": {},
+    }
+
+    try:
+        await col("users").find_one({}, {"_id": 1})
+        result["services"]["mongo"] = "up"
+    except Exception as exc:
+        result["services"]["mongo"] = "down"
+        result["status"] = "down"
+        logger.error("health_mongo_down", extra={"error": str(exc)})
+
+    try:
+        get_odoo_client().count("res.users", [])
+        result["services"]["odoo"] = "up"
+    except Exception as exc:
+        result["services"]["odoo"] = "down"
+        if result["status"] == "healthy":
+            result["status"] = "degraded"
+        logger.warning("health_odoo_down", extra={"error": str(exc)})
+
+    status_code = 503 if result["status"] == "down" else 200
+    return JSONResponse(result, status_code=status_code)
 
 
 from routes.auth_routes          import router as auth_router

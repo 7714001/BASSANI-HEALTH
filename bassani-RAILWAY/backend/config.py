@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     support_email:    str = "support@bassanihealth.com"
     healthcare_email: str = "healthcare@bassanihealth.com"
     packing_emails:   str = "packing@bassanihealth.com,warehouse@bassanihealth.com"
-    portal_url:       str = "https://portal.bassanihealth.com"
+    portal_url:       str = "https://bassani-health-production-3d68.up.railway.app"
     vapid_public_key:    str = ""
     vapid_private_key:   str = ""
     vapid_claims_email:  str = "admin@bassanihealth.com"
@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     expiry_warning_days:   int = 60
     forecast_lookback_weeks: int = 8
     reorder_alert_days:      int = 30
+    sentry_dsn:        str = ""
     require_2fa_admin: bool = False
     cors_origins: str = "*"
     super_admin_username: str = ""

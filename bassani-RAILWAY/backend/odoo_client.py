@@ -1,8 +1,11 @@
 import xmlrpc.client
 import threading
+import logging
+import time
 from config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _uid = None
@@ -16,19 +19,23 @@ def _connect():
     _uid = common.authenticate(settings.odoo_db, settings.odoo_username, settings.odoo_password, {})
     if not _uid:
         raise RuntimeError("Odoo authentication failed")
-    print(f"Odoo connected — UID {_uid}")
+    logger.info("odoo_connected", extra={"uid": _uid})
 
 def odoo(model, method, args=None, kwargs=None):
     global _uid, _models
+    start = time.monotonic()
     with _lock:
         if _uid is None:
             _connect()
         try:
-            return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+            result = _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
         except Exception:
             _uid = None
             _connect()
-            return _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+            result = _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+    duration_ms = round((time.monotonic() - start) * 1000)
+    logger.info("odoo_call", extra={"model": model, "method": method, "duration_ms": duration_ms})
+    return result
 
 def odoo_execute_kw(model, method, args=None, kwargs=None):
     return odoo(model, method, args, kwargs)

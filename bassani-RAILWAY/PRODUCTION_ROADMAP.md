@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-23  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 6, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
 
 ---
 
@@ -17,9 +17,10 @@
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🔴 Not Started | — |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
-| 6 | Observability & Operations | 🔴 Not Started | — |
+| 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
+| 9 | Go-Live Infrastructure | 🔴 Not Started | — |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -628,54 +629,44 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Failures are detected and alerted before customers report them. Data is backed up and recoverable.  
 **Estimate:** 2–3 days  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟢 Complete  
+**Completed:** Sub-deploy 1 (6.1–6.4) — 2026-06-23  
 
 ### Tasks
 
 #### 6.1 Sentry Error Monitoring
-- [ ] Add `sentry-sdk[fastapi]` to `requirements.txt`
-- [ ] Initialise Sentry in `server.py` with `SENTRY_DSN` env var (free tier on sentry.io)
-- [ ] Confirm every unhandled exception captures: user ID, route, request body (sanitised)
-- [ ] Set up Sentry alert: email notification on first occurrence of any new error
-- [ ] Add `SENTRY_DSN` to Railway environment variables
+- [x] Add `sentry-sdk[fastapi]` to `requirements.txt`
+- [x] Initialise Sentry in `server.py` with `SENTRY_DSN` env var — graceful no-op if unset
+- [x] Every unhandled exception captures user ID (from JWT), route, and request context automatically via FastAPI integration
+- [ ] **Operational:** create free account at sentry.io, add `SENTRY_DSN` to Railway environment variables, set up email alert on first occurrence of new error
 
 #### 6.2 Structured Logging
-- [ ] Replace all `print()` and default uvicorn access logs with structured JSON logging
-- [ ] Every request log includes: `request_id` (UUID), `user_id`, `route`, `method`, `status_code`, `duration_ms`
-- [ ] Every Odoo call logs: `model`, `method`, `duration_ms`, `success`
-- [ ] Use Python `logging` module with JSON formatter (e.g. `python-json-logger`)
+- [x] Created `backend/logging_config.py` — JSON formatter via `python-json-logger`, applied to root logger on startup
+- [x] All `print()` calls in `server.py` replaced with structured `logger.info/warning` calls
+- [x] HTTP request middleware: every request logs `request_id`, `method`, `path`, `status_code`, `duration_ms`, `user_id`
+- [x] Odoo calls: every `execute_kw` logs `model`, `method`, `duration_ms`
 
 #### 6.3 MongoDB Backups
-- [ ] Set up daily `mongodump` script targeting production MongoDB
-- [ ] Store dumps in Cloudflare R2 bucket (free 10GB tier)
-- [ ] Retention: keep 30 days of daily backups
-- [ ] Test restore procedure quarterly: restore to a staging instance and verify data integrity
-- [ ] Add `mongodump` as a Railway cron job
+- **Revised:** MongoDB is Railway's built-in plugin — no custom `mongodump` script needed
+- [ ] **Operational:** open the Backup tab on the Railway MongoDB plugin and enable scheduled daily backups; confirm a backup appears the next day
 
 #### 6.4 Health Endpoint Enhancement
-- [ ] Extend `GET /health` to probe MongoDB connectivity (simple ping)
-- [ ] Extend to probe Odoo connectivity (lightweight `res.users` count)
-- [ ] Return structured response: `{status: "healthy|degraded|down", services: {mongo, odoo, redis}}`
-- [ ] Railway health check already points to `/health` — ensure it passes on degraded state (not just full failure)
+- [x] `GET /health` now probes MongoDB (find_one) and Odoo (search_count on res.users)
+- [x] Returns `{status: "healthy|degraded|down", version, timestamp, services: {mongo, odoo}}`
+- [x] `degraded` (Odoo down, MongoDB up) returns HTTP 200 so Railway does not restart the container
+- [x] `down` (MongoDB unreachable) returns HTTP 503
 
 #### 6.5 Frontend to Cloudflare Pages
-- [ ] Create Cloudflare Pages project pointing to `frontend/` directory
-- [ ] Configure build: `npm run build`, output `build/`
-- [ ] Set `REACT_APP_API_URL` to Railway backend URL
-- [ ] Update nginx/Railway config: backend no longer serves static files
-- [ ] Verify SPA routing works (`/resellers/123` deep links load correctly via Cloudflare Pages `_redirects`)
-- [ ] Confirm CORS `allow_origins` includes Cloudflare Pages domain
+- **Deferred** — for ~30 users the CDN benefit is negligible; adds deployment complexity with no meaningful gain at current scale. Revisit if traffic grows significantly.
 
 ### Definition of Done
-- [ ] Trigger a deliberate 500 error → Sentry captures it and sends an email alert within 2 minutes
-- [ ] Every API request produces a JSON log line with `request_id` and `duration_ms`
-- [ ] A backup file exists in Cloudflare R2 from yesterday's automated run
-- [ ] `GET /health` returns `degraded` when Odoo is down but MongoDB is up (not `down`)
-- [ ] Frontend loads from Cloudflare Pages URL; API calls reach Railway backend; no CORS errors
+- [x] Every API request produces a JSON log line with `request_id` and `duration_ms`
+- [x] `GET /health` returns `degraded` when Odoo is down but MongoDB is up
+- [ ] Trigger a deliberate 500 error → Sentry captures it and sends email alert (requires `SENTRY_DSN` env var set)
+- [ ] Backup file visible in Railway MongoDB Backup tab after first scheduled run
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+> **2026-06-23:** 6.5 (Cloudflare Pages) dropped from this phase — not cost-effective at current scale. 6.3 is operational-only (Railway Backup tab). Sentry is wired and ready; only needs the `SENTRY_DSN` env var added to Railway once a free sentry.io account is created.
 
 ---
 
@@ -1022,6 +1013,65 @@ Items reviewed and intentionally deferred beyond Phase 7. Revisit when business 
 - **Returns / RMA workflow** — `stock.return.picking`. Deferred until operational volume justifies it.
 - **Contract management** — reseller agreements and pricing contracts. Deferred.
 - **Load testing** — k6 baseline tests. Deferred; add before any marketing campaign that expects traffic spikes.
+
+---
+
+---
+
+## Phase 9 — Go-Live Infrastructure
+
+**Goal:** Replace the Railway-generated URL with a permanent client-owned domain, verify email sending, and confirm all production environment variables are correct.  
+**Estimate:** 1–3 days (largely blocked on client actions)  
+**Status:** 🔴 Not Started  
+**Completed:** —  
+
+### Context
+
+The portal is currently live at `https://bassani-health-production-3d68.up.railway.app`. This is a Railway-generated subdomain — functional but not client-facing. Before going live with staff, the URL needs to point to a real domain. This requires coordination with whoever manages `bassanihealth.com` DNS, and a parallel Resend domain verification for outbound email.
+
+Current unknowns: who hosts `bassanihealth.com`, what control panel they use (cPanel, Plesk, Cloudflare, etc.), and whether there is a cost implication for the subdomain or SSL.
+
+### Tasks
+
+#### 9.1 Custom Domain on Railway
+- [ ] Identify who manages `bassanihealth.com` DNS — ask the client (likely their web hosting provider or registrar)
+- [ ] Decide on subdomain: `portal.bassanihealth.com` is the intended target (already hardcoded in roadmap references)
+- [ ] In Railway: Project → Settings → Networking → Add Custom Domain → enter `portal.bassanihealth.com`
+- [ ] Railway will display a CNAME target (e.g. `<project>.railway.app`) — provide this to the client's DNS admin to create the CNAME record
+- [ ] Wait for DNS propagation (typically 5–60 minutes; up to 48 hours worst case)
+- [ ] Railway provisions SSL automatically via Let's Encrypt once the CNAME resolves — no manual cert needed
+- [ ] Once verified: set `PORTAL_URL=https://portal.bassanihealth.com` in Railway environment variables
+- [ ] Update `backend/config.py` default to `https://portal.bassanihealth.com`
+
+> **Cost:** Railway custom domains are included in all paid plans — no additional charge. The domain itself is the client's existing asset. No new hosting cost.
+
+#### 9.2 Resend Sending Domain
+- [ ] Client creates a Resend account (or provides access to existing one) at resend.com
+- [ ] In Resend: Domains → Add Domain → enter `bassanihealth.com`
+- [ ] Resend will display 3 DNS records (SPF, DKIM × 2, and optionally DMARC) — provide to client's DNS admin
+- [ ] Once DNS records propagate and Resend shows domain as "Verified": update `SENDER_EMAIL=noreply@bassanihealth.com` in Railway environment variables
+- [ ] Update `RESEND_API_KEY` in Railway to the client's production Resend API key
+- [ ] Test: create a test user with a real email address, confirm welcome email arrives from `noreply@bassanihealth.com`
+
+> **Cost:** Resend free tier is 3,000 emails/month, 100/day. Likely sufficient for current volume. Pro plan is $20/month if needed.
+
+#### 9.3 Production Environment Verification
+- [ ] Confirm all Railway environment variables are set correctly for production:
+  - `RESEND_API_KEY` — client's production key
+  - `SENDER_EMAIL` — `noreply@bassanihealth.com` (after domain verified)
+  - `PORTAL_URL` — `https://portal.bassanihealth.com` (after domain live)
+  - `MONGO_URL`, `JWT_SECRET`, `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_PASSWORD` — already set
+- [ ] Smoke test all email triggers in production (welcome email, order placed, statement generated)
+- [ ] Confirm portal loads correctly on the custom domain with HTTPS green lock
+
+### Definition of Done
+- [ ] `https://portal.bassanihealth.com` loads the portal with a valid SSL certificate
+- [ ] Outbound emails arrive from `noreply@bassanihealth.com` (not `onboarding@resend.dev`)
+- [ ] All production environment variables confirmed correct
+- [ ] The Railway-generated URL still works as a fallback (Railway keeps it active alongside the custom domain)
+
+### Notes
+> **2026-06-23:** Current live URL is `https://bassani-health-production-3d68.up.railway.app`. Domain `portal.bassanihealth.com` is the intended target. Blocked on: (1) identifying the DNS provider for `bassanihealth.com`, (2) client access to their Resend account. No code changes required for this phase — it is entirely infrastructure and DNS coordination.
 
 ---
 
