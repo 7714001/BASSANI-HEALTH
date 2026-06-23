@@ -44,6 +44,15 @@ export function AuthProvider({ children }) {
     setUser((u) => ({ ...u, active_warehouse_id: data.active_warehouse_id }));
   };
 
+  /** Authenticated user sets their own new password (required on first login). */
+  const changePassword = async (currentPassword, newPassword) => {
+    await api.post("/api/auth/change-password", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+    setUser((u) => ({ ...u, must_change_password: false }));
+  };
+
   /**
    * Check whether the current user has a specific permission.
    * Format: "domain.action"  e.g.  can("commission.mark_paid")
@@ -65,7 +74,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin, setActiveWarehouse }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin, setActiveWarehouse, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

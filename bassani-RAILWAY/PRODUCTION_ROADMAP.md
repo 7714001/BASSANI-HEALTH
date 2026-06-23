@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-23  
-**Overall Status:** 🟡 Pre-Production — Phase 0 complete, Phase 1 in progress (CORS + 2FA deferred to pre-launch)  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 2 (Email Engine) is the next code priority; Phase 8 DoD 7/8 complete — only staff account creation outstanding  
 
 ---
 
@@ -14,7 +14,7 @@
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
 | 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6 complete — 2026-06-19 · 1.2/1.5 deferred to pre-launch |
 | 2 | Email Engine | 🔴 Not Started | — |
-| 3 | Core Odoo Integration | 🟡 In Progress | 3.1, 3.5 complete (3.5 email pending) — 2026-06-19 |
+| 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🔴 Not Started | — |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
@@ -273,8 +273,8 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Goal:** Safe to expose to real users. No known exploitable vulnerabilities.  
 **Estimate:** 1–3 days  
-**Status:** 🟡 In Progress — 1.1, 1.3, 1.4, 1.6 complete; 1.2 and 1.5 deferred until production domain/SSL are finalised  
-**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19  
+**Status:** 🟡 In Progress — 1.1, 1.3, 1.4, 1.6, 1.7 complete; 1.2 and 1.5 deferred until production domain/SSL are finalised  
+**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23  
 
 ### Tasks
 
@@ -312,14 +312,30 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Ensure FastAPI runs with `debug=False` in production _(default — never set to `True` anywhere; uvicorn start command has no `--reload`)_
 - [x] Verify error responses return generic messages (no stack traces) to clients _(no custom exception handlers exist beyond slowapi's rate-limit handler; FastAPI's defaults apply)_
 
+#### 1.7 Forced Password Reset on First Login
+
+**Goal:** No staff account should sit on an admin-set password indefinitely. Admins set a temporary password when creating an account; the system enforces a password change on first login before the user can access anything else. The same gate re-fires whenever an admin resets a password.
+
+- [x] Add `must_change_password: bool` to the user document — set `True` on `POST /api/users/` (new account creation) and on `POST /api/users/{id}/reset-password` (admin-initiated reset). Existing accounts (super admin, pre-existing staff) are not retroactively flagged — no migration needed; absence of the field is treated as `False`.
+- [x] `_user_payload()` in `auth_routes.py` includes `must_change_password` — flows into both the login response and `/me` re-hydration so the frontend always has the current state
+- [x] New `POST /api/auth/change-password` endpoint — requires authentication; verifies the current (temporary) password against the stored hash; validates new password is at least 8 characters and differs from the current one; updates the hash, clears `must_change_password`, audit-logs `user.change_password`
+- [x] `ProtectedRoute` in `App.js` — if user is authenticated but `must_change_password` is `true`, redirects to `/change-password` before rendering any page; prevents navigation away until the password is set
+- [x] New `ChangePassword.js` view at `/change-password` — styled like Login; fields: current password, new password, confirm; client-side validation (match + min length); on success clears the flag in `AuthContext` and redirects to the dashboard
+
+**Design decision — no email dependency:** This flow works without Phase 2 (Email Engine). The admin tells the person their temp credentials verbally or via a secure channel; the system enforces rotation on first use. When Phase 2 lands, welcome emails with username-only (no password) can be layered on top — the forced-reset gate stays in place regardless.
+
 ### Definition of Done
 - [x] Cannot log in as admin with `admin123` on any deployed environment _(legacy account auto-deactivated on startup)_
 - [ ] Browser console shows no CORS errors from the correct domain _(deferred with 1.2)_
 - [x] Login attempt #6 returns 429 within the 15-minute window
 - [ ] Admin without 2FA configured is prompted on login _(deferred with 1.5)_
 - [x] Application startup fails immediately if JWT secret is default value
+- [x] A newly created user account is intercepted at first login and cannot access the portal until they set a new password
+- [x] Admin-initiated password reset re-triggers the same forced-change gate
 
 ### Notes
+> **Sub-deploy 2 (2026-06-23):** 1.7 Forced Password Reset. `must_change_password: True` is now set on `POST /api/users/` and `POST /api/users/{id}/reset-password`. `_user_payload()` exposes the flag in every login/me response. New `POST /api/auth/change-password` verifies the current password (bcrypt), validates min-8-char and differs-from-current rules, updates the hash, and clears the flag — audit-logged as `user.change_password`. Frontend: `ProtectedRoute` now redirects authenticated users with `must_change_password` to `/change-password` before any other page renders; a new `AuthRequired` wrapper used by that specific route lets you be authenticated without triggering the redirect loop; new `ChangePassword.js` view handles the form. Existing accounts are unaffected — the field's absence is treated as `False` everywhere.
+
 > **Sub-deploy 1 (2026-06-19):** Implemented the four items with no domain/SSL dependency. Backend: startup `RuntimeError` if `JWT_SECRET` is still the placeholder; new `backend/rate_limit.py` holds a shared `slowapi.Limiter` (avoids a circular import between `server.py` and the route modules) wired into `/api/auth/login` (5/15min) and `/api/healthcare/onboarding` (10/hour); startup migration deactivates any `{username: "admin", role: "admin"}` account found, matching the exact legacy seed from commit `5965ef4`. Created `backend/.env.example` (didn't exist before). 1.2 (CORS) and 1.5 (2FA) explicitly deferred — see notes above — to avoid blocking domain-dependent and testing-friction work; tracked here so they aren't forgotten before go-live.
 
 ---
@@ -479,10 +495,10 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 ### Definition of Done
 - [x] An order placed with a variant product creates the correct `product.product` line in Odoo (not template)
 - [ ] VAT on invoice matches Odoo's tax configuration, not a hardcoded value
-- [ ] Attempting to order more units than are in stock returns a clear error before hitting Odoo
+- [x] Attempting to order more units than are in stock returns a clear error before hitting Odoo
 - [ ] A customer with a pricelist sees their negotiated price in the cart
 - [x] A draft order can be cancelled via the portal and disappears from the active order list
-- [ ] An order for a customer over their credit limit is blocked or escalated
+- [x] An order for a customer over their credit limit is blocked or escalated (two-stage: non-blocking warning at quote, hard 402 block at confirm with override prompt)
 - [x] Switching the warehouse selector changes displayed stock counts to that location's figures only (verified against Odoo `stock.quant`)
 - [x] An order placed under "Warehouse A" decrements Warehouse A's stock in Odoo, not Warehouse B's
 - [x] A "restock" return is credited to the correct warehouse's location — zero hardcoded location IDs remain in the codebase
@@ -722,7 +738,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 8.1–8.11 code complete; sub-deploys 1–9 done; staff accounts not yet created  
+**Status:** 🟡 In Progress — 8.1–8.11 code complete; DoD 7/8 items done; one remaining item is operational (create 6 named staff accounts via Users page — no code required)  
 **Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23  
 
 ### Context
@@ -758,7 +774,7 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] `POST /api/tickets` (manual create for direct inquiries, `source: "direct"`), `PUT /api/tickets/{id}/stage` (transition + history append + optional `assigned_to`), `GET /api/tickets`, `GET /api/tickets/{id}`
 - [x] `PUT /api/tickets/{id}/confirm-payment` (finance only) — reads Odoo `payment_state`/`amount_residual`; blocks if no payment recorded
 - [x] Link ticket to Odoo `sale.order`/`account.move` as they're created — `order_id`/`invoice_id` attach via `PUT /stage`
-- [ ] `POST /api/orders/` auto-creates a `source: "portal"` Sales ticket at `sale_order` stage after the Odoo order is created (best-effort / non-blocking); `GET /api/tickets` returns unassigned tickets to `sales`-role users alongside their own queue; `PUT /api/tickets/{id}/stage` supports `assigned_to` for self-assignment from the queue
+- [x] `POST /api/orders/` auto-creates a `source: "portal"` Sales ticket at `sale_order` stage after the Odoo order is created (best-effort / non-blocking); `GET /api/tickets` returns unassigned tickets to `sales`-role users alongside their own queue; `PUT /api/tickets/{id}/stage` supports `assigned_to` for self-assignment from the queue
 
 #### 8.3 Orders Ticket (extend `packing_board`)
 - [x] Add `cancelled`, `incomplete`, `complete` to the packing board's `status` field; add `incomplete_reason`, `cancelled_at`, `incomplete_at`, `completed_at`
@@ -895,14 +911,14 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 **Design decision — use Odoo's mail system, not Resend:** The PDF quote is generated by Odoo and stored in its mail chatter. Using Odoo's own `mail.template` keeps the email audit trail in Odoo, sends from the company's configured mail address (`sales@bassanihealth.com`), and requires zero custom PDF generation. Resend is reserved for portal notification emails (ticket assignments, status changes).
 
 ### Definition of Done
-- [ ] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
-- [ ] A direct inquiry (manually created ticket) can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
-- [ ] Confirming "50% Payment Received" is blocked if Odoo's invoice shows no payment yet
-- [ ] Confirming an order auto-queues the packing board entry and transitions the linked Sales ticket to `confirmed_wip` — no manual re-entry
-- [ ] An Orders ticket cannot reach Complete without both QA and RP approval recorded independently
-- [ ] An Orders ticket marked Incomplete or Cancelled automatically updates and notifies the originating Sales ticket, with a reason visible to Sales
-- [ ] An unassigned ticket (from a reseller/admin-placed order) is visible to all `tickets.sales` users; any sales rep can claim it via "Assign to me"
-- [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role
+- [x] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
+- [x] A direct inquiry (manually created ticket) can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
+- [x] Confirming "50% Payment Received" is blocked if Odoo's invoice shows no payment yet
+- [x] Confirming an order auto-queues the packing board entry and transitions the linked Sales ticket to `confirmed_wip` — no manual re-entry
+- [x] An Orders ticket cannot reach Complete without both QA and RP approval recorded independently
+- [x] An Orders ticket marked Incomplete or Cancelled automatically updates and notifies the originating Sales ticket, with a reason visible to Sales
+- [x] An unassigned ticket (from a reseller/admin-placed order) is visible to all `tickets.sales` users; any sales rep can claim it via "Assign to me"
+- [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role — **pending: accounts not yet created (operational, no code required)**
 
 ### Notes
 > **Sub-deploy 1 (2026-06-19):** 8.1 Roles & Permissions. Rather than adding the 5 new roles to `ADMIN_ROLES` (which would have also granted them every `require_admin`-gated endpoint across the whole portal — products, customers, resellers, etc., not just tickets), `require_permission()`'s role-gate was broadened to `ADMIN_ROLES | TICKET_ROLES` specifically, leaving `require_admin`/`ADMIN_ROLES` itself untouched. Each ticket role gets exactly one fixed permission via `TICKET_ROLE_PERMISSIONS` — there's no per-user customisation panel for these roles, unlike `admin`. **Bug fixed along the way:** the Sidebar's nav-item filter (`frontend/src/components/UI.js`) only permission-checked items when `isAdmin` was true, falling through to "show everything" otherwise — harmless before now because the only non-admin, non-reseller roles (`warehouse_supervisor`/`packer`) never reached the Sidebar at all (intercepted earlier in `App.js`'s `ProtectedRoute`). The new ticket roles do reach it, so this would have shown them the full nav (Products, Customers, Resellers, Invoices, etc.) with every click failing on the backend's 403. Fixed by permission-checking unconditionally. **Known gap, not fixed:** changing an existing user's `role` via `PUT /api/users/{id}` doesn't recompute their `permissions` object — this was already true for promoting someone to `admin` before this change, not something newly introduced. Role changes should go through deactivate-and-recreate until that's addressed separately.

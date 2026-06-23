@@ -147,6 +147,7 @@ async def create_user(
         "name": body.name,
         "active": True,
         "is_super_admin": False,
+        "must_change_password": True,
         "created_at": datetime.now(timezone.utc),
     }
 
@@ -263,6 +264,7 @@ async def reset_password(
         {"_id": oid},
         {"$set": {
             "password": hash_password(plain),
+            "must_change_password": True,
             "updated_at": datetime.now(timezone.utc),
         }},
     )

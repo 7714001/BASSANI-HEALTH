@@ -29,6 +29,7 @@ import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
 import ProductCategories     from "./views/ProductCategories";
 import ProductUOM            from "./views/ProductUOM";
+import ChangePassword        from "./views/ChangePassword";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -73,6 +74,19 @@ function PackingFloorScreen() {
   );
 }
 
+/** Requires authentication only — does not redirect away if must_change_password is set.
+ *  Used exclusively for the /change-password route so it can be accessed while the flag is true. */
+function AuthRequired({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return (
+    <div className="flex items-center justify-center h-screen">
+      <Spinner size="lg" />
+    </div>
+  );
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+
 function ProtectedRoute({ children, adminOnly }) {
   const { user, loading, isAdmin } = useAuth();
   if (loading) return (
@@ -81,6 +95,7 @@ function ProtectedRoute({ children, adminOnly }) {
     </div>
   );
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_change_password) return <Navigate to="/change-password" replace />;
   if (PACKING_FLOOR_ROLES.has(user.role)) return <PackingFloorScreen />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
   return children;
@@ -112,8 +127,13 @@ export default function App() {
       }} />
 
       <Routes>
-        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/login" element={
+          user
+            ? <Navigate to={user.must_change_password ? "/change-password" : "/"} replace />
+            : <Login />
+        } />
         <Route path="/register" element={<HcpRegister />} />
+        <Route path="/change-password" element={<AuthRequired><ChangePassword /></AuthRequired>} />
 
         <Route path="/" element={
           <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>
