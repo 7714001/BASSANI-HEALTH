@@ -10,7 +10,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
-  UserPlus, ShoppingCart, Ban, DollarSign, X,
+  UserPlus, ShoppingCart, Ban, DollarSign, X, Send,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -305,6 +305,7 @@ export default function SalesTickets() {
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
   const [saving, setSaving]             = useState(false);
   const [confirming, setConfirming]     = useState(false);
+  const [sending, setSending]           = useState(false);
 
   const openDetail = async (t) => {
     setDetail(null);
@@ -406,6 +407,23 @@ export default function SalesTickets() {
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not confirm payment"); }
     finally { setSaving(false); }
+  };
+
+  const sendQuote = async () => {
+    setSending(true);
+    try {
+      const r = await api.post(`/api/tickets/${detail.id}/send-quote`);
+      if (r.data.warning) {
+        toast(`Quote marked sent — ${r.data.warning}`, { icon: "⚠️", duration: 8000 });
+      } else {
+        toast.success("Quote sent to customer");
+      }
+      refreshDetail(detail.id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send quote");
+    } finally {
+      setSending(false);
+    }
   };
 
   const confirmOrder = async (overrideCredit = false) => {
@@ -800,6 +818,11 @@ export default function SalesTickets() {
                     </div>
                     {detail.order_id   && <p className="text-xs text-gray-400">Odoo Order #{detail.order_id}</p>}
                     {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                    {detail.quote_sent_at && (
+                      <p className="text-xs text-blue-600 flex items-center gap-1">
+                        <Send size={12} />Quote sent {fmtDate(detail.quote_sent_at)}
+                      </p>
+                    )}
                     {detail.payment_confirmed_at && (
                       <p className="text-xs text-green-600 flex items-center gap-1">
                         <CheckCircle2 size={12} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
@@ -829,6 +852,24 @@ export default function SalesTickets() {
                           </p>
                           <BtnSecondary onClick={openQuoteEdit} className="w-full justify-center">
                             <ShoppingCart size={13} />Edit Quote
+                          </BtnSecondary>
+                        </div>
+                      )}
+
+                      {/* Send Quote */}
+                      {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                        <div className={`rounded-2xl p-4 ${detailOrder.state === "draft" && detail.quote_sent_at ? "bg-amber-50 border border-amber-100" : "bg-white shadow-sm border border-gray-100"}`}>
+                          {detailOrder.state === "draft" && detail.quote_sent_at
+                            ? <p className="text-xs text-amber-700 mb-3">Quote was edited since last send ({fmtDate(detail.quote_sent_at)}) — resend to give the customer the updated version.</p>
+                            : detail.quote_sent_at
+                              ? <p className="text-xs text-gray-400 mb-3">Last sent {fmtDate(detail.quote_sent_at)}. Resend to deliver an updated copy.</p>
+                              : <p className="text-xs text-gray-400 mb-3">Email the PDF quote to the customer. Optional — you can confirm verbally without sending.</p>
+                          }
+                          <BtnSecondary onClick={sendQuote} loading={sending} className="w-full justify-center">
+                            <Send size={13} />
+                            {detail.quote_sent_at
+                              ? detailOrder.state === "draft" ? "Send Updated Quote" : "Resend Quote"
+                              : "Send Quote"}
                           </BtnSecondary>
                         </div>
                       )}

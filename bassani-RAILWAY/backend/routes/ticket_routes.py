@@ -599,6 +599,14 @@ async def update_order_from_ticket(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error writing lines: {str(e)}")
 
+    # If the customer already received a sent copy, reset to draft — their copy is stale.
+    # The portal will show an amber warning prompting the rep to resend.
+    if order["state"] == "sent":
+        try:
+            odoo.write("sale.order", [order_id], {"state": "draft"})
+        except Exception:
+            pass  # Non-fatal — state reset is best-effort; rep can resend regardless
+
     now = datetime.now(timezone.utc)
     n = len(body.order_line)
     timeline_note = f"Quote revised — {n} line{'s' if n != 1 else ''} (Odoo {order['name']}){customer_note}"
@@ -624,6 +632,97 @@ async def update_order_from_ticket(
         after={"order_id": order_id, "line_count": n, **ticket_field_updates},
     )
     return {"success": True, "odoo_order_id": order_id}
+
+
+@router.post("/{ticket_id}/send-quote")
+async def send_quote(
+    ticket_id: str,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """Email the PDF quotation to the customer via Odoo's built-in quotation
+    template. Marks the Odoo order as 'sent' and stamps quote_sent_at on the
+    ticket. Idempotent — safe to call again after edits (resend)."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build a quote first")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "partner_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order = rows[0]
+    if order["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order {order['name']} is already confirmed — cannot resend a confirmed order as a quote",
+        )
+
+    # Attempt to send via Odoo's built-in sale quotation email template.
+    # If the template is missing or Odoo's mail server isn't configured we still
+    # mark the state as 'sent' and warn — better than a hard failure that blocks
+    # the rep from progressing the ticket.
+    email_sent = False
+    warning = None
+    try:
+        templates = odoo.search_read(
+            "mail.template",
+            domain=[["model", "=", "sale.order"], ["name", "ilike", "quotation"]],
+            fields=["id", "name"],
+            limit=5,
+        )
+        if templates:
+            template_id = templates[0]["id"]
+            odoo_call("mail.template", "send_mail", [template_id, order_id], {"force_send": True})
+            email_sent = True
+        else:
+            warning = "Quotation email template not found in Odoo — order marked sent but no email was delivered"
+    except Exception as e:
+        warning = f"Odoo mail send failed ({e}) — order marked sent but email may not have been delivered"
+
+    # Mark the Odoo order as 'sent' regardless of email outcome
+    try:
+        odoo.write("sale.order", [order_id], {"state": "sent"})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error marking order sent: {str(e)}")
+
+    now = datetime.now(timezone.utc)
+    actor = _actor(current_user)
+    note = f"Quote {'sent' if email_sent else 'marked sent (email not delivered)'} to customer (Odoo {order['name']})"
+
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {"quote_sent_at": now, "updated_at": now},
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": actor,
+                "at": now, "note": note,
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.send_quote", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"order_id": order_id, "order_name": order["name"], "email_sent": email_sent},
+    )
+
+    result: dict = {"success": True, "email_sent": email_sent}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 @router.post("/{ticket_id}/register-deposit")

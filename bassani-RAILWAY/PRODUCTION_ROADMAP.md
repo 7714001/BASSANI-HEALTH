@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🔴 Not Started | — |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–8 (8.1–8.10 code complete) — 2026-06-23 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -722,8 +722,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 8.1–8.10 code complete; sub-deploys 1–8 done; staff accounts not yet created  
-**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23  
+**Status:** 🟡 In Progress — 8.1–8.11 code complete; sub-deploys 1–9 done; staff accounts not yet created  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23  
 
 ### Context
 Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
@@ -870,6 +870,30 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 **Design decision — onboarding path for existing draft orders:** When Merveille or another sales rep logs in for the first time, they will see all existing draft Odoo orders on the Orders screen. Clicking "Create Sales Ticket" on each one bootstraps a ticket at `quote` stage assigned to them — effectively claiming those orders and establishing ownership. Once all pre-portal orders have been claimed, every order in the system will have a ticket owner. Draft orders that already have a ticket show the ticket status badge with no action button — go to Sales Tickets to continue.
 
+#### 8.11 — Send Quote to Customer
+
+**Goal:** Complete the formal quote lifecycle — the sales rep can email the PDF quotation to the customer directly from the Sales Ticket, without touching Odoo. Sending is optional; the rep can still confirm verbally without it.
+
+**Send Quote action:**
+- [x] "Send Quote" action card in the Sales Ticket detail sidebar — shown when `order_id` exists, order is `draft`/`sent`, user has `tickets.sales`
+- [x] Button label adapts: "Send Quote" (never sent) → "Resend Quote" (sent, unchanged) → "Send Updated Quote" (sent, then edited — order reset to draft)
+- [x] Card style adapts: amber warning when quote was edited since last send; neutral otherwise
+- [x] Calls `POST /api/tickets/{id}/send-quote`; on success refreshes ticket + reloads Odoo order state
+
+**New backend endpoint `POST /api/tickets/{ticket_id}/send-quote`:**
+- [x] Requires `tickets.sales`; validates order exists and is `draft`/`sent`
+- [x] Searches for Odoo's built-in sale quotation `mail.template` (model = `sale.order`, name contains "quotation") and calls `send_mail` with `force_send=True` — email leaves via Odoo's configured mail server with the PDF quote attached
+- [x] Graceful degradation: if the template is missing or Odoo's mail server is not configured, marks the order `sent` and returns a `warning` field (toast shown to rep) rather than failing hard — the ticket can still progress
+- [x] Writes `state: "sent"` on the Odoo order regardless of email outcome
+- [x] Stamps `quote_sent_at` on the MongoDB ticket; logs to stage history timeline and audit trail
+
+**Edit-then-resend flow:**
+- [x] When a `sent` order is revised via "Edit Quote", Odoo order state is reset to `draft` (customer's copy is stale)
+- [x] `quote_sent_at` is preserved on the ticket so the portal can detect "was sent, then edited" → shows amber "edited since last send" warning
+- [x] Ticket info panel shows "Quote sent [date]" line alongside payment confirmed timestamp
+
+**Design decision — use Odoo's mail system, not Resend:** The PDF quote is generated by Odoo and stored in its mail chatter. Using Odoo's own `mail.template` keeps the email audit trail in Odoo, sends from the company's configured mail address (`sales@bassanihealth.com`), and requires zero custom PDF generation. Resend is reserved for portal notification emails (ticket assignments, status changes).
+
 ### Definition of Done
 - [ ] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
 - [ ] A direct inquiry (manually created ticket) can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
@@ -888,6 +912,8 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 > **Sub-deploy 5 (2026-06-21):** 8.6 Direct inquiry quote builder + portal deposit registration. Every gap that previously required Merveille or finance to open Odoo is now covered in the portal. `ticket_routes.py` gained three new action endpoints (`create-order`, `cancel-order`, `register-deposit`) plus a `payment-journals` lookup used by the deposit modal. The down payment invoice + payment registration flow mirrors the wizard sequence Odoo uses internally (`sale.advance.payment.inv` to create the invoice, `account.payment.register` to post and reconcile the payment) — both are XML-RPC calls, keeping Odoo as the financial source of truth. `GET /api/orders/` now batch-queries the `tickets` collection and attaches `linked_ticket` to each row so the Orders table shows pipeline status at a glance. On the frontend, the Sales Ticket detail modal gained three conditional action panels: Build Quote (full-page document-style builder), Cancel Quote (confirm dialog, only on pre-confirm stages), and Register Deposit (amount, date, journal). The quote builder uses **per-row debounced live Odoo search** (300ms, name + SKU) rather than a preloaded product list — no catalogue size cap, results are always live from Odoo. `GET /api/products/` search parameter extended to match `default_code` (SKU) as well as name via an Odoo OR domain. Deposit is optional before order confirmation — credit-term resellers don't need one.
 
 > **Sub-deploy 4 (2026-06-19):** Unified pipeline — every portal order auto-creates a Sales ticket. Key realisation: the ticket system was initially designed as a separate layer for mailbox inquiries, but the correct model is that it IS the processing pipeline for all orders, regardless of source. Changes: `create_order()` now inserts a `tickets` document (best-effort, non-blocking) immediately after the Odoo order is created — `source: "portal"`, `status: "sale_order"`, `order_id` already linked, `assigned_to` set to the creating user if they hold `tickets.sales`, otherwise `null`. `GET /api/tickets` updated so `sales`-role users see their own queue plus all unassigned tickets. `PUT /api/tickets/{id}/stage` extended with `assigned_to` support so a sales rep can claim an unassigned ticket from the queue. `SalesTickets.js` updated with a source badge (Portal Order / Direct Inquiry), assignment display, "Assign to me" button on unassigned tickets, and "New Direct Inquiry" label on the manual create button (portal orders no longer need manual ticket creation). `POST /api/tickets` (manual create) now stamps `source: "direct"` — this path remains for the pre-portal-order inquiry phase.
+
+> **Sub-deploy 9 (2026-06-23):** 8.11 Send Quote to customer. `POST /api/tickets/{id}/send-quote` finds Odoo's sale quotation `mail.template`, calls `send_mail` with `force_send=True`, then writes `state: "sent"` on the order and stamps `quote_sent_at` on the ticket. Graceful degradation: if Odoo's mail server isn't configured or the template is missing, the endpoint still marks the order sent and returns a `warning` field rather than a hard 502 — the rep sees a toast but can continue. Edit flow: `update-order` now resets a `sent` order to `draft` after line replacement (customer's copy is stale); `quote_sent_at` is kept on the ticket so the frontend can detect "sent then edited" and show an amber warning with "Send Updated Quote" label. The "Send Quote" card is positioned after "Edit Quote" and before "Confirm Order" in the sidebar — the natural action sequence.
 
 > **Sub-deploy 8 (2026-06-23):** 8.10 Orders screen read-only + Confirm Order in Sales Ticket. The Orders screen is now a pure monitoring view — no create, confirm, or cancel is possible from there. The confirm/cancel buttons were removed from both the table actions column and the `OrderView` full-page detail (passed `canConfirmOrder={false}` / `canCancelOrder={false}`). Draft orders without a ticket get a "Create Sales Ticket" button that calls the new `POST /api/tickets/from-order` endpoint — this creates a ticket at `quote` stage, assigns it to the creating user, and links the Odoo order immediately. The order's existing draft state is preserved; nothing changes in Odoo. The "Confirm Order" action card now lives exclusively in the Sales Ticket detail sidebar, shown when the linked order is still `draft`/`sent` and the user holds `orders.confirm`. It calls the existing `PUT /api/orders/{id}/confirm` and refreshes the ticket in place — the ticket auto-advances to `confirmed_wip` via the existing hook already written in `confirm_order()`. The credit-limit 402 override prompt (window.confirm fallback) is replicated in `SalesTickets.js` so the UX is identical to the old Orders screen behaviour.
 

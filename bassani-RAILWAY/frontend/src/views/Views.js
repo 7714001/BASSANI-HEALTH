@@ -696,7 +696,7 @@ export function Orders() {
             }}]:[]),
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
               <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                {o.state==="draft" && !o.linked_ticket && can("tickets.sales") && (
+                {(o.state==="draft" || o.state==="sent") && !o.linked_ticket && can("tickets.sales") && (
                   <BtnPrimary size="sm" onClick={()=>createTicketFromOrder(o.id)} loading={creatingTicket.has(o.id)} disabled={creatingTicket.has(o.id)}>Create Sales Ticket</BtnPrimary>
                 )}
                 {o.state==="sale" && !o.packing_status && can("tickets.manage") && (
