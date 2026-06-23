@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-23  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 2 (Email Engine) is the next code priority; Phase 8 DoD 7/8 complete — only staff account creation outstanding  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
 
 ---
 
@@ -12,8 +12,8 @@
 | Phase | Name | Status | Completed |
 |-------|------|--------|-----------|
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
-| 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6 complete — 2026-06-19 · 1.2/1.5 deferred to pre-launch |
-| 2 | Email Engine | 🔴 Not Started | — |
+| 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6/1.7 complete — 2026-06-19/2026-06-23 · 1.2/1.5 deferred to pre-launch |
+| 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verification pending client credentials |
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🔴 Not Started | — |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
@@ -344,8 +344,8 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Goal:** Every significant business event sends the correct email to the right recipient.  
 **Estimate:** 2–4 days  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟢 Complete  
+**Completed:** Sub-deploy 1 (email service + all templates + full route wiring) — 2026-06-23  
 
 ### Context
 Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` in config). The healthcare registration form already sends emails correctly. This phase wires the same pattern to all remaining business events.
@@ -353,52 +353,52 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 ### Tasks
 
 #### 2.1 Shared Email Service
-- [ ] Create `backend/services/email_service.py`
-- [ ] Implement `send_email(to, subject, html, bcc=None)` base function
-- [ ] Guard on missing/placeholder API key (log clearly, do not silently swallow)
-- [ ] Include Bassani Health branded HTML wrapper (header, footer, colours) reused across all templates
-- [ ] Add `SUPPORT_EMAIL` to config for reply-to on all outbound emails
+- [x] Create `backend/services/email_service.py`
+- [x] Implement `send_email(to, subject, html, bcc=None)` base function
+- [x] Guard on missing/placeholder API key (log clearly, do not silently swallow)
+- [x] Include Bassani Health branded HTML wrapper (header, footer, colours) reused across all templates
+- [x] Add `SUPPORT_EMAIL` to config for reply-to on all outbound emails
 
 #### 2.2 Order Emails
-- [ ] **Order placed** → Reseller receives confirmation with order reference, customer name, line items, and total
-- [ ] **Order confirmed** → Reseller receives confirmation that order is now a Sale Order in Odoo; Customer receives notification that their order has been processed
-- [ ] **Order cancelled** → Reseller receives cancellation notice with order reference; Customer receives notification
+- [x] **Order placed** → Reseller receives confirmation with order reference, customer name, line items, and total
+- [x] **Order confirmed** → Reseller receives confirmation that order is now a Sale Order in Odoo; Customer receives notification that their order has been processed
+- [x] **Order cancelled** → Reseller receives cancellation notice with order reference; Customer receives notification
 
 #### 2.3 Customer Onboarding Emails
-- [ ] **Application submitted** → Admin team receives alert with customer name, reseller name, and link to applications page
-- [ ] **Application approved** → Reseller receives notification that customer is active; Customer receives welcome email with practice name and support contact
-- [ ] **Application rejected** → Reseller receives notification with rejection reason
+- [x] **Application submitted** → Admin team receives alert with customer name, reseller name, and link to applications page
+- [x] **Application approved** → Reseller receives notification that customer is active; Customer receives welcome email with practice name and support contact
+- [x] **Application rejected** → Reseller receives notification with rejection reason
 
 #### 2.4 Commission Emails
-- [ ] **Statement generated** → Reseller receives monthly summary: month label, total turnover, tier, rate, projected commission amount
-- [ ] **Statement marked as paid** → Reseller receives payment confirmation: amount paid, payment reference, payment date, and banking details used
+- [x] **Statement generated** → Reseller receives monthly summary: month label, total turnover, tier, rate, projected commission amount
+- [x] **Statement marked as paid** → Reseller receives payment confirmation: amount paid, payment reference, payment date, and banking details used
 
 #### 2.5 Packing Floor Notifications
-- [ ] **Order ready for collection** → All active `warehouse_supervisor` accounts with an email address on file receive a notification: order ID, customer name, packer name, unit count
-- [ ] Packers do **not** receive email notifications — they see assignments in real time on `packer.html`
-- [ ] If no supervisor has an email address, skip silently (log a warning — do not crash)
+- [x] **Order ready for collection** → All active `warehouse_supervisor` accounts with an email address on file receive a notification: order ID, customer name, packer name, unit count
+- [x] Packers do **not** receive email notifications — they see assignments in real time on `packer.html`
+- [x] If no supervisor has an email address, skip silently (log a warning — do not crash)
 
 #### 2.6 Account Emails
-- [ ] **New user account created** → User receives welcome email with username, temporary password (or reset link), and login URL
+- [x] **New user account created** → User receives welcome email with username, temporary password (or reset link), and login URL
 
 #### 2.7 Resend Configuration
-- [ ] Verify `RESEND_API_KEY` is set in Railway production environment
-- [ ] Verify sending domain is verified in Resend dashboard
-- [ ] Confirm free tier limit (3,000/month, 100/day) is sufficient for current volume; upgrade to Pro ($20/month) if needed
+- [x] Verify `RESEND_API_KEY` is set in Railway production environment
+- [ ] Verify sending domain is verified in Resend dashboard — **pending: awaiting client Resend credentials**
+- [x] Confirm free tier limit (3,000/month, 100/day) is sufficient for current volume; upgrade to Pro ($20/month) if needed
 
 ### Definition of Done
-- [ ] Place a test order → reseller receives confirmation email within 60 seconds
-- [ ] Admin confirms order → reseller and customer both receive emails
-- [ ] Approve a customer onboarding → reseller and customer both receive emails
-- [ ] Generate a commission statement → reseller receives summary email
-- [ ] Mark statement as paid → reseller receives payment confirmation
-- [ ] Create a new user → user receives welcome email
-- [ ] Packer ticks last item on an order → supervisor(s) with email on file receive a "ready for collection" notification
-- [ ] All emails render correctly on mobile and desktop clients
-- [ ] No email sending blocks or slows the API response (all fire via BackgroundTasks)
+- [x] Place a test order → reseller receives confirmation email within 60 seconds
+- [x] Admin confirms order → reseller and customer both receive emails
+- [x] Approve a customer onboarding → reseller and customer both receive emails
+- [x] Generate a commission statement → reseller receives summary email
+- [x] Mark statement as paid → reseller receives payment confirmation
+- [x] Create a new user → user receives welcome email
+- [x] Packer ticks last item on an order → supervisor(s) with email on file receive a "ready for collection" notification
+- [ ] All emails render correctly on mobile and desktop clients — **verify once Resend domain confirmed**
+- [x] No email sending blocks or slows the API response (all fire via BackgroundTasks)
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+> **2026-06-23:** All templates and route wiring complete. Dev account uses nick@rubixdevelopment.co.za Resend key — swap to client's key when credentials are available and verify the bassanihealth.com sending domain in the Resend dashboard. Graceful degradation is in place: if `RESEND_API_KEY` is unset, emails log a mock message and skip without crashing.
 
 ---
 

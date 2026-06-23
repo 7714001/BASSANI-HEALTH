@@ -10,7 +10,7 @@ The Orders side of this handoff is NOT a separate collection — it's the
 existing `packing_board` document, extended in Phase 8.3. See
 `packing_board_routes.py` and the `orders_ticket_ref` field below.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -21,6 +21,7 @@ from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
+from services.email_service import send_ticket_assigned
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
@@ -226,6 +227,7 @@ async def get_ticket(
 async def update_ticket_stage(
     ticket_id: str,
     body: TicketStageUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.sales")),
 ):
     """
@@ -267,10 +269,11 @@ async def update_ticket_stage(
         updates["invoice_id"] = body.invoice_id
     if body.incomplete_reason:
         updates["incomplete_reason"] = body.incomplete_reason
+    _au = None
     if body.assigned_to is not None:
         updates["assigned_to"] = body.assigned_to or None
         if body.assigned_to:
-            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1})
+            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1, "email": 1})
             updates["assigned_to_name"] = (_au.get("name") or _au.get("username")) if _au else None
             updates["assigned_to_role"] = _au.get("role", "") if _au else ""
         else:
@@ -294,6 +297,15 @@ async def update_ticket_stage(
         before={"status": ticket["status"], "exit_status": ticket.get("exit_status")},
         after={"status": body.status, "exit_status": body.exit_status},
     )
+    if _au and _au.get("email"):
+        background_tasks.add_task(
+            send_ticket_assigned,
+            ticket_ref=f"TKT-{ticket_id[-8:].upper()}",
+            customer_name=ticket.get("customer_name", ""),
+            stage=body.status or ticket["status"],
+            assignee_name=updates.get("assigned_to_name") or "",
+            assignee_email=_au["email"],
+        )
     return {"success": True}
 
 

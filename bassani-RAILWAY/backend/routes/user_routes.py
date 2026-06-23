@@ -1,6 +1,6 @@
 import secrets
 import string
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -11,6 +11,7 @@ from auth import (
 )
 from database import col
 from middleware.audit import audit_log
+from services.email_service import send_welcome_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -115,6 +116,7 @@ async def list_users(
 @router.post("/")
 async def create_user(
     body: UserCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin),
 ):
     """
@@ -165,6 +167,13 @@ async def create_user(
     result = await col("users").insert_one(doc)
     await audit_log("user.create", "user", str(result.inserted_id), entity_label=body.username,
                     user=current_user, after={"role": body.role, "name": body.name})
+    if body.email:
+        background_tasks.add_task(
+            send_welcome_email,
+            username=body.username,
+            name=body.name,
+            email=body.email,
+        )
     return {"success": True, "user_id": str(result.inserted_id)}
 
 

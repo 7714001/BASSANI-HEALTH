@@ -17,7 +17,7 @@ import asyncio
 import json
 import jwt
 from datetime import datetime, timezone
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from auth import require_admin, get_current_user, get_user_by_username, require_permission, ADMIN_ROLES
@@ -25,6 +25,7 @@ from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
+from services.email_service import send_order_ready_for_collection
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
 settings = get_settings()
@@ -428,6 +429,7 @@ async def rp_approve(
 @router.put("/complete")
 async def complete_entry(
     body: OrderIdBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk's final close-out action — the explicit "I'm declaring
@@ -451,6 +453,21 @@ async def complete_entry(
     await push_update(updated)
     await audit_log("packing.complete", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
     await _sync_sales_ticket(body.order_id, "complete")
+
+    _sups = await col("users").find(
+        {"role": "warehouse_supervisor", "email": {"$exists": True, "$ne": ""}},
+        {"email": 1, "_id": 0},
+    ).to_list(50)
+    _sup_emails = [u["email"] for u in _sups if u.get("email")]
+    if _sup_emails:
+        background_tasks.add_task(
+            send_order_ready_for_collection,
+            order_ref=str(updated.get("order_id", body.order_id)),
+            customer_name=updated.get("customer_name", ""),
+            packer_name=updated.get("assigned_packer", "") or updated.get("packer_name", ""),
+            supervisor_emails=_sup_emails,
+        )
+
     return {"success": True}
 
 

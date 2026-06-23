@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -7,6 +7,7 @@ from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
+from services.email_service import send_onboarding_submitted, send_onboarding_approved, send_onboarding_rejected
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -55,6 +56,7 @@ class RejectBody(BaseModel):
 @router.post("/")
 async def submit_application(
     application: OnboardingApplication,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """Reseller submits a customer onboarding application for admin review."""
@@ -83,6 +85,12 @@ async def submit_application(
     await audit_log("onboarding.submit", "customer_onboarding", ref,
                     entity_label=application.company_name, user=current_user,
                     reseller_id=reseller["id"])
+    background_tasks.add_task(
+        send_onboarding_submitted,
+        company_name=application.company_name,
+        reseller_name=reseller.get("name", current_user.get("username", "")),
+        app_ref=ref,
+    )
     return {"success": True, "reference": ref}
 
 
@@ -134,7 +142,7 @@ async def get_application(app_id: str, current_user: dict = Depends(get_current_
 
 
 @router.put("/{app_id}/approve")
-async def approve_application(app_id: str, current_user: dict = Depends(require_permission("customers.approve_onboarding"))):
+async def approve_application(app_id: str, background_tasks: BackgroundTasks, current_user: dict = Depends(require_permission("customers.approve_onboarding"))):
     """
     Approve an onboarding application:
     1. Create res.partner in Odoo
@@ -198,6 +206,17 @@ async def approve_application(app_id: str, current_user: dict = Depends(require_
                     entity_label=app.get("company_name", ""), user=current_user,
                     detail={"odoo_partner_id": partner_id},
                     reseller_id=app.get("reseller_id"))
+
+    _res = await col("resellers").find_one({"id": app.get("reseller_id")}, {"email": 1, "_id": 0})
+    if _res and _res.get("email"):
+        background_tasks.add_task(
+            send_onboarding_approved,
+            company_name=app.get("company_name", ""),
+            reseller_name=app.get("reseller_name", ""),
+            reseller_email=_res["email"],
+            customer_contact_email=app.get("contact_email"),
+        )
+
     return {"success": True, "odoo_partner_id": partner_id}
 
 
@@ -205,6 +224,7 @@ async def approve_application(app_id: str, current_user: dict = Depends(require_
 async def reject_application(
     app_id: str,
     body:   RejectBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("customers.reject_onboarding")),
 ):
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
@@ -226,4 +246,15 @@ async def reject_application(
                     entity_label=app.get("company_name", ""), user=current_user,
                     detail={"reason": body.reason},
                     reseller_id=app.get("reseller_id"))
+
+    _res = await col("resellers").find_one({"id": app.get("reseller_id")}, {"email": 1, "_id": 0})
+    if _res and _res.get("email"):
+        background_tasks.add_task(
+            send_onboarding_rejected,
+            company_name=app.get("company_name", ""),
+            reseller_name=app.get("reseller_name", ""),
+            reseller_email=_res["email"],
+            reason=body.reason,
+        )
+
     return {"success": True}

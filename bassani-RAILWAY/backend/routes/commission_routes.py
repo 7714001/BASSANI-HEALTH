@@ -1,5 +1,5 @@
 import calendar as _cal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, date, timezone
@@ -7,6 +7,7 @@ from auth import get_current_user, require_admin, require_permission
 from database import col, NO_ID
 from odoo_client import get_odoo_client
 from middleware.audit import audit_log
+from services.email_service import send_statement_generated, send_statement_paid
 
 router = APIRouter(prefix="/api/commission", tags=["commission"])
 
@@ -171,6 +172,7 @@ async def reset_tiers(current_user: dict = Depends(require_permission("commissio
 @router.post("/statements/generate")
 async def generate_statements(
     payload: GeneratePayload,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("commission.generate_statements")),
 ):
     """
@@ -245,6 +247,18 @@ async def generate_statements(
             upsert=True,
         )
         generated.append(stmt)
+        _res = await col("resellers").find_one({"id": rid}, {"email": 1, "_id": 0})
+        if _res and _res.get("email"):
+            background_tasks.add_task(
+                send_statement_generated,
+                month_label=month_label,
+                total_turnover=turnover,
+                commission_rate=tier["rate"],
+                tier_label=tier["label"],
+                commission_amount=commission_amount,
+                reseller_name=row["reseller_name"] or "",
+                reseller_email=_res["email"],
+            )
 
     await audit_log("commission.generate_statements", "commission_statement", f"{year}-{month:02d}",
                     entity_label=month_label, user=current_user,
@@ -329,6 +343,7 @@ async def get_statement(
 async def mark_statement_paid(
     stmt_id: str,
     payload: MarkPaidPayload,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("commission.mark_paid")),
 ):
     """
@@ -411,6 +426,17 @@ async def mark_statement_paid(
                     user=current_user,
                     detail={"amount": stmt["commission_amount"], "odoo_bill_id": bill_id, "warning": warning},
                     reseller_id=stmt["reseller_id"])
+
+    if reseller and reseller.get("email"):
+        background_tasks.add_task(
+            send_statement_paid,
+            month_label=stmt["month_label"],
+            commission_amount=float(stmt["commission_amount"]),
+            payment_reference=payload.payment_reference or "",
+            payment_date=payload.payment_date or now.strftime("%Y-%m-%d"),
+            reseller_name=stmt["reseller_name"],
+            reseller_email=reseller["email"],
+        )
 
     return {"success": True, "odoo_bill_id": bill_id, "warning": warning}
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -8,6 +8,7 @@ from database import col, NO_ID
 from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
+from services.email_service import send_order_placed, send_order_confirmed, send_order_cancelled
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -195,6 +196,7 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
 @router.post("/")
 async def create_order(
     order: OrderCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -386,6 +388,21 @@ async def create_order(
             {"$inc": {"total_sales": original_subtotal}},
         )
 
+        if reseller_profile and reseller_profile.get("email"):
+            try:
+                _name_rows = odoo.read("sale.order", [odoo_order_id], fields=["name"])
+                _order_ref = _name_rows[0]["name"] if _name_rows else f"#{odoo_order_id}"
+            except Exception:
+                _order_ref = f"#{odoo_order_id}"
+            background_tasks.add_task(
+                send_order_placed,
+                order_ref=_order_ref,
+                customer_name=customer_name,
+                order_total=original_subtotal,
+                reseller_name=reseller_profile.get("name", ""),
+                reseller_email=reseller_profile["email"],
+            )
+
     await audit_log("order.create", "order", odoo_order_id, entity_label=customer_name if order.reseller_id else "",
                     user=current_user, after={"partner_id": effective_partner_id, "lines": len(order.order_line)},
                     reseller_id=order.reseller_id)
@@ -400,6 +417,7 @@ async def create_order(
 @router.put("/{order_id}/confirm")
 async def confirm_order(
     order_id: int,
+    background_tasks: BackgroundTasks,
     override_credit: bool = Query(False),
     current_user: dict = Depends(require_permission("orders.confirm")),
 ):
@@ -418,7 +436,7 @@ async def confirm_order(
     # Unlike the warning at order creation, this blocks: confirming commits to
     # an invoice, so it's the point where being over limit actually matters.
     try:
-        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "company_id", "warehouse_id"])
+        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "company_id", "warehouse_id", "name"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not read order: {str(e)}")
     if not pre_rows:
@@ -601,6 +619,18 @@ async def confirm_order(
                     detail={"invoice_id": invoice_id, "invoice_name": invoice_name, "warnings": warnings},
                     reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
 
+    if comm_lookup and comm_lookup.get("reseller_id"):
+        _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
+        if _reseller and _reseller.get("email"):
+            background_tasks.add_task(
+                send_order_confirmed,
+                order_ref=pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}",
+                customer_name=comm_lookup.get("customer_name", ""),
+                order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                reseller_name=comm_lookup.get("reseller_name", ""),
+                reseller_email=_reseller["email"],
+            )
+
     return {
         "success": True,
         "invoice_id": invoice_id,
@@ -610,13 +640,13 @@ async def confirm_order(
 
 
 @router.put("/{order_id}/cancel")
-async def cancel_order(order_id: int, current_user: dict = Depends(require_permission("orders.cancel"))):
+async def cancel_order(order_id: int, background_tasks: BackgroundTasks, current_user: dict = Depends(require_permission("orders.cancel"))):
     """Cancel a sales order in Odoo and void the related commission record.
     Only quotations (draft/sent) may be cancelled — a confirmed order already has
     an invoice and possibly a packing board entry in flight, so it must be handled
     manually rather than silently voided."""
     odoo = get_odoo_client()
-    rows = odoo.read("sale.order", [order_id], fields=["state"])
+    rows = odoo.read("sale.order", [order_id], fields=["state", "name"])
     if not rows:
         raise HTTPException(status_code=404, detail="Order not found")
     if rows[0]["state"] not in ("draft", "sent"):
@@ -624,6 +654,7 @@ async def cancel_order(order_id: int, current_user: dict = Depends(require_permi
             status_code=400,
             detail="Only quotations (not yet confirmed) can be cancelled this way",
         )
+    order_ref = rows[0].get("name", f"#{order_id}")
     try:
         odoo.execute("sale.order", "action_cancel", [order_id])
     except Exception as e:
@@ -642,6 +673,18 @@ async def cancel_order(order_id: int, current_user: dict = Depends(require_permi
     )
     await audit_log("order.cancel", "order", order_id, user=current_user,
                     reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
+
+    if comm_lookup and comm_lookup.get("reseller_id"):
+        _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
+        if _reseller and _reseller.get("email"):
+            background_tasks.add_task(
+                send_order_cancelled,
+                order_ref=order_ref,
+                customer_name=comm_lookup.get("customer_name", ""),
+                reseller_name=comm_lookup.get("reseller_name", ""),
+                reseller_email=_reseller["email"],
+            )
+
     return {"success": True}
 
 
