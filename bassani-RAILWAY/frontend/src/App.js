@@ -145,7 +145,7 @@ export default function App() {
           <ProtectedRoute><AppLayout><Customers /></AppLayout></ProtectedRoute>
         } />
         <Route path="/customers/:id" element={
-          <ProtectedRoute adminOnly><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
+          <ProtectedRoute><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders" element={
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>
