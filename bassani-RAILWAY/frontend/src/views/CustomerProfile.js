@@ -67,7 +67,7 @@ export default function CustomerProfile() {
     }
   };
 
-  useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line
 
   if (loading) return <LoadingState />;
   if (!data)   return null;
