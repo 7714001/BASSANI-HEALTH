@@ -121,12 +121,29 @@ async def list_customers(
 @router.get("/{customer_id}/profile")
 async def customer_profile(
     customer_id: int,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     """
-    Customer 360 view — aggregates Odoo orders + invoices + MongoDB ownership
-    into a single response for the admin customer profile page.
+    Customer 360 view — aggregates Odoo orders + invoices + MongoDB ownership.
+    Admins can view any customer; resellers can only view their own customers.
     """
+    reseller_order_ids: Optional[list] = None
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        if not reseller:
+            raise HTTPException(status_code=403, detail="Access denied")
+        ownership = await col("customer_ownership").find_one({
+            "reseller_id": reseller["id"],
+            "odoo_partner_id": customer_id,
+        })
+        if not ownership:
+            raise HTTPException(status_code=403, detail="Access denied")
+        # Only show orders this reseller placed
+        comm_records = await col("order_commissions").find(
+            {"reseller_id": reseller["id"]}, {"odoo_order_id": 1, "_id": 0}
+        ).to_list(5000)
+        reseller_order_ids = [int(r["odoo_order_id"]) for r in comm_records if r.get("odoo_order_id")]
+
     from datetime import date
     odoo = get_odoo_client()
 
@@ -140,14 +157,20 @@ async def customer_profile(
             customer[k] = None
     _attach_credit_hold([customer])
 
-    # All confirmed/done orders
-    all_orders = odoo.search_read(
-        "sale.order",
-        domain=[("partner_id", "=", customer_id), ("state", "not in", ["cancel"])],
-        fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "invoice_status"],
-        limit=2000,
-        order="date_order desc",
-    )
+    # Orders — resellers see only what they placed; admins see everything
+    if reseller_order_ids is not None and not reseller_order_ids:
+        all_orders = []  # reseller exists but has placed no orders
+    else:
+        order_domain = [("partner_id", "=", customer_id), ("state", "not in", ["cancel"])]
+        if reseller_order_ids:
+            order_domain.append(("id", "in", reseller_order_ids))
+        all_orders = odoo.search_read(
+            "sale.order",
+            domain=order_domain,
+            fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "invoice_status"],
+            limit=2000,
+            order="date_order desc",
+        )
 
     # Stats
     this_month = date.today().replace(day=1).isoformat()

@@ -280,7 +280,6 @@ export function Customers() {
   const [loading,   setLoading  ] = useState(true);
   const [search,    setSearch   ] = useState("");
   const [modal,     setModal    ] = useState(false);
-  const [detail,    setDetail   ] = useState(null);
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
   const [saving,    setSaving   ] = useState(false);
@@ -468,13 +467,13 @@ export function Customers() {
                   ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">{c.created_by_reseller_name}</span>
                   : <span className="text-xs text-gray-400">Bassani</span>
               },
-              { id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/customers/${c.id}`);}}>View</BtnSecondary> },
             ] : []),
+            { id:"actions", header:"", enableSorting:false, cell:({row:{original:c}})=><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/customers/${c.id}`);}}>View</BtnSecondary> },
           ]}
           data={customers} loading={loading} total={total}
           pagination={custPag} onPaginationChange={setCustPag}
           sorting={custSort} onSortingChange={u=>{ setCustSort(typeof u==="function"?u(custSort):u); setCustPag(p=>({...p,pageIndex:0})); }}
-          onRowClick={isReseller ? setDetail : c => navigate(`/customers/${c.id}`)}
+          onRowClick={c => navigate(`/customers/${c.id}`)}
           manualPagination manualSorting
         />
           </>
@@ -535,26 +534,6 @@ export function Customers() {
               <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Customer</BtnPrimary></div>
             </>
           )}
-        </Modal>
-      )}
-      {detail && (
-        <Modal title={detail.name} onClose={()=>setDetail(null)}>
-          <div className="space-y-2 text-sm">
-            {[["Email",detail.email||"—"],["Phone",detail.phone||"—"],["City",detail.city||"—"],["Credit Limit",fmtR(detail.credit_limit)],["Payment Terms",detail.property_payment_term_id?.[1]||"—"]].map(([l,v])=>(
-              <div key={l} className="flex justify-between py-2 border-b border-gray-50"><span className="text-gray-500">{l}</span><span className="font-medium">{v}</span></div>
-            ))}
-            {!isReseller && (
-              <div className="flex justify-between py-2 border-b border-gray-50">
-                <span className="text-gray-500">Onboarded By</span>
-                <span className="font-medium">
-                  {detail.created_by_reseller_name
-                    ? <span className="text-purple-700">{detail.created_by_reseller_name}</span>
-                    : "Bassani (admin)"}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setDetail(null)}>Close</BtnSecondary></div>
         </Modal>
       )}
     </div>
