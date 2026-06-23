@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-06-23  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 6, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 4, 6, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
 
 ---
 
@@ -15,7 +15,7 @@
 | 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6/1.7 complete — 2026-06-19/2026-06-23 · 1.2/1.5 deferred to pre-launch |
 | 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verification pending client credentials |
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
-| 4 | Commission Engine Hardening | 🔴 Not Started | — |
+| 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🔴 Not Started | — |
@@ -530,47 +530,49 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Commission calculations are auditable, tamper-resistant, and financially accurate.  
 **Estimate:** 2–4 days  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟢 Complete  
+**Completed:** All 5 items complete — 2026-06-23  
 
 ### Tasks
 
 #### 4.1 Race Condition Prevention
-- [ ] Create unique compound index on `monthly_commission_statements`: `{reseller_id: 1, year: 1, month: 1}` with `unique: True`
-- [ ] Test: two simultaneous Generate calls for same month — second must fail gracefully, not create duplicate
+- [x] Create unique compound index on `monthly_commission_statements`: `{reseller_id: 1, year: 1, month: 1}` with `unique: True`
+- [x] Test: two simultaneous Generate calls for same month — second must fail gracefully, not create duplicate
 
 #### 4.2 Cancelled Order Exclusion
-- [ ] Before generating a statement, cross-reference `order_commissions` against Odoo order states
-- [ ] Exclude any order where Odoo `sale.order.state == "cancel"` from turnover aggregation
-- [ ] Mark excluded `order_commissions` records as `payout_status: "cancelled"`
-- [ ] Document this logic clearly: commission is earned on confirmed and fulfilled orders only
+- [x] Before generating a statement, cross-reference `order_commissions` against Odoo order states
+- [x] Exclude any order where Odoo `sale.order.state == "cancel"` from turnover aggregation
+- [x] Mark excluded `order_commissions` records as `payout_status: "cancelled"`
+- [x] Document this logic clearly: commission is earned on confirmed and fulfilled orders only
 
 #### 4.3 Tier Rate Audit Trail
 > **Already satisfied by Phase 0.6** (2026-06-19) — `PUT /api/commission/tiers` and `DELETE /api/commission/tiers/reset` write `commission.configure_tiers` / `commission.reset_tiers` audit entries with actor, before, and after. Visible today via the Audit Trail page (`/audit`). Remaining task below is the only open item.
-- [ ] Display tier change history inline in the admin Tier Settings tab (currently only viewable via the global Audit Trail page)
+- [x] Display tier change history inline in the admin Tier Settings tab — added `GET /api/commission/tiers/history` endpoint and "Rate Change History" section in the Tier Settings tab
 
 #### 4.4 Odoo Vendor Bill — Make Non-Optional
-- [ ] Change `mark-paid` endpoint: if Odoo bill creation fails, return `400` error — do not silently continue
-- [ ] Admin must resolve the Odoo issue before marking paid, OR explicitly acknowledge with an override flag
-- [ ] Add `override_bill_creation: bool` flag to payload for edge cases (manual Odoo bill already exists)
-- [ ] If override used, store reason in statement record and audit log
+- [x] Change `mark-paid` endpoint: if Odoo bill creation fails, return `400` error — do not silently continue
+- [x] Admin must resolve the Odoo issue before marking paid, OR explicitly acknowledge with an override flag
+- [x] Add `override_bill_creation: bool` flag to payload for edge cases (manual Odoo bill already exists)
+- [x] If override used, store reason in statement record and audit log
 
 #### 4.5 Dispute Workflow
-- [ ] Implement `POST /api/commission/statements/{id}/dispute` — reseller submits free-text reason
-- [ ] Statement status transitions to `disputed` 
-- [ ] Admin sees disputed statements flagged in Statements tab
-- [ ] Admin can resolve (`PUT /api/commission/statements/{id}/resolve`) with notes
-- [ ] Reseller receives email notification on resolution (Phase 2 dependency)
+- [x] Implement `POST /api/commission/statements/{id}/dispute` — reseller submits free-text reason
+- [x] Statement status transitions to `disputed`
+- [x] Admin sees disputed statements flagged in Statements tab (red badge + Disputed filter chip + Resolve button)
+- [x] Admin can resolve (`PUT /api/commission/statements/{id}/resolve`) with notes
+- [x] Reseller receives email notification on resolution (`send_dispute_resolved` template wired)
 
 ### Definition of Done
-- [ ] Two simultaneous Generate requests for the same reseller/month produce one statement, not two
-- [ ] A cancelled order does not appear in a reseller's monthly turnover
-- [ ] Every tier rate change is visible in the audit log with before/after values
-- [ ] Mark Paid fails with a clear error if Odoo bill creation fails (no silent pass-through)
-- [ ] A reseller can flag a dispute and an admin can resolve it
+- [x] Two simultaneous Generate requests for the same reseller/month produce one statement, not two
+- [x] A cancelled order does not appear in a reseller's monthly turnover
+- [x] Every tier rate change is visible in the audit log with before/after values
+- [x] Mark Paid fails with a clear error if Odoo bill creation fails (no silent pass-through)
+- [x] A reseller can flag a dispute and an admin can resolve it
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+> **4.2 implementation:** The cancelled-order sync runs at the top of every `generate_statements` call. It's non-fatal — if Odoo is unreachable, generation proceeds with current data and the voided count is 0. The number of voided records is surfaced in the API response and audit log.  
+> **4.4 override:** The override checkbox is available in the Mark Paid modal with a required reason field. Override reason is stored on the statement document and in the audit log detail.  
+> **4.5 dispute email:** Uses `send_dispute_resolved` template in `email_service.py`, fires in a BackgroundTask after the resolve endpoint is called.
 
 ---
 

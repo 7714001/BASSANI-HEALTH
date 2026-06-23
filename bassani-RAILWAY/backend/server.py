@@ -165,6 +165,12 @@ async def initialise_users():
     await col("tickets").create_index([("order_id", 1)])
     await col("tickets").create_index([("updated_at", -1)])
 
+    await col("monthly_commission_statements").create_index(
+        [("reseller_id", 1), ("year", 1), ("month", 1)],
+        unique=True,
+        name="unique_reseller_year_month",
+    )
+
     result = await col("push_subscriptions").update_many(
         {"preferences.ticket_assigned": {"$exists": False}},
         {"$set": {"preferences.ticket_assigned": True, "preferences.ticket_handoff": True}},

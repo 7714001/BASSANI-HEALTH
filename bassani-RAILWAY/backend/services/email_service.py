@@ -494,6 +494,31 @@ def send_statement_paid(
           _wrap("Commission payment", body))
 
 
+def send_dispute_resolved(
+    month_label: str,
+    resolve_notes: str,
+    reseller_name: str,
+    reseller_email: str,
+) -> None:
+    """Sent to the reseller when an admin resolves their commission dispute."""
+    if not reseller_email:
+        return
+    body = (
+        _h1("Commission dispute resolved")
+        + _p(f"Hi {reseller_name},")
+        + _p(f"Your dispute for the <strong>{month_label}</strong> commission statement has been reviewed and resolved.")
+        + _info_box([
+            ("Period", month_label),
+            ("Resolution", resolve_notes or "No additional notes provided"),
+        ])
+        + _button("View statement", f"{settings.portal_url}/commission")
+        + _divider()
+        + _p("If you have further questions, please contact your account manager.", muted=True)
+    )
+    _send(reseller_email, f"Commission dispute resolved — {month_label}",
+          _wrap("Commission Update", body))
+
+
 # ── Packing floor emails ───────────────────────────────────────────────────────
 
 def send_order_ready_for_collection(

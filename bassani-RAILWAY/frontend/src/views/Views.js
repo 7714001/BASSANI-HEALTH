@@ -1033,9 +1033,18 @@ export function Resellers() {
 // Reseller commission view — tier progress + statement history
 // ─────────────────────────────────────────────────────────────────────────────
 function ResellerCommissionView() {
-  const [progress, setProgress] = useState(null);
-  const [history,  setHistory ] = useState([]);
-  const [loading,  setLoading ] = useState(true);
+  const [progress,      setProgress     ] = useState(null);
+  const [history,       setHistory      ] = useState([]);
+  const [loading,       setLoading      ] = useState(true);
+  const [resellerId,    setResellerId   ] = useState(null);
+  const [disputeModal,  setDisputeModal ] = useState(null);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputing,     setDisputing    ] = useState(false);
+
+  const loadHistory = async (rid) => {
+    const hRes = await api.get(`/api/commission/${rid}/history`);
+    setHistory(hRes.data.records || []);
+  };
 
   useEffect(() => {
     (async () => {
@@ -1043,6 +1052,7 @@ function ResellerCommissionView() {
         const me = await api.get("/api/auth/me");
         const rid = me.data.reseller_id;
         if (!rid) return;
+        setResellerId(rid);
         const [pRes, hRes] = await Promise.all([
           api.get(`/api/commission/${rid}/current-month`),
           api.get(`/api/commission/${rid}/history`),
@@ -1053,6 +1063,18 @@ function ResellerCommissionView() {
       finally { setLoading(false); }
     })();
   }, []);
+
+  const dispute = async () => {
+    if (!disputeModal) return;
+    setDisputing(true);
+    try {
+      await api.post(`/api/commission/statements/${disputeModal.id}/dispute`, { reason: disputeReason });
+      toast.success(`Dispute submitted for ${disputeModal.month_label}`);
+      setDisputeModal(null);
+      if (resellerId) await loadHistory(resellerId);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to submit dispute"); }
+    finally { setDisputing(false); }
+  };
 
   if (loading) return <LoadingState />;
 
@@ -1137,17 +1159,17 @@ function ResellerCommissionView() {
           <p className="text-xs text-gray-400 mt-0.5">Monthly commission statements</p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[520px]">
+          <table className="w-full text-sm min-w-[580px]">
             <thead>
               <tr className="bg-gray-50">
-                {["Month","Turnover","Tier","Rate","Commission","Status"].map(h=>(
+                {["Month","Turnover","Tier","Rate","Commission","Status",""].map(h=>(
                   <th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-5 py-2.5">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {history.length === 0 && (
-                <tr><td colSpan={6} className="px-5 py-8 text-center text-gray-400 text-sm">No statements yet — generated at month-end by your account manager</td></tr>
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400 text-sm">No statements yet — generated at month-end by your account manager</td></tr>
               )}
               {history.map((rec, i) => (
                 <tr key={i} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
@@ -1157,9 +1179,21 @@ function ResellerCommissionView() {
                   <td className="px-5 py-3 font-semibold text-bassani-700">{rec.commission_rate}%</td>
                   <td className="px-5 py-3 font-bold text-bassani-700">{fmtR(rec.commission_amount)}</td>
                   <td className="px-5 py-3">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${rec.status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                      {rec.status === "paid" ? "Paid" : "Pending"}
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                      rec.status === "paid" ? "bg-green-50 text-green-700" :
+                      rec.status === "disputed" ? "bg-red-50 text-red-700" :
+                      "bg-amber-50 text-amber-700"
+                    }`}>
+                      {rec.status === "paid" ? "Paid" : rec.status === "disputed" ? "Disputed" : "Pending"}
                     </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    {rec.status !== "disputed" && (
+                      <button onClick={() => { setDisputeModal(rec); setDisputeReason(""); }}
+                        className="text-[10px] text-red-400 hover:text-red-600 font-medium transition-colors">
+                        Dispute
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1167,6 +1201,24 @@ function ResellerCommissionView() {
           </table>
         </div>
       </div>
+
+      {disputeModal && (
+        <Modal title={`Dispute Statement — ${disputeModal.month_label}`} onClose={() => setDisputeModal(null)}>
+          <p className="text-sm text-gray-600 mb-4">
+            Commission of <b className="text-bassani-700">{fmtR(disputeModal.commission_amount)}</b> for <b>{disputeModal.month_label}</b>
+          </p>
+          <div className="space-y-3 mb-6">
+            <FormGroup label="Reason for Dispute">
+              <Input value={disputeReason} onChange={e => setDisputeReason(e.target.value)}
+                placeholder="Describe the issue with this statement…" autoFocus />
+            </FormGroup>
+          </div>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setDisputeModal(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={dispute} loading={disputing} disabled={!disputeReason.trim()}>Submit Dispute</BtnPrimary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1191,6 +1243,11 @@ function AdminCommissionView() {
   const [paying,      setPaying     ] = useState(false);
   const [expanded,    setExpanded   ] = useState(null);
   const [stmtOrders,  setStmtOrders ] = useState({});
+  const [resolveModal,  setResolveModal ] = useState(null);
+  const [resolveNotes,  setResolveNotes ] = useState("");
+  const [resolving,     setResolving    ] = useState(false);
+  const [payOverride,       setPayOverride      ] = useState(false);
+  const [payOverrideReason, setPayOverrideReason] = useState("");
   // Tier settings — seeded with defaults so the table is always visible
   const DEFAULT_TIERS = [
     { tier: 1, label: "Tier 1", range: "R0 – <R300k",    rate: 2.5  },
@@ -1199,9 +1256,11 @@ function AdminCommissionView() {
     { tier: 4, label: "Tier 4", range: "R750k – <R1m",   rate: 10.0 },
     { tier: 5, label: "Tier 5", range: "R1m+",           rate: 12.5 },
   ];
-  const [tiers,       setTiers      ] = useState(DEFAULT_TIERS);
-  const [tierRates,   setTierRates  ] = useState(DEFAULT_TIERS.map(t => t.rate));
-  const [tierSaving,  setTierSaving ] = useState(false);
+  const [tiers,              setTiers             ] = useState(DEFAULT_TIERS);
+  const [tierRates,          setTierRates         ] = useState(DEFAULT_TIERS.map(t => t.rate));
+  const [tierSaving,         setTierSaving        ] = useState(false);
+  const [tierHistory,        setTierHistory       ] = useState([]);
+  const [tierHistoryLoading, setTierHistoryLoading] = useState(false);
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -1226,6 +1285,15 @@ function AdminCommissionView() {
     }).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== "tiers") return;
+    setTierHistoryLoading(true);
+    api.get("/api/commission/tiers/history", { params: { limit: 10 } })
+      .then(r => setTierHistory(r.data.history || []))
+      .catch(() => {})
+      .finally(() => setTierHistoryLoading(false));
+  }, [activeTab]);
+
   const generate = async () => {
     setGenerating(true);
     try {
@@ -1236,21 +1304,42 @@ function AdminCommissionView() {
     finally { setGenerating(false); }
   };
 
-  const openPay = (stmt) => { setPayModal(stmt); setPayRef(""); setPayDate(today.toISOString().split("T")[0]); };
+  const openPay = (stmt) => {
+    setPayModal(stmt);
+    setPayRef("");
+    setPayDate(today.toISOString().split("T")[0]);
+    setPayOverride(false);
+    setPayOverrideReason("");
+  };
 
   const markPaid = async () => {
     if (!payModal) return;
     setPaying(true);
     try {
       const r = await api.put(`/api/commission/statements/${payModal.id}/mark-paid`, {
-        payment_reference: payRef, payment_date: payDate,
+        payment_reference: payRef,
+        payment_date: payDate,
+        override_bill_creation: payOverride,
+        override_reason: payOverrideReason,
       });
       toast.success(`${payModal.reseller_name} — ${payModal.month_label} marked as paid`);
-      if (r.data.warning) toast(r.data.warning, { icon: "⚠️", duration: 8000 });
+      if (r.data.bill_warning) toast(r.data.bill_warning, { icon: "⚠️", duration: 8000 });
       setPayModal(null);
       loadStatements();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to mark as paid"); }
     finally { setPaying(false); }
+  };
+
+  const resolveDispute = async () => {
+    if (!resolveModal) return;
+    setResolving(true);
+    try {
+      await api.put(`/api/commission/statements/${resolveModal.id}/resolve`, { notes: resolveNotes });
+      toast.success(`Dispute resolved — ${resolveModal.reseller_name} ${resolveModal.month_label}`);
+      setResolveModal(null);
+      loadStatements();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to resolve dispute"); }
+    finally { setResolving(false); }
   };
 
   const toggleExpand = async (stmtId) => {
@@ -1321,7 +1410,7 @@ function AdminCommissionView() {
         </div>
 
         <ChipRow>
-          {[["all","All"],["pending","Pending"],["paid","Paid"]].map(([k,l])=>(
+          {[["all","All"],["pending","Pending"],["paid","Paid"],["disputed","Disputed"]].map(([k,l])=>(
             <FilterPill key={k} label={l} active={stmtStatus===k} onClick={() => setStmtStatus(k)} />
           ))}
         </ChipRow>
@@ -1338,8 +1427,12 @@ function AdminCommissionView() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-semibold text-gray-900">{s.reseller_name}</p>
                   <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">{s.month_label}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${s.status === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                    {s.status === "paid" ? "Paid" : "Pending"}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                    s.status === "paid" ? "bg-green-50 text-green-700" :
+                    s.status === "disputed" ? "bg-red-50 text-red-700" :
+                    "bg-amber-50 text-amber-700"
+                  }`}>
+                    {s.status === "paid" ? "Paid" : s.status === "disputed" ? "Disputed" : "Pending"}
                   </span>
                 </div>
                 <p className="text-xs text-gray-500">
@@ -1348,6 +1441,9 @@ function AdminCommissionView() {
                 </p>
                 {s.status === "paid" && s.payment_reference && (
                   <p className="text-xs text-gray-400">Ref: <span className="font-mono">{s.payment_reference}</span> · {fmtDate(s.paid_at)}</p>
+                )}
+                {s.status === "disputed" && s.dispute_reason && (
+                  <p className="text-xs text-red-500 mt-0.5">Dispute: {s.dispute_reason}</p>
                 )}
               </div>
               <div className="flex items-center gap-3 shrink-0">
@@ -1359,6 +1455,9 @@ function AdminCommissionView() {
                   className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
                   {expanded === s.id ? "Hide" : "Orders"}
                 </button>
+                {s.status === "disputed" && can("commission.mark_paid") && (
+                  <BtnSecondary size="sm" onClick={() => { setResolveModal(s); setResolveNotes(""); }}>Resolve</BtnSecondary>
+                )}
                 {s.status === "pending" && can("commission.mark_paid") && (
                   <BtnPrimary size="sm" onClick={() => openPay(s)}>Mark Paid</BtnPrimary>
                 )}
@@ -1435,10 +1534,54 @@ function AdminCommissionView() {
               <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tier Rates</BtnPrimary>
             </div>
           )}
+          <div className="px-5 py-4 border-t border-gray-50">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Rate Change History</p>
+            {tierHistoryLoading ? (
+              <p className="text-xs text-gray-400">Loading…</p>
+            ) : tierHistory.length === 0 ? (
+              <p className="text-xs text-gray-400">No rate changes recorded yet</p>
+            ) : (
+              <div className="space-y-2">
+                {tierHistory.map((h, i) => (
+                  <div key={i} className="flex items-start gap-3 text-xs">
+                    <span className="text-gray-300 shrink-0 tabular-nums">{fmtDate(h.created_at)}</span>
+                    <span className="text-gray-600">
+                      <b>{h.actor_username}</b>
+                      {h.action === "commission.reset_tiers" ? " reset rates to system defaults" : " updated tier rates"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* Mark as Paid modal */}
+      {resolveModal && (
+        <Modal title={`Resolve Dispute — ${resolveModal.reseller_name}`} onClose={() => setResolveModal(null)}>
+          <p className="text-sm text-gray-600 mb-2">
+            <b>{resolveModal.month_label}</b> · {fmtR(resolveModal.commission_amount)}
+          </p>
+          {resolveModal.dispute_reason && (
+            <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3 mb-4">
+              <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wider mb-1">Dispute reason</p>
+              <p className="text-sm text-red-700">{resolveModal.dispute_reason}</p>
+            </div>
+          )}
+          <div className="space-y-3 mb-6">
+            <FormGroup label="Resolution Notes">
+              <Input value={resolveNotes} onChange={e => setResolveNotes(e.target.value)}
+                placeholder="Explain how the dispute was resolved…" autoFocus />
+            </FormGroup>
+          </div>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setResolveModal(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={resolveDispute} loading={resolving} disabled={!resolveNotes.trim()}>Resolve Dispute</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
       {payModal && (
         <Modal title={`Mark as Paid — ${payModal.reseller_name}`} onClose={() => setPayModal(null)}>
           <p className="text-sm text-gray-600 mb-4">
@@ -1458,13 +1601,30 @@ function AdminCommissionView() {
               </p>
             </div>
           )}
-          <div className="space-y-3 mb-6">
+          <div className="space-y-3 mb-4">
             <FormGroup label="Payment Reference">
               <Input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder="e.g. EFT ref 20260612-RES01" autoFocus />
             </FormGroup>
             <FormGroup label="Payment Date">
               <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
             </FormGroup>
+          </div>
+          <div className="border-t border-gray-100 pt-4 mb-6">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" checked={payOverride} onChange={e => setPayOverride(e.target.checked)}
+                className="mt-0.5 accent-bassani-600" />
+              <span className="text-xs text-gray-500">
+                Override Odoo bill creation <span className="text-gray-300 ml-1">(use only if Odoo integration is unavailable)</span>
+              </span>
+            </label>
+            {payOverride && (
+              <div className="mt-2">
+                <FormGroup label="Override Reason">
+                  <Input value={payOverrideReason} onChange={e => setPayOverrideReason(e.target.value)}
+                    placeholder="Reason for bypassing Odoo bill creation…" />
+                </FormGroup>
+              </div>
+            )}
           </div>
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setPayModal(null)}>Cancel</BtnSecondary>
