@@ -308,6 +308,8 @@ export default function SalesTickets() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailOrder, setDetailOrder]   = useState(null);
   const [detailOrderLoading, setDetailOrderLoading] = useState(false);
+  const [deliveries,        setDeliveries       ] = useState([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
   const [saving, setSaving]             = useState(false);
   const [confirming, setConfirming]     = useState(false);
@@ -366,6 +368,17 @@ export default function SalesTickets() {
     } catch { toast.error("Failed to refresh ticket"); }
     load(); // silently refresh list in background
   };
+
+  // Load deliveries whenever a ticket with an order is opened/refreshed
+  useEffect(() => {
+    const orderId = detail?.order_id;
+    if (!orderId) { setDeliveries([]); return; }
+    setDeliveriesLoading(true);
+    api.get(`/api/orders/${orderId}/deliveries`)
+      .then(r => setDeliveries(r.data.deliveries || []))
+      .catch(() => setDeliveries([]))
+      .finally(() => setDeliveriesLoading(false));
+  }, [detail?.order_id]);
 
   const advance = async () => {
     if (stageForm.status === "incomplete" && !stageForm.incomplete_reason)
@@ -693,6 +706,7 @@ export default function SalesTickets() {
                         <LoadingState />
                       </div>
                     ) : detailOrder ? (
+                      <>
                       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
 
                         {/* Document header */}
@@ -785,6 +799,59 @@ export default function SalesTickets() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Delivery & Fulfilment — 7.1 + 7.5 */}
+                      {(deliveriesLoading || deliveries.length > 0) && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                          <div className="px-5 py-3 border-b border-gray-50 flex items-center gap-2">
+                            <span className="text-xs font-semibold text-gray-600">Delivery & Fulfilment</span>
+                            {deliveries.some(d => d.is_backorder) && (
+                              <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">Backorders present</span>
+                            )}
+                          </div>
+                          {deliveriesLoading ? (
+                            <p className="px-5 py-4 text-xs text-gray-400">Loading deliveries…</p>
+                          ) : (
+                            <div className="divide-y divide-gray-50">
+                              {deliveries.map(d => (
+                                <div key={d.id} className="px-5 py-3 space-y-2">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <span className="font-mono text-xs font-semibold text-bassani-700">{d.name}</span>
+                                    {d.is_backorder && (
+                                      <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">Backorder</span>
+                                    )}
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                                      d.state === "done"     ? "bg-green-50 text-green-700"  :
+                                      d.state === "assigned" ? "bg-blue-50 text-blue-700"    :
+                                      d.state === "cancel"   ? "bg-gray-100 text-gray-400"   :
+                                                               "bg-amber-50 text-amber-700"
+                                    }`}>{d.state_label}</span>
+                                    {d.date_done && <span className="text-xs text-gray-400">Delivered {fmtDate(d.date_done)}</span>}
+                                    {d.scheduled_date && d.state !== "done" && <span className="text-xs text-gray-400">Expected {fmtDate(d.scheduled_date)}</span>}
+                                    {d.tracking_ref && <span className="text-xs text-gray-500 font-mono">{d.tracking_ref}</span>}
+                                  </div>
+                                  {d.lines.length > 0 && (
+                                    <div className="space-y-0.5 pl-1">
+                                      {d.lines.map((l, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-xs text-gray-500">
+                                          <span className="flex-1 truncate">{l.product_name}</span>
+                                          <span className="shrink-0 tabular-nums">
+                                            {l.qty_done}/{l.qty_ordered} units
+                                            {l.qty_done < l.qty_ordered && (
+                                              <span className="text-orange-500 ml-1">({l.qty_ordered - l.qty_done} outstanding)</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      </>
                     ) : (
                       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
                         <p className="text-sm text-gray-400">Order #{detail.order_id} — could not load from Odoo.</p>

@@ -193,6 +193,91 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+# ── Deliveries (7.1 + 7.5) ───────────────────────────────────────────────────
+
+_PICKING_STATE_LABEL = {
+    "draft":     "Draft",
+    "waiting":   "Waiting for Stock",
+    "confirmed": "Confirmed",
+    "assigned":  "Ready to Pick",
+    "done":      "Delivered",
+    "cancel":    "Cancelled",
+}
+
+@router.get("/{order_id}/deliveries")
+async def get_order_deliveries(
+    order_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return stock.picking records linked to a sale order, including move-line
+    detail so callers can show partially delivered quantities (backorders).
+    """
+    odoo = get_odoo_client()
+    try:
+        orders = odoo.search_read(
+            "sale.order",
+            domain=[("id", "=", order_id)],
+            fields=["picking_ids"],
+            limit=1,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if not orders or not orders[0].get("picking_ids"):
+        return {"deliveries": [], "has_backorder": False, "count": 0}
+
+    picking_ids = orders[0]["picking_ids"]
+    try:
+        pickings = odoo_call("stock.picking", "read", [picking_ids], {"fields": [
+            "id", "name", "origin", "state", "scheduled_date", "date_done",
+            "carrier_id", "carrier_tracking_ref", "backorder_id", "partner_id", "move_ids",
+        ]})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo picking error: {str(e)}")
+
+    all_move_ids = [mid for p in pickings for mid in p.get("move_ids", [])]
+    move_by_picking: dict = {}
+    if all_move_ids:
+        try:
+            moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
+                "id", "product_id", "product_uom_qty", "quantity_done", "picking_id", "state",
+            ]})
+            for m in moves:
+                pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
+                move_by_picking.setdefault(pid, []).append({
+                    "product_id":   m["product_id"][0] if isinstance(m["product_id"], list) else m["product_id"],
+                    "product_name": m["product_id"][1] if isinstance(m["product_id"], list) else "",
+                    "qty_ordered":  m["product_uom_qty"],
+                    "qty_done":     m["quantity_done"],
+                })
+        except Exception:
+            pass  # move lines are informational — non-fatal
+
+    has_backorder = False
+    result = []
+    for p in pickings:
+        is_backorder = bool(p.get("backorder_id"))
+        if is_backorder:
+            has_backorder = True
+        result.append({
+            "id":           p["id"],
+            "name":         p["name"],
+            "origin":       p.get("origin"),
+            "state":        p["state"],
+            "state_label":  _PICKING_STATE_LABEL.get(p["state"], p["state"]),
+            "scheduled_date": p.get("scheduled_date"),
+            "date_done":    p.get("date_done"),
+            "carrier":      p["carrier_id"][1] if isinstance(p.get("carrier_id"), list) and p["carrier_id"] else None,
+            "tracking_ref": p.get("carrier_tracking_ref") or None,
+            "is_backorder": is_backorder,
+            "backorder_ref": p["backorder_id"][1] if isinstance(p.get("backorder_id"), list) and p["backorder_id"] else None,
+            "lines":        move_by_picking.get(p["id"], []),
+        })
+
+    return {"deliveries": result, "has_backorder": has_backorder, "count": len(result)}
+
+
 @router.post("/")
 async def create_order(
     order: OrderCreate,

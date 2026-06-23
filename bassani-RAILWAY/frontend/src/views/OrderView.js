@@ -1,6 +1,7 @@
-import { useRef } from "react";
-import { Printer, X, ChevronLeft } from "lucide-react";
+import { useRef, useState, useEffect } from "react";
+import { Printer, X, ChevronLeft, Truck } from "lucide-react";
 import { fmtDate } from "../components/UI";
+import api from "../api";
 
 // ── Static Bassani details (mirrored from Invoices.js) ─────────────────────────
 const BASSANI = {
@@ -39,8 +40,29 @@ function fmt(n) {
   return new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
+const PICKING_STATE_COLOR = {
+  done:      "bg-green-50 text-green-700",
+  assigned:  "bg-blue-50 text-blue-700",
+  confirmed: "bg-amber-50 text-amber-700",
+  waiting:   "bg-orange-50 text-orange-700",
+  cancel:    "bg-gray-100 text-gray-400",
+  draft:     "bg-gray-100 text-gray-400",
+};
+
 export default function OrderView({ order: o, onClose, onConfirm, onCancel, confirming, cancelling, isAdmin, canConfirmOrder = true, canCancelOrder = true }) {
   const printRef = useRef();
+  const [deliveries,        setDeliveries       ] = useState([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [deliveriesOpen,    setDeliveriesOpen   ] = useState(true);
+
+  useEffect(() => {
+    if (!o?.id) return;
+    setDeliveriesLoading(true);
+    api.get(`/api/orders/${o.id}/deliveries`)
+      .then(r => setDeliveries(r.data.deliveries || []))
+      .catch(() => {})
+      .finally(() => setDeliveriesLoading(false));
+  }, [o?.id]);
 
   const print = () => {
     const content = printRef.current?.innerHTML;
@@ -119,6 +141,68 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
           </button>
         </div>
       </div>
+
+      {/* Delivery status strip — non-printable */}
+      {(deliveriesLoading || deliveries.length > 0) && (
+        <div className="bg-slate-50 border-b border-gray-200 px-6 py-3">
+          <button
+            onClick={() => setDeliveriesOpen(o => !o)}
+            className="flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors w-full text-left">
+            <Truck size={13} className="text-bassani-600" />
+            Delivery Status
+            {deliveries.length > 0 && (
+              <span className="ml-1 text-gray-400 font-normal">({deliveries.length} shipment{deliveries.length !== 1 ? "s" : ""})</span>
+            )}
+            <span className="ml-auto text-gray-300">{deliveriesOpen ? "▲" : "▼"}</span>
+          </button>
+          {deliveriesOpen && (
+            deliveriesLoading ? (
+              <p className="text-xs text-gray-400 mt-2">Loading deliveries…</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {deliveries.map(d => (
+                  <div key={d.id} className="flex flex-wrap items-start gap-3 bg-white border border-gray-100 rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-2 min-w-[140px]">
+                      <span className="font-mono text-xs text-bassani-700 font-semibold">{d.name}</span>
+                      {d.is_backorder && (
+                        <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">Backorder</span>
+                      )}
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${PICKING_STATE_COLOR[d.state] || "bg-gray-100 text-gray-500"}`}>
+                      {d.state_label}
+                    </span>
+                    {d.date_done && (
+                      <span className="text-xs text-gray-400">Delivered {fmtDate(d.date_done)}</span>
+                    )}
+                    {d.scheduled_date && d.state !== "done" && (
+                      <span className="text-xs text-gray-400">Expected {fmtDate(d.scheduled_date)}</span>
+                    )}
+                    {d.tracking_ref && (
+                      <span className="text-xs text-gray-500">Tracking: <span className="font-mono">{d.tracking_ref}</span></span>
+                    )}
+                    {d.lines.length > 0 && (
+                      <div className="w-full mt-1 border-t border-gray-50 pt-2 space-y-0.5">
+                        {d.lines.map((l, i) => {
+                          const pct = l.qty_ordered > 0 ? Math.min(Math.round(l.qty_done / l.qty_ordered * 100), 100) : 0;
+                          return (
+                            <div key={i} className="flex items-center gap-2 text-xs text-gray-500">
+                              <span className="flex-1 truncate">{l.product_name}</span>
+                              <span className="shrink-0">
+                                {l.qty_done}/{l.qty_ordered} units
+                                {l.qty_done < l.qty_ordered && <span className="text-orange-500 ml-1">({l.qty_ordered - l.qty_done} outstanding)</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      )}
 
       {/* Scrollable order area */}
       <div className="flex-1 overflow-y-auto py-8 px-4">

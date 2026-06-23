@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import { Printer, X } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow,
-  Modal, FormGroup, Input, Select, BtnPrimary, BtnSecondary,
+  Modal, FormGroup, Input, Select, Textarea, BtnPrimary, BtnSecondary,
   fmtR, fmtDate,
 } from "../components/UI";
 
@@ -297,6 +297,11 @@ export default function Invoices() {
   const [payForm,   setPayForm  ] = useState({ journal_id: "", payment_date: "", amount: "" });
   const [paying,    setPaying   ] = useState(false);
 
+  // Credit note request
+  const [cnModal,      setCnModal     ] = useState(null);
+  const [cnReason,     setCnReason    ] = useState("");
+  const [cnSubmitting, setCnSubmitting] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -307,7 +312,11 @@ export default function Invoices() {
       };
       if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search = search;
-      if (filter !== "all") params.payment_state = filter;
+      if (filter === "credit_notes") {
+        params.move_type = "out_refund";
+      } else if (filter !== "all") {
+        params.payment_state = filter;
+      }
       const r = await api.get("/api/invoices/", { params });
       setInvoices(r.data.invoices);
       setTotal(r.data.total);
@@ -366,12 +375,28 @@ export default function Invoices() {
   };
 
   const FILTERS = [
-    { key: "unpaid",   label: "Outstanding" },
-    { key: "not_paid", label: "Unpaid" },
-    { key: "partial",  label: "Partial" },
-    { key: "paid",     label: "Paid" },
-    { key: "all",      label: "All" },
+    { key: "unpaid",        label: "Outstanding" },
+    { key: "not_paid",      label: "Unpaid" },
+    { key: "partial",       label: "Partial" },
+    { key: "paid",          label: "Paid" },
+    { key: "all",           label: "All" },
+    { key: "credit_notes",  label: "Credit Notes" },
   ];
+
+  const submitCreditNoteRequest = async () => {
+    if (!cnReason.trim()) return toast.error("Please provide a reason");
+    setCnSubmitting(true);
+    try {
+      await api.post(`/api/invoices/${cnModal.id}/request-credit-note`, { reason: cnReason });
+      toast.success("Credit note request submitted");
+      setCnModal(null);
+      setCnReason("");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to submit request");
+    } finally {
+      setCnSubmitting(false);
+    }
+  };
 
   const outstandingTotal = invoices.reduce((s, i) => s + (i.amount_residual || 0), 0);
   const canPay = (inv) => isAdmin && (inv.payment_state === "not_paid" || inv.payment_state === "partial");
@@ -399,8 +424,14 @@ export default function Invoices() {
         <DataTable
           columns={[
             { accessorKey: "name", header: "Invoice #",
-              cell: ({ row: { original: inv } }) =>
-                <span className="font-mono text-xs text-bassani-700">{inv.name || "Draft"}</span> },
+              cell: ({ row: { original: inv } }) => (
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-bassani-700">{inv.name || "Draft"}</span>
+                  {inv.move_type === "out_refund" && (
+                    <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">CN</span>
+                  )}
+                </div>
+              ) },
             { id: "customer", header: "Customer", enableSorting: false,
               cell: ({ row: { original: inv } }) =>
                 <span className="font-medium text-gray-900">{inv.partner_id?.[1] || "—"}</span> },
@@ -437,6 +468,13 @@ export default function Invoices() {
                       Register Payment
                     </BtnPrimary>
                   )}
+                  {inv.move_type === "out_invoice" && inv.state === "posted" && (
+                    <button
+                      onClick={e => { e.stopPropagation(); setCnModal(inv); setCnReason(""); }}
+                      className="text-xs text-purple-600 hover:text-purple-700 font-medium hover:underline">
+                      Request CN
+                    </button>
+                  )}
                 </div>
               ),
             },
@@ -451,6 +489,35 @@ export default function Invoices() {
       {/* Full-screen invoice viewer */}
       {viewInvoice && (
         <InvoiceView invoice={viewInvoice} onClose={() => setViewInvoice(null)} />
+      )}
+
+      {/* Credit note request modal */}
+      {cnModal && (
+        <Modal title={`Request Credit Note — ${cnModal.name}`} onClose={() => setCnModal(null)}>
+          <div className="space-y-3">
+            <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm">
+              <span className="text-gray-500">Customer</span>
+              <span className="font-medium">{cnModal.partner_id?.[1]}</span>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm">
+              <span className="text-gray-500">Invoice Total</span>
+              <span className="font-semibold">{fmtR(cnModal.amount_total)}</span>
+            </div>
+            <FormGroup label="Reason for credit note" required>
+              <Textarea
+                rows={4}
+                placeholder="Describe the reason for the credit note request…"
+                value={cnReason}
+                onChange={e => setCnReason(e.target.value)}
+              />
+            </FormGroup>
+            <p className="text-xs text-gray-400">The finance team will review this request and process the credit note in Odoo.</p>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setCnModal(null)} disabled={cnSubmitting}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={submitCreditNoteRequest} loading={cnSubmitting}>Submit Request</BtnPrimary>
+          </div>
+        </Modal>
       )}
 
       {/* Payment modal */}

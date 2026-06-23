@@ -323,3 +323,91 @@ async def register_payment(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+# ── Credit Note Requests (7.2) ────────────────────────────────────────────────
+
+from database import col, NO_ID
+from datetime import datetime, timezone
+import uuid as _uuid
+
+class CreditNoteRequestCreate(BaseModel):
+    reason: str
+
+
+@router.post("/{invoice_id}/request-credit-note")
+async def request_credit_note(
+    invoice_id: int,
+    body: CreditNoteRequestCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reseller or sales clerk submits a credit note request against an invoice."""
+    odoo = get_odoo_client()
+    try:
+        records = odoo.read("account.move", [invoice_id],
+                            fields=["name", "partner_id", "amount_total", "move_type"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = records[0]
+    if inv.get("move_type") != "out_invoice":
+        raise HTTPException(status_code=400, detail="Credit note requests can only be raised against customer invoices")
+
+    now = datetime.now(timezone.utc)
+    req = {
+        "id":             str(_uuid.uuid4())[:8].upper(),
+        "invoice_id":     invoice_id,
+        "invoice_ref":    inv["name"],
+        "partner_id":     inv["partner_id"][0] if isinstance(inv["partner_id"], list) else inv["partner_id"],
+        "partner_name":   inv["partner_id"][1] if isinstance(inv["partner_id"], list) else "",
+        "amount_total":   inv.get("amount_total", 0),
+        "reason":         body.reason,
+        "status":         "pending",
+        "requested_by":   current_user.get("username", ""),
+        "created_at":     now,
+        "acknowledged_at": None,
+        "acknowledged_by": None,
+    }
+    await col("credit_note_requests").insert_one(req)
+    await audit_log("invoice.credit_note_request", "invoice", invoice_id,
+                    entity_label=inv["name"], user=current_user,
+                    detail={"reason": body.reason})
+    return {"success": True, "request_id": req["id"]}
+
+
+@router.get("/credit-note-requests")
+async def list_credit_note_requests(
+    status: Optional[str] = "pending",
+    limit: int = Query(50, le=200),
+    current_user: dict = Depends(require_admin),
+):
+    """Admin: list pending (or all) credit note requests."""
+    query: dict = {}
+    if status and status != "all":
+        query["status"] = status
+    rows = await col("credit_note_requests").find(query, NO_ID).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"requests": rows, "total": len(rows)}
+
+
+@router.put("/credit-note-requests/{req_id}/acknowledge")
+async def acknowledge_credit_note_request(
+    req_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Admin marks a credit note request as acknowledged (processed in Odoo)."""
+    req = await col("credit_note_requests").find_one({"id": req_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    now = datetime.now(timezone.utc)
+    await col("credit_note_requests").update_one(
+        {"id": req_id},
+        {"$set": {
+            "status":          "acknowledged",
+            "acknowledged_at": now,
+            "acknowledged_by": current_user.get("username", ""),
+        }},
+    )
+    await audit_log("invoice.acknowledge_credit_note", "invoice", req["invoice_id"],
+                    entity_label=req.get("invoice_ref", ""), user=current_user)
+    return {"success": True}

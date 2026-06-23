@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Badge, BtnPrimary, BtnSecondary, LoadingState, fmtR, fmtDate } from "../components/UI";
+import { Badge, BtnPrimary, BtnSecondary, Input, LoadingState, fmtR, fmtDate } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -38,8 +38,12 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function CustomerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [data,    setData   ] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data,         setData        ] = useState(null);
+  const [loading,      setLoading     ] = useState(true);
+  const [stmt,         setStmt        ] = useState(null);
+  const [stmtLoading,  setStmtLoading ] = useState(false);
+  const [stmtFrom,     setStmtFrom    ] = useState("");
+  const [stmtTo,       setStmtTo      ] = useState("");
 
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
@@ -47,6 +51,23 @@ export default function CustomerProfile() {
       .catch(() => { toast.error("Failed to load customer profile"); navigate("/customers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  const loadStatement = async () => {
+    setStmtLoading(true);
+    try {
+      const params = {};
+      if (stmtFrom) params.date_from = stmtFrom;
+      if (stmtTo)   params.date_to   = stmtTo;
+      const r = await api.get(`/api/customers/${id}/statement`, { params });
+      setStmt(r.data);
+    } catch {
+      toast.error("Failed to load account statement");
+    } finally {
+      setStmtLoading(false);
+    }
+  };
+
+  useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <LoadingState />;
   if (!data)   return null;
@@ -220,6 +241,93 @@ export default function CustomerProfile() {
                 </tbody>
               </table>
             )}
+          </Section>
+
+          {/* Account Statement — 7.3 */}
+          <Section title="Account Statement">
+            <div className="px-5 py-4 border-b border-gray-50 flex flex-wrap items-end gap-3">
+              <div>
+                <p className="text-xs text-gray-400 mb-1">From</p>
+                <Input type="date" value={stmtFrom} onChange={e => setStmtFrom(e.target.value)} className="w-36" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-1">To</p>
+                <Input type="date" value={stmtTo} onChange={e => setStmtTo(e.target.value)} className="w-36" />
+              </div>
+              <BtnSecondary size="sm" onClick={loadStatement} disabled={stmtLoading}>
+                {stmtLoading ? "Loading…" : "Load Statement"}
+              </BtnSecondary>
+            </div>
+
+            {stmtLoading ? (
+              <p className="px-5 py-6 text-xs text-gray-400">Loading statement…</p>
+            ) : stmt ? (
+              <>
+                {/* Summary row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-50 border-b border-gray-50">
+                  {[
+                    { label: "Total Invoiced",   value: fmtR(stmt.summary.total_invoiced),   color: "text-gray-800" },
+                    { label: "Total Credits",     value: fmtR(stmt.summary.total_credits),    color: "text-purple-700" },
+                    { label: "Total Outstanding", value: fmtR(stmt.summary.total_outstanding), color: "text-red-600"   },
+                    { label: "Net Balance",       value: fmtR(stmt.summary.net_balance),      color: stmt.summary.net_balance > 0 ? "text-red-600" : "text-green-700" },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="px-5 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">{label}</p>
+                      <p className={`text-sm font-bold ${color}`}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Transaction table */}
+                {stmt.invoices.length === 0 ? (
+                  <p className="px-5 py-4 text-sm text-gray-400">No transactions in this period.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-xs text-gray-500">
+                        <th className="text-left px-5 py-2.5 font-medium">Ref</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Type</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Date</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Due</th>
+                        <th className="text-right px-5 py-2.5 font-medium">Total</th>
+                        <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stmt.invoices.map(inv => {
+                        const isCN = inv.move_type === "out_refund";
+                        const overdue = !isCN && inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date() && inv.payment_state !== "paid";
+                        return (
+                          <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                            <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
+                            <td className="px-5 py-3">
+                              {isCN
+                                ? <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">Credit Note</span>
+                                : <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-semibold">Invoice</span>
+                              }
+                            </td>
+                            <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
+                            <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
+                              {inv.invoice_date_due ? fmtDate(inv.invoice_date_due) : "—"}{overdue ? " ⚠" : ""}
+                            </td>
+                            <td className={`px-5 py-3 text-right font-semibold ${isCN ? "text-purple-700" : ""}`}>
+                              {isCN ? `(${fmtR(inv.amount_total)})` : fmtR(inv.amount_total)}
+                            </td>
+                            <td className={`px-5 py-3 text-right font-semibold ${inv.amount_residual > 0 ? "text-red-600" : "text-gray-400"}`}>
+                              {inv.amount_residual > 0 ? fmtR(inv.amount_residual) : "—"}
+                            </td>
+                            <td className="px-5 py-3">
+                              <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            ) : null}
           </Section>
 
         </div>

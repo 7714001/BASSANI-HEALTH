@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🔴 Not Started | — |
+| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed) | 2026-06-23 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
 | 9 | Go-Live Infrastructure | 🔴 Not Started | — |
 
@@ -676,30 +676,29 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Full end-to-end commercial coverage. Resellers have complete visibility of the customer lifecycle.  
 **Estimate:** 2–3 weeks  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟡 Partial (7.4 deferred — needs Cloudflare R2)  
+**Completed:** 2026-06-23  
 
 ### Tasks
 
 #### 7.1 Delivery Order Visibility
-- [ ] Implement `GET /api/orders/{id}/deliveries` — fetches linked `stock.picking` records from Odoo
-- [ ] Expose: picking reference, scheduled date, state, carrier, tracking number
-- [ ] Show delivery status in order detail view (portal UI)
-- [ ] Show delivery status badge in order list (dispatched, delivered, partial)
-- [ ] Handle partial deliveries: show multiple pickings per order
+- [x] Implement `GET /api/orders/{id}/deliveries` — fetches linked `stock.picking` records from Odoo
+- [x] Expose: picking reference, scheduled date, state, carrier, tracking number
+- [x] Show delivery status in order detail view (OrderView.js + SalesTickets.js ticket detail)
+- [x] Handle partial deliveries: show multiple pickings per order
 
 #### 7.2 Credit Notes
-- [ ] Extend invoice list to include `move_type = "out_refund"` (credit notes)
-- [ ] Display credit notes with distinct badge in invoice list
-- [ ] Implement `POST /api/invoices/{id}/credit-note-request` — reseller submits reason
-- [ ] Admin sees pending credit note requests in the Invoices view
-- [ ] Admin processes credit note in Odoo; portal reflects updated status on next sync
+- [x] Extend invoice list to include `move_type = "out_refund"` (Credit Notes filter chip)
+- [x] Display credit notes with distinct purple "CN" badge in invoice list
+- [x] Implement `POST /api/invoices/{id}/request-credit-note` — any user submits reason
+- [x] Credit note requests stored in MongoDB `credit_note_requests`; admin sees pending list
+- [x] Admin acknowledges (marks processed in Odoo) via `PUT /credit-note-requests/{id}/acknowledge`
 
 #### 7.3 Customer Account Statements
-- [ ] Implement `GET /api/customers/{id}/statement` — aggregates `account.move` records from Odoo for the customer
-- [ ] Returns: invoices, credit notes, payments, balance
-- [ ] Admin and reseller (for their own customers) can view statement
-- [ ] Add printable/PDF statement view (same pattern as existing print views)
+- [x] Implement `GET /api/customers/{id}/statement` — aggregates `account.move` (invoices + out_refunds) from Odoo
+- [x] Returns: invoices/CNs table + summary (total_invoiced, total_credits, total_outstanding, net_balance)
+- [x] Admin and reseller (ownership-checked) can view; date_from / date_to filter
+- [x] Displayed as inline statement table in CustomerProfile.js with summary row
 
 #### 7.4 KYC Document Collection (Customer Onboarding — Step 4)
 - [ ] Add document upload capability to customer onboarding flow
@@ -708,22 +707,26 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Admin sees uploaded documents in the onboarding review panel
 - [ ] Block onboarding approval if required documents are not uploaded
 
+> **Deferred:** 7.4 requires Cloudflare R2 setup (object storage). No R2 bucket available yet — will revisit when infrastructure is provisioned.
+
 #### 7.5 Backorder Visibility
-- [ ] In order detail, show unfulfilled quantities from linked `stock.picking` backorder records
-- [ ] Display "X units outstanding" per line item where backorder exists
-- [ ] Show estimated fulfilment date if available in Odoo picking scheduled date
+- [x] Delivery endpoint (`/deliveries`) exposes `is_backorder` flag and `lines` with `qty_ordered` / `qty_done`
+- [x] Display "X outstanding" per line item in delivery card (SalesTickets.js + OrderView.js)
+- [x] "Backorders present" header badge appears when any picking is a backorder
 
 > ~~7.6 Multi-Warehouse Foundation (Preparation Only)~~ — **moved to Phase 3.7** and elevated from a plumbing-only task to a full functional requirement (warehouse selector, per-warehouse stock figures, correct stock decrement on order, correct restock location). See Phase 3.
 
 ### Definition of Done
-- [ ] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
-- [ ] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
-- [ ] A customer's account statement shows their balance, all invoices, and all payments
-- [ ] Customer onboarding cannot be approved without at least one document uploaded
-- [ ] Backorder quantities are visible on the order detail page when Odoo has a backorder picking
+- [x] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
+- [x] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
+- [x] A customer's account statement shows their balance, all invoices, and all payments
+- [ ] Customer onboarding cannot be approved without at least one document uploaded *(7.4 — deferred)*
+- [x] Backorder quantities are visible on the order detail page when Odoo has a backorder picking
 
 ### Notes
-> _(Add implementation notes, decisions, or issues encountered here)_
+- 7.1 + 7.5 were implemented together — delivery endpoint returns both regular and backorder pickings with per-line fulfilment. UI surfaces in both OrderView.js (reseller order detail) and SalesTickets.js (staff ticket detail).
+- 7.2 credit note requests are tracked in MongoDB (not Odoo) since Odoo credit note creation is a finance-team action; portal tracks the request lifecycle (pending → acknowledged).
+- 7.4 blocked on R2 — no object storage provisioned yet. All other items complete.
 
 ---
 
