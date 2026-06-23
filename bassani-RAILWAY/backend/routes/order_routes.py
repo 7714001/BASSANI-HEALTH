@@ -118,6 +118,17 @@ async def list_orders(
         for order in orders:
             order["linked_ticket"] = ticket_map.get(order["id"])
 
+        # Batch-fetch packing board entries to surface pipeline status in the list
+        packing_map: dict = {}
+        if order_ids:
+            async for pb in col("packing_board").find(
+                {"order_id": {"$in": [str(oid) for oid in order_ids]}},
+                {"order_id": 1, "status": 1},
+            ):
+                packing_map[pb["order_id"]] = pb.get("status")
+        for order in orders:
+            order["packing_status"] = packing_map.get(str(order["id"]))
+
         return {"orders": orders, "total": total}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

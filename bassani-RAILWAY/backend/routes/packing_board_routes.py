@@ -24,6 +24,7 @@ from auth import require_admin, get_current_user, get_user_by_username, require_
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
+from odoo_client import get_odoo_client
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
 settings = get_settings()
@@ -298,6 +299,10 @@ class CancelBody(BaseModel):
     reason:   Optional[str] = None
 
 
+class AdoptBody(BaseModel):
+    order_id: int  # Odoo sale.order ID (integer)
+
+
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/queue")
@@ -508,6 +513,125 @@ async def get_entry(order_id: str, _: dict = Depends(require_board_access)):
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
     return entry
+
+
+@router.post("/adopt")
+async def adopt_order(
+    body: AdoptBody,
+    current_user: dict = Depends(require_permission("tickets.manage")),
+):
+    """Adopt an existing confirmed Odoo order into the packing pipeline.
+    Used by admins to bring pre-pipeline orders into the Orders Ticket flow
+    without going through the full Sales Ticket quote/deposit process."""
+    order_id_str = str(body.order_id)
+
+    existing = await col("packing_board").find_one({"order_id": order_id_str})
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Order is already in the pipeline (status: {existing['status']})",
+        )
+
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read(
+            "sale.order", [body.order_id],
+            fields=["name", "partner_id", "state", "warehouse_id", "picking_ids", "note", "invoice_ids"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found in Odoo")
+    order_data = rows[0]
+
+    _STATE_LABELS = {
+        "draft": "a draft quotation", "sent": "a sent quotation",
+        "done": "already completed", "cancel": "cancelled",
+    }
+    if order_data["state"] != "sale":
+        label = _STATE_LABELS.get(order_data["state"], order_data["state"])
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot adopt: order is {label}. Only confirmed Sales Orders can be queued.",
+        )
+
+    # Invoice name (best-effort — may not exist for orders confirmed outside portal)
+    inv_name = ""
+    if order_data.get("invoice_ids"):
+        try:
+            inv_rows = odoo.read("account.move", [order_data["invoice_ids"][0]], fields=["name"])
+            inv_name = inv_rows[0]["name"] if inv_rows else ""
+        except Exception:
+            pass
+
+    # Items from the delivery order (picking), same as the confirm flow
+    items: list = []
+    dn_num = ""
+    if order_data.get("picking_ids"):
+        try:
+            picking_id = order_data["picking_ids"][0]
+            pickings = odoo.read("stock.picking", [picking_id], fields=["name", "move_ids"])
+            picking = pickings[0] if pickings else None
+            if picking:
+                dn_num = picking["name"]
+                if picking.get("move_ids"):
+                    moves = odoo.read(
+                        "stock.move", picking["move_ids"],
+                        fields=["product_id", "product_uom_qty"],
+                    )
+                    for m in moves:
+                        pname = m["product_id"][1] if m.get("product_id") else "Unknown"
+                        prod = (
+                            odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
+                            if m.get("product_id") else []
+                        )
+                        sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
+                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+        except Exception as e:
+            print(f"⚠️  adopt: could not read picking for order {body.order_id}: {e}")
+
+    partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
+    comm_data = await col("order_commissions").find_one({"odoo_order_id": order_id_str}, NO_ID)
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "order_id":      order_id_str,
+        "warehouse_id":  order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
+        "warehouse_name": order_data["warehouse_id"][1] if order_data.get("warehouse_id") else None,
+        "customer_name": partner_name,
+        "customer_city": "",
+        "items":         items,
+        "total_units":   int(sum(i["qty"] for i in items)),
+        "inv_num":       inv_name,
+        "dn_num":        dn_num,
+        "ps_num":        order_data["name"],
+        "notes":         order_data.get("note") or "",
+        "is_reseller":   bool(comm_data),
+        "reseller_name": comm_data.get("reseller_name") if comm_data else None,
+        "packer_name":   None,
+        "status":        "queued",
+        "queued_at":     now,
+        "packed_at":     None,
+        "ready_at":      None,
+        "collected_at":  None,
+        "cancelled_at":  None,
+        "incomplete_at": None,
+        "completed_at":  None,
+        "incomplete_reason": None,
+        "qa_approved_by": None, "qa_approved_at": None,
+        "rp_approved_by": None, "rp_approved_at": None,
+        "item_ticks":    {i["sku"]: False for i in items},
+    }
+    await col("packing_board").replace_one({"order_id": order_id_str}, doc, upsert=True)
+    await manager.broadcast({"type": "entry_update", "data": {**doc, "queued_at": now.isoformat()}})
+    await audit_log(
+        "packing.adopted", "packing_board", order_id_str,
+        entity_label=order_data["name"],
+        user=current_user,
+        detail={"customer": partner_name, "units": doc["total_units"]},
+    )
+    return {"success": True, "order_id": order_id_str}
 
 
 @router.put("/mark-packing")

@@ -579,22 +579,9 @@ export function Orders() {
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
   const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
-  // ── Cart view state ───────────────────────────────────────────────────────
-  const [products,     setProducts    ] = useState([]);
-  const [prodsLoading, setProdsLoading] = useState(false);
-  const [prodSearch,   setProdSearch  ] = useState("");
-  const [prodCat,      setProdCat     ] = useState("all");
-  const [stockFilter,  setStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
-  const [cart,         setCart        ] = useState([]);
-  const [orderNote,    setOrderNote   ] = useState("");
-  const [custSearch,   setCustSearch  ] = useState("");
-  const [custResults,  setCustResults ] = useState([]);
-  const [custLoading,  setCustLoading ] = useState(false);
-  const [selectedCust, setSelectedCust] = useState(null);
-  const [custDropOpen,     setCustDropOpen    ] = useState(false);
-  const [submitting,  setSubmitting ] = useState(false);
   const [confirming,  setConfirming ] = useState(new Set());
-  const [cancelling,         setCancelling        ] = useState(new Set());
+  const [cancelling,  setCancelling ] = useState(new Set());
+  const [adopting,    setAdopting   ] = useState(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -666,341 +653,21 @@ export function Orders() {
     }
   };
 
-  // ── Load products for cart view ───────────────────────────────────────────
-  const loadProducts = async () => {
-    setProdsLoading(true);
+  // ── Adopt existing Odoo order into packing pipeline ──────────────────────
+  const adoptOrder = async (id) => {
+    setAdopting(s => new Set(s).add(id));
     try {
-      const r = await api.get("/api/products/", { params: { limit: 200 } });
-      setProducts(r.data.products || []);
-    } catch { toast.error("Failed to load products"); }
-    finally { setProdsLoading(false); }
-  };
-
-  // ── Customer search debounce (cart) ───────────────────────────────────────
-  useEffect(() => {
-    if (!custDropOpen) { setCustResults([]); return; }
-    const delay = custSearch.length >= 2 ? 300 : 0;
-    const t = setTimeout(async () => {
-      setCustLoading(true);
-      try {
-        const params = { limit: 20 };
-        if (custSearch.length >= 2) params.search = custSearch;
-        const r = await api.get("/api/customers/", { params });
-        setCustResults(r.data.customers || []);
-      } catch { setCustResults([]); }
-      finally { setCustLoading(false); }
-    }, delay);
-    return () => clearTimeout(t);
-  }, [custSearch, custDropOpen, isReseller]);
-
-  // ── Open cart view ────────────────────────────────────────────────────────
-  const openCart = () => {
-    setCart([]); setProdSearch(""); setProdCat("all"); setStockFilter("all"); setOrderNote("");
-    setCustSearch(""); setCustResults([]); setSelectedCust(null);
-    setCustDropOpen(false); setSubmitting(false);
-    loadProducts();
-    setView("cart");
-  };
-
-  // ── Cart operations ───────────────────────────────────────────────────────
-  // product.id is already the correct Odoo product.product (variant) id —
-  // the product list endpoint returns variants, not templates.
-  const addToCart = (product) => {
-    const pid = product.id;
-    setCart(prev => {
-      const ex = prev.find(i => i.product_id === pid);
-      if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
-      return [...prev, { product_id: pid, product_uom_qty: 1, price_unit: product.list_price, name: product.display_name || product.name, _sku: product.default_code || "", _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0 }];
-    });
-  };
-
-  const removeFromCart = (pid) => setCart(prev => prev.filter(i => i.product_id !== pid));
-
-  const updateQty = (pid, qty) => {
-    if (qty <= 0) { removeFromCart(pid); return; }
-    setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
-  };
-
-  const cartItemFor = (product) => cart.find(i => i.product_id === product.id) || null;
-
-  // ── Submit order ──────────────────────────────────────────────────────────
-  const submitOrder = async () => {
-    if (cart.length === 0) return toast.error("Add at least one product");
-    if (!selectedCust) return toast.error("Select a customer first");
-    setSubmitting(true);
-
-    // Section 21 script check — blocks expired/missing scripts, warns if expiring soon
-    try {
-      const { data: sc } = await api.get(`/api/scripts/check/${selectedCust.id}`);
-      if (sc.block_order) {
-        toast.error(`Order blocked: ${sc.reason}`, { duration: 8000 });
-        setSubmitting(false);
-        return;
-      }
-      if (sc.warn) {
-        toast(`⚠️ ${sc.reason}`, { duration: 6000 });
-      }
-    } catch (e) {
-      // 404 = customer has no script record (not a private patient) — proceed normally
-      if (e.response?.status !== 404) {
-        console.warn("Script check error:", e);
-      }
-    }
-
-    try {
-      const payload = {
-        partner_id: selectedCust.id,
-        order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
-        note: orderNote,
-      };
-      const { data } = await api.post("/api/orders/", payload);
-      toast.success("Order placed successfully");
-      if (data.credit_warning) {
-        toast(
-          `⚠️ ${selectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
-          { duration: 10000 }
-        );
-      }
-      setView("list");
+      await api.post("/api/packing/adopt", { order_id: id });
+      toast.success("Order queued for packing");
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to place order");
-    } finally { setSubmitting(false); }
+      toast.error(e.response?.data?.detail || "Failed to queue order");
+    } finally {
+      setAdopting(s => { const n = new Set(s); n.delete(id); return n; });
+    }
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const productCategories = ["all", ...Array.from(new Set(products.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
-  const filteredProducts  = products
-    .filter(p => {
-      const q         = prodSearch.toLowerCase();
-      const inStock   = (p.virtual_available ?? 0) > 0;
-      const matchQ    = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-      const matchCat  = prodCat === "all" || (p.categ_id?.[1] || "") === prodCat;
-      const matchStock = stockFilter === "all" || (stockFilter === "in_stock" ? inStock : !inStock);
-      return matchQ && matchCat && matchStock;
-    })
-    .sort((a, b) => {
-      const aIn = (a.virtual_available ?? 0) > 0;
-      const bIn = (b.virtual_available ?? 0) > 0;
-      if (aIn !== bIn) return aIn ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-  // VAT computed per line from each product's real Odoo tax configuration
-  // (resolved server-side in product_routes.py::_attach_tax_rates), not a
-  // flat assumption — a zero-rated or differently-taxed item would otherwise
-  // show the wrong total before the order is even submitted.
-  const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
-  const cartVat      = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit * ((i._taxRate ?? 0) / 100), 0);
-  const cartTotal    = cartSubtotal + cartVat;
-
   const STATUSES = ["all","draft","sale","done","cancel"];
-
-  // ── Cart view ─────────────────────────────────────────────────────────────
-  if (view === "cart") {
-    return (
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar title="Place New Order"
-          subtitle="Select a customer and add products"
-          showWarehouseSwitcher
-          actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
-
-        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-
-          {/* ── Left panel: product browser ────────────────────────────── */}
-          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-            {/* Search + category filters */}
-            <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100 space-y-3">
-              <input
-                value={prodSearch}
-                onChange={e => setProdSearch(e.target.value)}
-                placeholder="Search by product name or SKU…"
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
-              />
-              <ChipRow>
-                {productCategories.map(c => (
-                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={prodCat === c} onClick={() => setProdCat(c)} />
-                ))}
-                <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
-                <FilterPill label="In Stock"     active={stockFilter === "in_stock"}     onClick={() => setStockFilter(stockFilter === "in_stock"     ? "all" : "in_stock")}     />
-                <FilterPill label="Out of Stock" active={stockFilter === "out_of_stock"} onClick={() => setStockFilter(stockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
-              </ChipRow>
-            </div>
-            {/* Product grid */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {prodsLoading && <LoadingState />}
-              {!prodsLoading && filteredProducts.length === 0 && <EmptyState />}
-              {!prodsLoading && (
-                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                  {filteredProducts.map(p => {
-                    const item        = cartItemFor(p);
-                    const outOfStock  = (p.virtual_available ?? 0) <= 0;
-                    const lowStock    = !outOfStock && (p.virtual_available ?? 0) < 10;
-                    return (
-                      <div key={p.id}
-                        className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
-                        {/* Name + SKU + category */}
-                        <div className="flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="font-semibold text-gray-900 text-sm leading-snug">{p.display_name || p.name}</p>
-                            {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
-                          </div>
-                          {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
-                          {p.categ_id?.[1] && <span className="inline-block mt-1 text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
-                        </div>
-                        {/* Price + stock badge */}
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
-                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
-                            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
-                          </span>
-                        </div>
-                        {/* Add button or qty stepper */}
-                        {item ? (
-                          <div className="flex items-center gap-1.5">
-                            <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
-                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-                            <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
-                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock)); }}
-                              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                            <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
-                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
-                            <button onClick={() => removeFromCart(item.product_id)}
-                              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => !outOfStock && addToCart(p)}
-                            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
-                            {outOfStock ? "Out of stock" : "+ Add to Order"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── Right panel: cart ──────────────────────────────────────── */}
-          <div className="h-72 lg:h-auto w-full lg:w-80 xl:w-96 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-gray-100 shrink-0">
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">Your Order</h3>
-                <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
-              </div>
-              {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
-            </div>
-
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-
-              {/* Customer selector */}
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
-                  {isReseller ? "Ordering For (Customer)" : "Customer"} <span className="text-red-400">*</span>
-                </p>
-                {selectedCust ? (
-                  <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
-                    <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
-                    <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{selectedCust.name}</p>
-                    <button onClick={() => { setSelectedCust(null); setCustSearch(""); setCustDropOpen(true); }}
-                      className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <Input value={custSearch} onChange={e => setCustSearch(e.target.value)}
-                      onFocus={() => setCustDropOpen(true)}
-                      onBlur={() => setTimeout(() => setCustDropOpen(false), 150)}
-                      placeholder="Search customers…" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                      <ChevronDown size={14} />
-                    </span>
-                    {custDropOpen && (
-                      <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
-                        {custLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
-                        {!custLoading && custResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
-                        {custResults.map(c => (
-                          <button key={c.id} onMouseDown={() => { setSelectedCust(c); setCustSearch(c.name); setCustDropOpen(false); setCustResults([]); }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
-                            <span className="font-medium">{c.name}</span>
-                            {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Cart items */}
-              {cart.length === 0 ? (
-                <div className="py-10 text-center">
-                  <p className="text-sm text-gray-400">No products added yet</p>
-                  <p className="text-xs text-gray-300 mt-1">Click "+ Add to Order" on a product card</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {cart.map(item => (
-                    <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
-                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
-                        </div>
-                        <button onClick={() => removeFromCart(item.product_id)}
-                          className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
-                          <button onClick={() => updateQty(item.product_id, item.product_uom_qty - 1)}
-                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
-                          <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
-                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateQty(item.product_id, Math.min(v, item._stock)); }}
-                            className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                          <button onClick={() => updateQty(item.product_id, item.product_uom_qty + 1)}
-                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
-                        </div>
-                        <span className="text-xs text-gray-400 flex-1 truncate">× {fmtR(item.price_unit)}</span>
-                        <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Footer: totals + notes + actions */}
-            <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white">
-              {cart.length > 0 && (
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between text-gray-500">
-                    <span>Subtotal (excl. VAT)</span>
-                    <span>{fmtR(cartSubtotal)}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-500">
-                    <span>VAT</span>
-                    <span>{fmtR(cartVat)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
-                    <span className="text-gray-900">Total</span>
-                    <span className="text-bassani-700">{fmtR(cartTotal)}</span>
-                  </div>
-                </div>
-              )}
-              <Textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
-              <div className="flex gap-2">
-                <BtnSecondary onClick={() => setView("list")} className="flex-1">Cancel</BtnSecondary>
-                <BtnPrimary onClick={submitOrder} loading={submitting} disabled={submitting || cart.length === 0} className="flex-1">
-                  {submitting ? "Placing…" : "Place Order"}
-                </BtnPrimary>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // ── Detail / order view ───────────────────────────────────────────────────
   if (view === "detail" && detail) {
@@ -1022,9 +689,14 @@ export function Orders() {
   // ── List view ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher
-        actions={<BtnPrimary onClick={openCart}><Plus size={14}/>Place Order</BtnPrimary>} />
+      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher />
       <main className="flex-1 overflow-y-auto p-6">
+        {!isReseller && (
+          <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">
+            <span className="font-semibold shrink-0">New orders:</span>
+            <span>All new orders must be created through the <strong>Sales Tickets</strong> pipeline (Quote → Deposit → Confirm). Use the <em>Queue for Packing</em> button below to adopt any existing confirmed orders that pre-date the pipeline.</span>
+          </div>
+        )}
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v=>{ setSearch(v); setOrderPag(p=>({...p,pageIndex:0})); }} placeholder="Search order, customer…" />
           <ChipRow>
@@ -1051,14 +723,22 @@ export function Orders() {
                 ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                 : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
             }}]:[]),
-            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>
-              (o.state==="draft"||o.state==="sale") ? (
-                <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                  {o.state==="draft" && can("orders.confirm") && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
-                  {o.state==="draft" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
-                </div>
-              ) : null
-            }]:[]),
+            ...(!isReseller?[{ id:"packing", header:"Packing", enableSorting:false, cell:({row:{original:o}})=>{
+              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
+              const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready", complete:"Complete", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
+              if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
+              if (o.state === "sale") return <span className="text-[10px] text-gray-400 italic">Not queued</span>;
+              return <span className="text-xs text-gray-200">—</span>;
+            }}]:[]),
+            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
+              <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
+                {o.state==="draft" && can("orders.confirm") && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
+                {o.state==="draft" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                {o.state==="sale" && !o.packing_status && can("tickets.manage") && (
+                  <BtnPrimary size="sm" onClick={()=>adoptOrder(o.id)} loading={adopting.has(o.id)} disabled={adopting.has(o.id)}>Queue for Packing</BtnPrimary>
+                )}
+              </div>
+            )}]:[]),
           ]}
           data={orders} loading={loading} total={orderTotal}
           pagination={orderPag} onPaginationChange={setOrderPag}
