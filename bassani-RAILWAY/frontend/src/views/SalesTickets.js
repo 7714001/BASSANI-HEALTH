@@ -10,7 +10,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
-  UserPlus, ShoppingCart, Ban, DollarSign, X, Send,
+  UserPlus, ShoppingCart, Ban, DollarSign, X, Send, ChevronDown,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -306,6 +306,7 @@ export default function SalesTickets() {
   const [saving, setSaving]             = useState(false);
   const [confirming, setConfirming]     = useState(false);
   const [sending, setSending]           = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
 
   const openDetail = async (t) => {
     setDetail(null);
@@ -803,10 +804,10 @@ export default function SalesTickets() {
                   )}
                 </div>
 
-                {/* ── Right sidebar: info + actions + timeline ── */}
+                {/* ── Right sidebar: status + actions + timeline ── */}
                 <div className="space-y-4">
 
-                  {/* Ticket info */}
+                  {/* Status & Details */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                     <div className="flex flex-wrap gap-2">
                       {detail.exit_status
@@ -816,18 +817,20 @@ export default function SalesTickets() {
                         {detail.source === "portal" ? "Portal Order" : "Direct Inquiry"}
                       </Badge>
                     </div>
-                    {detail.order_id   && <p className="text-xs text-gray-400">Odoo Order #{detail.order_id}</p>}
-                    {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
-                    {detail.quote_sent_at && (
-                      <p className="text-xs text-blue-600 flex items-center gap-1">
-                        <Send size={12} />Quote sent {fmtDate(detail.quote_sent_at)}
-                      </p>
-                    )}
-                    {detail.payment_confirmed_at && (
-                      <p className="text-xs text-green-600 flex items-center gap-1">
-                        <CheckCircle2 size={12} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
-                      </p>
-                    )}
+                    <div className="space-y-1.5">
+                      {detail.order_id   && <p className="text-xs text-gray-400">Odoo SO #{detail.order_id}</p>}
+                      {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                      {detail.quote_sent_at && (
+                        <p className="text-xs text-blue-600 flex items-center gap-1.5">
+                          <Send size={11} />Quote sent {fmtDate(detail.quote_sent_at)}
+                        </p>
+                      )}
+                      {detail.payment_confirmed_at && (
+                        <p className="text-xs text-green-600 flex items-center gap-1.5">
+                          <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
+                        </p>
+                      )}
+                    </div>
                     <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
                       {detail.assigned_to_name
                         ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span></span>
@@ -842,144 +845,111 @@ export default function SalesTickets() {
 
                   {/* Actions */}
                   {!detail.exit_status && (
-                    <div className="space-y-3">
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-50">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</p>
+                      </div>
+                      <div className="p-2">
 
-                      {/* Edit Quote */}
-                      {detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                          <p className="text-xs text-gray-400 mb-3">
-                            Revise the quote — add, remove, or adjust lines before the customer confirms.
-                          </p>
-                          <BtnSecondary onClick={openQuoteEdit} className="w-full justify-center">
-                            <ShoppingCart size={13} />Edit Quote
-                          </BtnSecondary>
-                        </div>
-                      )}
+                        {detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                          <button onClick={openQuoteEdit} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <ShoppingCart size={14} className="text-gray-400 shrink-0" />Edit Quote
+                          </button>
+                        )}
 
-                      {/* Send Quote */}
-                      {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
-                        <div className={`rounded-2xl p-4 ${detailOrder.state === "draft" && detail.quote_sent_at ? "bg-amber-50 border border-amber-100" : "bg-white shadow-sm border border-gray-100"}`}>
-                          {detailOrder.state === "draft" && detail.quote_sent_at
-                            ? <p className="text-xs text-amber-700 mb-3">Quote was edited since last send ({fmtDate(detail.quote_sent_at)}) — resend to give the customer the updated version.</p>
-                            : detail.quote_sent_at
-                              ? <p className="text-xs text-gray-400 mb-3">Last sent {fmtDate(detail.quote_sent_at)}. Resend to deliver an updated copy.</p>
-                              : <p className="text-xs text-gray-400 mb-3">Email the PDF quote to the customer. Optional — you can confirm verbally without sending.</p>
-                          }
-                          <BtnSecondary onClick={sendQuote} loading={sending} className="w-full justify-center">
-                            <Send size={13} />
-                            {detail.quote_sent_at
-                              ? detailOrder.state === "draft" ? "Send Updated Quote" : "Resend Quote"
-                              : "Send Quote"}
-                          </BtnSecondary>
-                        </div>
-                      )}
+                        {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                          <button onClick={sendQuote} disabled={sending} className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors text-left ${detailOrder.state === "draft" && detail.quote_sent_at ? "text-amber-700 hover:bg-amber-50" : "text-gray-700 hover:bg-gray-50"}`}>
+                            <Send size={14} className={`shrink-0 ${detailOrder.state === "draft" && detail.quote_sent_at ? "text-amber-400" : "text-gray-400"}`} />
+                            <span className="flex-1">{sending ? "Sending…" : (detail.quote_sent_at ? (detailOrder.state === "draft" ? "Send Updated Quote" : "Resend Quote") : "Send Quote")}</span>
+                            {detail.quote_sent_at && !sending && (
+                              <span className="text-[10px] text-gray-400 shrink-0">{detailOrder.state === "draft" ? "edited" : fmtDate(detail.quote_sent_at)}</span>
+                            )}
+                          </button>
+                        )}
 
-                      {/* Confirm Order */}
-                      {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && (
-                        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
-                          <p className="text-xs text-green-700 mb-3">
-                            Customer confirmed? Lock the order in Odoo and move this ticket to WIP.
-                          </p>
-                          <BtnPrimary onClick={() => confirmOrder()} loading={confirming} className="w-full justify-center">
-                            <CheckCircle2 size={13} />Confirm Order
-                          </BtnPrimary>
-                        </div>
-                      )}
+                        {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && (
+                          <button onClick={() => confirmOrder()} disabled={confirming} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg transition-colors text-left">
+                            <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                            {confirming ? "Confirming…" : "Confirm Order"}
+                          </button>
+                        )}
 
-                      {/* Cancel Quote */}
-                      {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
-                        <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
-                          <p className="text-xs text-red-700 mb-3">
-                            Customer rejected? Cancel the draft quote and close this ticket.
-                          </p>
-                          <BtnSecondary
-                            onClick={cancelQuote}
-                            disabled={saving}
-                            className="w-full justify-center border-red-200 text-red-600 hover:bg-red-100"
-                          >
-                            <Ban size={13} />Cancel Quote
-                          </BtnSecondary>
-                        </div>
-                      )}
+                        {detail.order_id && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                          <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
+                            <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
+                          </button>
+                        )}
 
-                      {/* Register Deposit */}
-                      {detail.order_id && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
-                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
-                          <p className="text-xs text-amber-700 mb-3">
-                            Register the 50% deposit — creates a down payment invoice and records payment in Odoo.
-                          </p>
-                          <BtnPrimary onClick={openDepositModal} className="w-full justify-center">
-                            <DollarSign size={13} />Register Deposit
-                          </BtnPrimary>
-                        </div>
-                      )}
+                        {detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                          <button onClick={confirmPayment} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
+                            <CreditCard size={14} className="text-amber-500 shrink-0" />
+                            {saving ? "Confirming…" : "Confirm Payment"}
+                          </button>
+                        )}
 
-                      {/* Confirm Payment */}
-                      {detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
-                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
-                          <p className="text-xs text-amber-700 mb-3">
-                            Confirm "Payment Received" — checks Odoo's real invoice payment status.
-                          </p>
-                          <BtnPrimary onClick={confirmPayment} loading={saving} className="w-full justify-center">
-                            <CreditCard size={13} />Confirm Payment
-                          </BtnPrimary>
-                        </div>
-                      )}
+                        {/* Divider before destructive actions */}
+                        {((detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive) || (!detail.order_id && canDrive)) && (
+                          <div className="my-1 border-t border-gray-100" />
+                        )}
 
-                      {/* Not Interested — client went cold before a quote was even built */}
-                      {!detail.order_id && canDrive && (
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                          <p className="text-xs text-gray-400 mb-3">
-                            Customer declined the quote? Close this ticket as not interested.
-                          </p>
-                          <BtnSecondary
-                            onClick={() => markExit("not_interested")}
-                            disabled={saving}
-                            className="w-full justify-center text-xs"
-                          >
-                            <XCircle size={12} />Not Interested
-                          </BtnSecondary>
-                        </div>
-                      )}
+                        {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
+                          <button onClick={cancelQuote} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors text-left">
+                            <Ban size={14} className="shrink-0" />Cancel Quote
+                          </button>
+                        )}
 
-                      {/* Stage override — admin/super_admin only */}
-                      {canManage && (
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Override Stage</p>
-                          <FormGroup label="Stage">
-                            <Select value={stageForm.status} onChange={e => setStageForm({ ...stageForm, status: e.target.value })}>
-                              {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-                            </Select>
-                          </FormGroup>
-                          <div className="grid grid-cols-2 gap-2">
-                            <FormGroup label="Order ID">
-                              <Input type="number" value={stageForm.order_id} onChange={e => setStageForm({ ...stageForm, order_id: e.target.value })} placeholder="Odoo id" />
-                            </FormGroup>
-                            <FormGroup label="Invoice ID">
-                              <Input type="number" value={stageForm.invoice_id} onChange={e => setStageForm({ ...stageForm, invoice_id: e.target.value })} placeholder="Odoo id" />
-                            </FormGroup>
-                          </div>
-                          {stageForm.status === "incomplete" && (
-                            <FormGroup label="Reason" required>
-                              <Input
-                                value={stageForm.incomplete_reason}
-                                onChange={e => setStageForm({ ...stageForm, incomplete_reason: e.target.value })}
-                                placeholder="Why incomplete?"
-                              />
-                            </FormGroup>
-                          )}
-                          <FormGroup label="Note">
-                            <Input
-                              value={stageForm.note}
-                              onChange={e => setStageForm({ ...stageForm, note: e.target.value })}
-                              placeholder="Optional note for the timeline"
-                            />
-                          </FormGroup>
-                          <BtnPrimary onClick={advance} loading={saving} className="w-full justify-center">
-                            Save
-                          </BtnPrimary>
-                        </div>
-                      )}
+                        {!detail.order_id && canDrive && (
+                          <button onClick={() => markExit("not_interested")} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <XCircle size={14} className="shrink-0" />Not Interested
+                          </button>
+                        )}
+
+                        {/* Admin override — collapsible */}
+                        {canManage && (
+                          <>
+                            <div className="my-1 border-t border-gray-100" />
+                            <button onClick={() => setOverrideOpen(o => !o)} className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-gray-400 hover:bg-gray-50 rounded-lg transition-colors">
+                              <span className="font-semibold uppercase tracking-wide">Admin Override</span>
+                              <ChevronDown size={12} className={`transition-transform duration-150 ${overrideOpen ? "rotate-180" : ""}`} />
+                            </button>
+                            {overrideOpen && (
+                              <div className="px-3 pb-2 pt-1 space-y-3">
+                                <FormGroup label="Stage">
+                                  <Select value={stageForm.status} onChange={e => setStageForm({ ...stageForm, status: e.target.value })}>
+                                    {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                                  </Select>
+                                </FormGroup>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <FormGroup label="Order ID">
+                                    <Input type="number" value={stageForm.order_id} onChange={e => setStageForm({ ...stageForm, order_id: e.target.value })} placeholder="Odoo id" />
+                                  </FormGroup>
+                                  <FormGroup label="Invoice ID">
+                                    <Input type="number" value={stageForm.invoice_id} onChange={e => setStageForm({ ...stageForm, invoice_id: e.target.value })} placeholder="Odoo id" />
+                                  </FormGroup>
+                                </div>
+                                {stageForm.status === "incomplete" && (
+                                  <FormGroup label="Reason" required>
+                                    <Input
+                                      value={stageForm.incomplete_reason}
+                                      onChange={e => setStageForm({ ...stageForm, incomplete_reason: e.target.value })}
+                                      placeholder="Why incomplete?"
+                                    />
+                                  </FormGroup>
+                                )}
+                                <FormGroup label="Note">
+                                  <Input
+                                    value={stageForm.note}
+                                    onChange={e => setStageForm({ ...stageForm, note: e.target.value })}
+                                    placeholder="Optional note for the timeline"
+                                  />
+                                </FormGroup>
+                                <BtnPrimary onClick={advance} loading={saving} className="w-full justify-center">Save</BtnPrimary>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                      </div>
                     </div>
                   )}
 
