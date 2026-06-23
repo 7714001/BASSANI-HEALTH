@@ -242,9 +242,10 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
   const { can, user } = useAuth();
-  const canDrive   = can("tickets.sales");
-  const canFinance = can("tickets.finance_confirm");
-  const canManage  = can("tickets.manage");
+  const canDrive        = can("tickets.sales");
+  const canFinance      = can("tickets.finance_confirm");
+  const canManage       = can("tickets.manage");
+  const canConfirmOrder = can("orders.confirm");
 
   // ── List state ────────────────────────────────────────────────────────────
   const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
@@ -303,6 +304,7 @@ export default function SalesTickets() {
   const [detailOrderLoading, setDetailOrderLoading] = useState(false);
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
   const [saving, setSaving]             = useState(false);
+  const [confirming, setConfirming]     = useState(false);
 
   const openDetail = async (t) => {
     setDetail(null);
@@ -404,6 +406,37 @@ export default function SalesTickets() {
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not confirm payment"); }
     finally { setSaving(false); }
+  };
+
+  const confirmOrder = async (overrideCredit = false) => {
+    setConfirming(true);
+    try {
+      const { data } = await api.put(
+        `/api/orders/${detail.order_id}/confirm`,
+        null,
+        { params: overrideCredit ? { override_credit: true } : {} },
+      );
+      if (data.invoice_name) {
+        toast.success(`Order confirmed · Invoice ${data.invoice_name} created`);
+      } else {
+        toast.success("Order confirmed — ticket moved to WIP");
+      }
+      if (data.warnings?.length) {
+        data.warnings.forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
+      }
+      refreshDetail(detail.id);
+    } catch (e) {
+      if (e.response?.status === 402) {
+        setConfirming(false);
+        if (window.confirm(`${e.response.data.detail}\n\nConfirm anyway?`)) {
+          await confirmOrder(true);
+        }
+        return;
+      }
+      toast.error(e.response?.data?.detail || "Failed to confirm order");
+    } finally {
+      setConfirming(false);
+    }
   };
 
   // ── Quote Builder ─────────────────────────────────────────────────────────
@@ -797,6 +830,18 @@ export default function SalesTickets() {
                           <BtnSecondary onClick={openQuoteEdit} className="w-full justify-center">
                             <ShoppingCart size={13} />Edit Quote
                           </BtnSecondary>
+                        </div>
+                      )}
+
+                      {/* Confirm Order */}
+                      {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && (
+                        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
+                          <p className="text-xs text-green-700 mb-3">
+                            Customer confirmed? Lock the order in Odoo and move this ticket to WIP.
+                          </p>
+                          <BtnPrimary onClick={() => confirmOrder()} loading={confirming} className="w-full justify-center">
+                            <CheckCircle2 size={13} />Confirm Order
+                          </BtnPrimary>
                         </div>
                       )}
 

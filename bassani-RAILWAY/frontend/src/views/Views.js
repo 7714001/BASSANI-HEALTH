@@ -569,7 +569,7 @@ export function Orders() {
   const isReseller = user?.role === "reseller";
 
   // ── List view state ───────────────────────────────────────────────────────
-  const [view,        setView       ] = useState("list"); // "list" | "cart" | "detail"
+  const [view,        setView       ] = useState("list"); // "list" | "detail"
   const [orders,      setOrders     ] = useState([]);
   const [orderTotal,  setOrderTotal ] = useState(0);
   const [loading,     setLoading    ] = useState(true);
@@ -579,9 +579,8 @@ export function Orders() {
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
   const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
-  const [confirming,  setConfirming ] = useState(new Set());
-  const [cancelling,  setCancelling ] = useState(new Set());
-  const [adopting,    setAdopting   ] = useState(new Set());
+  const [adopting,       setAdopting      ] = useState(new Set());
+  const [creatingTicket, setCreatingTicket] = useState(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -608,51 +607,6 @@ export function Orders() {
     } catch { /* keep showing basic data */ }
   };
 
-  const confirm = async (id, overrideCredit = false) => {
-    setConfirming(s => new Set(s).add(id));
-    try {
-      const { data } = await api.put(`/api/orders/${id}/confirm`, null, { params: overrideCredit ? { override_credit: true } : {} });
-      if (data.invoice_name) {
-        toast.success(`Order confirmed · Invoice ${data.invoice_name} created`);
-      } else {
-        toast.success("Order confirmed");
-      }
-      if (data.warnings?.length) {
-        data.warnings.forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
-      }
-      load();
-    } catch (e) {
-      if (e.response?.status === 402) {
-        // Customer is over their credit limit — offer an explicit override instead
-        // of just failing, since the admin may have a good reason to proceed anyway.
-        setConfirming(s => { const n = new Set(s); n.delete(id); return n; });
-        if (window.confirm(`${e.response.data.detail}\n\nConfirm anyway?`)) {
-          await confirm(id, true);
-        }
-        return;
-      }
-      toast.error(e.response?.data?.detail || "Failed to confirm order");
-    } finally {
-      setConfirming(s => { const n = new Set(s); n.delete(id); return n; });
-    }
-  };
-
-  const cancelOrder = async (id) => {
-    if (!window.confirm("Cancel this order? This cannot be undone.")) return;
-    setCancelling(s => new Set(s).add(id));
-    try {
-      await api.put(`/api/orders/${id}/cancel`);
-      toast.success("Order cancelled");
-      setDetail(null);
-      setView("list");
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to cancel order");
-    } finally {
-      setCancelling(s => { const n = new Set(s); n.delete(id); return n; });
-    }
-  };
-
   // ── Adopt existing Odoo order into packing pipeline ──────────────────────
   const adoptOrder = async (id) => {
     setAdopting(s => new Set(s).add(id));
@@ -667,6 +621,20 @@ export function Orders() {
     }
   };
 
+  // ── Create a Sales Ticket for an existing draft order ────────────────────
+  const createTicketFromOrder = async (orderId) => {
+    setCreatingTicket(s => new Set(s).add(orderId));
+    try {
+      await api.post("/api/tickets/from-order", { order_id: orderId });
+      toast.success("Sales Ticket created — find it in Sales Tickets");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to create ticket");
+    } finally {
+      setCreatingTicket(s => { const n = new Set(s); n.delete(orderId); return n; });
+    }
+  };
+
   const STATUSES = ["all","draft","sale","done","cancel"];
 
   // ── Detail / order view ───────────────────────────────────────────────────
@@ -675,13 +643,9 @@ export function Orders() {
       <OrderView
         order={detail}
         isAdmin={!isReseller}
-        canConfirmOrder={can("orders.confirm")}
-        canCancelOrder={can("orders.cancel")}
+        canConfirmOrder={false}
+        canCancelOrder={false}
         onClose={() => { setView("list"); setDetail(null); }}
-        onConfirm={() => { confirm(detail.id); setView("list"); setDetail(null); }}
-        onCancel={() => cancelOrder(detail.id)}
-        confirming={confirming.has(detail.id)}
-        cancelling={cancelling.has(detail.id)}
       />
     );
   }
@@ -694,7 +658,7 @@ export function Orders() {
         {!isReseller && (
           <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">
             <span className="font-semibold shrink-0">New orders:</span>
-            <span>All new orders must be created through the <strong>Sales Tickets</strong> pipeline (Quote → Deposit → Confirm). Use the <em>Queue for Packing</em> button below to adopt any existing confirmed orders that pre-date the pipeline.</span>
+            <span>All new orders must follow the <strong>Sales Tickets</strong> pipeline (Quote → Deposit → Confirm). Draft orders without a ticket can be linked using <em>Create Sales Ticket</em> below. Confirmed orders that pre-date the pipeline can be adopted directly into packing.</span>
           </div>
         )}
         <div className="mb-4 space-y-2">
@@ -732,8 +696,9 @@ export function Orders() {
             }}]:[]),
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
               <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                {o.state==="draft" && can("orders.confirm") && <BtnPrimary size="sm" onClick={()=>confirm(o.id)} loading={confirming.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)}>Confirm</BtnPrimary>}
-                {o.state==="draft" && can("orders.cancel") && <BtnSecondary size="sm" onClick={()=>cancelOrder(o.id)} loading={cancelling.has(o.id)} disabled={confirming.has(o.id)||cancelling.has(o.id)} className="text-red-600 border-red-200 hover:bg-red-50">Cancel</BtnSecondary>}
+                {o.state==="draft" && !o.linked_ticket && can("tickets.sales") && (
+                  <BtnPrimary size="sm" onClick={()=>createTicketFromOrder(o.id)} loading={creatingTicket.has(o.id)} disabled={creatingTicket.has(o.id)}>Create Sales Ticket</BtnPrimary>
+                )}
                 {o.state==="sale" && !o.packing_status && can("tickets.manage") && (
                   <BtnPrimary size="sm" onClick={()=>adoptOrder(o.id)} loading={adopting.has(o.id)} disabled={adopting.has(o.id)}>Queue for Packing</BtnPrimary>
                 )}

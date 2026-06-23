@@ -76,6 +76,10 @@ class TicketDepositRegister(BaseModel):
     note: Optional[str] = ""
 
 
+class TicketFromOrder(BaseModel):
+    order_id: int
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _serialize(t: dict) -> dict:
@@ -737,3 +741,76 @@ async def register_deposit(
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
     )
     return {"success": True, "invoice_id": invoice_id}
+
+
+@router.post("/from-order")
+async def create_ticket_from_order(
+    body: TicketFromOrder,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """Onboard an existing Odoo draft order into the Sales Ticket pipeline.
+    Creates a Sales Ticket at 'quote' stage with the order already linked.
+    Used by sales reps/admins to claim pre-portal orders during system migration."""
+    odoo = get_odoo_client()
+    try:
+        orders = odoo.read(
+            "sale.order",
+            [body.order_id],
+            fields=["name", "partner_id", "state"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not orders:
+        raise HTTPException(status_code=404, detail="Order not found in Odoo")
+    order = orders[0]
+    if order["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Order {order['name']} is already confirmed (state: {order['state']}) — "
+                "use 'Queue for Packing' to adopt it instead"
+            ),
+        )
+    existing = await col("tickets").find_one({"order_id": body.order_id, "type": "sales", "exit_status": None})
+    if existing:
+        raise HTTPException(status_code=409, detail="A Sales Ticket already exists for this order")
+
+    partner = order.get("partner_id")
+    customer_id = partner[0] if partner and partner is not False else None
+    customer_name = partner[1] if partner and partner is not False else "Unknown"
+
+    now = datetime.now(timezone.utc)
+    actor = _actor(current_user)
+    doc = {
+        "type": "sales",
+        "source": "direct",
+        "customer_id": customer_id,
+        "customer_name": customer_name,
+        "order_id": body.order_id,
+        "invoice_id": None,
+        "orders_ticket_ref": None,
+        "status": "quote",
+        "exit_status": None,
+        "assigned_to": current_user["id"],
+        "assigned_to_name": actor,
+        "payment_confirmed_by": None,
+        "payment_confirmed_at": None,
+        "incomplete_reason": None,
+        "stage_history": [{
+            "status": "quote", "exit_status": None,
+            "actor_id": current_user["id"], "actor_name": actor,
+            "at": now,
+            "note": f"Ticket created from existing Odoo order {order['name']}",
+        }],
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await col("tickets").insert_one(doc)
+    await audit_log(
+        "ticket.create_from_order", "ticket", str(result.inserted_id),
+        entity_label=customer_name,
+        user=current_user,
+        after={"status": "quote", "order_id": body.order_id, "order_name": order["name"]},
+    )
+    await notify_ticket_assigned("sales", customer_name, current_user["id"])
+    return {"success": True, "ticket_id": str(result.inserted_id)}
