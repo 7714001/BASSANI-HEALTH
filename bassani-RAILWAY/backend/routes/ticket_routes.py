@@ -111,9 +111,11 @@ async def create_ticket(
     now = datetime.now(timezone.utc)
     _assignee_id = body.assigned_to or current_user["id"]
     _assignee_name = current_user.get("name") or current_user.get("username") or "unknown"
+    _assignee_role = current_user.get("role", "")
     if body.assigned_to and body.assigned_to != current_user["id"]:
-        _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1})
+        _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1})
         _assignee_name = (_au.get("name") or _au.get("username")) if _au else body.assigned_to
+        _assignee_role = _au.get("role", "") if _au else ""
     doc = {
         "type": "sales",
         "source": "direct",
@@ -126,6 +128,7 @@ async def create_ticket(
         "exit_status": None,
         "assigned_to": _assignee_id,
         "assigned_to_name": _assignee_name,
+        "assigned_to_role": _assignee_role,
         "payment_confirmed_by": None,
         "payment_confirmed_at": None,
         "incomplete_reason": None,
@@ -267,10 +270,12 @@ async def update_ticket_stage(
     if body.assigned_to is not None:
         updates["assigned_to"] = body.assigned_to or None
         if body.assigned_to:
-            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1})
+            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1})
             updates["assigned_to_name"] = (_au.get("name") or _au.get("username")) if _au else None
+            updates["assigned_to_role"] = _au.get("role", "") if _au else ""
         else:
             updates["assigned_to_name"] = None
+            updates["assigned_to_role"] = None
 
     mongo_ops: dict = {"$set": updates}
     # Only append to stage timeline for actual stage changes, not silent assignment
@@ -900,6 +905,7 @@ async def create_ticket_from_order(
         "exit_status": None,
         "assigned_to": current_user["id"],
         "assigned_to_name": actor,
+        "assigned_to_role": current_user.get("role", ""),
         "payment_confirmed_by": None,
         "payment_confirmed_at": None,
         "incomplete_reason": None,

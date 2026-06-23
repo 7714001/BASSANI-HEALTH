@@ -36,6 +36,12 @@ const PRE_CONFIRM = new Set(["open", "quote", "sale_order", "invoice"]);
 const ORDER_STATE_LABEL = {
   draft: "Quotation", sent: "Quotation Sent", sale: "Sale Order", done: "Locked", cancel: "Cancelled",
 };
+
+const ROLE_LABEL = {
+  super_admin: "Super Admin", admin: "Admin", sales: "Sales",
+  orders_clerk: "Orders Clerk", finance: "Finance",
+  qa_manager: "QA Manager", responsible_pharmacist: "RP",
+};
 const ORDER_STATE_COLOR = {
   draft: "gray", sent: "amber", sale: "blue", done: "green", cancel: "red",
 };
@@ -833,7 +839,7 @@ export default function SalesTickets() {
                     </div>
                     <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
                       {detail.assigned_to_name
-                        ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span></span>
+                        ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span>{detail.assigned_to_role && <span className="ml-1 text-gray-400">({ROLE_LABEL[detail.assigned_to_role] || detail.assigned_to_role})</span>}</span>
                         : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
                       {!detail.assigned_to && canDrive && (
                         <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
