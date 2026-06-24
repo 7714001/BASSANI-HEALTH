@@ -114,12 +114,13 @@ def _attach_tax_rates(odoo, products: list, company_id: Optional[int] = None) ->
 
 @router.get("/")
 async def list_products(
-    search: Optional[str] = None,
-    category: Optional[str] = None,
-    limit: int = Query(50, le=200),
-    offset: int = 0,
-    sort_by: str = Query("name"),
-    sort_dir: str = Query("asc"),
+    search:       Optional[str] = None,
+    category:     Optional[str] = None,
+    limit:        int           = Query(50, le=200),
+    offset:       int           = 0,
+    sort_by:      str           = Query("name"),
+    sort_dir:     str           = Query("asc"),
+    warehouse_id: Optional[int] = Query(None),   # explicit override — quote builder passes the quote's warehouse
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -145,7 +146,7 @@ async def list_products(
     if category and category != "all":
         domain.append(("categ_id.name", "ilike", category))
 
-    warehouse_id = await resolve_warehouse_id(current_user)
+    warehouse_id = warehouse_id or await resolve_warehouse_id(current_user)
     company_id = get_company_id(odoo, warehouse_id)
 
     try:

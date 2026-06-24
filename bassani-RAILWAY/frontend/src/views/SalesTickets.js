@@ -49,7 +49,7 @@ const ORDER_STATE_COLOR = {
 // ── Line item row ─────────────────────────────────────────────────────────────
 // Each row fires its own debounced Odoo search so results are always live and
 // catalogue size is never a constraint (no preload, no 200-item cap).
-function LineRow({ line, onUpdate, onRemove, autoFocus }) {
+function LineRow({ line, onUpdate, onRemove, autoFocus, warehouseId }) {
   const [prodSearch, setProdSearch]     = useState(line._product_label || "");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searching, setSearching]       = useState(false);
@@ -63,7 +63,9 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const r = await api.get("/api/products/", { params: { search: q, limit: 30 } });
+        const params = { search: q, limit: 30 };
+        if (warehouseId) params.warehouse_id = warehouseId;
+        const r = await api.get("/api/products/", { params });
         setSearchResults(r.data.products || []);
         setDropdownOpen(true);
       } catch {
@@ -73,7 +75,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [prodSearch]);
+  }, [prodSearch, warehouseId]); // eslint-disable-line
 
   const selectProduct = (p) => {
     const label = p.display_name || p.name;
@@ -1260,6 +1262,7 @@ export default function SalesTickets() {
                       onUpdate={(updates) => updateLine(line._id, updates)}
                       onRemove={() => removeLine(line._id)}
                       autoFocus={line._id === lastAddedId}
+                      warehouseId={quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined}
                     />
                   ))}
                 </tbody>
