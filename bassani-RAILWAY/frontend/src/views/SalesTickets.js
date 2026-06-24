@@ -77,6 +77,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
 
   const selectProduct = (p) => {
     const label = p.display_name || p.name;
+    const stock = Math.max(0, Math.floor(p.virtual_available || 0));
     setProdSearch(label);
     setDropdownOpen(false);
     onUpdate({
@@ -86,7 +87,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
       price_unit:       p.list_price || 0,
       _tax_rate:        p.tax_rate   || 0,
       _sku:             p.default_code || "",
-      _stock:           Math.max(0, Math.floor(p.virtual_available || 0)),
+      _stock:           stock,
       product_uom_qty:  1,
     });
   };
@@ -125,11 +126,15 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
         )}
         {dropdownOpen && searchResults.length > 0 && (
           <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
-            {searchResults.map(p => (
+            {searchResults.map(p => {
+              const outOfStock = (p.virtual_available || 0) <= 0;
+              return (
               <button
                 key={p.id}
-                onMouseDown={() => selectProduct(p)}
-                className="w-full text-left px-3 py-2.5 hover:bg-bassani-50 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors"
+                onMouseDown={() => { if (!outOfStock) selectProduct(p); }}
+                disabled={outOfStock}
+                title={outOfStock ? "No forecasted stock — cannot add to quote" : undefined}
+                className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors ${outOfStock ? "opacity-50 cursor-not-allowed bg-gray-50" : "hover:bg-bassani-50"}`}
               >
                 <div className="min-w-0">
                   {(() => {
@@ -155,7 +160,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
                   {inStockBadge(p)}
                 </div>
               </button>
-            ))}
+            ); })}
           </div>
         )}
       </td>
@@ -173,8 +178,9 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
       {/* ── Qty ── */}
       <td className="p-2 w-24">
         {(() => {
-          const maxQty = line._stock > 0 ? line._stock : null;
-          const atMax  = maxQty !== null && line.product_uom_qty >= maxQty;
+          const noStock = line.product_id && line._stock === 0;
+          const maxQty  = line._stock > 0 ? line._stock : null;
+          const atMax   = maxQty !== null && line.product_uom_qty >= maxQty;
           const overMax = maxQty !== null && line.product_uom_qty > maxQty;
           return (
             <div>
@@ -189,12 +195,16 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
                   onUpdate({ product_uom_qty: maxQty ? Math.min(v, maxQty) : v });
                 }}
                 className={`w-full text-sm text-center border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 bg-white ${
+                  noStock  ? "border-red-300 focus:ring-red-200 text-red-600" :
                   overMax  ? "border-red-400 focus:ring-red-300 text-red-600" :
                   atMax    ? "border-amber-300 focus:ring-amber-300" :
                              "border-gray-200 focus:ring-bassani-300"
                 }`}
               />
-              {atMax && (
+              {noStock && (
+                <p className="text-[10px] text-red-500 text-center mt-0.5 leading-none">0 available</p>
+              )}
+              {!noStock && atMax && (
                 <p className="text-[10px] text-amber-500 text-center mt-0.5 leading-none">max available</p>
               )}
             </div>
