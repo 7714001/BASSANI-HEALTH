@@ -41,6 +41,7 @@ class ResellerUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     active: Optional[bool] = None
+    odoo_partner_id: Optional[int] = None     # nullable — set to link, omit to leave unchanged
     warehouse_id: Optional[int] = None
     company_reg_number: Optional[str] = None
     vat_registered: Optional[bool] = None
@@ -215,6 +216,25 @@ async def update_reseller(
         raise HTTPException(status_code=404, detail="Reseller not found")
 
     updates = {k: v for k, v in reseller.model_dump().items() if v is not None}
+
+    # odoo_partner_id can be explicitly set to null (to clear the link) — handle separately
+    # since the `if v is not None` filter above would silently drop a null value.
+    if "odoo_partner_id" in reseller.model_fields_set:
+        new_pid = reseller.odoo_partner_id
+        if new_pid is not None:
+            try:
+                partners = get_odoo_client().read("res.partner", [new_pid], fields=["id", "name"])
+                if not partners:
+                    raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # don't block save if Odoo is temporarily unreachable
+            conflict = await col("resellers").find_one({"odoo_partner_id": new_pid, "id": {"$ne": reseller_id}})
+            if conflict:
+                raise HTTPException(status_code=400, detail="This Odoo partner is already linked to another reseller")
+        updates["odoo_partner_id"] = new_pid  # None clears the link, int sets it
+
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 

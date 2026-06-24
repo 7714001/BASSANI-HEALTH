@@ -792,11 +792,12 @@ export function Resellers() {
   const [customerLoading,    setCustomerLoading   ] = useState(false);
   const [selectedCustomer,   setSelectedCustomer  ] = useState(null);
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
-  const [editModal,          setEditModal         ] = useState(false);
-  const [editingId,          setEditingId         ] = useState(null);
-  const [editForm,           setEditForm          ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
-  const [saving,             setSaving            ] = useState(false);
-  const [editSaving,         setEditSaving        ] = useState(false);
+  const [editModal,              setEditModal             ] = useState(false);
+  const [editingId,              setEditingId             ] = useState(null);
+  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", odoo_partner_id:null, warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editSelectedCustomer,   setEditSelectedCustomer  ] = useState(null);
+  const [saving,                 setSaving                ] = useState(false);
+  const [editSaving,             setEditSaving            ] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -856,6 +857,7 @@ export function Resellers() {
   const openEdit = (r) => {
     setEditForm({
       name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
+      odoo_partner_id: r.odoo_partner_id || null,
       warehouse_id: r.warehouse_id || "",
       company_reg_number: r.company_reg_number || "",
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
@@ -863,7 +865,29 @@ export function Resellers() {
       bank_account_number: r.bank_account_number || "", bank_branch_code: r.bank_branch_code || "",
     });
     setEditingId(r.id);
+    setEditSelectedCustomer(null);
+    setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false);
+    if (r.odoo_partner_id) {
+      api.get(`/api/customers/${r.odoo_partner_id}`)
+        .then(res => setEditSelectedCustomer({ id: r.odoo_partner_id, name: res.data.name || `Partner #${r.odoo_partner_id}`, email: res.data.email || null }))
+        .catch(() => setEditSelectedCustomer({ id: r.odoo_partner_id, name: `Partner #${r.odoo_partner_id}`, email: null }));
+    }
     setEditModal(true);
+  };
+
+  const editSelectCustomer = (c) => {
+    setEditSelectedCustomer(c);
+    setCustDropdownOpen(false);
+    setCustomers([]);
+    setCustomerSearch("");
+    setEditForm(f => ({ ...f, odoo_partner_id: c.id }));
+  };
+
+  const editClearCustomer = () => {
+    setEditSelectedCustomer(null);
+    setEditForm(f => ({ ...f, odoo_partner_id: null }));
+    setCustomerSearch("");
+    setCustDropdownOpen(true);
   };
 
   const saveEdit = async () => {
@@ -872,6 +896,7 @@ export function Resellers() {
     try {
       const payload = { ...editForm };
       payload.warehouse_id = payload.warehouse_id ? parseInt(payload.warehouse_id) : null;
+      payload.odoo_partner_id = editForm.odoo_partner_id ? parseInt(editForm.odoo_partner_id) : null;
       await api.put(`/api/resellers/${editingId}`, payload);
       toast.success("Reseller updated");
       setEditModal(false);
@@ -1038,6 +1063,53 @@ export function Resellers() {
 
       {editModal && (
         <Modal title="Edit Reseller" onClose={()=>setEditModal(false)} width="max-w-2xl">
+
+          {/* Section 1 — Odoo vendor partner link */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Odoo Vendor Profile <span className="text-gray-300 font-normal normal-case">(optional — used for commission billing)</span></p>
+          <div className="relative mb-4">
+            {editSelectedCustomer ? (
+              <div className="flex items-center gap-3 border border-bassani-300 bg-bassani-50 rounded-xl px-4 py-2.5">
+                <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-bassani-800 truncate">{editSelectedCustomer.name}</p>
+                  {editSelectedCustomer.email && <p className="text-xs text-gray-400 truncate">{editSelectedCustomer.email}</p>}
+                </div>
+                <button onClick={editClearCustomer}
+                  className="text-gray-400 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Input
+                  value={customerSearch}
+                  onChange={e=>setCustomerSearch(e.target.value)}
+                  onFocus={()=>setCustDropdownOpen(true)}
+                  onBlur={()=>setTimeout(()=>setCustDropdownOpen(false), 150)}
+                  placeholder="Click to browse or type to search…"
+                  className="pr-10"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                  <ChevronDown size={15} className={custDropdownOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+                </span>
+              </div>
+            )}
+            {custDropdownOpen && !editSelectedCustomer && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-56 overflow-y-auto">
+                {customerLoading && <p className="px-4 py-3 text-xs text-gray-400">Loading customers…</p>}
+                {!customerLoading && customers.length === 0 && <p className="px-4 py-3 text-xs text-gray-400">No customers found</p>}
+                {customers.map(c=>(
+                  <button key={c.id} onMouseDown={()=>editSelectCustomer(c)}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                      {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
+                    </div>
+                    {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></FormGroup>
