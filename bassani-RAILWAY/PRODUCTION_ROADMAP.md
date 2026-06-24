@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed) | 2026-06-23 |
+| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.6 complete) | 2026-06-24 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
 | 9 | Go-Live Infrastructure | 🔴 Not Started | — |
 
@@ -716,17 +716,29 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 > ~~7.6 Multi-Warehouse Foundation (Preparation Only)~~ — **moved to Phase 3.7** and elevated from a plumbing-only task to a full functional requirement (warehouse selector, per-warehouse stock figures, correct stock decrement on order, correct restock location). See Phase 3.
 
+#### 7.6 Stock Movement Audit Trail (Product History)
+> **Added 2026-06-24** — requested by the business after a meeting reviewing Odoo's traceability screen. The portal now surfaces the same data in a more readable, labelled form.
+
+- [x] `GET /api/products/{product_id}/movements` — queries `stock.move` in `done` state, newest-first; optional `from_date`/`to_date` filters; default limit 100, max 500
+- [x] Batch-fetches `stock.location` records for every from/to location referenced — resolves `complete_name` and `usage` for each
+- [x] Move type classification from location `usage` pairs: `receipt` (supplier → internal), `delivery` (internal → customer), `return` (customer → internal), `vendor_return` (internal → supplier), `adjustment_in`/`adjustment_out` (inventory virtual location), `transfer` (internal → internal — covers both same-warehouse and inter-warehouse moves), `consumed`/`produced` (production location), `other`
+- [x] Inter-warehouse transfers included automatically — they appear as `transfer` type moves with full from/to location names (e.g. "Vault A / Stock → Vault B / Stock"), distinguishable from same-warehouse moves by the location name difference
+- [x] Frontend: small `History` icon button in the On Hand column of the Products table — opens a modal (consistent with the existing Reservations drill-down)
+- [x] Modal: optional date-from / date-to filter with a "Filter" button that re-fetches; colour-coded move type badge per row; ± qty with sign colouring (red for outbound, green for inbound); `from → to` location path + formatted date below each row
+
 ### Definition of Done
 - [x] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
 - [x] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
 - [x] A customer's account statement shows their balance, all invoices, and all payments
 - [ ] Customer onboarding cannot be approved without at least one document uploaded *(7.4 — deferred)*
 - [x] Backorder quantities are visible on the order detail page when Odoo has a backorder picking
+- [x] Clicking the history icon on any product shows its complete stock movement trail — receipts, deliveries, transfers, and adjustments — with move type labels and ± quantities
 
 ### Notes
 - 7.1 + 7.5 were implemented together — delivery endpoint returns both regular and backorder pickings with per-line fulfilment. UI surfaces in both OrderView.js (reseller order detail) and SalesTickets.js (staff ticket detail).
 - 7.2 credit note requests are tracked in MongoDB (not Odoo) since Odoo credit note creation is a finance-team action; portal tracks the request lifecycle (pending → acknowledged).
 - 7.4 blocked on R2 — no object storage provisioned yet. All other items complete.
+- 7.6 added after business meeting 2026-06-24 — they recognised the value of Odoo's traceability screen and wanted it surfaced in the portal. Inter-warehouse transfers are covered automatically via the location `usage=internal` classification.
 
 ---
 

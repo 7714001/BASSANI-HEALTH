@@ -562,6 +562,91 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/{product_id}/movements")
+async def get_product_movements(
+    product_id: int,
+    from_date:  Optional[str] = Query(None),   # YYYY-MM-DD
+    to_date:    Optional[str] = Query(None),
+    limit:      int           = Query(100, le=500),
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Returns the completed stock movement history for a product (stock.move where
+    state='done'), newest first.  Each move is classified by the usage type of its
+    source and destination locations so the UI can label it as Receipt, Delivery,
+    Return, Inter-Warehouse Transfer, Stock Adjustment, etc. without the caller
+    needing to understand Odoo's location hierarchy.
+    """
+    odoo = get_odoo_client()
+
+    domain: list = [("product_id", "=", product_id), ("state", "=", "done")]
+    if from_date:
+        domain.append(("date", ">=", f"{from_date} 00:00:00"))
+    if to_date:
+        domain.append(("date", "<=", f"{to_date} 23:59:59"))
+
+    try:
+        moves = odoo.search_read(
+            "stock.move",
+            domain=domain,
+            fields=["date", "product_qty", "location_id", "location_dest_id",
+                    "reference", "origin", "picking_id"],
+            order="date desc",
+            limit=limit,
+        )
+
+        # Batch-fetch every location referenced so we can label them and classify
+        loc_ids: set = set()
+        for m in moves:
+            if m.get("location_id"):
+                loc_ids.add(m["location_id"][0])
+            if m.get("location_dest_id"):
+                loc_ids.add(m["location_dest_id"][0])
+
+        locations: dict = {}
+        if loc_ids:
+            loc_records = odoo.search_read(
+                "stock.location",
+                domain=[("id", "in", list(loc_ids))],
+                fields=["id", "name", "complete_name", "usage"],
+                limit=500,
+            )
+            locations = {l["id"]: l for l in loc_records}
+
+        def _classify(from_usage: str, to_usage: str) -> str:
+            if from_usage == "supplier":                                return "receipt"
+            if to_usage   == "customer":                                return "delivery"
+            if from_usage == "customer":                                return "return"
+            if to_usage   == "supplier":                                return "vendor_return"
+            if to_usage   == "inventory":                               return "adjustment_out"
+            if from_usage == "inventory":                               return "adjustment_in"
+            if to_usage   == "production":                              return "consumed"
+            if from_usage == "production":                              return "produced"
+            if from_usage == "internal" and to_usage == "internal":    return "transfer"
+            return "other"
+
+        result = []
+        for m in moves:
+            fid   = m["location_id"][0]      if m.get("location_id")      else None
+            tid   = m["location_dest_id"][0] if m.get("location_dest_id") else None
+            loc_f = locations.get(fid, {})   if fid else {}
+            loc_t = locations.get(tid, {})   if tid else {}
+
+            result.append({
+                "date":          m.get("date"),
+                "qty":           m.get("product_qty", 0),
+                "from_location": loc_f.get("complete_name") or loc_f.get("name") or "Unknown",
+                "to_location":   loc_t.get("complete_name") or loc_t.get("name") or "Unknown",
+                "reference":     m.get("reference") or "",
+                "origin":        m.get("origin") or "",
+                "move_type":     _classify(loc_f.get("usage", ""), loc_t.get("usage", "")),
+            })
+
+        return {"movements": result, "total": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.post("/{product_id}/stock")
 async def set_stock_level(
     product_id: int,

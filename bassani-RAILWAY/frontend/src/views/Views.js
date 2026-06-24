@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch } from "lucide-react";
+import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch, History } from "lucide-react";
 import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -14,6 +14,20 @@ import {
   LoadingState, EmptyState, Badge, fmtR, fmtDate,
 } from "../components/UI";
 
+
+const MOVE_TYPE_META = {
+  receipt:        { label: "Receipt",        cls: "bg-green-100 text-green-800"   },
+  delivery:       { label: "Delivery",       cls: "bg-red-100 text-red-800"       },
+  return:         { label: "Return",         cls: "bg-blue-100 text-blue-800"     },
+  vendor_return:  { label: "Vendor Return",  cls: "bg-gray-100 text-gray-700"     },
+  adjustment_in:  { label: "Adj. +",         cls: "bg-teal-100 text-teal-800"    },
+  adjustment_out: { label: "Adj. −",         cls: "bg-amber-100 text-amber-800"  },
+  transfer:       { label: "Transfer",       cls: "bg-purple-100 text-purple-800" },
+  consumed:       { label: "MFG Consumed",   cls: "bg-orange-100 text-orange-800" },
+  produced:       { label: "MFG Output",     cls: "bg-indigo-100 text-indigo-800" },
+  other:          { label: "Other",          cls: "bg-gray-100 text-gray-500"     },
+};
+const MOVE_OUT_TYPES = new Set(["delivery", "adjustment_out", "consumed", "vendor_return"]);
 
 export function Products() {
   const { user, can } = useAuth();
@@ -41,6 +55,13 @@ export function Products() {
   const [viewingOrder,       setViewingOrder        ] = useState(null);
   const [viewingOrderId,     setViewingOrderId      ] = useState(null); // tracks which row is loading
 
+  const [historyModal,   setHistoryModal  ] = useState(false);
+  const [historyProduct, setHistoryProduct] = useState(null);
+  const [historyMoves,   setHistoryMoves  ] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFrom,    setHistoryFrom   ] = useState("");
+  const [historyTo,      setHistoryTo     ] = useState("");
+
   const openReservationOrder = async (orderId) => {
     setViewingOrderId(orderId);
     try {
@@ -65,6 +86,24 @@ export function Products() {
       setReservations([]);
     } finally {
       setReservationsLoading(false);
+    }
+  };
+
+  const openHistory = async (p) => {
+    setHistoryProduct(p);
+    setHistoryModal(true);
+    setHistoryLoading(true);
+    try {
+      const params = {};
+      if (historyFrom) params.from_date = historyFrom;
+      if (historyTo)   params.to_date   = historyTo;
+      const r = await api.get(`/api/products/${p.id}/movements`, { params });
+      setHistoryMoves(r.data.movements || []);
+    } catch {
+      toast.error("Failed to load stock movements");
+      setHistoryMoves([]);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -161,7 +200,7 @@ export function Products() {
                 ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
                 : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
             },
-            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
+            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button></span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=>{
               const onHand = p.qty_available ?? 0;
               const forecasted = p.virtual_available ?? 0;
@@ -258,6 +297,47 @@ export function Products() {
             </div>
           )}
           <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setReservationsModal(false)}>Close</BtnSecondary></div>
+        </Modal>
+      )}
+      {historyModal && historyProduct && (
+        <Modal title={`Stock History — ${historyProduct.display_name || historyProduct.name}`} onClose={()=>setHistoryModal(false)}>
+          <div className="flex items-center gap-2 mb-4">
+            <Input type="date" value={historyFrom} onChange={e=>setHistoryFrom(e.target.value)} className="text-xs flex-1" />
+            <span className="text-gray-400 text-xs flex-shrink-0">to</span>
+            <Input type="date" value={historyTo} onChange={e=>setHistoryTo(e.target.value)} className="text-xs flex-1" />
+            <BtnSecondary size="sm" onClick={()=>openHistory(historyProduct)}>Filter</BtnSecondary>
+          </div>
+          {historyLoading && <LoadingState />}
+          {!historyLoading && historyMoves.length === 0 && (
+            <EmptyState message="No completed stock movements found for this product in the selected date range." />
+          )}
+          {!historyLoading && historyMoves.length > 0 && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100 max-h-[420px] overflow-y-auto">
+              {historyMoves.map((m, i) => {
+                const meta   = MOVE_TYPE_META[m.move_type] || MOVE_TYPE_META.other;
+                const isOut  = MOVE_OUT_TYPES.has(m.move_type);
+                const label  = m.reference || m.origin || "—";
+                return (
+                  <div key={i} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 flex-shrink-0 ${meta.cls}`}>{meta.label}</span>
+                        <span className="text-xs text-gray-500 truncate">{label}</span>
+                      </div>
+                      <span className={`text-sm font-semibold flex-shrink-0 ${isOut ? "text-red-600" : "text-green-600"}`}>
+                        {isOut ? "−" : "+"}{m.qty}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                      {m.from_location} → {m.to_location}
+                      {" · "}{fmtDate(m.date)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setHistoryModal(false)}>Close</BtnSecondary></div>
         </Modal>
       )}
       {viewingOrder && (
