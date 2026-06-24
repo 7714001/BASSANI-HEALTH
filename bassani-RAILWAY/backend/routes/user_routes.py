@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from auth import (
     require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS,
-    ALL_ROLES, TICKET_ROLES, TICKET_ROLE_PERMISSIONS,
+    ALL_ROLES, TICKET_ROLES, ROLE_DEFAULT_PERMISSIONS,
 )
 from database import col
 from middleware.audit import audit_log
@@ -62,8 +62,12 @@ def _permissions_for_new_role(role: str, supplied: Optional[dict]) -> Optional[d
     if role == "admin":
         return supplied if supplied else DEFAULT_ADMIN_PERMISSIONS
     if role in TICKET_ROLES:
-        # Fixed, not user-customisable — the role IS the permission.
-        return TICKET_ROLE_PERMISSIONS[role]
+        # Start from the role's default set; merge any caller-supplied overrides on top.
+        base = dict(ROLE_DEFAULT_PERMISSIONS[role])
+        if supplied:
+            for domain, actions in supplied.items():
+                base[domain] = {**base.get(domain, {}), **actions}
+        return base
     # warehouse_supervisor and packer access is role-gated at the packing board layer,
     # not via this permissions object — store nothing so the portal summary shows correctly.
     return None

@@ -30,7 +30,7 @@ TICKET_ROLES = {"sales", "orders_clerk", "finance", "qa_manager", "responsible_p
 DEFAULT_ADMIN_PERMISSIONS: dict = {
     "products":    {"manage": False},
     "orders":      {"view": True,  "confirm": False, "cancel": False},
-    "customers":   {"view": True,  "approve_onboarding": False, "reject_onboarding": False},
+    "customers":   {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
     "commission":  {"view": True,  "generate_statements": False, "mark_paid": False, "configure_tiers": False},
     "resellers":   {"view": True,  "manage": False},
     "invoices":    {"view": True,  "record_payment": False},
@@ -39,14 +39,14 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "users":       {"manage": False},
     "warehouse":   {"view": False, "supervise": False},
     "audit":       {"view": False},
-    "tickets":     {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False},
+    "tickets":     {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
 FULL_PERMISSIONS: dict = {
     "products":    {"manage": True},
     "orders":      {"view": True,  "confirm": True,  "cancel": True},
-    "customers":   {"view": True,  "approve_onboarding": True,  "reject_onboarding": True},
+    "customers":   {"view": True,  "manage": True,   "approve_onboarding": True,  "reject_onboarding": True},
     "commission":  {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": True},
     "resellers":   {"view": True,  "manage": True},
     "invoices":    {"view": True,  "record_payment": True},
@@ -55,18 +55,87 @@ FULL_PERMISSIONS: dict = {
     "users":       {"manage": True},
     "warehouse":   {"view": True,  "supervise": True},
     "audit":       {"view": True},
-    "tickets":     {"sales": True, "orders": True, "finance_confirm": True, "qa_approve": True, "rp_approve": True},
+    "tickets":     {"sales": True, "orders": True, "finance_confirm": True, "qa_approve": True, "rp_approve": True, "manage": True},
 }
 
-# Each ticketing role gets exactly one fixed permission — the role IS the
-# permission, so unlike "admin" there's no per-user customisation panel.
-TICKET_ROLE_PERMISSIONS: dict = {
-    "sales":                  {"tickets": {"sales": True}},
-    "orders_clerk":           {"tickets": {"orders": True}},
-    "finance":                {"tickets": {"finance_confirm": True}},
-    "qa_manager":             {"tickets": {"qa_approve": True}},
-    "responsible_pharmacist": {"tickets": {"rp_approve": True}},
+# Full default permission sets for each staff role.
+# Each role's core ticket permission is always True — everything else reflects
+# what that role typically needs.  Super admin can extend any key via the Users UI.
+# Replaces the old TICKET_ROLE_PERMISSIONS (single-key objects); kept as an alias
+# for any import sites that haven't been updated yet.
+ROLE_DEFAULT_PERMISSIONS: dict = {
+    "sales": {
+        "products":   {"manage": False},
+        "orders":     {"view": True,  "confirm": False, "cancel": False},
+        "customers":  {"view": True,  "manage": True,   "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
+        "resellers":  {"view": False, "manage": False},
+        "invoices":   {"view": False, "record_payment": False},
+        "reports":    {"view": False, "export": False},
+        "healthcare": {"view": False, "manage": False},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": True, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+    },
+    "orders_clerk": {
+        "products":   {"manage": False},
+        "orders":     {"view": True,  "confirm": False, "cancel": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
+        "resellers":  {"view": False, "manage": False},
+        "invoices":   {"view": False, "record_payment": False},
+        "reports":    {"view": False, "export": False},
+        "healthcare": {"view": False, "manage": False},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": False, "orders": True, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+    },
+    "finance": {
+        "products":   {"manage": False},
+        "orders":     {"view": True,  "confirm": False, "cancel": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": False},
+        "resellers":  {"view": True,  "manage": False},
+        "invoices":   {"view": True,  "record_payment": True},
+        "reports":    {"view": True,  "export": False},
+        "healthcare": {"view": False, "manage": False},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": False, "orders": False, "finance_confirm": True, "qa_approve": False, "rp_approve": False, "manage": False},
+    },
+    "qa_manager": {
+        "products":   {"manage": False},
+        "orders":     {"view": True,  "confirm": False, "cancel": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
+        "resellers":  {"view": False, "manage": False},
+        "invoices":   {"view": False, "record_payment": False},
+        "reports":    {"view": False, "export": False},
+        "healthcare": {"view": False, "manage": False},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": True, "rp_approve": False, "manage": False},
+    },
+    "responsible_pharmacist": {
+        "products":   {"manage": False},
+        "orders":     {"view": True,  "confirm": False, "cancel": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
+        "resellers":  {"view": False, "manage": False},
+        "invoices":   {"view": False, "record_payment": False},
+        "reports":    {"view": False, "export": False},
+        "healthcare": {"view": True,  "manage": True},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": True, "manage": False},
+    },
 }
+TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────

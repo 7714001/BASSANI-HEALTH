@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
@@ -358,8 +358,10 @@ async def create_customer(
     customer: CustomerCreate,
     current_user: dict = Depends(get_current_user),
 ):
-    """Create a new customer in Odoo. Admins and resellers can create customers."""
-    if current_user.get("role") not in ("admin", "reseller"):
+    """Create a new customer in Odoo. Resellers can always create; staff need customers.manage."""
+    role  = current_user.get("role")
+    perms = current_user.get("permissions", {})
+    if role != "reseller" and not current_user.get("is_super_admin") and not perms.get("customers", {}).get("manage"):
         raise HTTPException(status_code=403, detail="Not authorised")
 
     odoo = get_odoo_client()
@@ -442,7 +444,7 @@ async def claim_customer(
 def update_customer(
     customer_id: int,
     customer: CustomerUpdate,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("customers.manage")),
 ):
     odoo = get_odoo_client()
     vals = {k: v for k, v in customer.model_dump().items() if v is not None}

@@ -36,6 +36,7 @@ const PERMISSION_GROUPS = [
     label: "Customers & Onboarding",
     actions: [
       { key: "view",                label: "View customers" },
+      { key: "manage",              label: "Create & edit customers" },
       { key: "approve_onboarding",  label: "Approve onboarding applications" },
       { key: "reject_onboarding",   label: "Reject onboarding applications" },
     ],
@@ -153,7 +154,7 @@ const EMPTY_PERMISSIONS = Object.fromEntries(
 const DEFAULT_ADMIN_PERMS = {
   products:   { manage: false },
   orders:     { view: true,  confirm: false, cancel: false },
-  customers:  { view: true,  approve_onboarding: false, reject_onboarding: false },
+  customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
   commission: { view: true,  generate_statements: false, mark_paid: false, configure_tiers: false },
   resellers:  { view: true,  manage: false },
   invoices:   { view: true,  record_payment: false },
@@ -163,6 +164,91 @@ const DEFAULT_ADMIN_PERMS = {
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
   tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+};
+
+// Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
+const TICKET_ROLES = new Set(["sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"]);
+
+const ROLE_DEFAULT_PERMS = {
+  sales: {
+    products:   { manage: false },
+    orders:     { view: true,  confirm: false, cancel: false },
+    customers:  { view: true,  manage: true,   approve_onboarding: false, reject_onboarding: false },
+    commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
+    resellers:  { view: false, manage: false },
+    invoices:   { view: false, record_payment: false },
+    reports:    { view: false, export: false },
+    healthcare: { view: false, manage: false },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:    { sales: true, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+  },
+  orders_clerk: {
+    products:   { manage: false },
+    orders:     { view: true,  confirm: false, cancel: false },
+    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
+    commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
+    resellers:  { view: false, manage: false },
+    invoices:   { view: false, record_payment: false },
+    reports:    { view: false, export: false },
+    healthcare: { view: false, manage: false },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:    { sales: false, orders: true, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+  },
+  finance: {
+    products:   { manage: false },
+    orders:     { view: true,  confirm: false, cancel: false },
+    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
+    commission: { view: true,  generate_statements: true,  mark_paid: true,  configure_tiers: false },
+    resellers:  { view: true,  manage: false },
+    invoices:   { view: true,  record_payment: true },
+    reports:    { view: true,  export: false },
+    healthcare: { view: false, manage: false },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:    { sales: false, orders: false, finance_confirm: true, qa_approve: false, rp_approve: false, manage: false },
+  },
+  qa_manager: {
+    products:   { manage: false },
+    orders:     { view: true,  confirm: false, cancel: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
+    commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
+    resellers:  { view: false, manage: false },
+    invoices:   { view: false, record_payment: false },
+    reports:    { view: false, export: false },
+    healthcare: { view: false, manage: false },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: true, rp_approve: false, manage: false },
+  },
+  responsible_pharmacist: {
+    products:   { manage: false },
+    orders:     { view: true,  confirm: false, cancel: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
+    commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
+    resellers:  { view: false, manage: false },
+    invoices:   { view: false, record_payment: false },
+    reports:    { view: false, export: false },
+    healthcare: { view: true,  manage: true },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: true, manage: false },
+  },
+};
+
+// The core ticket permission per role — always checked and cannot be toggled off in the UI.
+const ROLE_LOCKED_PERMS = {
+  sales:                  { tickets: { sales: true } },
+  orders_clerk:           { tickets: { orders: true } },
+  finance:                { tickets: { finance_confirm: true } },
+  qa_manager:             { tickets: { qa_approve: true } },
+  responsible_pharmacist: { tickets: { rp_approve: true } },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -223,10 +309,16 @@ export default function Users() {
 
   // ── Create user ─────────────────────────────────────────────────────────────
 
+  const permsForRole = (role) => {
+    if (role === "admin") return JSON.parse(JSON.stringify(DEFAULT_ADMIN_PERMS));
+    if (TICKET_ROLES.has(role)) return JSON.parse(JSON.stringify(ROLE_DEFAULT_PERMS[role]));
+    return JSON.parse(JSON.stringify(EMPTY_PERMISSIONS));
+  };
+
   const openCreate = () => {
     const defaultRole = isSuperAdmin ? "admin" : "warehouse_supervisor";
     setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole, warehouse_id: "" });
-    setCreatePerms(defaultRole === "admin" ? { ...DEFAULT_ADMIN_PERMS } : { ...EMPTY_PERMISSIONS });
+    setCreatePerms(permsForRole(defaultRole));
     setCreateModal(true);
   };
 
@@ -235,7 +327,7 @@ export default function Users() {
     if (createForm.password.length < 8) return toast.error("Password must be at least 8 characters");
     try {
       const body = { ...createForm };
-      if (createForm.role === "admin") body.permissions = createPerms;
+      if (createForm.role === "admin" || TICKET_ROLES.has(createForm.role)) body.permissions = createPerms;
       if (createForm.role !== "packer") delete body.display_name;
       if (["warehouse_supervisor", "packer"].includes(createForm.role) && createForm.warehouse_id) {
         body.warehouse_id = parseInt(createForm.warehouse_id);
@@ -375,16 +467,11 @@ export default function Users() {
   });
 
   const permSummary = (u) => {
-    if (u.is_super_admin)                   return "Full access";
-    if (u.role === "warehouse_supervisor")  return "Packing floor — supervisor";
-    if (u.role === "packer")                return "Packing floor — packer";
-    if (u.role === "reseller")              return "Reseller portal";
-    if (u.role === "sales")                  return "Sales ticket queue";
-    if (u.role === "orders_clerk")           return "Orders ticket queue";
-    if (u.role === "finance")                return "Finance — payment confirmation";
-    if (u.role === "qa_manager")             return "QA approval";
-    if (u.role === "responsible_pharmacist") return "RP approval";
-    if (!u.permissions)                     return "—";
+    if (u.is_super_admin)                  return "Full access";
+    if (u.role === "warehouse_supervisor") return "Packing floor — supervisor";
+    if (u.role === "packer")               return "Packing floor — packer";
+    if (u.role === "reseller")             return "Reseller portal";
+    if (!u.permissions)                    return "—";
     const enabled = Object.values(u.permissions).flatMap(Object.values).filter(Boolean).length;
     const total   = Object.values(u.permissions).flatMap(Object.values).length;
     return `${enabled} / ${total} permissions`;
@@ -524,7 +611,7 @@ export default function Users() {
               enableSorting: false,
               cell: ({ row: { original: u } }) => (
                 <div className="flex gap-1.5 flex-wrap">
-                  {isSuperAdmin && u.role === "admin" && !u.is_super_admin && (
+                  {isSuperAdmin && (u.role === "admin" || TICKET_ROLES.has(u.role)) && !u.is_super_admin && (
                     <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
                       <ShieldCheck size={12} />
                     </BtnSecondary>
@@ -589,7 +676,7 @@ export default function Users() {
                 onChange={e => {
                   const role = e.target.value;
                   setCreateForm({ ...createForm, role });
-                  setCreatePerms(role === "admin" ? { ...DEFAULT_ADMIN_PERMS } : { ...EMPTY_PERMISSIONS });
+                  setCreatePerms(permsForRole(role));
                 }}
               >
                 {availableRoles.map(r => (
@@ -622,29 +709,44 @@ export default function Users() {
             )}
           </div>
 
-          {/* Permissions panel — only for admin role, only super_admin can set */}
-          {createForm.role === "admin" && (
+          {/* Permissions panel — admin and all ticket roles */}
+          {(createForm.role === "admin" || TICKET_ROLES.has(createForm.role)) && (
             <div className="mt-4 border border-gray-200 rounded-xl overflow-hidden">
               <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200">
                 <p className="text-xs font-semibold text-gray-700">Permissions</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">Defaults to view-only. Toggle to grant additional access.</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {createForm.role === "admin"
+                    ? "Defaults to view-only. Toggle to grant additional access."
+                    : "Pre-set for this role. Locked permissions cannot be removed. Toggle to extend access."}
+                </p>
               </div>
               <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                {PERMISSION_GROUPS.map(group => (
-                  <PermissionGroup
-                    key={group.domain}
-                    group={group}
-                    perms={createPerms[group.domain]}
-                    onToggle={(action) => setCreatePerm(group.domain, action, !createPerms[group.domain][action])}
-                    onToggleAll={() => {
-                      const allOn = group.actions.every(a => createPerms[group.domain][a.key]);
-                      setCreatePerms(prev => ({
-                        ...prev,
-                        [group.domain]: Object.fromEntries(group.actions.map(a => [a.key, !allOn])),
-                      }));
-                    }}
-                  />
-                ))}
+                {PERMISSION_GROUPS.map(group => {
+                  const groupLocked = ROLE_LOCKED_PERMS[createForm.role]?.[group.domain] || {};
+                  return (
+                    <PermissionGroup
+                      key={group.domain}
+                      group={group}
+                      perms={createPerms[group.domain]}
+                      lockedPerms={groupLocked}
+                      onToggle={(action) => {
+                        if (groupLocked[action]) return;
+                        setCreatePerm(group.domain, action, !createPerms[group.domain][action]);
+                      }}
+                      onToggleAll={() => {
+                        const unlocked = group.actions.filter(a => !groupLocked[a.key]);
+                        const allOn = unlocked.every(a => createPerms[group.domain][a.key]);
+                        setCreatePerms(prev => ({
+                          ...prev,
+                          [group.domain]: {
+                            ...prev[group.domain],
+                            ...Object.fromEntries(unlocked.map(a => [a.key, !allOn])),
+                          },
+                        }));
+                      }}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
@@ -722,39 +824,58 @@ export default function Users() {
       )}
 
       {/* ── Edit permissions modal ── */}
-      {permsModal && permsTarget && (
-        <Modal title={`Permissions — ${permsTarget.username}`} onClose={() => setPermsModal(false)}>
-          <p className="text-xs text-gray-500 mb-3">
-            Super admin always overrides these. Changes take effect immediately on next API call.
-          </p>
-          <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
-            <div className="divide-y divide-gray-100">
-              {PERMISSION_GROUPS.map(group => (
-                <PermissionGroup
-                  key={group.domain}
-                  group={group}
-                  perms={editPerms[group.domain]}
-                  expanded={expandedGroups[group.domain]}
-                  onExpand={() => setExpandedGroups(prev => ({ ...prev, [group.domain]: !prev[group.domain] }))}
-                  onToggle={(action) => togglePerm(group.domain, action)}
-                  onToggleAll={() => toggleGroup(group.domain)}
-                />
-              ))}
+      {permsModal && permsTarget && (() => {
+        const roleLocked = ROLE_LOCKED_PERMS[permsTarget.role] || {};
+        return (
+          <Modal title={`Permissions — ${permsTarget.username}`} onClose={() => setPermsModal(false)}>
+            <p className="text-xs text-gray-500 mb-3">
+              Super admin always overrides these. Changes take effect immediately on next API call.
+              {TICKET_ROLES.has(permsTarget.role) && " Locked permissions are part of this role's core access and cannot be removed."}
+            </p>
+            <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
+              <div className="divide-y divide-gray-100">
+                {PERMISSION_GROUPS.map(group => {
+                  const groupLocked = roleLocked[group.domain] || {};
+                  return (
+                    <PermissionGroup
+                      key={group.domain}
+                      group={group}
+                      perms={editPerms[group.domain]}
+                      lockedPerms={groupLocked}
+                      expanded={expandedGroups[group.domain]}
+                      onExpand={() => setExpandedGroups(prev => ({ ...prev, [group.domain]: !prev[group.domain] }))}
+                      onToggle={(action) => { if (!groupLocked[action]) togglePerm(group.domain, action); }}
+                      onToggleAll={() => {
+                        const unlocked = PERMISSION_GROUPS.find(g => g.domain === group.domain)
+                          ?.actions.filter(a => !groupLocked[a.key]) || [];
+                        const allOn = unlocked.every(a => editPerms[group.domain]?.[a.key]);
+                        setEditPerms(prev => ({
+                          ...prev,
+                          [group.domain]: {
+                            ...prev[group.domain],
+                            ...Object.fromEntries(unlocked.map(a => [a.key, !allOn])),
+                          },
+                        }));
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setPermsModal(false)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={savePerms}><ShieldCheck size={13} /> Save Permissions</BtnPrimary>
-          </div>
-        </Modal>
-      )}
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setPermsModal(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={savePerms}><ShieldCheck size={13} /> Save Permissions</BtnPrimary>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
 
 // ── PermissionGroup sub-component ─────────────────────────────────────────────
 
-function PermissionGroup({ group, perms = {}, expanded = true, onExpand, onToggle, onToggleAll }) {
+function PermissionGroup({ group, perms = {}, lockedPerms = {}, expanded = true, onExpand, onToggle, onToggleAll }) {
   const allOn = group.actions.every(a => perms[a.key]);
   const anyOn = group.actions.some(a => perms[a.key]);
 
@@ -785,23 +906,29 @@ function PermissionGroup({ group, perms = {}, expanded = true, onExpand, onToggl
 
       {expanded && (
         <div className="pr-4 pl-[44px] pb-2 pt-1 space-y-1">
-          {group.actions.map(action => (
-            <label key={action.key} className="flex items-center gap-3 py-1 cursor-pointer group">
-              <div
-                className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                  perms[action.key] ? "bg-bassani-600 border-bassani-600" : "bg-white border border-gray-300"
-                }`}
-                onClick={() => onToggle(action.key)}
-              >
-                {perms[action.key] && (
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10">
-                    <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
-              </div>
-              <span className="text-xs text-gray-600 group-hover:text-gray-900">{action.label}</span>
-            </label>
-          ))}
+          {group.actions.map(action => {
+            const isLocked = !!lockedPerms[action.key];
+            return (
+              <label key={action.key} className={`flex items-center gap-3 py-1 ${isLocked ? "opacity-60" : "cursor-pointer group"}`}>
+                <div
+                  className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                    perms[action.key] ? "bg-bassani-600 border-bassani-600" : "bg-white border border-gray-300"
+                  } ${isLocked ? "cursor-not-allowed" : ""}`}
+                  onClick={() => !isLocked && onToggle(action.key)}
+                >
+                  {perms[action.key] && (
+                    <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10">
+                      <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </div>
+                <span className={`text-xs ${isLocked ? "text-gray-400" : "text-gray-600 group-hover:text-gray-900"}`}>
+                  {action.label}
+                  {isLocked && <span className="ml-1.5 text-[10px] font-medium text-gray-400 bg-gray-100 rounded px-1">locked</span>}
+                </span>
+              </label>
+            );
+          })}
         </div>
       )}
     </div>

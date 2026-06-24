@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from config import get_settings
-from auth import hash_password, FULL_PERMISSIONS
+from auth import hash_password, FULL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS
 from rate_limit import limiter
 from logging_config import setup_logging
 
@@ -149,6 +149,31 @@ async def initialise_users():
     )
     if result.modified_count:
         logger.info("startup_migrated_audit_permission", extra={"count": result.modified_count})
+
+    # Migrate ticket-role accounts from the old single-key permissions object
+    # ({"tickets": {"sales": True}}) to the full ROLE_DEFAULT_PERMISSIONS set.
+    # Detection: old format has exactly one key ("tickets") in permissions.
+    # Accounts that have already been extended by a super admin are left untouched.
+    migrated_ticket = 0
+    for role, defaults in ROLE_DEFAULT_PERMISSIONS.items():
+        async for user in col("users").find({"role": role}):
+            perms = user.get("permissions") or {}
+            if list(perms.keys()) == ["tickets"]:  # old minimal format
+                await col("users").update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"permissions": defaults}},
+                )
+                migrated_ticket += 1
+    if migrated_ticket:
+        logger.info("startup_migrated_ticket_role_permissions", extra={"count": migrated_ticket})
+
+    # Backfill customers.manage: False on admin accounts that predate this key.
+    result = await col("users").update_many(
+        {"role": "admin", "permissions.customers.manage": {"$exists": False}},
+        {"$set": {"permissions.customers.manage": False}},
+    )
+    if result.modified_count:
+        logger.info("startup_migrated_customers_manage", extra={"count": result.modified_count})
 
     await col("audit_logs").create_index([("created_at", -1)])
     await col("audit_logs").create_index([("entity_type", 1), ("entity_id", 1)])
