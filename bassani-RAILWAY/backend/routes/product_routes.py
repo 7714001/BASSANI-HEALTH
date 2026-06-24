@@ -132,7 +132,7 @@ async def list_products(
     warehouse (their assigned vault, or the admin's active selection) so
     resellers/staff see stock for the warehouse their orders actually draw from.
     """
-    _SORTABLE = {"name", "default_code", "list_price", "standard_price", "qty_available"}
+    _SORTABLE = {"name", "default_code", "list_price", "standard_price"}
     sort_by  = sort_by  if sort_by  in _SORTABLE          else "name"
     sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "asc"
     odoo = get_odoo_client()

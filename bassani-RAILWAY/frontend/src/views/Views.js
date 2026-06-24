@@ -17,7 +17,6 @@ import {
 
 export function Products() {
   const { user, can } = useAuth();
-  const isReseller = user?.role === "reseller";
   const [products,   setProducts  ] = useState([]);
   const [total,      setTotal     ] = useState(0);
   const [loading,    setLoading   ] = useState(true);
@@ -162,7 +161,7 @@ export function Products() {
                 ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
                 : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
             },
-            { accessorKey:"qty_available", header:"On Hand", cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
+            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className={stockColor(q)}>{q}</span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=>{
               const onHand = p.qty_available ?? 0;
               const forecasted = p.virtual_available ?? 0;
@@ -1213,7 +1212,6 @@ function AdminCommissionView() {
   const [genMonth,    setGenMonth   ] = useState(today.getMonth() + 1);
   const [generating,  setGenerating ] = useState(false);
   const [statements,  setStatements ] = useState([]);
-  const [stmtTotal,   setStmtTotal  ] = useState(0);
   const [stmtLoading, setStmtLoading] = useState(true);
   const [stmtStatus,  setStmtStatus ] = useState("all");
   const [payModal,    setPayModal   ] = useState(null);
@@ -1250,7 +1248,6 @@ function AdminCommissionView() {
         params: { status: stmtStatus === "all" ? undefined : stmtStatus, limit: 100 },
       });
       setStatements(r.data.statements || []);
-      setStmtTotal(r.data.total || 0);
     } catch { toast.error("Failed to load statements"); }
     finally { setStmtLoading(false); }
   }, [stmtStatus]);

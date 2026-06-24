@@ -63,7 +63,7 @@ function LineRow({ line, onUpdate, onRemove, autoFocus }) {
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const r = await api.get("/api/products/", { params: { search: q, limit: 10 } });
+        const r = await api.get("/api/products/", { params: { search: q, limit: 30 } });
         setSearchResults(r.data.products || []);
         setDropdownOpen(true);
       } catch {
