@@ -104,66 +104,100 @@ function LineRow({ line, onUpdate, onRemove, autoFocus, warehouseId }) {
   return (
     <tr className="border-b border-gray-100 group hover:bg-slate-50/50 transition-colors">
 
-      {/* ── Product search ── */}
+      {/* ── Product — search input until selected, then pill display ── */}
       <td className="p-2.5 relative">
-        <input
-          autoFocus={autoFocus}
-          value={prodSearch}
-          onChange={e => {
-            const v = e.target.value;
-            setProdSearch(v);
-            if (!v) {
-              setSearchResults([]);
-              setDropdownOpen(false);
-              onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
-            }
-          }}
-          onFocus={() => { if (searchResults.length > 0) setDropdownOpen(true); }}
-          onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
-          placeholder="Type product name or SKU…"
-          className="w-full text-sm bg-transparent border-0 focus:outline-none placeholder-gray-300"
-        />
-        {searching && (
-          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
-        )}
-        {dropdownOpen && searchResults.length > 0 && (
-          <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
-            {searchResults.map(p => {
-              const outOfStock = (p.virtual_available || 0) <= 0;
-              return (
+        {line.product_id ? (() => {
+          const full       = line._product_label || line.name || "";
+          const bracketIdx = full.indexOf(" (");
+          const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
+          const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 2, -1) : null;
+          return (
+            <div className="flex items-start justify-between gap-1">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-900 leading-tight">{base}</p>
+                {(variant || line._sku) && (
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {variant && (
+                      <span className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{variant}</span>
+                    )}
+                    {line._sku && (
+                      <span className="text-[10px] font-mono text-gray-400 leading-none">{line._sku}</span>
+                    )}
+                  </div>
+                )}
+              </div>
               <button
-                key={p.id}
-                onMouseDown={() => { if (!outOfStock) selectProduct(p); }}
-                disabled={outOfStock}
-                title={outOfStock ? "No forecasted stock — cannot add to quote" : undefined}
-                className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors ${outOfStock ? "opacity-50 cursor-not-allowed bg-gray-50" : "hover:bg-bassani-50"}`}
+                onClick={() => {
+                  setProdSearch("");
+                  setSearchResults([]);
+                  onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0, _stock: 0, _sku: "" });
+                }}
+                title="Change product"
+                className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
               >
-                <div className="min-w-0">
-                  {(() => {
-                    const full = p.display_name || p.name;
-                    const bracketIdx = full.indexOf(" (");
-                    const base    = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
-                    const variant = bracketIdx !== -1 ? full.slice(bracketIdx + 1) : null;
-                    return (
-                      <>
-                        <p className="text-sm font-medium text-gray-900">{base}</p>
-                        {variant && (
-                          <p className="text-xs text-bassani-600 font-medium mt-0.5">{variant}</p>
-                        )}
-                      </>
-                    );
-                  })()}
-                  {p.default_code && (
-                    <p className="text-[10px] font-mono text-gray-400 mt-0.5">{p.default_code}</p>
-                  )}
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs font-semibold text-gray-800">{fmtR(p.list_price)}</p>
-                  {inStockBadge(p)}
-                </div>
+                <X size={13} />
               </button>
-            ); })}
-          </div>
+            </div>
+          );
+        })() : (
+          <>
+            <input
+              autoFocus={autoFocus}
+              value={prodSearch}
+              onChange={e => {
+                const v = e.target.value;
+                setProdSearch(v);
+                if (!v) {
+                  setSearchResults([]);
+                  setDropdownOpen(false);
+                  onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
+                }
+              }}
+              onFocus={() => { if (searchResults.length > 0) setDropdownOpen(true); }}
+              onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+              placeholder="Type product name or SKU…"
+              className="w-full text-sm bg-transparent border-0 focus:outline-none placeholder-gray-300"
+            />
+            {searching && (
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
+            )}
+            {dropdownOpen && searchResults.length > 0 && (
+              <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
+                {searchResults.map(p => {
+                  const outOfStock = (p.virtual_available || 0) <= 0;
+                  return (
+                    <button
+                      key={p.id}
+                      onMouseDown={() => { if (!outOfStock) selectProduct(p); }}
+                      disabled={outOfStock}
+                      title={outOfStock ? "No forecasted stock — cannot add to quote" : undefined}
+                      className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors ${outOfStock ? "opacity-50 cursor-not-allowed bg-gray-50" : "hover:bg-bassani-50"}`}
+                    >
+                      <div className="min-w-0">
+                        {(() => {
+                          const full       = p.display_name || p.name;
+                          const bracketIdx = full.indexOf(" (");
+                          const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
+                          const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 1) : null;
+                          return (
+                            <>
+                              <p className="text-sm font-medium text-gray-900">{base}</p>
+                              {variant && <p className="text-xs text-bassani-600 font-medium mt-0.5">{variant}</p>}
+                            </>
+                          );
+                        })()}
+                        {p.default_code && <p className="text-[10px] font-mono text-gray-400 mt-0.5">{p.default_code}</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-xs font-semibold text-gray-800">{fmtR(p.list_price)}</p>
+                        {inStockBadge(p)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </td>
 
@@ -780,16 +814,24 @@ export default function SalesTickets() {
                             </tr>
                           </thead>
                           <tbody>
-                            {(detailOrder.lines || []).map((line, i) => (
+                            {(detailOrder.lines || []).map((line, i) => {
+                              const full       = line.name || line.product_id?.[1] || "";
+                              const bracketIdx = full.indexOf(" (");
+                              const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
+                              const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 2, -1) : null;
+                              return (
                               <tr key={i} className="border-b border-gray-50 hover:bg-slate-50/30">
                                 <td className="p-3 pl-6">
-                                  <p className="text-sm font-medium text-gray-900">{line.name || line.product_id?.[1]}</p>
+                                  <p className="text-sm font-medium text-gray-900">{base}</p>
+                                  {variant && (
+                                    <span className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none mt-1 inline-block">{variant}</span>
+                                  )}
                                 </td>
                                 <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
                                 <td className="p-3 text-right text-sm text-gray-600">{fmtR(line.price_unit)}</td>
                                 <td className="p-3 pr-6 text-right text-sm font-semibold text-gray-900">{fmtR(line.price_subtotal)}</td>
                               </tr>
-                            ))}
+                            ); })}
                           </tbody>
                         </table>
 
