@@ -78,14 +78,16 @@ function LineRow({ line, onUpdate, onRemove, autoFocus, warehouseId }) {
   }, [prodSearch, warehouseId]); // eslint-disable-line
 
   const selectProduct = (p) => {
-    const label = p.display_name || p.name;
-    const stock = Math.max(0, Math.floor(p.virtual_available || 0));
+    const label      = p.display_name || p.name;
+    const bracketIdx = label.indexOf(" (");
+    const baseName   = bracketIdx !== -1 ? label.slice(0, bracketIdx) : label;
+    const stock      = Math.max(0, Math.floor(p.virtual_available || 0));
     setProdSearch(label);
     setDropdownOpen(false);
     onUpdate({
       product_id:       p.id,
       _product_label:   label,
-      name:             label,
+      name:             baseName,
       price_unit:       p.list_price || 0,
       _tax_rate:        p.tax_rate   || 0,
       _sku:             p.default_code || "",
