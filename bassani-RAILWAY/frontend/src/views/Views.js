@@ -192,16 +192,16 @@ export function Products() {
         <DataTable
           columns={[
             { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
-            { id:"category", header:"Category", enableSorting:false, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
-            { accessorKey:"list_price", header:"Sale Price", cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
-            { accessorKey:"standard_price", header:"Cost", cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
-            { accessorKey:"tax_rate", header:"Tax", enableSorting:false, cell:({ row:{original:p} })=>
+            { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"}, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
+            { accessorKey:"list_price", header:"Sale Price", meta:{className:"hidden sm:table-cell"}, cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
+            { accessorKey:"standard_price", header:"Cost", meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
+            { accessorKey:"tax_rate", header:"Tax", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>
               (p.tax_rate ?? 0) > 0
                 ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
                 : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
             },
             { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button></span>; } },
-            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, cell:({ row:{original:p} })=>{
+            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>{
               const onHand = p.qty_available ?? 0;
               const forecasted = p.virtual_available ?? 0;
               const tiedUp = onHand - forecasted > 0.001;
@@ -528,10 +528,10 @@ export function Customers() {
           columns={[
             { accessorKey:"name", header:"Customer", cell:({row:{original:c}})=><p className="font-medium">{c.name}</p> },
             { id:"type", header:"Type", enableSorting:false, accessorFn:r=>r.comment?.match(/Type: (\w+)/)?.[1]||"—", cell:({row:{original:c}})=><Badge status={c.comment?.match(/Type: (\w+)/)?.[1]?.toLowerCase()||"pharmacy"} label={c.comment?.match(/Type: (\w+)/)?.[1]||"—"} /> },
-            { accessorKey:"email", header:"Contact", cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
-            { accessorKey:"city", header:"City", cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
-            { id:"s21", header:"Section 21", enableSorting:false, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
-            { accessorKey:"credit_limit", header:"Credit Limit", cell:({row:{original:c}})=>(
+            { accessorKey:"email", header:"Contact", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
+            { accessorKey:"city", header:"City", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
+            { id:"s21", header:"Section 21", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
+            { accessorKey:"credit_limit", header:"Credit Limit", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>(
               <div className="flex items-center gap-1.5">
                 <span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span>
                 {c.credit_hold && (
@@ -539,9 +539,9 @@ export function Customers() {
                 )}
               </div>
             ) },
-            { id:"terms", header:"Terms", enableSorting:false, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
+            { id:"terms", header:"Terms", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
             ...(!isReseller ? [
-              { id:"createdBy", header:"Created By", enableSorting:false, cell:({row:{original:c}})=>
+              { id:"createdBy", header:"Created By", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>
                 c.created_by_reseller_name
                   ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">{c.created_by_reseller_name}</span>
                   : <span className="text-xs text-gray-400">Bassani</span>
@@ -727,14 +727,14 @@ export function Orders() {
         </div>
         <DataTable
           columns={[
-            { accessorKey:"name", header:"Order #", cell:({row:{original:o}})=><span className="font-mono text-xs text-bassani-700">{o.name}</span> },
+            { accessorKey:"name", header:"Order #", meta:{className:"hidden sm:table-cell"}, cell:({row:{original:o}})=><span className="font-mono text-xs text-bassani-700">{o.name}</span> },
             { id:"customer", header:"Customer", enableSorting:false, cell:({row:{original:o}})=><div><p className="font-medium text-sm">{o.partner_id?.[1]||"—"}</p>{o.reseller_name&&<span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full">{o.reseller_name}</span>}</div> },
-            { accessorKey:"date_order", header:"Date", cell:({row:{original:o}})=><span className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</span> },
-            { accessorKey:"amount_untaxed", header:"Amount", cell:({row:{original:o}})=>fmtR(o.amount_untaxed) },
+            { accessorKey:"date_order", header:"Date", meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=><span className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</span> },
+            { accessorKey:"amount_untaxed", header:"Amount", meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=>fmtR(o.amount_untaxed) },
             { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
             { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
-            { id:"invoice", header:"Payment", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
-            ...(!isReseller?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, cell:({row:{original:o}})=>{
+            { id:"invoice", header:"Payment", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
+            ...(!isReseller?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const t = o.linked_ticket;
               if (!t) return <span className="text-xs text-gray-300">—</span>;
               const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
@@ -745,7 +745,7 @@ export function Orders() {
                 ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                 : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
             }}]:[]),
-            ...(!isReseller?[{ id:"packing", header:"Packing", enableSorting:false, cell:({row:{original:o}})=>{
+            ...(!isReseller?[{ id:"packing", header:"Packing", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
               const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready", complete:"Complete", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
@@ -932,8 +932,8 @@ export function Resellers() {
         <DataTable
           columns={[
             { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
-            { accessorKey:"type", header:"Type", cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
-            { id:"contact", header:"Contact", enableSorting:false, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
+            { accessorKey:"type", header:"Type", meta:{className:"hidden sm:table-cell"}, cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
+            { id:"contact", header:"Contact", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
             { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=>(
               <div className="flex gap-2">
                 <BtnSecondary size="sm" onClick={e=>{e.stopPropagation();navigate(`/resellers/${r.id}`);}}>View</BtnSecondary>

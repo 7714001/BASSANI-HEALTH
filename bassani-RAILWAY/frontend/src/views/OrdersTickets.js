@@ -168,7 +168,7 @@ export default function OrdersTickets() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-50">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-gray-50">
                         <div>
                           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Customer</p>
                           <p className="text-sm font-semibold text-gray-900">{detail.customer_name}</p>
@@ -207,6 +207,7 @@ export default function OrdersTickets() {
                     </div>
 
                     {/* Items table */}
+                    <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-gray-100 bg-slate-50/50">
@@ -239,6 +240,7 @@ export default function OrdersTickets() {
                         })}
                       </tbody>
                     </table>
+                    </div>
 
                     {/* Notes / incomplete reason */}
                     {(detail.notes || detail.incomplete_reason) && (

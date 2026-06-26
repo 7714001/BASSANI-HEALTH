@@ -191,7 +191,7 @@ export default function AuditTrail() {
       {detail && (
         <Modal title={`${detail.action} — ${detail.entity_label || detail.entity_id}`} onClose={() => setDetail(null)} width="max-w-2xl">
           <div className="space-y-3 text-xs">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <p className="text-gray-400 uppercase tracking-wide text-[10px] mb-1">Actor</p>
                 <p className="text-gray-800">{detail.actor_username || "system"} {detail.actor_role ? `(${detail.actor_role})` : ""}</p>

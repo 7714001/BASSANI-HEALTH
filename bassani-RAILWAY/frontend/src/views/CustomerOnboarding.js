@@ -182,7 +182,7 @@ export default function CustomerOnboarding() {
       <Field label="Trading Name (if different)">
         <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Company Registration No.">
           <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
         </Field>
@@ -202,7 +202,7 @@ export default function CustomerOnboarding() {
       <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
         Please provide the details of the primary contact person who will be responsible for orders.
       </p>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Full Name" required>
           <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" autoFocus />
         </Field>
@@ -213,7 +213,7 @@ export default function CustomerOnboarding() {
       <Field label="Email Address" required>
         <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Phone Number" required>
           <TextInput value={form.contact_phone} onChange={upd("contact_phone")} placeholder="+27 11 555 1234" />
         </Field>
@@ -231,7 +231,7 @@ export default function CustomerOnboarding() {
       <Field label="Suburb">
         <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="City" required>
           <TextInput value={form.city} onChange={upd("city")} placeholder="Johannesburg" />
         </Field>
@@ -239,7 +239,7 @@ export default function CustomerOnboarding() {
           <TextInput value={form.postal_code} onChange={upd("postal_code")} placeholder="2196" />
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Province">
           <SelectInput value={form.province} onChange={upd("province")}>
             <option value="">— Select province —</option>

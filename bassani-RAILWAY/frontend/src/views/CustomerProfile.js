@@ -244,6 +244,7 @@ export default function CustomerProfile() {
             ) : addresses.length === 0 ? (
               <p className="text-sm text-gray-400 px-5 py-4">No addresses on file.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-xs text-gray-500">
@@ -282,6 +283,7 @@ export default function CustomerProfile() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             {canManageAddresses && (
               <div className="px-5 py-3 border-t border-gray-50">
@@ -300,6 +302,7 @@ export default function CustomerProfile() {
             {recent_orders.length === 0 ? (
               <p className="text-sm text-gray-400 px-5 py-4">No orders yet.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-xs text-gray-500">
@@ -322,6 +325,7 @@ export default function CustomerProfile() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </Section>
 
@@ -330,6 +334,7 @@ export default function CustomerProfile() {
             {outstanding_invoices.length === 0 ? (
               <p className="text-sm text-gray-400 px-5 py-4">No outstanding invoices.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-xs text-gray-500">
@@ -363,6 +368,7 @@ export default function CustomerProfile() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </Section>
 
@@ -405,6 +411,7 @@ export default function CustomerProfile() {
                 {stmt.invoices.length === 0 ? (
                   <p className="px-5 py-4 text-sm text-gray-400">No transactions in this period.</p>
                 ) : (
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 text-xs text-gray-500">
@@ -448,6 +455,7 @@ export default function CustomerProfile() {
                       })}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </>
             ) : null}
@@ -480,7 +488,7 @@ export default function CustomerProfile() {
             <FormGroup label="Street 2">
               <Input value={addrForm.street2} onChange={e => setAddrForm(f => ({ ...f, street2: e.target.value }))} placeholder="Unit / Suite / Floor" />
             </FormGroup>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormGroup label="City">
                 <Input value={addrForm.city} onChange={e => setAddrForm(f => ({ ...f, city: e.target.value }))} />
               </FormGroup>

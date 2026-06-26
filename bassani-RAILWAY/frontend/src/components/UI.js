@@ -423,7 +423,8 @@ export function DataTable({
                   <th key={header.id}
                     onClick={header.column.getToggleSortingHandler()}
                     className={`text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3 whitespace-nowrap
-                      ${header.column.getCanSort() ? "cursor-pointer select-none hover:text-gray-600 transition-colors" : ""}`}
+                      ${header.column.getCanSort() ? "cursor-pointer select-none hover:text-gray-600 transition-colors" : ""}
+                      ${header.column.columnDef.meta?.className || ""}`}
                   >
                     <div className="flex items-center gap-1">
                       {flexRender(header.column.columnDef.header, header.getContext())}
@@ -450,7 +451,7 @@ export function DataTable({
                   className={`border-b border-gray-50 transition-colors ${onRowClick ? "cursor-pointer hover:bg-gray-50" : "hover:bg-gray-50/50"}`}
                 >
                   {row.getVisibleCells().map(cell => (
-                    <td key={cell.id} className="px-4 py-3 text-gray-700 text-sm">
+                    <td key={cell.id} className={`px-4 py-3 text-gray-700 text-sm ${cell.column.columnDef.meta?.className || ""}`}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}

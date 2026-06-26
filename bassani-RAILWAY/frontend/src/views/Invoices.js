@@ -435,10 +435,10 @@ export default function Invoices() {
             { id: "customer", header: "Customer", enableSorting: false,
               cell: ({ row: { original: inv } }) =>
                 <span className="font-medium text-gray-900">{inv.partner_id?.[1] || "—"}</span> },
-            { accessorKey: "invoice_date", header: "Date",
+            { accessorKey: "invoice_date", header: "Date", meta: { className: "hidden sm:table-cell" },
               cell: ({ row: { original: inv } }) =>
                 <span className="text-xs text-gray-500">{fmtDate(inv.invoice_date)}</span> },
-            { accessorKey: "invoice_date_due", header: "Due Date",
+            { accessorKey: "invoice_date_due", header: "Due Date", meta: { className: "hidden sm:table-cell" },
               cell: ({ row: { original: inv } }) => {
                 const overdue = inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date() && inv.payment_state !== "paid";
                 return <span className={`text-xs ${overdue ? "text-red-600 font-semibold" : "text-gray-500"}`}>{fmtDate(inv.invoice_date_due)}</span>;
@@ -446,7 +446,7 @@ export default function Invoices() {
             { accessorKey: "amount_total", header: "Total",
               cell: ({ row: { original: inv } }) =>
                 <span className="font-semibold">{fmtR(inv.amount_total)}</span> },
-            { accessorKey: "amount_residual", header: "Outstanding",
+            { accessorKey: "amount_residual", header: "Outstanding", meta: { className: "hidden sm:table-cell" },
               cell: ({ row: { original: inv } }) =>
                 <span className={`font-semibold ${inv.amount_residual > 0 ? "text-red-600" : "text-green-700"}`}>
                   {inv.amount_residual > 0 ? fmtR(inv.amount_residual) : "—"}

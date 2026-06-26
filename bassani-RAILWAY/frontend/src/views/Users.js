@@ -569,6 +569,7 @@ export default function Users() {
               id: "permissions",
               header: "Permissions",
               enableSorting: false,
+              meta: { className: "hidden lg:table-cell" },
               cell: ({ row: { original: u } }) => (
                 <span className="text-xs text-gray-500">{permSummary(u)}</span>
               ),
@@ -577,6 +578,7 @@ export default function Users() {
               id: "warehouse",
               header: "Warehouse",
               enableSorting: false,
+              meta: { className: "hidden md:table-cell" },
               cell: ({ row: { original: u } }) => (
                 ["warehouse_supervisor", "packer"].includes(u.role)
                   ? (warehouseName(u.warehouse_id)
@@ -589,6 +591,7 @@ export default function Users() {
               id: "status",
               header: "Status",
               enableSorting: false,
+              meta: { className: "hidden sm:table-cell" },
               cell: ({ row: { original: u } }) => (
                 <Badge color={u.active !== false ? "green" : "red"}>
                   {u.active !== false ? "Active" : "Inactive"}
@@ -599,6 +602,7 @@ export default function Users() {
               id: "last_login",
               header: "Last Login",
               enableSorting: false,
+              meta: { className: "hidden md:table-cell" },
               cell: ({ row: { original: u } }) => (
                 <span className="text-xs text-gray-400">
                   {u.last_login_at ? fmtDate(u.last_login_at) : <span className="italic">Never</span>}
@@ -639,7 +643,7 @@ export default function Users() {
       {/* ── Create user modal ── */}
       {createModal && (
         <Modal title="Add User Account" onClose={() => setCreateModal(false)}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormGroup label="Username" required>
               <Input
                 value={createForm.username}

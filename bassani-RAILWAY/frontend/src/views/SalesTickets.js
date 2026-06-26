@@ -799,7 +799,7 @@ export default function SalesTickets() {
                               </p>
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-50">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-gray-50">
                             <div>
                               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Bill To</p>
                               <p className="text-sm font-semibold text-gray-900">
@@ -828,6 +828,7 @@ export default function SalesTickets() {
                         </div>
 
                         {/* Line items table */}
+                        <div className="overflow-x-auto">
                         <table className="w-full">
                           <thead>
                             <tr className="border-b border-gray-100 bg-slate-50/50">
@@ -858,6 +859,7 @@ export default function SalesTickets() {
                             ); })}
                           </tbody>
                         </table>
+                        </div>
 
                         {/* Totals */}
                         <div className="p-6 border-t border-gray-100 flex justify-end">
@@ -1070,7 +1072,7 @@ export default function SalesTickets() {
                                     {FORWARD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
                                   </Select>
                                 </FormGroup>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                   <FormGroup label="Order ID">
                                     <Input type="number" value={stageForm.order_id} onChange={e => setStageForm({ ...stageForm, order_id: e.target.value })} placeholder="Odoo id" />
                                   </FormGroup>
@@ -1225,7 +1227,7 @@ export default function SalesTickets() {
                   <p className="text-sm font-medium text-gray-700">{today}</p>
                 </div>
               </div>
-              <div className="pt-5 border-t border-gray-100 grid grid-cols-3 gap-8">
+              <div className="pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-8">
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Bill To</p>
                   {quoteMode === "edit" ? (
@@ -1324,7 +1326,7 @@ export default function SalesTickets() {
             </div>
 
             {/* ── Line items ── */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b-2 border-gray-100">
@@ -1365,10 +1367,10 @@ export default function SalesTickets() {
             </div>
 
             {/* ── Notes + Totals ── */}
-            <div className="grid grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
               {/* Notes */}
-              <div className="col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+              <div className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Notes</p>
                 <textarea
                   value={quoteNote}
@@ -1380,7 +1382,7 @@ export default function SalesTickets() {
               </div>
 
               {/* Totals */}
-              <div className="col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between">
+              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between">
                 <div className="space-y-2.5">
                   <div className="flex justify-between text-sm text-gray-600">
                     <span>Subtotal</span>
