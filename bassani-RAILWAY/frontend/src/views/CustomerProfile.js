@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User } from "lucide-react";
+import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Badge, BtnPrimary, BtnSecondary, Input, LoadingState, fmtR, fmtDate } from "../components/UI";
+import { useAuth } from "../AuthContext";
+import { Badge, BtnPrimary, BtnSecondary, Input, Select, Modal, FormGroup, LoadingState, fmtR, fmtDate } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -38,6 +39,9 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function CustomerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManageAddresses = user?.permissions?.customers?.manage;
+
   const [data,         setData        ] = useState(null);
   const [loading,      setLoading     ] = useState(true);
   const [stmt,         setStmt        ] = useState(null);
@@ -45,12 +49,73 @@ export default function CustomerProfile() {
   const [stmtFrom,     setStmtFrom    ] = useState("");
   const [stmtTo,       setStmtTo      ] = useState("");
 
+  // ── Addresses ─────────────────────────────────────────────────────────────
+  const [addresses,  setAddresses ] = useState([]);
+  const [addrLoading,setAddrLoading] = useState(false);
+  const [addrModal,  setAddrModal ] = useState(false);
+  const [addrTarget, setAddrTarget] = useState(null);
+  const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
+  const [addrSaving, setAddrSaving] = useState(false);
+
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
       .then(r => setData(r.data))
       .catch(() => { toast.error("Failed to load customer profile"); navigate("/customers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  useEffect(() => {
+    setAddrLoading(true);
+    api.get(`/api/customers/${id}/addresses`)
+      .then(r => setAddresses(r.data.addresses || []))
+      .catch(() => {})
+      .finally(() => setAddrLoading(false));
+  }, [id]);
+
+  const loadAddresses = () => {
+    setAddrLoading(true);
+    api.get(`/api/customers/${id}/addresses`)
+      .then(r => setAddresses(r.data.addresses || []))
+      .catch(() => {})
+      .finally(() => setAddrLoading(false));
+  };
+
+  const openAddrCreate = () => {
+    setAddrForm({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
+    setAddrTarget(null);
+    setAddrModal(true);
+  };
+
+  const openAddrEdit = (addr) => {
+    setAddrForm({
+      name: addr.name || "", type: addr.type || "delivery",
+      street: addr.street || "", street2: addr.street2 || "",
+      city: addr.city || "", zip: addr.zip || "",
+      phone: addr.phone || "", email: addr.email || "",
+    });
+    setAddrTarget(addr);
+    setAddrModal(true);
+  };
+
+  const saveAddr = async () => {
+    if (!addrForm.name.trim()) return toast.error("Name is required");
+    setAddrSaving(true);
+    try {
+      if (addrTarget) {
+        await api.put(`/api/customers/${id}/addresses/${addrTarget.id}`, addrForm);
+        toast.success("Address updated");
+      } else {
+        await api.post(`/api/customers/${id}/addresses`, addrForm);
+        toast.success("Address added");
+      }
+      setAddrModal(false);
+      loadAddresses();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save address");
+    } finally {
+      setAddrSaving(false);
+    }
+  };
 
   const loadStatement = async () => {
     setStmtLoading(true);
@@ -171,6 +236,64 @@ export default function CustomerProfile() {
               <KpiCard label="Account Manager" value={ownership.reseller_name}        sub="Onboarded via reseller"     icon={User}         accent="bg-purple-500" />
             )}
           </div>
+
+          {/* Addresses */}
+          <Section title={`Addresses (${addresses.length})`}>
+            {addrLoading ? (
+              <p className="text-sm text-gray-400 px-5 py-4">Loading…</p>
+            ) : addresses.length === 0 ? (
+              <p className="text-sm text-gray-400 px-5 py-4">No addresses on file.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-xs text-gray-500">
+                    <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Type</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Street</th>
+                    <th className="text-left px-5 py-2.5 font-medium">City / ZIP</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Phone</th>
+                    {canManageAddresses && <th className="w-10" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {addresses.map(a => (
+                    <tr key={a.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 font-medium text-gray-900">{a.name}</td>
+                      <td className="px-5 py-3">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                          a.type === "delivery" ? "bg-blue-50 text-blue-700"
+                          : a.type === "invoice" ? "bg-purple-50 text-purple-700"
+                          : "bg-gray-100 text-gray-500"
+                        }`}>
+                          {a.type === "delivery" ? "Delivery" : a.type === "invoice" ? "Billing" : a.type || "Other"}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-gray-500">{[a.street, a.street2].filter(Boolean).join(", ") || "—"}</td>
+                      <td className="px-5 py-3 text-gray-500">{[a.city, a.zip].filter(Boolean).join(" ") || "—"}</td>
+                      <td className="px-5 py-3 text-gray-500">{a.phone || "—"}</td>
+                      {canManageAddresses && (
+                        <td className="px-5 py-3">
+                          <button onClick={() => openAddrEdit(a)} className="text-gray-400 hover:text-bassani-600 transition-colors p-1">
+                            <Pencil size={13} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {canManageAddresses && (
+              <div className="px-5 py-3 border-t border-gray-50">
+                <button
+                  onClick={openAddrCreate}
+                  className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors"
+                >
+                  <Plus size={14} />Add address
+                </button>
+              </div>
+            )}
+          </Section>
 
           {/* Recent orders */}
           <Section title={`Recent Orders (${recent_orders.length})`}>
@@ -332,6 +455,54 @@ export default function CustomerProfile() {
 
         </div>
       </main>
+
+      {addrModal && (
+        <Modal title={addrTarget ? "Edit Address" : "Add Address"} onClose={() => setAddrModal(false)}>
+          <div className="space-y-4">
+            <FormGroup label="Name" required>
+              <Input
+                value={addrForm.name}
+                onChange={e => setAddrForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="Branch name or contact name"
+                autoFocus
+              />
+            </FormGroup>
+            <FormGroup label="Type">
+              <Select value={addrForm.type} onChange={e => setAddrForm(f => ({ ...f, type: e.target.value }))}>
+                <option value="delivery">Delivery</option>
+                <option value="invoice">Invoice / Billing</option>
+                <option value="other">Other</option>
+              </Select>
+            </FormGroup>
+            <FormGroup label="Street">
+              <Input value={addrForm.street} onChange={e => setAddrForm(f => ({ ...f, street: e.target.value }))} placeholder="Street address" />
+            </FormGroup>
+            <FormGroup label="Street 2">
+              <Input value={addrForm.street2} onChange={e => setAddrForm(f => ({ ...f, street2: e.target.value }))} placeholder="Unit / Suite / Floor" />
+            </FormGroup>
+            <div className="grid grid-cols-2 gap-3">
+              <FormGroup label="City">
+                <Input value={addrForm.city} onChange={e => setAddrForm(f => ({ ...f, city: e.target.value }))} />
+              </FormGroup>
+              <FormGroup label="Postal Code">
+                <Input value={addrForm.zip} onChange={e => setAddrForm(f => ({ ...f, zip: e.target.value }))} />
+              </FormGroup>
+            </div>
+            <FormGroup label="Phone">
+              <Input value={addrForm.phone} onChange={e => setAddrForm(f => ({ ...f, phone: e.target.value }))} placeholder="+27 …" />
+            </FormGroup>
+            <FormGroup label="Email">
+              <Input type="email" value={addrForm.email} onChange={e => setAddrForm(f => ({ ...f, email: e.target.value }))} />
+            </FormGroup>
+            <div className="flex justify-end gap-2 pt-2">
+              <BtnSecondary onClick={() => setAddrModal(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={saveAddr} loading={addrSaving}>
+                {addrTarget ? "Save Changes" : "Add Address"}
+              </BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

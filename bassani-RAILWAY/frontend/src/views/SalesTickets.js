@@ -538,6 +538,8 @@ export default function SalesTickets() {
   const [quoteCustomerSearch, setQuoteCustomerSearch]   = useState("");
   const [quoteCustomerResults, setQuoteCustomerResults] = useState([]);
   const [quoteCustomerEditing, setQuoteCustomerEditing] = useState(false);
+  const [quoteAddresses, setQuoteAddresses]     = useState([]); // delivery addresses for current customer
+  const [quoteShippingId, setQuoteShippingId]   = useState("");
 
   useEffect(() => {
     if (quoteMode !== "edit" || quoteCustomerSearch.length < 2) { setQuoteCustomerResults([]); return; }
@@ -557,6 +559,20 @@ export default function SalesTickets() {
     price_unit: 0, _tax_rate: 0, _sku: "", _stock: 0,
   });
 
+  const loadQuoteAddresses = async (customerId) => {
+    if (!customerId) { setQuoteAddresses([]); setQuoteShippingId(""); return; }
+    try {
+      const r = await api.get(`/api/customers/${customerId}/addresses`);
+      const addrs = r.data.addresses || [];
+      setQuoteAddresses(addrs);
+      const delivery = addrs.find(a => a.type === "delivery");
+      setQuoteShippingId(delivery ? String(delivery.id) : addrs.length > 0 ? String(addrs[0].id) : "");
+    } catch {
+      setQuoteAddresses([]);
+      setQuoteShippingId("");
+    }
+  };
+
   const openQuoteBuilder = async (ticket) => {
     const firstLine = newLine();
     setQuoteTicket(ticket);
@@ -565,6 +581,7 @@ export default function SalesTickets() {
     setQuoteNote("");
     setQuoteMode("create");
     setView("quote-builder");
+    loadQuoteAddresses(ticket?.customer_id);
 
     if (quoteWarehouses.length === 0) {
       try {
@@ -603,6 +620,8 @@ export default function SalesTickets() {
     setQuoteNote("");
     setQuoteMode("edit");
     setView("quote-builder");
+    const customerId = Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : detail?.customer_id;
+    loadQuoteAddresses(customerId);
   };
 
   const addLine = () => {
@@ -641,10 +660,12 @@ export default function SalesTickets() {
       price_unit: l.price_unit, name: l.name,
     }));
     try {
+      const shippingId = quoteShippingId ? parseInt(quoteShippingId) : undefined;
       if (quoteMode === "edit") {
         await api.put(`/api/tickets/${tid}/update-order`, {
           order_line: linePayload,
           customer_id: quoteCustomer?.id || undefined,
+          partner_shipping_id: shippingId,
           note: quoteNote || undefined,
         });
         toast.success("Quote updated in Odoo");
@@ -652,6 +673,7 @@ export default function SalesTickets() {
         await api.post(`/api/tickets/${tid}/create-order`, {
           order_line: linePayload,
           warehouse_id: quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
+          partner_shipping_id: shippingId,
           note: quoteNote || undefined,
         });
         toast.success("Quote created in Odoo — ticket advanced to Quote stage");
@@ -1203,7 +1225,7 @@ export default function SalesTickets() {
                   <p className="text-sm font-medium text-gray-700">{today}</p>
                 </div>
               </div>
-              <div className="pt-5 border-t border-gray-100 grid grid-cols-2 gap-8">
+              <div className="pt-5 border-t border-gray-100 grid grid-cols-3 gap-8">
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Bill To</p>
                   {quoteMode === "edit" ? (
@@ -1279,6 +1301,23 @@ export default function SalesTickets() {
                     </>
                   ) : (
                     <p className="text-sm text-gray-400">Default warehouse</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Deliver To</p>
+                  {quoteAddresses.length > 0 ? (
+                    <Select
+                      value={quoteShippingId}
+                      onChange={e => setQuoteShippingId(e.target.value)}
+                    >
+                      {quoteAddresses.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}{a.type === "delivery" ? "" : ` (${a.type})`}{a.city ? ` — ${a.city}` : ""}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <p className="text-sm text-gray-400 italic">No addresses — same as billing</p>
                   )}
                 </div>
               </div>

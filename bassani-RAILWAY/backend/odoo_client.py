@@ -29,7 +29,13 @@ def odoo(model, method, args=None, kwargs=None):
             _connect()
         try:
             result = _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
+        except xmlrpc.client.Fault:
+            # Odoo returned a structured error response (including response-serialisation
+            # faults). Do NOT retry — the call reached Odoo and may have already written
+            # data. Retrying a write would create duplicate records.
+            raise
         except Exception:
+            # Connection / socket failure — safe to reconnect and retry.
             _uid = None
             _connect()
             result = _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
@@ -9,6 +10,8 @@ from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
 from services.email_service import send_order_placed, send_order_confirmed, send_order_cancelled
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -554,7 +557,20 @@ async def confirm_order(
     try:
         odoo.execute("sale.order", "action_confirm", [order_id])
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
+        # action_confirm may return an action dict with None values that Odoo's
+        # XML-RPC marshaller rejects, even though the confirm itself succeeded.
+        # Verify the order state before treating this as a failure.
+        try:
+            state_check = odoo.read("sale.order", [order_id], fields=["state"])
+            if state_check and state_check[0].get("state") == "sale":
+                logger.warning("confirm_response_error_but_confirmed",
+                               extra={"order_id": order_id, "error": str(e)})
+            else:
+                raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
 
     # Read order data needed by all subsequent steps
     order_data = None
@@ -583,30 +599,46 @@ async def confirm_order(
             [{"advance_payment_method": "delivered"}],
             {"context": ctx},
         )
-        odoo_call(
-            "sale.advance.payment.inv", "create_invoices",
-            [[wizard_id]],
-            {"context": ctx},
-        )
-
-        refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
-        inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
-        invoice_id = inv_ids[0] if inv_ids else None
-
-        if invoice_id:
-            odoo.execute("account.move", "action_post", [invoice_id])
-            inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
-            invoice_name = inv_rows[0]["name"] if inv_rows else None
-        else:
-            warnings.append(
-                "Customer invoice could not be created automatically — "
-                "please create it manually from the sale order in Odoo."
-            )
     except Exception as e:
         warnings.append(
             f"Invoice creation failed: {str(e)} — "
             "create the customer invoice manually in Odoo."
         )
+        wizard_id = None
+
+    if wizard_id is not None:
+        try:
+            odoo_call(
+                "sale.advance.payment.inv", "create_invoices",
+                [[wizard_id]],
+                {"context": ctx},
+            )
+        except Exception as e:
+            # create_invoices returns an action dict that may contain None values —
+            # Odoo's marshaller rejects it even though the invoice was created.
+            # We verify via invoice_ids below rather than trusting the return value.
+            logger.warning("confirm_create_invoices_response_error",
+                           extra={"order_id": order_id, "error": str(e)})
+
+        try:
+            refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+            inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
+            invoice_id = inv_ids[0] if inv_ids else None
+
+            if invoice_id:
+                odoo.execute("account.move", "action_post", [invoice_id])
+                inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
+                invoice_name = inv_rows[0]["name"] if inv_rows else None
+            else:
+                warnings.append(
+                    "Customer invoice could not be created automatically — "
+                    "please create it manually from the sale order in Odoo."
+                )
+        except Exception as e:
+            warnings.append(
+                f"Invoice post/read failed: {str(e)} — "
+                "check the invoice in Odoo."
+            )
 
     # ── Step 3: Packing board (non-blocking) ─────────────────────────────────
     try:

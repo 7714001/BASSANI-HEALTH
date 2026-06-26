@@ -34,6 +34,26 @@ class CustomerUpdate(BaseModel):
     credit_limit: Optional[float] = None
     active: Optional[bool] = None
 
+class AddressCreate(BaseModel):
+    name: str
+    type: str = "delivery"   # delivery | invoice | other
+    street: Optional[str] = None
+    street2: Optional[str] = None
+    city: Optional[str] = None
+    zip: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+class AddressUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    street: Optional[str] = None
+    street2: Optional[str] = None
+    city: Optional[str] = None
+    zip: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
 # ── Shared fields ─────────────────────────────────────────────────────────────
 
 CUSTOMER_FIELDS = [
@@ -41,6 +61,18 @@ CUSTOMER_FIELDS = [
     "country_id", "customer_rank", "credit_limit", "credit",
     "property_payment_term_id", "active", "comment",
 ]
+
+ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "email"]
+
+
+def _format_address(r: dict) -> dict:
+    for k, v in list(r.items()):
+        if v is False:
+            r[k] = None
+    cid = r.get("country_id")
+    r["country_name"] = cid[1] if cid else None
+    r["country_id"] = cid[0] if cid else None
+    return r
 
 
 def _attach_credit_hold(customers: list) -> None:
@@ -455,6 +487,72 @@ def update_customer(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{customer_id}/addresses")
+def list_customer_addresses(customer_id: int, current_user: dict = Depends(get_current_user)):
+    odoo = get_odoo_client()
+    try:
+        child_ids = odoo.search("res.partner", [["parent_id", "=", customer_id]], limit=50)
+        if not child_ids:
+            return {"addresses": []}
+        rows = odoo.read("res.partner", child_ids, fields=ADDRESS_FIELDS)
+        return {"addresses": [_format_address(r) for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/{customer_id}/addresses")
+def create_customer_address(
+    customer_id: int,
+    body: AddressCreate,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    odoo = get_odoo_client()
+    try:
+        exists = odoo.read("res.partner", [customer_id], fields=["id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not exists:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    vals: dict = {"parent_id": customer_id, "name": body.name, "type": body.type}
+    for f in ("street", "street2", "city", "zip", "phone", "email"):
+        v = getattr(body, f)
+        if v:
+            vals[f] = v
+    try:
+        address_id = odoo.create("res.partner", vals)
+        return {"success": True, "address_id": address_id}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.put("/{customer_id}/addresses/{address_id}")
+def update_customer_address(
+    customer_id: int,
+    address_id: int,
+    body: AddressUpdate,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    odoo = get_odoo_client()
+    try:
+        existing = odoo.read("res.partner", [address_id], fields=["parent_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not existing:
+        raise HTTPException(status_code=404, detail="Address not found")
+    parent = existing[0].get("parent_id")
+    pid = parent[0] if isinstance(parent, (list, tuple)) else parent
+    if pid != customer_id:
+        raise HTTPException(status_code=404, detail="Address not found on this customer")
+    vals = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not vals:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        odoo.write("res.partner", [address_id], vals)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
 @router.delete("/{customer_id}")

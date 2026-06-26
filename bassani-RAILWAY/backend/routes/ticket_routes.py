@@ -10,6 +10,7 @@ The Orders side of this handoff is NOT a separate collection — it's the
 existing `packing_board` document, extended in Phase 8.3. See
 `packing_board_routes.py` and the `orders_ticket_ref` field below.
 """
+import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from typing import Optional, List
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
 from services.email_service import send_ticket_assigned
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
@@ -61,12 +64,14 @@ class TicketOrderLine(BaseModel):
 class TicketOrderCreate(BaseModel):
     order_line: List[TicketOrderLine]
     warehouse_id: Optional[int] = None
+    partner_shipping_id: Optional[int] = None   # explicit delivery address; auto-resolved if omitted
     note: Optional[str] = ""
 
 
 class TicketOrderUpdate(BaseModel):
     order_line: List[TicketOrderLine]
-    customer_id: Optional[int] = None   # if provided, updates partner_id on the Odoo order
+    customer_id: Optional[int] = None           # if provided, updates partner_id on the Odoo order
+    partner_shipping_id: Optional[int] = None   # if provided, updates delivery address on the Odoo order
     note: Optional[str] = ""
 
 
@@ -414,8 +419,30 @@ async def create_order_from_ticket(
         })
         for l in body.order_line
     ]
+    # Resolve the customer's delivery address. Odoo normally defaults
+    # partner_shipping_id from partner_id via onchange, but that doesn't fire
+    # over XML-RPC — if left unset the field stays False, which blocks
+    # action_confirm when stock picking creation requires a shipping address.
+    customer_id = ticket["customer_id"]
+    if body.partner_shipping_id:
+        partner_shipping_id = body.partner_shipping_id
+    else:
+        partner_shipping_id = customer_id  # fallback: bill-to = ship-to
+        try:
+            shipping_rows = odoo.read("res.partner", [customer_id], fields=["child_ids", "type"])
+            if shipping_rows:
+                child_ids = shipping_rows[0].get("child_ids") or []
+                if child_ids:
+                    children = odoo.read("res.partner", child_ids, fields=["type"])
+                    delivery = next((c["id"] for c in children if c.get("type") == "delivery"), None)
+                    if delivery:
+                        partner_shipping_id = delivery
+        except Exception:
+            pass  # non-fatal — fallback to customer as shipping address
+
     vals: dict = {
-        "partner_id": ticket["customer_id"],
+        "partner_id": customer_id,
+        "partner_shipping_id": partner_shipping_id,
         "order_line": lines,
         "note": body.note or "",
     }
@@ -593,6 +620,12 @@ async def update_order_from_ticket(
             ticket_field_updates["customer_id"] = body.customer_id
             ticket_field_updates["customer_name"] = new_customer_name
             customer_note = f" | Customer changed to {new_customer_name}"
+
+    if body.partner_shipping_id:
+        try:
+            odoo.write("sale.order", [order_id], {"partner_shipping_id": body.partner_shipping_id})
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error updating delivery address: {str(e)}")
 
     # Replace lines atomically: unlink all existing, then create the new set
     existing_line_ids = order.get("order_line") or []
@@ -791,20 +824,28 @@ async def register_deposit(
     _cctx = company_context(order_company_id)
 
     # Step 1: Create fixed-amount down payment invoice via Odoo wizard
+    ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
     try:
-        ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
         wizard_id = odoo_call(
             "sale.advance.payment.inv", "create",
             [{"advance_payment_method": "fixed", "fixed_amount": body.amount}],
             {"context": ctx},
         )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
+
+    try:
         odoo_call(
             "sale.advance.payment.inv", "create_invoices",
             [[wizard_id]],
             {"context": ctx},
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
+        # create_invoices returns an Odoo action dict that may contain None values,
+        # which Odoo's own XML-RPC marshaller rejects. The invoice is still created —
+        # we verify it exists by reading invoice_ids below rather than trusting the return value.
+        logger.warning("deposit_create_invoices_response_error",
+                       extra={"wizard_id": wizard_id, "error": str(e)})
 
     # Resolve the new invoice (highest ID among this order's invoices)
     try:
@@ -831,13 +872,28 @@ async def register_deposit(
             }],
             {"context": pay_ctx},
         )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+
+    try:
         odoo_call(
             "account.payment.register", "action_create_payments",
             [[pay_wizard_id]],
             {"context": pay_ctx},
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        # Same Odoo XML-RPC serialisation quirk on the action response.
+        # Verify the payment actually landed before treating this as a failure.
+        try:
+            updated = odoo.read("account.move", [invoice_id], fields=["payment_state"])
+            if not updated or updated[0].get("payment_state") not in ("in_payment", "paid"):
+                raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        logger.warning("deposit_payment_response_error",
+                       extra={"invoice_id": invoice_id, "error": str(e)})
 
     # Stamp ticket
     now = datetime.now(timezone.utc)
