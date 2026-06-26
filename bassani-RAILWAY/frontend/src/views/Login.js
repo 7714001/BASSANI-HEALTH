@@ -25,8 +25,8 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left panel */}
-      <div className="w-72 bg-slate-900 flex flex-col justify-between p-8 flex-shrink-0">
+      {/* Left panel — hidden on mobile, visible md+ */}
+      <div className="hidden md:flex md:w-72 bg-slate-900 flex-col justify-between p-8 flex-shrink-0">
         <div>
           <div className="w-10 h-10 bg-bassani-600 rounded-xl flex items-center justify-center mb-6">
             <Package size={20} color="white" />

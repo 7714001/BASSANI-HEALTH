@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-06-23  
+**Last Updated:** 2026-06-26  
 **Overall Status:** 🟡 Pre-Production — Phases 0, 2, 4, 6, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding  
 
 ---
@@ -21,6 +21,7 @@
 | 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.6 complete) | 2026-06-24 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
 | 9 | Go-Live Infrastructure | 🔴 Not Started | — |
+| 10 | Responsive UI | 🟡 In Progress | 10.0 login page fix — 2026-06-26 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -1089,6 +1090,95 @@ Current unknowns: who hosts `bassanihealth.com`, what control panel they use (cP
 
 ### Notes
 > **2026-06-23:** Current live URL is `https://bassani-health-production-3d68.up.railway.app`. Domain `portal.bassanihealth.com` is the intended target. Blocked on: (1) identifying the DNS provider for `bassanihealth.com`, (2) client access to their Resend account. No code changes required for this phase — it is entirely infrastructure and DNS coordination.
+
+---
+
+## Phase 10 — Responsive UI
+
+**Goal:** The portal works correctly and looks professional on every screen used by the business: mobile phone (sales reps, remote access), tablet, laptop, desktop, and wide 4K displays. No view is broken, illegible, or unusable at any supported viewport.  
+**Estimate:** 1–2 weeks  
+**Status:** 🟡 In Progress — 10.0 complete  
+**Completed:** 10.0 (login page mobile fix) — 2026-06-26
+
+### Context
+
+The portal was built primarily for desktop/laptop use. Responsive Tailwind classes were applied to some components (the sidebar already has mobile slide-in behaviour via `fixed -translate-x-full` + hamburger toggle; TopBar already has a `lg:hidden` hamburger button), but most views — particularly tables, modals, and complex form layouts — have not been tested or adapted for smaller viewports. The login page's fixed-width left panel (`w-72`) occupied most of the screen on mobile, making the sign-in form unusable.
+
+**Supported viewports:**
+- **Mobile phone** (360px+) — sales reps on the go, remote access
+- **Tablet** (768px+) — clinical or field staff
+- **Laptop / Desktop** (1024px+) — primary internal workstation use
+- **85" Packing floor screen** — the warehouse display board is a standalone HTML page with its own optimised layout; this phase covers the React SPA portal only
+
+---
+
+### 10.0 — Login Page Mobile Fix ✅
+
+- [x] Login left panel (`w-72 bg-slate-900`) hidden on mobile — changed to `hidden md:flex md:w-72` so the sign-in form takes full width below `md` breakpoint
+- [x] Verified: main app sidebar already has correct mobile behaviour (prior work) — `fixed -translate-x-full` default; `lg:static lg:translate-x-0` on desktop; hamburger in TopBar already present — no changes needed
+
+---
+
+### 10.1 — Shell & Navigation Polish
+
+- [ ] Modals: enforce full-screen on mobile (override `max-w-lg` with `sm:max-w-lg max-w-full h-full sm:h-auto rounded-none sm:rounded-2xl` in the `Modal` component)
+- [ ] All `DataTable` instances: wrap in `overflow-x-auto` so tables never cause horizontal page scroll — only the table overflows, not the layout
+- [ ] TopBar action slots: buttons with text labels collapse to icon-only below `sm:` breakpoint where space is tight
+- [ ] Filter chip rows: verify `flex-wrap` is consistently applied (already present in most views; audit those that aren't)
+
+---
+
+### 10.2 — List Views
+
+- [ ] **Customers, Products, Invoices, Users, Warehouses** — hide lower-priority columns on mobile (e.g. hide City, Terms, Credit on the Customers table; keep Name + Status + action button visible)
+- [ ] **Orders table** — hide Amount, Terms, Packing columns on mobile; keep Order #, Customer, Status
+- [ ] **Sales Tickets list** — replace the table with a card-per-row layout on mobile (table is too dense at narrow widths)
+- [ ] **Orders Tickets list** — same card treatment as Sales Tickets
+- [ ] **Resellers list** — hide Commission, Warehouse columns below `md:`
+
+---
+
+### 10.3 — Detail & Profile Views
+
+- [ ] **CustomerProfile.js** — KPI grid: `grid-cols-2 lg:grid-cols-3`; address table: hide City/ZIP column on mobile (show inline below name); credit bar and section cards: full-width stack
+- [ ] **ResellerProfile.js** — same grid adjustments; stats cards stack on mobile
+- [ ] **SalesTickets detail** — right action sidebar stacks below the document on mobile (currently side-by-side); document left panel collapses header to stacked layout
+- [ ] **OrdersTickets detail** — same sidebar stacking treatment; items table gets `overflow-x-auto`
+- [ ] **AuditTrail** — before/after JSON diff panel usable on mobile (mono pre-formatted, scrollable)
+
+---
+
+### 10.4 — Quote Builder & Complex Forms
+
+- [ ] Quote builder header (Bill To / Warehouse / Deliver To): `grid-cols-3` collapses to `grid-cols-1` on mobile, `grid-cols-2` on tablet
+- [ ] Line item table: `overflow-x-auto` wrapper so the full table is accessible on mobile without breaking page layout; or collapse to card-per-line view below `sm:`
+- [ ] Deposit modal, address modal, user permissions panel: confirmed full-screen on mobile via Modal component fix from 10.1
+- [ ] Customer onboarding form (`CustomerOnboarding.js`): multi-step form stacks correctly on mobile
+
+---
+
+### 10.5 — Large Screen Optimisation
+
+- [ ] Content areas: add `max-w-screen-2xl mx-auto` cap to `main` containers to prevent extreme line-lengths and whitespace on 4K / ultrawide displays
+- [ ] Table columns: use proportional widths (`w-1/4`, `min-w-[120px]`) so columns don't collapse to slivers on narrow viewports or balloon on wide ones
+- [ ] The 85" packing board HTML (`packing-board.html`) already has its own fullscreen layout — verify touch targets and text sizes are suitable for floor use at that scale
+
+---
+
+### Definition of Done
+
+- [x] Login page is fully usable on a 360px-wide mobile screen — form is visible, inputs are reachable, the black panel does not obscure the form
+- [x] Sidebar hamburger opens and closes correctly on a mobile browser (via existing mechanism)
+- [ ] Every DataTable in the portal scrolls horizontally rather than breaking page layout on narrow screens
+- [ ] No modal clips off-screen on a 375px viewport — modal occupies full screen on mobile
+- [ ] CustomerProfile KPI cards are readable on a 375px phone (2-column grid)
+- [ ] SalesTickets detail is usable on a 768px tablet — action sidebar stacks below the quote document
+- [ ] Quote builder 3-column header collapses gracefully on mobile
+- [ ] All views render without excessive whitespace on a 2560px+ desktop
+
+### Notes
+
+> **10.0 (2026-06-26):** Login left panel hidden on mobile with `hidden md:flex`. Main app sidebar was already fully responsive from prior work — `fixed -translate-x-full` on mobile, `lg:static lg:translate-x-0` on desktop, hamburger in `TopBar` already in place. No changes to the sidebar or AppLayout were necessary.
 
 ---
 
