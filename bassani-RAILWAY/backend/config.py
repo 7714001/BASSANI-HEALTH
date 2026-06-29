@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     support_email:    str = "support@bassanihealth.com"
     healthcare_email: str = "healthcare@bassanihealth.com"
     packing_emails:   str = "packing@bassanihealth.com,warehouse@bassanihealth.com"
-    portal_url:       str = "https://bassani-health-production-3d68.up.railway.app"
+    portal_url:       str = "https://portal.bassanihealth.com"
     vapid_public_key:    str = ""
     vapid_private_key:   str = ""
     vapid_claims_email:  str = "admin@bassanihealth.com"

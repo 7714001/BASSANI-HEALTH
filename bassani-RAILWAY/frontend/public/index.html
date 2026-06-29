@@ -30,7 +30,25 @@
         padding-bottom: env(safe-area-inset-bottom);
         padding-left:   env(safe-area-inset-left);
         padding-right:  env(safe-area-inset-right);
+        margin: 0;
+        background: #f9fafb;
       }
+      #root:empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+      #root:empty::after {
+        content: '';
+        width: 32px;
+        height: 32px;
+        border: 3px solid #e2e8f0;
+        border-top-color: #0f6e56;
+        border-radius: 50%;
+        animation: _spin 0.7s linear infinite;
+      }
+      @keyframes _spin { to { transform: rotate(360deg); } }
     </style>
 
     <title>Bassani Health</title>
