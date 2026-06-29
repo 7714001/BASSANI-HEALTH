@@ -627,7 +627,7 @@ export function Orders() {
   const isReseller = user?.role === "reseller";
 
   // ── List view state ───────────────────────────────────────────────────────
-  const [view,        setView       ] = useState("list"); // "list" | "detail"
+  const [view,        setView       ] = useState("list"); // "list" | "detail" | "new"
   const [orders,      setOrders     ] = useState([]);
   const [orderTotal,  setOrderTotal ] = useState(0);
   const [loading,     setLoading    ] = useState(true);
@@ -639,6 +639,141 @@ export function Orders() {
 
   const [adopting,       setAdopting      ] = useState(new Set());
   const [creatingTicket, setCreatingTicket] = useState(new Set());
+
+  // ── Reseller order cart (place a new order) ──────────────────────────────
+  // Resellers only — staff use the Sales Ticket quote builder instead (they
+  // know product names/SKUs and type-search; resellers need to browse a
+  // catalogue, so this is a product grid + cart, not a line-item table).
+  // Submits straight to POST /api/orders/, which auto-creates an unassigned
+  // Sales Ticket exactly like every other portal order (see order_routes.py).
+  const [cartProducts,     setCartProducts    ] = useState([]);
+  const [cartProdsLoading, setCartProdsLoading] = useState(false);
+  const [cartProdSearch,   setCartProdSearch  ] = useState("");
+  const [cartProdCat,      setCartProdCat     ] = useState("all");
+  const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
+  const [cart,             setCart            ] = useState([]);
+  const [cartNote,         setCartNote        ] = useState("");
+  const [cartCustSearch,   setCartCustSearch  ] = useState("");
+  const [cartCustResults,  setCartCustResults ] = useState([]);
+  const [cartCustLoading,  setCartCustLoading ] = useState(false);
+  const [cartSelectedCust, setCartSelectedCust] = useState(null);
+  const [cartCustDropOpen, setCartCustDropOpen] = useState(false);
+  const [cartSubmitting,   setCartSubmitting  ] = useState(false);
+
+  const loadCartProducts = async () => {
+    setCartProdsLoading(true);
+    try {
+      const r = await api.get("/api/products/", { params: { limit: 200 } });
+      setCartProducts(r.data.products || []);
+    } catch { toast.error("Failed to load products"); }
+    finally { setCartProdsLoading(false); }
+  };
+
+  // Customer search debounce (cart)
+  useEffect(() => {
+    if (!cartCustDropOpen) { setCartCustResults([]); return; }
+    const delay = cartCustSearch.length >= 2 ? 300 : 0;
+    const t = setTimeout(async () => {
+      setCartCustLoading(true);
+      try {
+        const params = { limit: 20 };
+        if (cartCustSearch.length >= 2) params.search = cartCustSearch;
+        const r = await api.get("/api/customers/", { params });
+        setCartCustResults(r.data.customers || []);
+      } catch { setCartCustResults([]); }
+      finally { setCartCustLoading(false); }
+    }, delay);
+    return () => clearTimeout(t);
+  }, [cartCustSearch, cartCustDropOpen]);
+
+  const openNewOrder = () => {
+    setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartStockFilter("all"); setCartNote("");
+    setCartCustSearch(""); setCartCustResults([]); setCartSelectedCust(null);
+    setCartCustDropOpen(false); setCartSubmitting(false);
+    loadCartProducts();
+    setView("new");
+  };
+
+  // product.id is already the correct Odoo product.product (variant) id —
+  // the product list endpoint returns variants, not templates.
+  const addToCart = (product) => {
+    const pid = product.id;
+    setCart(prev => {
+      const ex = prev.find(i => i.product_id === pid);
+      if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
+      return [...prev, {
+        product_id: pid, product_uom_qty: 1, price_unit: product.list_price,
+        name: product.display_name || product.name, _sku: product.default_code || "",
+        _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0,
+      }];
+    });
+  };
+  const removeFromCart = (pid) => setCart(prev => prev.filter(i => i.product_id !== pid));
+  const updateCartQty = (pid, qty) => {
+    if (qty <= 0) { removeFromCart(pid); return; }
+    setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
+  };
+  const cartItemFor = (product) => cart.find(i => i.product_id === product.id) || null;
+
+  const submitCart = async () => {
+    if (cart.length === 0) return toast.error("Add at least one product");
+    if (!cartSelectedCust) return toast.error("Select a customer first");
+    setCartSubmitting(true);
+
+    // Section 21 script check — blocks expired/missing scripts, warns if expiring soon
+    try {
+      const { data: sc } = await api.get(`/api/scripts/check/${cartSelectedCust.id}`);
+      if (sc.block_order) {
+        toast.error(`Order blocked: ${sc.reason}`, { duration: 8000 });
+        setCartSubmitting(false);
+        return;
+      }
+      if (sc.warn) toast(`⚠️ ${sc.reason}`, { duration: 6000 });
+    } catch (e) {
+      if (e.response?.status !== 404) console.warn("Script check error:", e);
+    }
+
+    try {
+      const { data } = await api.post("/api/orders/", {
+        partner_id: cartSelectedCust.id,
+        order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
+        note: cartNote,
+      });
+      toast.success("Order placed — it's now in the Sales queue for processing");
+      if (data.credit_warning) {
+        toast(`⚠️ ${cartSelectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
+          { duration: 10000 });
+      }
+      setView("list");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to place order");
+    } finally {
+      setCartSubmitting(false);
+    }
+  };
+
+  const cartProductCategories = ["all", ...Array.from(new Set(cartProducts.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
+  const cartFilteredProducts  = cartProducts
+    .filter(p => {
+      const q          = cartProdSearch.toLowerCase();
+      const inStock     = (p.virtual_available ?? 0) > 0;
+      const matchQ      = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
+      const matchCat    = cartProdCat === "all" || (p.categ_id?.[1] || "") === cartProdCat;
+      const matchStock  = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
+      return matchQ && matchCat && matchStock;
+    })
+    .sort((a, b) => {
+      const aIn = (a.virtual_available ?? 0) > 0;
+      const bIn = (b.virtual_available ?? 0) > 0;
+      if (aIn !== bIn) return aIn ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  // VAT computed per line from each product's real Odoo tax configuration
+  // (resolved server-side via _attach_tax_rates), not a flat assumption.
+  const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
+  const cartVat      = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit * ((i._taxRate ?? 0) / 100), 0);
+  const cartTotal    = cartSubtotal + cartVat;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -708,10 +843,212 @@ export function Orders() {
     );
   }
 
+  // ── New order (reseller cart) ────────────────────────────────────────────
+  if (view === "new" && isReseller) {
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden">
+        <TopBar title="Place New Order"
+          subtitle="Select a customer and add products"
+          showWarehouseSwitcher
+          actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
+
+        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+
+          {/* ── Left panel: product browser ────────────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+            <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100 space-y-3">
+              <input
+                value={cartProdSearch}
+                onChange={e => setCartProdSearch(e.target.value)}
+                placeholder="Search by product name or SKU…"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
+              />
+              <ChipRow>
+                {cartProductCategories.map(c => (
+                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c} onClick={() => setCartProdCat(c)} />
+                ))}
+                <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
+                <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
+                <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
+              </ChipRow>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {cartProdsLoading && <LoadingState />}
+              {!cartProdsLoading && cartFilteredProducts.length === 0 && <EmptyState />}
+              {!cartProdsLoading && (
+                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                  {cartFilteredProducts.map(p => {
+                    const item       = cartItemFor(p);
+                    const outOfStock = (p.virtual_available ?? 0) <= 0;
+                    const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
+                    return (
+                      <div key={p.id}
+                        className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
+                        <div className="flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="font-semibold text-gray-900 text-sm leading-snug">{p.display_name || p.name}</p>
+                            {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
+                          </div>
+                          {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
+                          {p.categ_id?.[1] && <span className="inline-block mt-1 text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
+                            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
+                          </span>
+                        </div>
+                        {item ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
+                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
+                            <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
+                              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
+                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
+                            <button onClick={() => removeFromCart(item.product_id)}
+                              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => !outOfStock && addToCart(p)}
+                            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
+                            {outOfStock ? "Out of stock" : "+ Add to Order"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Right panel: cart ──────────────────────────────────────── */}
+          <div className="h-72 lg:h-auto w-full lg:w-80 xl:w-96 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-gray-100 shrink-0">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">Your Order</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
+              </div>
+              {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+              {/* Customer selector */}
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                  Ordering For (Customer) <span className="text-red-400">*</span>
+                </p>
+                {cartSelectedCust ? (
+                  <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
+                    <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                    <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{cartSelectedCust.name}</p>
+                    <button onClick={() => { setCartSelectedCust(null); setCartCustSearch(""); setCartCustDropOpen(true); }}
+                      className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <Input value={cartCustSearch} onChange={e => setCartCustSearch(e.target.value)}
+                      onFocus={() => setCartCustDropOpen(true)}
+                      onBlur={() => setTimeout(() => setCartCustDropOpen(false), 150)}
+                      placeholder="Search your customers…" />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                      <ChevronDown size={14} />
+                    </span>
+                    {cartCustDropOpen && (
+                      <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
+                        {cartCustLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
+                        {!cartCustLoading && cartCustResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
+                        {cartCustResults.map(c => (
+                          <button key={c.id} onMouseDown={() => { setCartSelectedCust(c); setCartCustSearch(c.name); setCartCustDropOpen(false); setCartCustResults([]); }}
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                            <span className="font-medium">{c.name}</span>
+                            {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Cart items */}
+              {cart.length === 0 ? (
+                <div className="py-10 text-center">
+                  <p className="text-sm text-gray-400">No products added yet</p>
+                  <p className="text-xs text-gray-300 mt-1">Click "+ Add to Order" on a product card</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {cart.map(item => (
+                    <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
+                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                        </div>
+                        <button onClick={() => removeFromCart(item.product_id)}
+                          className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
+                          <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
+                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
+                          <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
+                            className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                          <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
+                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
+                        </div>
+                        <span className="text-xs text-gray-400 flex-1 truncate">× {fmtR(item.price_unit)}</span>
+                        <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer: totals + notes + actions */}
+            <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white">
+              {cart.length > 0 && (
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between text-gray-500">
+                    <span>Subtotal (excl. VAT)</span>
+                    <span>{fmtR(cartSubtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-500">
+                    <span>VAT</span>
+                    <span>{fmtR(cartVat)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
+                    <span className="text-gray-900">Total</span>
+                    <span className="text-bassani-700">{fmtR(cartTotal)}</span>
+                  </div>
+                </div>
+              )}
+              <Textarea value={cartNote} onChange={e => setCartNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
+              <div className="flex gap-2">
+                <BtnSecondary onClick={() => setView("list")} className="flex-1">Cancel</BtnSecondary>
+                <BtnPrimary onClick={submitCart} loading={cartSubmitting} disabled={cartSubmitting || cart.length === 0} className="flex-1">
+                  {cartSubmitting ? "Placing…" : "Place Order"}
+                </BtnPrimary>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── List view ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher />
+      <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher
+        actions={isReseller && <BtnPrimary onClick={openNewOrder}><Plus size={14} />New Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         {!isReseller && (
           <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">

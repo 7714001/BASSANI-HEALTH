@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-06-26  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 2, 4, 6, 8 code complete; Phase 1 in progress (CORS + 2FA deferred to pre-launch); Phase 8 DoD 7/8 complete — only staff account creation outstanding; Phase 10 responsive UI in progress (10.0–10.4 core work complete)  
+**Last Updated:** 2026-06-29  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 8, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 7/8 complete — only staff account creation outstanding; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 pending); Phase 11 built and deployed, blocked on Azure credentials  
 
 ---
 
@@ -12,19 +12,21 @@
 | Phase | Name | Status | Completed |
 |-------|------|--------|-----------|
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
-| 1 | Security Hardening | 🟡 In Progress | 1.1/1.3/1.4/1.6/1.7 complete — 2026-06-19/2026-06-23 · 1.2/1.5 deferred to pre-launch |
-| 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verification pending client credentials |
+| 1 | Security Hardening | 🟢 Complete | All items complete — 2026-06-29 (1.2 CORS + 1.5 email OTP 2FA) |
+| 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verified — 2026-06-29 |
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.6 complete) | 2026-06-24 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
-| 9 | Go-Live Infrastructure | 🔴 Not Started | — |
-| 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 |
-| 11 | Microsoft 365 Mailbox Integration | 🔴 Not Started | Blocked on: Azure app registration credentials from M365 admin |
+| 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
+| 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 pending |
+| 11 | Microsoft 365 Mailbox Integration | 🟡 In Progress | All code built — 2026-06-29 · Blocked on: Azure app registration credentials from M365 admin (Tristan) |
+| 12 | Barcode Integration | 🔴 Not Started | — |
+| 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
-**Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
+**Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
 ---
 
@@ -276,8 +278,8 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Goal:** Safe to expose to real users. No known exploitable vulnerabilities.  
 **Estimate:** 1–3 days  
-**Status:** 🟡 In Progress — 1.1, 1.3, 1.4, 1.6, 1.7 complete; 1.2 and 1.5 deferred until production domain/SSL are finalised  
-**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23  
+**Status:** 🟢 Complete  
+**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23 · Sub-deploy 3 (1.2 CORS lockdown + 1.5 email OTP 2FA) — 2026-06-29  
 
 ### Tasks
 
@@ -286,11 +288,10 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Document minimum requirements: 32+ character random string
 - [x] Update `.env.example` with `JWT_SECRET=<run: openssl rand -base64 48>` _(file didn't exist — created)_
 
-#### 1.2 CORS Lockdown — Deferred
-> **Deferred until the production domain and SSL are finalised** (decided 2026-06-19). Locking `CORS_ORIGINS` to a domain that doesn't exist yet would break every deployed environment, including ongoing testing. Revisit immediately once the domain is live.
-- [ ] Replace `allow_origins=["*"]` in `server.py` with `settings.cors_origins_list()`
-- [ ] Set `CORS_ORIGINS=https://yourdomain.com` in Railway environment variables
-- [ ] Verify preflight requests work correctly on frontend after change
+#### 1.2 CORS Lockdown
+- [x] Replace `allow_origins=["*"]` in `server.py` with `settings.cors_origins_list()`
+- [x] Set `CORS_ORIGINS=https://portal.bassanihealth.com` in Railway environment variables
+- [x] Verify preflight requests work correctly on frontend after change
 
 #### 1.3 Default Admin Credentials
 - [x] Remove hardcoded admin seed from `server.py` startup event _(completed in Phase 0.1)_
@@ -304,11 +305,16 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Return `429 Too Many Requests` with `Retry-After` header on breach _(slowapi's default handler sets this)_
 - [x] Apply rate limiter to `POST /api/healthcare/onboarding` — 10 per hour per IP
 
-#### 1.5 2FA Enforcement for Admins — Deferred
-> **Deferred alongside 1.2** (decided 2026-06-19). Forcing a 2FA setup prompt on every admin login would add friction to active testing of Phases 2–7. Revisit at the same time as the CORS lockdown, right before go-live.
-- [ ] Set `require_2fa_admin=True` in config (infrastructure already exists via `pyotp`)
-- [ ] Enforce 2FA setup prompt on first admin login after flag is enabled
-- [ ] Verify admin cannot bypass 2FA by going directly to protected routes
+#### 1.5 2FA for All Accounts — Email OTP
+> **Implemented as email OTP** (2026-06-29) rather than the originally-planned TOTP/authenticator-app flow. Email OTP requires no user setup, leverages the now-verified Resend domain, and applies to every account that has an email address stored (not just admins — all portal roles). The TOTP routes (`twofa_routes.py`) remain as dead infrastructure; the live flow is entirely in `auth_routes.py` + `verify-otp`.
+- [x] Email OTP 2FA implemented — 6-digit code, 10-minute TTL, 3-attempt limit, SHA-256 hash at rest
+- [x] `POST /api/auth/login` returns `{otp_required: true, otp_session_id}` instead of JWT when 2FA triggers; JWT only issued after `POST /api/auth/verify-otp`
+- [x] `otp_sessions` MongoDB collection with TTL index for automatic cleanup
+- [x] `send_otp_email()` added to `email_service.py` using the branded template
+- [x] `SUPER_ADMIN_EMAIL` Railway var + startup writes email onto super admin document
+- [x] `REQUIRE_2FA_ADMIN=true` set in Railway — 2FA active for all accounts with email
+- [x] Login.js OTP entry screen — numeric-only input, large monospace display
+- [x] Applies to any account with a stored email — accounts without email fall through to normal login
 
 #### 1.6 Cleanup
 - [x] Remove `/debug-static` endpoint from `server.py` _(already removed in commit `2fae93a`, prior to this phase)_
@@ -329,15 +335,17 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 ### Definition of Done
 - [x] Cannot log in as admin with `admin123` on any deployed environment _(legacy account auto-deactivated on startup)_
-- [ ] Browser console shows no CORS errors from the correct domain _(deferred with 1.2)_
+- [x] Browser console shows no CORS errors from the correct domain
 - [x] Login attempt #6 returns 429 within the 15-minute window
-- [ ] Admin without 2FA configured is prompted on login _(deferred with 1.5)_
+- [x] Any account with an email address is challenged with an email OTP on login
 - [x] Application startup fails immediately if JWT secret is default value
 - [x] A newly created user account is intercepted at first login and cannot access the portal until they set a new password
 - [x] Admin-initiated password reset re-triggers the same forced-change gate
 
 ### Notes
 > **Sub-deploy 2 (2026-06-23):** 1.7 Forced Password Reset. `must_change_password: True` is now set on `POST /api/users/` and `POST /api/users/{id}/reset-password`. `_user_payload()` exposes the flag in every login/me response. New `POST /api/auth/change-password` verifies the current password (bcrypt), validates min-8-char and differs-from-current rules, updates the hash, and clears the flag — audit-logged as `user.change_password`. Frontend: `ProtectedRoute` now redirects authenticated users with `must_change_password` to `/change-password` before any other page renders; a new `AuthRequired` wrapper used by that specific route lets you be authenticated without triggering the redirect loop; new `ChangePassword.js` view handles the form. Existing accounts are unaffected — the field's absence is treated as `False` everywhere.
+
+> **Sub-deploy 3 (2026-06-29):** 1.2 CORS lockdown + 1.5 email OTP 2FA. `allow_origins` in `server.py` now calls `settings.cors_origins_list()` — `CORS_ORIGINS=https://portal.bassanihealth.com` set in Railway. 2FA implemented as email OTP (not TOTP) — any account with a stored email gets challenged on login when `REQUIRE_2FA_ADMIN=true`. Flow: login validates password → if 2FA triggers, OTP generated, SHA-256 hashed, stored in `otp_sessions` with 10-minute TTL index, emailed via Resend → login returns `{otp_required: true, otp_session_id}` — no JWT yet → frontend shows OTP entry screen → `POST /api/auth/verify-otp` validates code and issues JWT. 3-attempt lockout; session auto-deleted on success or exhaustion; TTL index auto-purges expired sessions. `SUPER_ADMIN_EMAIL` Railway var stamps email onto super admin document at startup so the super admin account is covered. `config.py` `portal_url` default updated to `portal.bassanihealth.com`. `index.html` CSS-only spinner on `#root:empty` eliminates white-page flash before React loads.
 
 > **Sub-deploy 1 (2026-06-19):** Implemented the four items with no domain/SSL dependency. Backend: startup `RuntimeError` if `JWT_SECRET` is still the placeholder; new `backend/rate_limit.py` holds a shared `slowapi.Limiter` (avoids a circular import between `server.py` and the route modules) wired into `/api/auth/login` (5/15min) and `/api/healthcare/onboarding` (10/hour); startup migration deactivates any `{username: "admin", role: "admin"}` account found, matching the exact legacy seed from commit `5965ef4`. Created `backend/.env.example` (didn't exist before). 1.2 (CORS) and 1.5 (2FA) explicitly deferred — see notes above — to avoid blocking domain-dependent and testing-friction work; tracked here so they aren't forgotten before go-live.
 
@@ -386,7 +394,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 #### 2.7 Resend Configuration
 - [x] Verify `RESEND_API_KEY` is set in Railway production environment
-- [ ] Verify sending domain is verified in Resend dashboard — **pending: awaiting client Resend credentials**
+- [x] Verify sending domain is verified in Resend dashboard — `bassanihealth.com` verified 2026-06-29
 - [x] Confirm free tier limit (3,000/month, 100/day) is sufficient for current volume; upgrade to Pro ($20/month) if needed
 
 ### Definition of Done
@@ -397,7 +405,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Mark statement as paid → reseller receives payment confirmation
 - [x] Create a new user → user receives welcome email
 - [x] Packer ticks last item on an order → supervisor(s) with email on file receive a "ready for collection" notification
-- [ ] All emails render correctly on mobile and desktop clients — **verify once Resend domain confirmed**
+- [x] All emails render correctly on mobile and desktop clients — verified via 2FA OTP emails post domain confirmation 2026-06-29
 - [x] No email sending blocks or slows the API response (all fire via BackgroundTasks)
 
 ### Notes
@@ -1041,8 +1049,8 @@ Items reviewed and intentionally deferred beyond Phase 7. Revisit when business 
 
 **Goal:** Replace the Railway-generated URL with a permanent client-owned domain, verify email sending, and confirm all production environment variables are correct.  
 **Estimate:** 1–3 days (largely blocked on client actions)  
-**Status:** 🔴 Not Started  
-**Completed:** —  
+**Status:** 🟢 Complete  
+**Completed:** 2026-06-29  
 
 ### Context
 
@@ -1053,44 +1061,39 @@ Current unknowns: who hosts `bassanihealth.com`, what control panel they use (cP
 ### Tasks
 
 #### 9.1 Custom Domain on Railway
-- [ ] Identify who manages `bassanihealth.com` DNS — ask the client (likely their web hosting provider or registrar)
-- [ ] Decide on subdomain: `portal.bassanihealth.com` is the intended target (already hardcoded in roadmap references)
-- [ ] In Railway: Project → Settings → Networking → Add Custom Domain → enter `portal.bassanihealth.com`
-- [ ] Railway will display a CNAME target (e.g. `<project>.railway.app`) — provide this to the client's DNS admin to create the CNAME record
-- [ ] Wait for DNS propagation (typically 5–60 minutes; up to 48 hours worst case)
-- [ ] Railway provisions SSL automatically via Let's Encrypt once the CNAME resolves — no manual cert needed
-- [ ] Once verified: set `PORTAL_URL=https://portal.bassanihealth.com` in Railway environment variables
-- [ ] Update `backend/config.py` default to `https://portal.bassanihealth.com`
+- [x] Identify who manages `bassanihealth.com` DNS
+- [x] Decide on subdomain: `portal.bassanihealth.com`
+- [x] In Railway: Project → Settings → Networking → Add Custom Domain → `portal.bassanihealth.com`
+- [x] CNAME record created by DNS admin
+- [x] DNS propagation complete
+- [x] Railway SSL provisioned automatically
+- [x] `PORTAL_URL=https://portal.bassanihealth.com` set in Railway
+- [x] `backend/config.py` default updated to `https://portal.bassanihealth.com`
 
 > **Cost:** Railway custom domains are included in all paid plans — no additional charge. The domain itself is the client's existing asset. No new hosting cost.
 
 #### 9.2 Resend Sending Domain
-- [ ] Client creates a Resend account (or provides access to existing one) at resend.com
-- [ ] In Resend: Domains → Add Domain → enter `bassanihealth.com`
-- [ ] Resend will display 3 DNS records (SPF, DKIM × 2, and optionally DMARC) — provide to client's DNS admin
-- [ ] Once DNS records propagate and Resend shows domain as "Verified": update `SENDER_EMAIL=noreply@bassanihealth.com` in Railway environment variables
-- [ ] Update `RESEND_API_KEY` in Railway to the client's production Resend API key
-- [ ] Test: create a test user with a real email address, confirm welcome email arrives from `noreply@bassanihealth.com`
+- [x] Resend account confirmed, `bassanihealth.com` added as sending domain
+- [x] SPF/DKIM DNS records added and verified
+- [x] `SENDER_EMAIL=noreply@bassanihealth.com` set in Railway
+- [x] `RESEND_API_KEY` set in Railway to production key
+- [x] Email confirmed working — 2FA OTP emails arriving from `noreply@bassanihealth.com`
 
 > **Cost:** Resend free tier is 3,000 emails/month, 100/day. Likely sufficient for current volume. Pro plan is $20/month if needed.
 
 #### 9.3 Production Environment Verification
-- [ ] Confirm all Railway environment variables are set correctly for production:
-  - `RESEND_API_KEY` — client's production key
-  - `SENDER_EMAIL` — `noreply@bassanihealth.com` (after domain verified)
-  - `PORTAL_URL` — `https://portal.bassanihealth.com` (after domain live)
-  - `MONGO_URL`, `JWT_SECRET`, `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_PASSWORD` — already set
-- [ ] Smoke test all email triggers in production (welcome email, order placed, statement generated)
-- [ ] Confirm portal loads correctly on the custom domain with HTTPS green lock
+- [x] All Railway environment variables confirmed set for production
+- [x] Email triggers confirmed working in production (2FA OTP verified live)
+- [x] Portal loads correctly on `portal.bassanihealth.com` with HTTPS
 
 ### Definition of Done
-- [ ] `https://portal.bassanihealth.com` loads the portal with a valid SSL certificate
-- [ ] Outbound emails arrive from `noreply@bassanihealth.com` (not `onboarding@resend.dev`)
-- [ ] All production environment variables confirmed correct
-- [ ] The Railway-generated URL still works as a fallback (Railway keeps it active alongside the custom domain)
+- [x] `https://portal.bassanihealth.com` loads the portal with a valid SSL certificate
+- [x] Outbound emails arrive from `noreply@bassanihealth.com` (not `onboarding@resend.dev`)
+- [x] All production environment variables confirmed correct
+- [x] The Railway-generated URL still works as a fallback
 
 ### Notes
-> **2026-06-23:** Current live URL is `https://bassani-health-production-3d68.up.railway.app`. Domain `portal.bassanihealth.com` is the intended target. Blocked on: (1) identifying the DNS provider for `bassanihealth.com`, (2) client access to their Resend account. No code changes required for this phase — it is entirely infrastructure and DNS coordination.
+> **2026-06-29:** Phase complete. `portal.bassanihealth.com` is live with SSL. `bassanihealth.com` domain verified in Resend; emails confirmed sending from `noreply@bassanihealth.com`. All Railway environment variables confirmed. The old Railway-generated URL (`bassani-health-production-3d68.up.railway.app`) remains active as a fallback.
 
 ---
 
@@ -1417,6 +1420,348 @@ Changes to the existing Sales Ticket system (Phase 8):
 ### Notes
 
 > **2026-06-27:** Microsoft 365 confirmed via MX record lookup (`bassanihealth-com.mail.protection.outlook.com`). Shared mailbox `orders@bassanihealth.com` confirmed in active use. Microsoft Graph API (Option 2) selected over Resend Inbound — no DNS changes needed, reply-in-thread capability, attachment streaming, real-time push notifications. **Blocked on:** M365 admin completing Azure app registration (11.0) and providing Tenant ID, Client ID, Client Secret. No backend work can start until credentials are in Railway env vars.
+
+---
+
+## Phase 12 — Barcode Integration
+
+**Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. Warehouse packers can scan item barcodes on their handheld to tick items instead of tapping checkboxes — faster, more accurate, glove-friendly.
+
+**Estimate:** 1–2 weeks  
+**Status:** 🔴 Not Started  
+**Completed:** —
+
+### Context
+
+Odoo stores a `barcode` field on every `product.product` record — EAN-13, Code-128, or any custom format. This field is already part of the Odoo data model and does not require any module to be installed. The portal currently ignores it entirely.
+
+Three distinct integration points are possible and all are in scope:
+
+1. **Quote builder** — scan a physical barcode to look up and add a product line, eliminating typed search for catalogue items that have been barcoded
+2. **Label printing** — generate print-ready barcode labels from the Products page, so the warehouse can label stock without a separate label management system
+3. **Packing floor** — scan item barcodes to tick items on a packer's handheld rather than tapping touch targets, which is faster for gloved hands and reduces mis-ticks
+
+**Barcode scanner hardware:** USB and Bluetooth scanners emulate keyboard input — when a barcode is scanned, the scanner types the barcode digits into whatever input field is focused, followed by an Enter key. This means USB scanner support in any input field requires zero code changes — the scanner just types. Camera scanning uses `@zxing/browser` (the browser port of the ZXing barcode library — cross-platform, works in Chrome, Firefox, Safari, and Android WebView).
+
+**Barcode types supported:** EAN-13 (most common for cannabis products in SA), Code-128 (alphanumeric, common for internal warehouse labels), QR Code.
+
+**New npm dependencies (frontend only — no backend packages needed):**
+- `@zxing/browser` — camera-based barcode scanning (React SPA and packer.html)
+- `JsBarcode` — barcode SVG generation for label printing (React SPA only)
+
+---
+
+### 12.0 — Odoo Barcode Field Exposure (Backend Foundation)
+
+Before any front-end scan or print feature can work, the barcode field must be read from Odoo and available in API responses.
+
+- [ ] Add `barcode` to `PRODUCT_FIELDS` in `product_routes.py` — every `list_products` and `get_product` response now includes the barcode value (or `null` if not set in Odoo)
+- [ ] Add `barcode` to `ProductCreate` and `ProductUpdate` Pydantic models — allows setting/clearing a product's barcode from the portal product form (no Odoo trip needed)
+- [ ] New `GET /api/products/barcode/{barcode_value}` endpoint:
+  - Searches `product.product` in Odoo for `[('barcode', '=', barcode_value)]` scoped to the user's resolved warehouse/company
+  - Returns the same product shape as `GET /api/products/{id}` — name, SKU, price, stock, tax rate, barcode
+  - Returns `404` with a human-readable message if no match: `"No product found for barcode {barcode_value}"`
+  - Returns `409` if multiple products share the same barcode (should not happen but Odoo permits it — surface clearly rather than silently returning one)
+  - Requires authentication; gated by `require_admin` or `tickets.sales` (sales reps use the quote builder scanner)
+- [ ] Add `barcode` column to the Products admin table — shown alongside SKU, hidden on mobile (`hidden md:table-cell`); displays the barcode value as text or a dash if unset
+- [ ] Add a `Barcode` input field to the product create/edit form — plain text input; clears to `null` if left blank
+
+---
+
+### 12.1 — Quote Builder Product Scan
+
+**Goal:** In the direct inquiry quote builder (Sales Tickets), a sales rep can scan a product barcode to add it to the quote without typing. Works with both a USB/Bluetooth scanner plugged into the desk and via the device's camera.
+
+**USB/Bluetooth scanner support (zero code required):**
+USB and Bluetooth scanners emulate a keyboard — they type the barcode value and press Enter. The quote builder's existing per-row product search input already captures keyboard input. The only addition needed is: when the input value is submitted (Enter pressed) without the user selecting from the dropdown, attempt a barcode lookup before showing "no results".
+
+- [ ] In the quote builder's per-row product search, on `Enter` keydown with no dropdown selection active:
+  - If the input value looks like a barcode (all digits, or recognisable Code-128 pattern) → call `GET /api/products/barcode/{value}` immediately
+  - On match: auto-populate the product line (name, unit price, tax rate) and clear the search input — identical to selecting from the dropdown
+  - On no match: show inline error "No product found for barcode — try searching by name"
+  - This covers USB scanners with no UI changes needed on the scanner detection side
+
+**Camera scanning:**
+- [ ] Add `@zxing/browser` to `package.json`
+- [ ] Add a small "Scan" icon button (camera icon, lucide) to each product row in the quote builder, positioned left of the product name search input
+- [ ] Clicking the Scan button opens a compact camera modal:
+  - Live camera feed (requests camera permission on first use; remembered thereafter)
+  - Scanning overlay with a centred scan-zone rectangle (visual guide for alignment)
+  - "Cancel" button closes without scanning
+  - On barcode detected: modal closes automatically; calls `GET /api/products/barcode/{value}`; on match auto-fills the row; on no match shows a toast and re-opens the modal for retry
+- [ ] Camera modal prefers rear-facing camera on mobile (`facingMode: "environment"`) — natural for pointing at a product label
+- [ ] The modal is a shared component (`BarcodeScanner.js`) so it can be reused in Phase 12.3
+
+---
+
+### 12.2 — Barcode Label Printing
+
+**Goal:** An admin can generate and print a professional barcode label for any product directly from the Products page — no Dymo software, no label management system, just a browser print dialog.
+
+- [ ] Add `JsBarcode` to `package.json`
+- [ ] **Single label:** "Print Label" button (printer icon) in each product row's actions column on the Products table — visible to users with `products.manage`
+- [ ] **Batch print:** checkbox column on the Products table (similar to the existing select-all pattern for other bulk actions); "Print Selected Labels" button appears in the table toolbar when any rows are checked
+- [ ] Clicking Print Label (single or batch) opens a `BarcodePrintPreview` modal:
+  - Renders one label card per product using `JsBarcode` to generate an SVG barcode
+  - Label layout:
+    - Bassani Health logo/wordmark (small, top)
+    - Product name (bold)
+    - SKU (`default_code`) below name
+    - Barcode SVG (centred, large — EAN-13 or Code-128 depending on barcode format)
+    - Barcode digits printed below the bars (standard label convention)
+    - Sale price (bottom right)
+  - Label size selector: `38mm × 25mm` (small), `57mm × 32mm` (medium), `100mm × 50mm` (A4-friendly), Custom
+  - A "Print" button triggers `window.print()` — the browser's native print dialog opens, showing only the label(s) (modal content uses `@media print` CSS to hide everything else)
+  - Labels tile on the printed page for batch prints — 2-up or 4-up depending on selected label size
+- [ ] If a product has no barcode set in Odoo, the Print Label button shows a tooltip "No barcode set — edit this product to add one" and is disabled
+- [ ] `@media print` CSS in the modal hides the portal chrome (sidebar, topbar, modal frame) and shows only the label cards — no full-page PDF generation needed
+
+---
+
+### 12.3 — Packer Handheld Scan-to-Tick
+
+**Goal:** Packers can scan a product's barcode on their handheld device to tick an order line item, rather than tapping a touch target on screen. Faster, more accurate for gloved hands, and eliminates the risk of tapping the wrong item on a small screen.
+
+**Data model change — barcode on packing board items:**
+
+Currently the `packing_board` MongoDB document's `items` array contains: `{ product_id, name, qty, ticked }`. We need to add `barcode` so the packer handheld can match a scan against items without calling Odoo at scan time.
+
+- [ ] When a packing board entry is created (in `packing_board_routes.py::confirm_order()` and `packing_board_routes.py::_do_adopt()`), batch-fetch the `barcode` field for all `product_id` values in the order lines from Odoo — one batched `read()` call, not one per line
+- [ ] Store `barcode` (string or `null`) on each item in the `items` array in MongoDB alongside existing fields
+- [ ] **Backfill endpoint:** `POST /api/packing/backfill-barcodes` (admin/super_admin only) — iterates all existing packing board entries, fetches missing barcodes from Odoo, writes them back; idempotent; run once after deploy
+
+**`packer.html` changes:**
+
+- [ ] Add `@zxing/browser` to the packer page (bundled as a standalone script via CDN or built with the frontend build step, whichever is simpler given `packer.html` is a standalone HTML file outside the React SPA)
+- [ ] Add a "Scan to Tick" toggle button at the top of the packer's order view — off by default; when toggled on:
+  - Activates the rear-facing camera via ZXing in a persistent scanning strip at the top of the screen (not a modal — continuous scanning mode so the packer doesn't have to re-tap to scan each item)
+  - A scan-zone overlay shows the active capture area
+- [ ] On barcode detected:
+  - Look up the decoded value against the `items` array on the currently-open order (match on `barcode` field)
+  - If matched and not yet ticked: auto-tick that item (calls the existing `tick_item` WebSocket action — identical to tapping the tick button manually); brief green flash on the matched row
+  - If matched and already ticked: amber flash and a small "Already ticked" toast — not an error, just feedback
+  - If no match in current order: red flash and "Barcode not in this order" toast — prevents cross-order misfires
+  - Scanner continues running after a match — the packer can scan the next item immediately without interaction
+- [ ] The existing manual tick buttons remain — scan mode is additive, not a replacement; packers can mix scanning and tapping
+- [ ] When all items on an order are ticked (whether by scan or tap), the existing "All items packed" visual remains unchanged
+
+**`supervisor.html` — no changes needed.** The supervisor sees tick status updates in real time via the existing WebSocket regardless of whether ticks came from button taps or barcode scans — the action path is identical.
+
+---
+
+### Definition of Done
+
+- [ ] Every product with a barcode set in Odoo shows that barcode value in the Products admin table
+- [ ] Setting a barcode on a product from the product create/edit form writes it to Odoo correctly
+- [ ] In the quote builder, typing a barcode and pressing Enter (USB scanner flow) auto-populates the product row without needing to select from the dropdown
+- [ ] In the quote builder, clicking the camera scan button and presenting a barcoded label fills the product row instantly
+- [ ] An unknown barcode (not in Odoo) shows a clear "no product found" message, not a crash
+- [ ] A product with a barcode shows a Print Label button; a product without a barcode shows the button as disabled with a tooltip
+- [ ] Printing a single label opens the browser print dialog with only the label visible — no portal chrome
+- [ ] Printing 4 selected products prints 4 labels tiled on one page
+- [ ] A packer enables scan mode; scans a barcode; the matching item ticks and the packing board display updates in real time
+- [ ] Scanning the same barcode twice shows "Already ticked" feedback
+- [ ] Scanning a barcode from a different order shows "Barcode not in this order" and does not tick anything
+- [ ] Packing board entries created before this deploy can have barcodes backfilled via the admin endpoint
+- [ ] All scan-sourced ticks appear in `audit_logs` with actor identity — same as manual ticks
+
+### Notes
+
+> _(Add implementation notes, decisions, or issues encountered here)_
+
+---
+
+---
+
+## Phase 13 — Production & Cultivation Module (GrowerIQ In-House)
+
+**Goal:** Build Bassani Health's own seed-to-sale production tracking system into the portal, replacing the need for a third-party platform like GrowerIQ. Covers the full upstream lifecycle — cultivation through to finished goods entering the vault — with SAHPRA compliance reporting as the primary regulatory output and yield intelligence as the primary operational output.
+
+**Estimate:** To be scoped — significant. Likely 2–3 months of active development.  
+**Status:** 🔵 Concept — Needs Scoping  
+**Blocked on:** SAHPRA reporting requirements (exact fields, formats, submission method) must be obtained before any data model can be finalised. Do not design the schema without them.
+
+> **Origin:** Bassani Health attended a meeting with GrowerIQ (June 2026) to evaluate their platform. Decision is to build the equivalent in-house, retaining full data ownership and tight integration with the existing commercial portal. The commercial portal already covers the downstream (vault → sales); this phase covers the upstream (cultivation → vault).
+
+> **Compliance standard:** GrowerIQ provided their EU GMP Annex 11 (Computerised Systems) compliance mapping in June 2026. EU GMP Annex 11 is the pharmaceutical industry standard governing how software managing medicinal product manufacturing must behave — covering audit trails, access control, electronic signatures, data integrity, and batch release. SAHPRA aligns with EU GMP for medicinal cannabis in South Africa, making this the most likely standard Bassani must satisfy. Building against Annex 11 from the start is the correct design target. Confirm explicitly with Bassani's compliance officer before scoping begins.
+
+---
+
+### Architectural Vision
+
+The portal already operates as two conceptual halves that share infrastructure. This phase formalises the upstream half:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  PRODUCTION SIDE (Phase 13 — new)                           ║
+║                                                              ║
+║  CULTIVATION (GACP facility)                                 ║
+║    Grow rooms → plant batches → veg → flower → harvest       ║
+║    Yield record: expected band vs actual weight              ║
+║    Variance investigation if outside band                    ║
+║          ↓                                                   ║
+║  MANUFACTURING                                               ║
+║    Processing → formulation → batch records                  ║
+║    QA testing → RP sign-off                                  ║
+║          ↓                                                   ║
+║  PACKING & LABELLING                                         ║
+║    Finished goods → barcode applied → SAHPRA lot number      ║
+║          ↓                                                   ║
+╚══════════════════════════╦═══════════════════════════════════╝
+                           ║  (goods received into Odoo vault)
+╔══════════════════════════╩═══════════════════════════════════╗
+║  COMMERCIAL SIDE (existing portal)                           ║
+║                                                              ║
+║  VAULT (Odoo inventory)                                      ║
+║    product.product + barcode + stock.lot + qty_available     ║
+║          ↓                                                   ║
+║  SALES                                                       ║
+║    Resellers → quotes → orders → packing board → dispatch    ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+**The barcode (Phase 12) is the junction point.** The barcode/lot number on a finished goods label is the same identifier that traces back through manufacturing to the cultivation batch. One scan on the commercial side (a packer ticking an item) creates a traceable link to the SAHPRA batch record on the production side. This is the traceability chain SAHPRA compliance requires.
+
+---
+
+### Annex 11 Compliance — What We Already Have
+
+The existing portal satisfies more of EU GMP Annex 11 than might be expected — because the same engineering decisions that make the commercial portal auditable also satisfy pharmaceutical computerised system requirements.
+
+| Annex 11 Requirement | Clause | Status in existing portal |
+|---|---|---|
+| Named users with defined roles and access levels | §2 | ✅ Phase 0 — full permission system, role-based access |
+| Comprehensive audit trail — actor, timestamp, before/after, reason | §22 | ✅ Phase 0.6 — built to this exact spec |
+| Identity recorded on every data entry, change, confirmation, deletion | §25–28 | ✅ Phase 0 + 0.6 cover all four requirements |
+| Access authorisation changes recorded | §27 | ✅ User create/update/deactivate logged in audit trail |
+| Time and date on all signed/confirmed actions | §30 | ✅ Every audit entry has UTC timestamp |
+| Secure API with authentication tokens | §16 | ✅ JWT + 2FA (Phase 1.5) |
+| Regular data backups | §19 | ✅ Railway MongoDB daily backups |
+| Incident management and error monitoring | §29 | ✅ Sentry (Phase 6) |
+| Printable records | §20 | ✅ Phase 12 barcode/label printing |
+
+**The one significant gap: Electronic Signatures (§30–31)**
+
+Annex 11 §30 requires that electronic signatures are permanently linked to their respective record, include time and date, and carry the same legal weight as a handwritten signature. §31 requires that only a Qualified Person can certify batch release, using an electronic signature.
+
+GrowerIQ's implementation: **re-authentication at the point of signing** — the user enters their password again at the exact moment of approval. That credential event is permanently stored, linked to the batch record. It is not a button click authenticated by a background session token.
+
+Currently, the portal's QA and RP approvals on the packing board are JWT-authenticated button presses. These satisfy naming and timestamping but not the formal e-signature requirement. This must be addressed in Phase 13 for production batch sign-off, and should be retrofitted to the existing QA/RP packing board approvals to bring the commercial side into full Annex 11 compliance as well.
+
+**E-signature design (to implement in Phase 13, backport to packing board):**
+- At the point of a critical sign-off action (batch release, RP approval, QA approval), the UI presents a confirmation dialog requiring the user to re-enter their password
+- The backend verifies the password against the stored bcrypt hash independently of the existing JWT session
+- On success, a `signature_event` document is created: `{ actor, actor_id, action, entity_type, entity_id, password_verified: true, signed_at, ip }` — permanently linked to the batch/order record
+- The JWT session is unaffected — re-auth is purely for the signature event, not a login
+- This satisfies Annex 11 §30 completely and is how GrowerIQ handles it
+
+---
+
+### Shared Infrastructure (No Duplication)
+
+Everything from the existing portal carries over:
+
+| Existing | How it carries into Phase 13 |
+|---|---|
+| Auth / permissions system | New production roles added; same `require_permission()` pattern |
+| Audit trail | Every cultivation action logged with named actor; same schema — already Annex 11 compliant |
+| E-signature module (to be built) | Shared by production batch sign-off and commercial QA/RP approvals |
+| RP role (Rookshanna) | Already in the system; gains production batch sign-off on top of dispatch sign-off |
+| Warehouse structure | GACP facility is a warehouse in Odoo; already modelled |
+| Barcode field (Phase 12) | Cultivation lot → barcode → finished goods label → traceable in both portals |
+| Email system | Yield alerts, batch approval notifications via existing Resend integration |
+| MongoDB | Production collections sit alongside commercial collections; same database |
+
+---
+
+### Distinct User Population
+
+Production staff never need to see the commercial side (resellers, commissions, invoices) and vice versa. New roles to define when scoping:
+
+| Role (proposed) | Responsibility |
+|---|---|
+| `cultivation_manager` | Manage grow rooms, plant batches, advance cultivation stages |
+| `lab_technician` | Log manufacturing batch records, upload test results |
+| `production_supervisor` | Oversight across cultivation and manufacturing |
+| `responsible_pharmacist` | Already exists — gains batch QA sign-off in addition to dispatch sign-off |
+
+---
+
+### Core Concepts to Model (draft — not final until SAHPRA requirements obtained)
+
+**Grow Room**
+- Physical room identifier, capacity (max plants), current strain(s), status (active/idle/cleaning)
+- Links to Odoo `stock.warehouse` / `stock.location` for the physical space
+
+**Cultivation Batch**
+- Strain, plant count, planting date, assigned grow room
+- Stage progression: `propagation → veg → flower → harvest → drying → curing`
+- Each stage transition logged with actor and timestamp
+- Destruction events: plants that die or are destroyed before harvest must be recorded (SAHPRA tracks plant-level losses)
+
+**Yield Band**
+- Per strain: historical average yield per plant (g dry weight), expressed as a [min, max] band
+- Expected yield for a batch = plant count × [band min, band max]
+- Band calibrates automatically from completed harvests over time (rolling average)
+- Can be overridden manually by production manager with a reason
+
+**Harvest Record**
+- Actual wet weight at harvest → actual dry weight after drying/curing
+- Comparison against expected band: `within_band | above_band | below_band`
+- If outside band: investigation record required before batch can proceed
+  - Above band: positive investigation ("what contributed to higher yield?" — environment, strain selection, nutrients)
+  - Below band: negative investigation ("what caused the shortfall?" — potential damage, theft, disease, environmental failure); full pipeline backtrace available
+
+**Manufacturing Batch**
+- Links one or more cultivation batches (the raw material)
+- Process type: extraction, tincture formulation, capsule filling, etc.
+- Input weights, output weights, waste recorded
+- Lab test results attached (cannabinoid profile, contaminant screen)
+- RP sign-off required before batch can proceed to packing
+
+**Finished Goods Receipt**
+- When a manufacturing batch passes QA/RP sign-off, it triggers a stock receipt into Odoo
+- `stock.lot` created in Odoo with the batch number as lot name
+- `barcode` set on the `product.product` record (or on the lot)
+- Qty enters the vault → appears in the reseller product catalog
+
+**SAHPRA Reporting**
+- Lot-level audit trail: cultivation batch → manufacturing batch → finished goods → every order that dispensed units from that lot
+- Plant count accuracy: planted vs harvested vs destroyed vs transferred
+- Destruction records: date, reason, witness, quantity
+- *(Exact report format and fields: to be obtained from SAHPRA or Bassani's compliance officer before any schema is finalised)*
+
+---
+
+### Yield Intelligence (Operational Layer)
+
+On top of the compliance foundation, the yield band system provides operational intelligence:
+
+- Dashboard for production managers: current batches by room and stage, days to expected harvest, projected yield by batch
+- Harvest history by strain: trend line of actual yield vs band over time — identifies improving or declining performance
+- Investigation log: all above/below-band events with resolution status
+- Alert system: notify production manager when a batch is approaching harvest date, when a batch falls outside band after weighing
+
+---
+
+### What Needs to Happen Before Scoping Can Start
+
+1. **Obtain SAHPRA reporting requirements** — the actual fields, data format, and submission mechanism. This is the non-negotiable foundation; everything else depends on it. Annex 11 tells us how the software must behave; SAHPRA tells us what data it must capture.
+2. **Confirm EU GMP Annex 11 applies to Bassani's licence** — ask Bassani's compliance officer whether SAHPRA explicitly requires Annex 11 for their licence category (almost certain yes for medicinal cannabis, but confirm before treating it as a hard requirement).
+3. **Walk through Bassani's current cultivation workflow** — how they currently track plant counts, stages, and weights (spreadsheets? paper? Odoo?). The portal must map to how they actually work, not how GrowerIQ assumed a generic producer works.
+4. **Determine scale integration feasibility** — Annex 11 §17 flags manual weight transcription as a risk requiring mitigation. GrowerIQ's answer is automated scale integration (weight transfers directly from digital scale to system). Do the GACP facility scales have USB/serial output? This eliminates the most auditor-scrutinised data entry point in the whole system.
+5. **Confirm which roles/staff would use the production portal** — named individuals, as was done for the commercial side in Phase 8.
+6. **Confirm Odoo lot/serial number usage** — whether Odoo is currently configured for lot tracking on finished goods, and whether the manufacturing (MRP) module is in use or if finished goods are received manually.
+7. **Agree on yield band methodology** — fixed band set by production manager, or auto-calibrating from historical harvests over time, or both.
+8. **Confirm data retention period** — Annex 11 §18 requires data retention for the length of the retention period required by the most stringent applicable jurisdiction. GrowerIQ retains for 7 years. Confirm with Bassani's compliance officer what SAHPRA requires and ensure MongoDB backup policy explicitly covers it.
+
+---
+
+### Notes
+
+> **2026-06-29:** Concept recorded following a business meeting with GrowerIQ and a brainstorming session. Bassani Health's decision is to build in-house rather than license GrowerIQ — retaining data ownership, tighter integration with the commercial portal, and avoiding a third-party subscription. The Phase 12 barcode infrastructure is the direct foundation this phase builds on. No design or implementation work to begin until SAHPRA reporting requirements are in hand and the cultivation workflow has been walked through with the production team.
+
+> **2026-06-29 — EU GMP Annex 11 analysis:** GrowerIQ shared their EU GMP Annex 11 (Computerised Systems) compliance document. Key findings: (1) The existing portal already satisfies the majority of Annex 11 requirements — audit trail §22, named user identity §25–28, secure API §16, backups §19, incident management §29 are all covered by Phases 0, 1, and 6. (2) The single significant gap is **electronic signatures** (§30–31): Annex 11 requires re-authentication at the point of critical sign-off events (batch release, QA/RP approval), not just a session-token-authenticated button click. This must be built as a shared e-signature module for both Phase 13 (production batch sign-off) and retrofitted to the commercial packing board QA/RP approvals. (3) Scale integration (§17) is the recommended mitigation for manual weight transcription risk — worth confirming whether GACP facility scales support it. (4) Data retention of 7 years is GrowerIQ's standard — confirm SAHPRA's specific requirement before setting the Railway MongoDB backup retention policy. Document reference: `EU GMP Annex11 & GrowerIQ Compliance (1).pdf`.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** June 2026
+**Last Updated:** 29 June 2026
 
 ---
 
@@ -34,13 +34,20 @@ Before the first user logs in, the following must be set in Railway's environmen
 |---|---|---|
 | `SUPER_ADMIN_USERNAME` | Your super admin login username | Choose a secure username (e.g. `bassani.superadmin`) |
 | `SUPER_ADMIN_PASSWORD` | Your super admin login password | Use a strong password — at least 16 characters |
+| `SUPER_ADMIN_EMAIL` | Email address of the super admin account | Used to deliver 2FA OTP codes to the super admin |
 | `JWT_SECRET` | Signs all login tokens — must be secret | Run `openssl rand -base64 48` in any terminal |
 | `ODOO_URL` | URL of your Odoo instance | e.g. `https://bassanihealth.odoo.com` |
 | `ODOO_DB` | Your Odoo database name | Found in Odoo's Settings → Database |
 | `ODOO_USERNAME` | Odoo API user email | A dedicated Odoo API user — not your personal login |
 | `ODOO_PASSWORD` | Odoo API user password | Set in Odoo → Settings → Users |
 | `MONGODB_URL` | Your Railway MongoDB connection string | Provided automatically by Railway MongoDB plugin |
-| `RESEND_API_KEY` | Sends all system emails | From your Resend.com account dashboard |
+| `RESEND_API_KEY` | Sends all system emails (notifications, OTP codes) | From your Resend.com account dashboard — must match the account where `bassanihealth.com` is verified |
+| `REQUIRE_2FA_ADMIN` | Enables email OTP two-factor authentication for all accounts | Set to `true` to enforce 2FA for every user with an email address |
+| `CORS_ORIGINS` | Which browser origins can call the API | Set to your portal URL e.g. `https://portal.bassanihealth.com` |
+| `MS_TENANT_ID` | Azure Active Directory Tenant ID for M365 mailbox integration | From Azure Portal → App registrations → your app |
+| `MS_CLIENT_ID` | Azure app client ID for M365 mailbox integration | From Azure Portal → App registrations → your app |
+| `MS_CLIENT_SECRET` | Azure app secret for M365 mailbox integration | Generated in Azure Portal → Certificates & secrets |
+| `MS_SHARED_MAILBOX` | The shared mailbox to monitor for inbound sales emails | e.g. `orders@bassanihealth.com` |
 | `SENTRY_DSN` | Error monitoring | From your Sentry.io project settings (optional but recommended) |
 
 > **Security note:** The system will refuse to start if `JWT_SECRET` is still set to its default placeholder. This is intentional — a weak JWT secret is a serious security risk.
@@ -51,11 +58,16 @@ Before the first user logs in, the following must be set in Railway's environmen
 
 ## Step 2 — Log In as Super Admin and Change Your Password
 
-1. Navigate to your portal URL (e.g. `https://yourportal.railway.app`)
-2. Log in with the username and password you set in Step 1
-3. If this is a first-time login with a temporary password, the system will immediately redirect you to a password change screen — this is mandatory before you can access anything
+1. Navigate to the portal at `https://portal.bassanihealth.com`
+2. Enter the username and password you set in Step 1
+3. If `REQUIRE_2FA_ADMIN` is enabled and your account has an email address, the system will not issue a session yet — instead it sends a 6-digit code to your email and displays a verification screen
+4. Enter the code from the email. The code expires in 10 minutes and allows 3 attempts before the session is invalidated (you must sign in again)
+5. Once verified, you are logged in
+6. If this is a first-time login with a temporary password, the system will immediately redirect you to a mandatory password change screen before you can access anything
 
 > **The super admin account cannot be deactivated or edited by anyone else.** Only you can change its password. Keep these credentials in a secure password manager.
+
+> **Accounts without an email address are not subject to 2FA** — this applies to warehouse floor accounts (packers, supervisors) where email delivery is impractical. Any account with an email address will require 2FA when the flag is enabled.
 
 ---
 
@@ -207,15 +219,20 @@ MongoDB is your portal's primary database — it stores reseller profiles, commi
 
 - [ ] All environment variables set in Railway
 - [ ] Super admin password changed from temporary
+- [ ] `REQUIRE_2FA_ADMIN=true` set in Railway and OTP email delivery confirmed working
+- [ ] `SUPER_ADMIN_EMAIL` set so super admin receives OTP codes
+- [ ] `CORS_ORIGINS` set to `https://portal.bassanihealth.com`
 - [ ] Warehouses configured and display tokens generated
 - [ ] Packing board screens connected and tested
-- [ ] All 6 named staff accounts created (Merveille, Tshidi, Kashi, Ragini, Cullen Grant, Rookshanna)
+- [ ] All 6 named staff accounts created (Merveille, Tshidi, Kashi, Ragini, Cullen Grant, Rookshanna) with correct email addresses for 2FA delivery
 - [ ] Commission tiers configured to match reseller agreements
 - [ ] All reseller accounts created with correct Odoo partner IDs and assigned warehouses
-- [ ] Resend domain verified and test email received
+- [ ] Resend domain (`bassanihealth.com`) verified in the same Resend account as the API key in Railway
+- [ ] Test OTP sign-in flow for each staff account
 - [ ] Sentry DSN added to Railway
 - [ ] MongoDB daily backups enabled
 - [ ] At least one full order flow tested from quote to completion
+- [ ] Sales Inbox connected (Azure credentials set, shared mailbox emails appearing in Inbox view)
 
 ---
 
@@ -328,6 +345,111 @@ If the customer is not interested:
 ### What Happens After Confirmation
 
 Once an order is confirmed, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
+
+---
+
+## Sales Inbox
+
+**Access:** Sales role (`inbox.view` permission), Admins with `inbox.view`, Super Admin
+
+The Sales Inbox connects the `orders@bassanihealth.com` shared Microsoft 365 mailbox directly into the portal. Every email that arrives in that mailbox appears in the Inbox — no need to open Outlook. You can read, reply, create tickets, and archive without leaving the portal.
+
+> **This requires Azure app credentials** (`MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`) set in Railway. Without them, the Inbox menu item will still appear but will show a "not configured" message. Contact your M365 admin (Tristan) to obtain these values.
+
+### The Inbox List
+
+Go to **Inbox** in the left sidebar to open the inbox view. You will see a list of email threads sorted by most recent first.
+
+Each thread shows:
+- The sender name and email address
+- The subject line
+- A preview of the latest message
+- When it was received
+- Its status: **Unread**, **Read**, or **Archived**
+- Whether it is already linked to a Sales Ticket (shows a ticket reference if so)
+- Whether the sender has been matched to a known Odoo customer (shows the customer name if matched)
+
+**Filter chips** at the top let you narrow down:
+- **All** — everything not archived
+- **Unread** — emails that haven't been opened yet
+- **Linked** — threads that already have a Sales Ticket created from them
+- **Unlinked** — threads with no ticket yet (your to-do pile)
+- **Archived** — dismissed/dealt-with emails
+
+### Reading an Email Thread
+
+Click any thread to open the full conversation view. You will see:
+- All messages in the thread in chronological order (oldest at top, newest at bottom)
+- The full sender details and reply-to address
+- Any attachments (shown as download links)
+
+The thread is automatically marked as **Read** when you open it.
+
+### Customer Matching
+
+When an email arrives, the system tries to match the sender's email address to an Odoo customer automatically. If it finds a match, the customer's name appears on the thread in both the inbox list and the thread view.
+
+**If the sender is not automatically matched:**
+1. Open the thread
+2. Click **Link Customer** in the right panel
+3. Search for the customer by name or email
+4. Select the correct customer from the results
+5. Click **Link**
+
+The sender's email address is now remembered — future emails from the same address will auto-match to this customer.
+
+### Creating a Sales Ticket from an Email
+
+When an email represents a new sales inquiry:
+
+1. Open the thread
+2. Click **Create Sales Ticket** in the right panel
+3. If a customer is already matched, the ticket is pre-populated with their details
+4. If no customer is matched yet, you will be prompted to link a customer or create a ticket as an unmatched inquiry
+5. Confirm — the ticket is created at `Open` stage, linked to this email thread
+
+Once a ticket is created:
+- The thread shows the ticket reference
+- The ticket's timeline shows it was created from this email thread
+- Opening the ticket later shows a link back to the inbox thread
+- From the ticket, you can use **Build Quote**, **Send Quote**, and all other normal Sales Ticket actions
+
+> You can only create one Sales Ticket per email thread. If the thread already has a linked ticket, the button changes to **View Ticket**.
+
+### Replying to an Email
+
+You can reply to any email thread directly from the portal — no need to open Outlook:
+
+1. Open the thread
+2. Type your reply in the text box at the bottom of the thread view
+3. Click **Send Reply**
+
+The reply is sent from `orders@bassanihealth.com` via Microsoft 365 and appears as a new message in the thread. The sender receives it in their inbox as a normal email reply.
+
+> Replies are sent via the Microsoft Graph API using the shared mailbox credentials. If the Azure credentials are not configured, the reply box will not appear.
+
+### Archiving a Thread
+
+When you have dealt with an email and do not want it cluttering the active inbox:
+
+1. Open the thread (or hover over it in the list)
+2. Click **Archive**
+
+Archived threads move to the **Archived** filter view. They are not deleted — you can search for or access them at any time. Archiving is reversible: open an archived thread and click **Unarchive** to move it back to the active inbox.
+
+### Inbox and Sales Tickets Working Together
+
+The inbox and tickets are designed to work hand-in-hand:
+
+- An email arrives in `orders@bassanihealth.com`
+- It appears in the Inbox
+- Merveille reads it, links it to the customer, and creates a Sales Ticket
+- She builds the quote in the ticket and sends it via the ticket's **Send Quote** action
+- The customer replies — their reply appears in the same inbox thread
+- Merveille can reply from the portal or advance the ticket as needed
+- When the order is complete, she archives the thread
+
+The inbox does not replace the ticket — it is the entry point. All order lifecycle actions (confirming, deposits, packing) happen in the ticket as normal.
 
 ---
 
@@ -739,9 +861,13 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 - **Never share your login credentials.** Every person has their own account so the audit trail can identify exactly who did what.
 - **Change your password on first login.** The system enforces this — you cannot proceed until it is done.
+- **Two-factor authentication (2FA)** is required for every account with an email address. After entering your password, a 6-digit code is emailed to you. Enter it to complete sign-in. Codes expire in 10 minutes and allow 3 attempts — if all attempts are used, you must start the sign-in process again.
+- **Do not share your OTP code** with anyone, including colleagues. Each code is single-use and specific to your sign-in session.
+- **If you receive an OTP email you did not request**, your password may be compromised. Contact the super admin immediately.
 - **If you think someone else knows your password**, contact the super admin immediately to have it reset.
+- **Your session lasts 8 hours** from the point of successful 2FA verification. After 8 hours your session expires and you will be asked to sign in (and verify via OTP) again.
 - **Logging out** clears your session. Always log out when stepping away from a shared computer.
-- **Login is rate-limited**: after 5 failed attempts within 15 minutes, your IP is temporarily blocked. If you are legitimately locked out, wait 15 minutes or contact the super admin.
+- **Login is rate-limited**: after 5 failed password attempts within 15 minutes, your IP is temporarily blocked. OTP verification is rate-limited to 10 attempts per 15 minutes. If you are legitimately locked out, wait 15 minutes or contact the super admin.
 
 ---
 
@@ -749,6 +875,10 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 | Task | Who |
 |---|---|
+| Read inbound sales emails | Merveille (sales) or admin with `inbox.view` |
+| Reply to an email from the portal | Merveille (sales) or admin with `inbox.view` |
+| Create a ticket from an email thread | Merveille (sales) or admin with `inbox.view` |
+| Archive an email thread | Merveille (sales) or admin with `inbox.view` |
 | Create a direct inquiry ticket | Merveille (sales) |
 | Build or edit a quote | Merveille (sales) |
 | Send quote to customer | Merveille (sales) |
@@ -774,4 +904,4 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-*This manual covers the system as built through Phase 8. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+*This manual covers the system as built through Phase 11 (Sales Inbox / Microsoft 365 integration and email OTP two-factor authentication). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
