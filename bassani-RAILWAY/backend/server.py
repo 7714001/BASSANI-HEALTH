@@ -211,6 +211,64 @@ async def initialise_users():
         )
         logger.info("startup_deactivated_legacy_admin")
 
+    # Phase 11 — backfill inbox permission for all users that predate it.
+    # Admins/super_admins get view:True (they had full access before).
+    # Sales role gets view:True (they are the primary inbox users).
+    # All other roles get view:False by default (super_admin can grant explicitly).
+    r = await col("users").update_many(
+        {"role": {"$in": ["super_admin", "admin"]}, "permissions.inbox": {"$exists": False}},
+        {"$set": {"permissions.inbox": {"view": True}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_inbox_admin", extra={"count": r.modified_count})
+
+    r = await col("users").update_many(
+        {"role": "sales", "permissions.inbox": {"$exists": False}},
+        {"$set": {"permissions.inbox": {"view": True}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_inbox_sales", extra={"count": r.modified_count})
+
+    r = await col("users").update_many(
+        {"permissions.inbox": {"$exists": False}},
+        {"$set": {"permissions.inbox": {"view": False}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_inbox_other", extra={"count": r.modified_count})
+
+
+@app.on_event("startup")
+async def initialise_inbox():
+    """Phase 11 — sales_inbox indexes and Graph subscription."""
+    import asyncio
+    from database import col
+    from services.graph_client import graph_configured
+    from services.graph_subscription import ensure_subscription
+
+    await col("sales_inbox").create_index([("received_at", -1)])
+    await col("sales_inbox").create_index([("status", 1)])
+    await col("sales_inbox").create_index(
+        [("graph_message_id", 1)], unique=True, sparse=True
+    )
+    await col("sales_inbox").create_index([("graph_conversation_id", 1)])
+    await col("sales_inbox").create_index([("from_email", 1)])
+    await col("sales_inbox").create_index([("ticket_id", 1)])
+
+    # Create or renew the Graph push-notification subscription.
+    # Skipped silently when MS credentials are not configured.
+    await ensure_subscription()
+
+    if graph_configured():
+        async def _renewal_loop():
+            while True:
+                await asyncio.sleep(12 * 3600)  # every 12 h — renewal threshold is 47 h
+                try:
+                    await ensure_subscription()
+                except Exception as exc:
+                    logger.error("graph_renewal_loop_error error=%s", exc)
+
+        asyncio.create_task(_renewal_loop())
+
 
 @app.get("/health")
 async def health():
@@ -271,6 +329,7 @@ from routes.target_routes        import router as target_router
 from routes.packing_board_routes import router as packing_board_router
 from routes.warehouse_routes      import router as warehouse_router
 from routes.ticket_routes         import router as ticket_router
+from routes.inbox_routes          import router as inbox_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -279,7 +338,7 @@ for router in [
     aged_debtors_router, payment_router, audit_router, batch_router,
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
-    warehouse_router, ticket_router,
+    warehouse_router, ticket_router, inbox_router,
 ]:
     app.include_router(router)
 

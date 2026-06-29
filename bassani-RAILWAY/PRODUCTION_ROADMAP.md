@@ -22,6 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–9 (8.1–8.11 code complete) — 2026-06-23 |
 | 9 | Go-Live Infrastructure | 🔴 Not Started | — |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 |
+| 11 | Microsoft 365 Mailbox Integration | 🔴 Not Started | Blocked on: Azure app registration credentials from M365 admin |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred
 
@@ -1190,6 +1191,232 @@ The portal was built primarily for desktop/laptop use. Responsive Tailwind class
 > **10.0 (2026-06-26):** Login left panel hidden on mobile with `hidden md:flex`. Main app sidebar was already fully responsive from prior work — `fixed -translate-x-full` on mobile, `lg:static lg:translate-x-0` on desktop, hamburger in `TopBar` already in place. No changes to the sidebar or AppLayout were necessary.
 
 > **10.1–10.4 (2026-06-26):** Comprehensive responsive pass across 9 files. `DataTable` and `Modal` in `UI.js` were already mobile-safe — confirmed and left unchanged. `DataTable` extended with `meta.className` support (applied to both `<th>` and `<td>`) enabling declarative column hiding from each view's column definition. Inline tables in `CustomerProfile.js` (addresses, recent orders, outstanding invoices, account statement) wrapped in `overflow-x-auto`. `SalesTickets.js` and `OrdersTickets.js` fixed two fixed-column grids in detail views and wrapped line-item tables. Quote builder (SalesTickets) collapsed 3-col header to responsive, made Notes/Totals stack on mobile, added overflow-x on the line items card. `CustomerOnboarding.js` all 5 form grids made responsive. `Users.js`, `AuditTrail.js`, and `CustomerProfile.js` modal grids all stacked to single-column below `sm:`. Column hiding applied to Customers, Orders, Products, Invoices, Resellers, Users list views — each hides secondary columns at `sm`/`md`/`lg` breakpoints so the most critical info always stays visible without horizontal scrolling. **Only 10.5 (max-width caps for 2560px+ displays) remains.**
+
+---
+
+---
+
+## Phase 11 — Microsoft 365 Mailbox Integration
+
+**Goal:** Surface the `orders@bassanihealth.com` shared mailbox inside the portal. Staff see incoming POs and RFQs in a Sales Inbox view, identify the customer, and convert emails directly into Sales Tickets — without leaving the portal or switching to Outlook. Replies from the portal go out as real emails from the shared mailbox, keeping the thread intact in the customer's inbox.
+
+**Estimate:** 2–3 weeks  
+**Status:** 🔴 Not Started  
+**Blocked on:** Azure AD app registration — need Tenant ID, Client ID, and Client Secret from the M365 admin before any backend work can begin. No code changes possible until credentials are in Railway env vars.
+
+### Context
+
+Bassani Health's email is confirmed on Microsoft 365 (MX: `bassanihealth-com.mail.protection.outlook.com`). The `orders@bassanihealth.com` shared mailbox already exists and is in active use. Microsoft Graph API gives programmatic access to that mailbox — reading messages, downloading attachments, sending replies, and subscribing to real-time push notifications when new mail arrives.
+
+This integrates with the existing Sales Ticket system (Phase 8). The inbox is not a replacement for tickets — it is the **top of the funnel** that feeds the ticket pipeline. Every PO or RFQ that arrives by email becomes a ticket within seconds of landing, without staff having to manually copy details across from Outlook.
+
+---
+
+### 11.0 — Azure App Registration (Client dependency)
+
+The M365 admin must complete this once. No code required.
+
+- [ ] In Azure Portal → Azure Active Directory → App registrations → **New registration**
+  - Name: `Bassani Health Portal`
+  - Account type: `Accounts in this organizational directory only`
+- [ ] Add API permissions (Application permissions, not Delegated):
+  - `Mail.Read` — read messages in the shared mailbox
+  - `Mail.Send` — send replies from the shared mailbox
+  - `Mail.ReadWrite` — mark messages as read, move to folders
+- [ ] Admin grants consent for the organisation on those permissions
+- [ ] Generate a **Client Secret** (set expiry to 24 months)
+- [ ] Note down three values and provide to Nick: **Tenant ID**, **Client ID**, **Client Secret**
+- [ ] Add to Railway environment variables: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_SHARED_MAILBOX` (e.g. `orders@bassanihealth.com`)
+
+> **Security note:** The app registration is scoped to the shared mailbox only, not all staff mailboxes. Personal email is not accessible.
+
+---
+
+### 11.1 — Graph API Client & Subscription Management
+
+- [ ] Add `httpx` (already available) or `msal` to `requirements.txt` for token acquisition
+- [ ] New `backend/services/graph_client.py` — thin wrapper around Microsoft Graph:
+  - `get_access_token()` — OAuth2 client-credentials flow using the three env vars; cache token, auto-refresh before expiry
+  - `list_messages(mailbox, folder="inbox", filter=None)` — fetch messages with standard fields
+  - `get_message(mailbox, message_id)` — fetch full message including body and attachments
+  - `get_attachment(mailbox, message_id, attachment_id)` — download attachment bytes
+  - `send_reply(mailbox, message_id, body_html)` — reply in-thread from the shared mailbox
+  - `mark_read(mailbox, message_id)` — mark message as read in Outlook
+- [ ] New `backend/services/graph_subscription.py` — manages the Graph change notification subscription:
+  - `create_subscription(mailbox)` — POST to Graph to subscribe to new messages in the inbox; returns subscription ID and expiry
+  - `renew_subscription(subscription_id)` — PATCH to extend; Graph subscriptions expire every 3 days (max)
+  - `delete_subscription(subscription_id)` — cleanup
+  - Subscription ID and expiry stored in MongoDB `settings` collection
+- [ ] Add startup event in `server.py`: check if subscription exists and is not expired; create or renew as needed
+- [ ] Add a background renewal task (runs every 47 hours) to renew before the 72-hour expiry — prevents a lapse that would cause missed messages
+- [ ] **Fallback:** if subscription lapses (server restart, renewal failure), fall back to polling `GET /users/{mailbox}/mailFolders/inbox/messages?$filter=isRead eq false` on a 60-second interval until subscription is re-established
+
+---
+
+### 11.2 — Inbound Message Processing
+
+- [ ] New `POST /api/inbox/graph-webhook` endpoint — Graph calls this when a new message arrives:
+  - Validate the Graph notification signature (prevent spoofing)
+  - Handle the initial `validationToken` handshake (Graph sends this once to verify the endpoint)
+  - Fetch the full message from Graph using the `messageId` in the notification
+  - Deduplicate (Graph may send duplicate notifications) — check `graph_message_id` in MongoDB before inserting
+  - Process and store as a `sales_inbox` document (see schema below)
+  - Return `202 Accepted` immediately — processing is async via `BackgroundTasks`
+- [ ] New MongoDB collection: `sales_inbox`
+
+```
+{
+  graph_message_id: str,         // Graph message ID — dedup key
+  graph_conversation_id: str,    // Thread grouping key
+  from_email: str,               // sender email address
+  from_name: str,                // sender display name
+  subject: str,
+  body_preview: str,             // first 255 chars, plain text
+  body_html: str,                // full rendered body
+  received_at: datetime,
+  has_attachments: bool,
+  attachments: [                 // metadata only; content fetched on demand
+    { id, name, content_type, size_bytes }
+  ],
+  customer_id: int | null,       // Odoo res.partner id — null if unknown sender
+  customer_name: str | null,
+  is_unknown_sender: bool,
+  ticket_id: str | null,         // Sales ticket ID if converted
+  status: str,                   // unhandled | ticket_created | pending_onboarding | archived
+  is_reply: bool,                // true if this is a reply to an existing thread
+  linked_ticket_id: str | null,  // populated when reply matched to existing ticket
+  created_at: datetime,
+  handled_by: str | null,        // username of staff member who acted on it
+  handled_at: datetime | null
+}
+```
+
+- [ ] **Customer matching logic** (runs on every inbound message):
+  1. Look up `from_email` in Odoo `res.partner` (email field) — exact match
+  2. If no match, check MongoDB customer records for the email
+  3. If still no match → `is_unknown_sender: true`, `customer_id: null`
+- [ ] **Thread matching logic** (runs on every inbound message):
+  1. Check `graph_conversation_id` against existing `sales_inbox` documents and `ticket` records
+  2. If match found and ticket exists → this is a reply → set `is_reply: true`, `linked_ticket_id` → append to ticket's email thread timeline; do not surface as a new unhandled item
+  3. If match found but no ticket yet → group with existing inbox item (same conversation)
+  4. If no match → new conversation → standalone inbox item
+
+---
+
+### 11.3 — Sales Inbox API Routes
+
+- [ ] `GET /api/inbox` — list inbox items, paginated, filterable:
+  - `?status=unhandled|all|pending_onboarding|archived`
+  - `?unknown_only=true`
+  - Returns: id, from, subject, preview, received_at, customer name, status, has_attachments, ticket_id
+- [ ] `GET /api/inbox/{id}` — full inbox item including body_html and attachment list
+- [ ] `GET /api/inbox/{id}/attachment/{attachment_id}` — stream attachment bytes from Graph on demand; no storage needed
+- [ ] `POST /api/inbox/{id}/create-ticket` — convert to sales ticket:
+  - Requires `customer_id` to be resolved (cannot create ticket for unknown sender)
+  - Creates a sales ticket record (same MongoDB document as Phase 8 creates)
+  - Updates inbox item: `status: ticket_created`, `ticket_id`, `handled_by`, `handled_at`
+  - Returns the new ticket ID → frontend navigates to quote builder
+- [ ] `POST /api/inbox/{id}/link-customer` — assign a customer to an unknown sender:
+  - Body: `{ customer_id: int }`
+  - Updates `customer_id`, `customer_name`, `is_unknown_sender: false` on the inbox item
+  - Does not create a ticket — staff still needs to explicitly do that
+- [ ] `POST /api/inbox/{id}/start-onboarding` — flag for new customer onboarding:
+  - Sets `status: pending_onboarding`
+  - Optionally pre-fills and sends the onboarding form link to `from_email`
+  - Inbox item stays visible until onboarding completes and customer is linked
+- [ ] `POST /api/inbox/{id}/reply` — send a reply from the shared mailbox:
+  - Body: `{ body_html: str }`
+  - Calls `graph_client.send_reply()` — goes out as a genuine in-thread reply from `orders@bassanihealth.com`
+  - Audit-logged as `inbox.reply`
+- [ ] `POST /api/inbox/{id}/archive` — mark as not relevant:
+  - Sets `status: archived`; soft delete only
+  - Optionally marks as read in Outlook via Graph
+- [ ] `GET /api/inbox/unhandled-count` — returns `{ count: int }` — used for the sidebar badge
+
+All routes require `require_permission("inbox.view")` or `require_permission("tickets.sales")`.
+
+---
+
+### 11.4 — Sales Inbox UI (`SalesInbox.js`)
+
+New view at `/inbox`, added to sidebar nav between Dashboard and Sales Tickets.
+
+**Sidebar nav item:**
+- Label: "Sales Inbox"
+- Icon: `Mail` (lucide)
+- Unhandled count badge (red dot with number) — live-polled every 60 seconds via `GET /api/inbox/unhandled-count`
+- Gated by `tickets.sales` or new `inbox.view` permission
+
+**Inbox list view:**
+
+Filter chips: `Unhandled` (default) · `All` · `Unknown Senders` · `Pending Onboarding` · `Archived`
+
+Each row shows:
+- Sender name + email
+- Subject line
+- Body preview (truncated)
+- Received timestamp (relative: "2 hours ago")
+- 📎 attachment indicator if present
+- Customer chip: green "City Clinic" if matched, amber "Unknown Sender" if not
+- Status badge: `Unhandled` · `Ticket Created — ST-043` · `Pending Onboarding` · `Archived`
+
+Row click → opens the detail panel (slide-in right panel, same pattern as SalesTickets detail).
+
+**Inbox detail panel:**
+
+- Full rendered email body (sandboxed iframe or sanitised HTML)
+- Attachment list: filename, size, Download button (fetches from `/attachment/{id}` on demand)
+- **Customer section:**
+  - Known customer → name card with "View Profile" link
+  - Unknown sender → search-and-link dropdown ("Assign to existing customer") + "Start Onboarding" button
+- **Email thread history** — prior messages in the same `graph_conversation_id`, collapsed, expandable
+- **Reply composer** — textarea + "Send Reply" button; reply goes from `orders@bassanihealth.com` in-thread
+- **Action bar:**
+  - `Create Sales Ticket` (primary, disabled until customer is resolved)
+  - `Archive` (secondary)
+- If ticket already created → shows "View Ticket ST-043" link instead of create button
+
+---
+
+### 11.5 — Sales Ticket Integration
+
+Changes to the existing Sales Ticket system (Phase 8):
+
+- [ ] Add optional `inbox_item_id` field to the ticket MongoDB document — set when ticket is created from an inbox item
+- [ ] Ticket detail view in `SalesTickets.js`: add **Email Thread** section at the bottom when `inbox_item_id` is set:
+  - Shows the original email (subject, sender, body preview, attachments)
+  - Shows any subsequent replies received (`is_reply: true` items sharing the same `graph_conversation_id`)
+  - "Reply" button opens composer inline → sends via Graph
+- [ ] When a reply arrives that matches an existing ticket's conversation ID, it auto-appends to the ticket's thread and triggers a visual notification (toast: "New reply on ST-043 from City Clinic")
+- [ ] Ticket list view: add optional "Source" column — `📧 Email` badge vs `Portal` or `Direct` for tickets not created from inbox
+
+---
+
+### 11.6 — Permissions & Audit
+
+- [ ] Add `inbox: { view: false }` to `DEFAULT_ADMIN_PERMISSIONS` and `FULL_PERMISSIONS`
+- [ ] Gate all inbox routes with `require_permission("inbox.view")`; creating tickets still requires `tickets.sales`
+- [ ] Add `inbox.view` toggle to the permissions editor in `Users.js`
+- [ ] Audit log entries: `inbox.ticket_created`, `inbox.customer_linked`, `inbox.onboarding_started`, `inbox.reply`, `inbox.archived` — each captures the staff actor and the inbox item / customer involved
+
+---
+
+### Definition of Done
+
+- [ ] New email sent to `orders@bassanihealth.com` appears in the Sales Inbox within 30 seconds (Graph push notification)
+- [ ] Email from a known customer shows their name and "Create Sales Ticket" is immediately available
+- [ ] Email from an unknown sender shows "Unknown Sender" and requires customer resolution before a ticket can be created
+- [ ] Creating a ticket from an inbox item opens the quote builder with the customer pre-selected and the inbox item linked
+- [ ] A customer reply to an existing ticket's thread appears in the ticket detail view, not as a new unhandled inbox item
+- [ ] Replying from the portal sends a real in-thread email from `orders@bassanihealth.com` visible in the customer's Outlook thread
+- [ ] Attachments (PDF POs) are downloadable from within the portal without storage infrastructure — fetched from Graph on demand
+- [ ] Graph subscription auto-renews before the 72-hour expiry; if it lapses, polling fallback kicks in
+- [ ] Unhandled inbox count badge on sidebar nav stays accurate
+- [ ] All inbox actions (create ticket, reply, archive, link customer) are audit-logged with actor identity
+
+### Notes
+
+> **2026-06-27:** Microsoft 365 confirmed via MX record lookup (`bassanihealth-com.mail.protection.outlook.com`). Shared mailbox `orders@bassanihealth.com` confirmed in active use. Microsoft Graph API (Option 2) selected over Resend Inbound — no DNS changes needed, reply-in-thread capability, attachment streaming, real-time push notifications. **Blocked on:** M365 admin completing Azure app registration (11.0) and providing Tenant ID, Client ID, Client Secret. No backend work can start until credentials are in Railway env vars.
 
 ---
 

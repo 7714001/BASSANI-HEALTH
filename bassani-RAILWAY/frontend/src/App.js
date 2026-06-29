@@ -27,6 +27,7 @@ import CustomerApplications  from "./views/CustomerApplications";
 import ResellerProfile       from "./views/ResellerProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
+import SalesInbox            from "./views/SalesInbox";
 import ProductCategories     from "./views/ProductCategories";
 import ProductUOM            from "./views/ProductUOM";
 import ChangePassword        from "./views/ChangePassword";
@@ -188,6 +189,9 @@ export default function App() {
         } />
         <Route path="/warehouses" element={
           <ProtectedRoute adminOnly><AppLayout><Warehouses /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/inbox" element={
+          <ProtectedRoute><AppLayout><SalesInbox /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/sales" element={
           <ProtectedRoute><AppLayout><SalesTickets /></AppLayout></ProtectedRoute>

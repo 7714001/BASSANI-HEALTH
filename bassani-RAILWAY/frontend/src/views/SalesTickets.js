@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, X, Send, ChevronDown,
+  Mail, Paperclip, ExternalLink, ChevronUp,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -356,6 +357,8 @@ export default function SalesTickets() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailOrder, setDetailOrder]   = useState(null);
   const [detailOrderLoading, setDetailOrderLoading] = useState(false);
+  const [inboxItem, setInboxItem]       = useState(null);
+  const [showInboxPanel, setShowInboxPanel] = useState(true);
   const [deliveries,        setDeliveries       ] = useState([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
@@ -367,6 +370,8 @@ export default function SalesTickets() {
   const openDetail = async (t) => {
     setDetail(null);
     setDetailOrder(null);
+    setInboxItem(null);
+    setShowInboxPanel(true);
     setDetailLoading(true);
     setView("detail");
     try {
@@ -384,6 +389,11 @@ export default function SalesTickets() {
           setDetailOrder(or.data);
         } catch { /* non-fatal — show fallback */ }
         finally { setDetailOrderLoading(false); }
+      }
+      if (ticket.inbox_item_id) {
+        api.get(`/api/inbox/${ticket.inbox_item_id}`)
+          .then(ir => setInboxItem(ir.data))
+          .catch(() => {});
       }
     } catch {
       toast.error("Failed to load ticket");
@@ -1129,6 +1139,58 @@ export default function SalesTickets() {
                       )}
                     </div>
                   </div>
+
+                  {/* Source email (Phase 11 — only shown when ticket was created from inbox) */}
+                  {inboxItem && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-bassani-100 overflow-hidden">
+                      <button
+                        onClick={() => setShowInboxPanel(v => !v)}
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                          <Mail size={12} className="text-bassani-500" />
+                          Source Email
+                        </span>
+                        {showInboxPanel
+                          ? <ChevronUp size={12} className="text-gray-400" />
+                          : <ChevronDown size={12} className="text-gray-400" />
+                        }
+                      </button>
+                      {showInboxPanel && (
+                        <div className="px-4 pb-4 border-t border-gray-50 space-y-2">
+                          <div className="pt-2 space-y-1">
+                            <p className="text-xs font-medium text-gray-800 truncate">{inboxItem.subject}</p>
+                            <p className="text-[11px] text-gray-500">{inboxItem.from_name} &lt;{inboxItem.from_email}&gt;</p>
+                            <p className="text-[11px] text-gray-400">{fmtDate(inboxItem.received_at)}</p>
+                          </div>
+                          <p className="text-xs text-gray-600 line-clamp-4 leading-relaxed">{inboxItem.body_preview}</p>
+                          {inboxItem.attachments && inboxItem.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {inboxItem.attachments.map(att => (
+                                <a
+                                  key={att.id}
+                                  href={`/api/inbox/${inboxItem.id}/attachment/${att.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-gray-50 border border-gray-200 rounded text-[10px] text-gray-600 hover:bg-gray-100 transition-colors"
+                                >
+                                  <Paperclip size={9} className="text-gray-400" />
+                                  {att.name}
+                                  <ExternalLink size={8} className="text-gray-400" />
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                          <a
+                            href="/inbox"
+                            className="inline-flex items-center gap-1 text-[11px] text-bassani-600 hover:text-bassani-700 font-medium transition-colors"
+                          >
+                            <Mail size={10} /> View in Sales Inbox
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                 </div>
               </div>

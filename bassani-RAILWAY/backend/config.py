@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     super_admin_username: str = ""
     super_admin_password: str = ""
+    ms_tenant_id:      str = ""
+    ms_client_id:      str = ""
+    ms_client_secret:  str = ""
+    ms_shared_mailbox: str = "orders@bassanihealth.com"
 
     class Config:
         env_file = ".env"

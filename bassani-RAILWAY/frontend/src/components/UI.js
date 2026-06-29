@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket, Tag, Ruler,
+  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket, Tag, Ruler, Mail,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -39,6 +39,7 @@ const NAV = [
   { label: "Reports",      path: "/reports",     icon: BarChart3,       section: "Insights", permission: "reports.view"        },
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
+  { label: "Sales Inbox",    path: "/inbox",           icon: Mail,   section: "Tickets", permission: "inbox.view", showInboxBadge: true },
   { label: "Sales Tickets", path: "/tickets/sales",  icon: Ticket, section: "Tickets", permissions: ["tickets.sales", "tickets.finance_confirm"] },
   { label: "Orders Tickets",path: "/tickets/orders", icon: Ticket, section: "Tickets", permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Users",        path: "/users",       icon: UserCog,         section: "Admin",    permission: "users.manage"        },
@@ -59,6 +60,18 @@ export function Sidebar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { open, close } = useContext(SidebarContext);
+  const [inboxCount, setInboxCount] = useState(0);
+
+  useEffect(() => {
+    if (!can("inbox.view")) return;
+    const fetchCount = () =>
+      api.get("/api/inbox/unhandled-count")
+        .then(r => setInboxCount(r.data.count || 0))
+        .catch(() => {});
+    fetchCount();
+    const id = setInterval(fetchCount, 60000);
+    return () => clearInterval(id);
+  }, [can]);
 
   const isReseller = user?.role === "reseller";
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
@@ -106,7 +119,8 @@ export function Sidebar() {
               {items.filter((i) => i.section === section).map((item) =>
                 item.children
                   ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
-                  : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate} />
+                  : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
+                      badge={item.showInboxBadge ? inboxCount : 0} />
               )}
             </div>
           ))
@@ -139,7 +153,7 @@ export function Sidebar() {
   );
 }
 
-function NavItem({ item, pathname, navigate }) {
+function NavItem({ item, pathname, navigate, badge = 0 }) {
   const { close } = useContext(SidebarContext);
   const isActive = pathname === item.path || (item.path !== "/" && pathname.startsWith(item.path));
   const Icon = item.icon;
@@ -153,7 +167,12 @@ function NavItem({ item, pathname, navigate }) {
       }`}
     >
       <Icon size={15} className="flex-shrink-0" />
-      <span className="truncate">{item.label}</span>
+      <span className="truncate flex-1 text-left">{item.label}</span>
+      {badge > 0 && (
+        <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </button>
   );
 }
@@ -226,7 +245,7 @@ function WarehouseSwitcher() {
   );
 }
 
-export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = true, showWarehouseSwitcher = false }) {
+export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooConnected = true, showWarehouseSwitcher = false }) {
   const { toggle } = useContext(SidebarContext);
   return (
     <header className="bg-white border-b border-gray-100 px-4 sm:px-6 py-3.5 flex items-center justify-between flex-shrink-0 gap-3">
@@ -235,6 +254,7 @@ export function TopBar({ title, subtitle, onRefresh, actions, odooConnected = tr
           className="lg:hidden p-1.5 rounded-md border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all flex-shrink-0">
           <Menu size={16} />
         </button>
+        {leftAction}
         <div className="min-w-0">
           <h1 className="text-base font-semibold text-gray-900 truncate">{title}</h1>
           {subtitle && <p className="text-xs text-gray-500 mt-0.5 hidden sm:block truncate">{subtitle}</p>}

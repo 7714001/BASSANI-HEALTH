@@ -40,6 +40,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "warehouse":   {"view": False, "supervise": False},
     "audit":       {"view": False},
     "tickets":     {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+    "inbox":       {"view": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -56,6 +57,7 @@ FULL_PERMISSIONS: dict = {
     "warehouse":   {"view": True,  "supervise": True},
     "audit":       {"view": True},
     "tickets":     {"sales": True, "orders": True, "finance_confirm": True, "qa_approve": True, "rp_approve": True, "manage": True},
+    "inbox":       {"view": True},
 }
 
 # Full default permission sets for each staff role.
@@ -77,6 +79,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "warehouse":  {"view": False, "supervise": False},
         "audit":      {"view": False},
         "tickets":    {"sales": True, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+        "inbox":      {"view": True},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -91,6 +94,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "warehouse":  {"view": False, "supervise": False},
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": True, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+        "inbox":      {"view": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -105,6 +109,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "warehouse":  {"view": False, "supervise": False},
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": True, "qa_approve": False, "rp_approve": False, "manage": False},
+        "inbox":      {"view": False},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -119,6 +124,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "warehouse":  {"view": False, "supervise": False},
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": True, "rp_approve": False, "manage": False},
+        "inbox":      {"view": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -133,6 +139,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "warehouse":  {"view": False, "supervise": False},
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": True, "manage": False},
+        "inbox":      {"view": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias
