@@ -1,15 +1,25 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import hashlib
+import logging
+import random
+import secrets
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from bson import ObjectId
+
 from auth import (
     authenticate_user, create_access_token,
-    get_current_user, Token, verify_password, hash_password
+    get_current_user, get_user_by_username,
+    Token, verify_password, hash_password,
 )
+from config import get_settings
 from database import col
 from middleware.audit import audit_log
 from rate_limit import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -17,6 +27,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class ChangePasswordBody(BaseModel):
     current_password: str
     new_password: str
+
+
+class VerifyOtpBody(BaseModel):
+    session_id: str
+    otp: str
 
 
 def _user_payload(user: dict) -> dict:
@@ -38,7 +53,12 @@ def _user_payload(user: dict) -> dict:
 
 @router.post("/login", response_model=Token)
 @limiter.limit("5/15minutes")
-async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+):
+    settings = get_settings()
     user = await authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -46,6 +66,29 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Email OTP 2FA — applies to any account that has an email address stored
+    email = user.get("email")
+    if settings.require_2fa_admin and email:
+        from services.email_service import send_otp_email
+        otp = f"{random.randint(100000, 999999)}"
+        otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+        session_token = secrets.token_urlsafe(32)
+        await col("otp_sessions").insert_one({
+            "session_token": session_token,
+            "username": user["username"],
+            "otp_hash": otp_hash,
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "attempts": 0,
+        })
+        background_tasks.add_task(
+            send_otp_email,
+            email,
+            user.get("name") or user["username"],
+            otp,
+        )
+        return Token(otp_required=True, otp_session_id=session_token)
+
     token = create_access_token(data={"sub": user["username"]})
     await col("users").update_one(
         {"username": user["username"]},
@@ -53,11 +96,62 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
     )
     await audit_log("user.login", "user", user["id"], entity_label=user["username"], user=user,
                     reseller_id=user.get("reseller_id"))
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": _user_payload(user),
-    }
+    return Token(access_token=token, token_type="bearer", user=_user_payload(user))
+
+
+@router.post("/verify-otp", response_model=Token)
+@limiter.limit("10/15minutes")
+async def verify_otp(request: Request, body: VerifyOtpBody):
+    now = datetime.now(timezone.utc)
+    session = await col("otp_sessions").find_one({"session_token": body.session_id})
+    if not session:
+        raise HTTPException(status_code=401,
+                            detail="Invalid or expired session. Please sign in again.")
+
+    # Normalise stored datetime to timezone-aware for comparison
+    exp = session["expires_at"]
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < now:
+        await col("otp_sessions").delete_one({"session_token": body.session_id})
+        raise HTTPException(status_code=401,
+                            detail="Code has expired. Please sign in again.")
+
+    if session["attempts"] >= 3:
+        await col("otp_sessions").delete_one({"session_token": body.session_id})
+        raise HTTPException(status_code=401,
+                            detail="Too many incorrect attempts. Please sign in again.")
+
+    otp_hash = hashlib.sha256(body.otp.strip().encode()).hexdigest()
+    if otp_hash != session["otp_hash"]:
+        new_attempts = session["attempts"] + 1
+        if new_attempts >= 3:
+            await col("otp_sessions").delete_one({"session_token": body.session_id})
+            raise HTTPException(status_code=400,
+                                detail="Incorrect code. You have used all attempts. Please sign in again.")
+        await col("otp_sessions").update_one(
+            {"session_token": body.session_id},
+            {"$inc": {"attempts": 1}},
+        )
+        remaining = 3 - new_attempts
+        noun = "attempt" if remaining == 1 else "attempts"
+        raise HTTPException(status_code=400,
+                            detail=f"Incorrect code. {remaining} {noun} remaining.")
+
+    await col("otp_sessions").delete_one({"session_token": body.session_id})
+
+    user = await get_user_by_username(session["username"])
+    if not user or not user.get("active", True):
+        raise HTTPException(status_code=401, detail="Account is no longer active.")
+
+    token = create_access_token(data={"sub": user["username"]})
+    await col("users").update_one(
+        {"username": user["username"]},
+        {"$set": {"last_login_at": now}},
+    )
+    await audit_log("user.login", "user", user["id"], entity_label=user["username"], user=user,
+                    reseller_id=user.get("reseller_id"))
+    return Token(access_token=token, token_type="bearer", user=_user_payload(user))
 
 
 @router.get("/me")

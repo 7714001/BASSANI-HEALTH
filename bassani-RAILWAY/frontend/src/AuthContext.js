@@ -28,6 +28,16 @@ export function AuthProvider({ children }) {
     const { data } = await api.post("/api/auth/login", form, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
     });
+    if (data.otp_required) {
+      return { otp_required: true, otp_session_id: data.otp_session_id };
+    }
+    localStorage.setItem("token", data.access_token);
+    setUser(data.user);
+    return data.user;
+  };
+
+  const verifyOtp = async (sessionId, otp) => {
+    const { data } = await api.post("/api/auth/verify-otp", { session_id: sessionId, otp });
     localStorage.setItem("token", data.access_token);
     setUser(data.user);
     return data.user;
@@ -74,7 +84,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, can, isAdmin, setActiveWarehouse, changePassword }}>
+    <AuthContext.Provider value={{ user, login, verifyOtp, logout, loading, can, isAdmin, setActiveWarehouse, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

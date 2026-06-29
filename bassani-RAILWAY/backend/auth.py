@@ -148,9 +148,11 @@ TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class Token(BaseModel):
-    access_token: str
+    access_token: str = ""
     token_type: str = "bearer"
-    user: dict
+    user: dict | None = None
+    otp_required: bool = False
+    otp_session_id: str | None = None
 
 
 class UserOut(BaseModel):

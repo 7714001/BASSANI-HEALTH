@@ -43,7 +43,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,28 +99,27 @@ async def initialise_users():
 
     if sa_username and sa_password:
         existing = await col("users").find_one({"username": sa_username})
+        sa_fields: dict = {
+            "role": "super_admin",
+            "is_super_admin": True,
+            "active": True,
+            "permissions": FULL_PERMISSIONS,
+            "password": hash_password(sa_password),
+        }
+        if settings.super_admin_email:
+            sa_fields["email"] = settings.super_admin_email
         if existing:
             await col("users").update_one(
                 {"username": sa_username},
-                {"$set": {
-                    "role": "super_admin",
-                    "is_super_admin": True,
-                    "active": True,
-                    "permissions": FULL_PERMISSIONS,
-                    "password": hash_password(sa_password),
-                }},
+                {"$set": sa_fields},
             )
             logger.info("startup_super_admin_verified", extra={"username": sa_username})
         else:
             await col("users").insert_one({
                 "username": sa_username,
-                "password": hash_password(sa_password),
-                "role": "super_admin",
-                "is_super_admin": True,
                 "name": "Super Admin",
-                "active": True,
-                "permissions": FULL_PERMISSIONS,
                 "created_at": datetime.now(timezone.utc),
+                **sa_fields,
             })
             logger.info("startup_super_admin_created", extra={"username": sa_username})
     else:
@@ -194,6 +193,14 @@ async def initialise_users():
         [("reseller_id", 1), ("year", 1), ("month", 1)],
         unique=True,
         name="unique_reseller_year_month",
+    )
+
+    # Phase 1.5 — OTP sessions (auto-expire via MongoDB TTL)
+    await col("otp_sessions").create_index(
+        [("expires_at", 1)], expireAfterSeconds=0, name="otp_sessions_ttl"
+    )
+    await col("otp_sessions").create_index(
+        [("session_token", 1)], unique=True, sparse=True
     )
 
     result = await col("push_subscriptions").update_many(

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     super_admin_username: str = ""
     super_admin_password: str = ""
+    super_admin_email:    str = ""
     ms_tenant_id:      str = ""
     ms_client_id:      str = ""
     ms_client_secret:  str = ""

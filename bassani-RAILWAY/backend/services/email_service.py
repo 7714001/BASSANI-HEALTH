@@ -519,6 +519,34 @@ def send_dispute_resolved(
           _wrap("Commission Update", body))
 
 
+# ── 2FA / OTP emails ──────────────────────────────────────────────────────────
+
+def send_otp_email(email: str, name: str, otp: str) -> None:
+    """Sent when a staff member's login triggers the email OTP 2FA step."""
+    body = (
+        _h1("Your sign-in code")
+        + _p(f"Hi {name},")
+        + _p("Enter the code below to complete your sign-in. It expires in <strong>10 minutes</strong> "
+             "and can only be used once.")
+        + (
+            '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">'
+            '<tr><td align="center">'
+            f'<p style="font-size:42px;font-weight:800;letter-spacing:12px;color:#0f172a;margin:0;'
+            f'font-family:\'Courier New\',monospace;background:#f8fafc;border:1px solid #e2e8f0;'
+            f'border-radius:12px;padding:18px 32px;display:inline-block;">{otp}</p>'
+            '</td></tr></table>'
+        )
+        + _divider()
+        + _p("Do not share this code with anyone — Bassani Health staff will never ask for it.", muted=True)
+        + _p(
+            f'If you did not attempt to sign in, your password may be compromised. '
+            f'Change it immediately at <a href="{settings.portal_url}" style="color:#0f6e56;">{settings.portal_url}</a>.',
+            muted=True,
+        )
+    )
+    _send(email, "Your Bassani Health sign-in code", _wrap("Two-factor authentication", body))
+
+
 # ── Packing floor emails ───────────────────────────────────────────────────────
 
 def send_order_ready_for_collection(
