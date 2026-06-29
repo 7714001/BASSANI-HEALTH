@@ -6,7 +6,8 @@
 // to pin a specific vault (quote builder), or omit it to let the backend
 // resolve the current user's own warehouse automatically (reseller cart).
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import api from "../api";
 import { fmtR } from "./UI";
@@ -16,7 +17,30 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searching, setSearching]       = useState(false);
   const [searchResults, setSearchResults] = useState([]);
+  const [dropdownRect, setDropdownRect] = useState(null);
   const debounceRef = useRef(null);
+  const inputWrapRef = useRef(null);
+
+  // The line-items table sits inside an `overflow-x-auto` card (needed for
+  // mobile horizontal scroll — Phase 10.4). A plain `position: absolute`
+  // dropdown gets clipped by that ancestor's scroll box instead of floating
+  // above the page. Rendering it through a portal at document.body, positioned
+  // from the input's real screen coordinates, escapes that clipping entirely.
+  useLayoutEffect(() => {
+    if (!dropdownOpen) return;
+    const updateRect = () => {
+      if (!inputWrapRef.current) return;
+      const r = inputWrapRef.current.getBoundingClientRect();
+      setDropdownRect({ top: r.bottom + 4, left: r.left });
+    };
+    updateRect();
+    window.addEventListener("scroll", updateRect, true);
+    window.addEventListener("resize", updateRect);
+    return () => {
+      window.removeEventListener("scroll", updateRect, true);
+      window.removeEventListener("resize", updateRect);
+    };
+  }, [dropdownOpen]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -105,28 +129,33 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
           );
         })() : (
           <>
-            <input
-              autoFocus={autoFocus}
-              value={prodSearch}
-              onChange={e => {
-                const v = e.target.value;
-                setProdSearch(v);
-                if (!v) {
-                  setSearchResults([]);
-                  setDropdownOpen(false);
-                  onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
-                }
-              }}
-              onFocus={() => { if (searchResults.length > 0) setDropdownOpen(true); }}
-              onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
-              placeholder="Type product name or SKU…"
-              className="w-full text-sm bg-transparent border-0 focus:outline-none placeholder-gray-300"
-            />
-            {searching && (
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
-            )}
-            {dropdownOpen && searchResults.length > 0 && (
-              <div className="absolute z-50 left-0 top-full mt-0.5 w-80 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
+            <div ref={inputWrapRef} className="relative">
+              <input
+                autoFocus={autoFocus}
+                value={prodSearch}
+                onChange={e => {
+                  const v = e.target.value;
+                  setProdSearch(v);
+                  if (!v) {
+                    setSearchResults([]);
+                    setDropdownOpen(false);
+                    onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0 });
+                  }
+                }}
+                onFocus={() => { if (searchResults.length > 0) setDropdownOpen(true); }}
+                onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+                placeholder="Type product name or SKU…"
+                className="w-full text-sm bg-transparent border-0 focus:outline-none placeholder-gray-300"
+              />
+              {searching && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 animate-pulse">searching…</span>
+              )}
+            </div>
+            {dropdownOpen && searchResults.length > 0 && dropdownRect && createPortal(
+              <div
+                style={{ position: "fixed", top: dropdownRect.top, left: dropdownRect.left, width: 320 }}
+                className="z-[9999] bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto"
+              >
                 {searchResults.map(p => {
                   const outOfStock = (p.virtual_available || 0) <= 0;
                   return (
@@ -159,7 +188,8 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                     </button>
                   );
                 })}
-              </div>
+              </div>,
+              document.body
             )}
           </>
         )}
