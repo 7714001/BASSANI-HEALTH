@@ -41,7 +41,7 @@ export function Products() {
   const [taxes,       setTaxes      ] = useState([]);
   const [modal,       setModal      ] = useState(false);
   const [editing,     setEditing    ] = useState(null);
-  const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"", uom_id:"", tax_id:"" });
+  const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"", uom_id:"", tax_id:"", barcode:"" });
   const [saving,      setSaving     ] = useState(false);
   const [archivingId, setArchivingId] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -137,8 +137,8 @@ export function Products() {
 
   const stockColor = (qty) => qty <= 0 ? "text-red-600 font-semibold" : qty < 10 ? "text-amber-600 font-semibold" : "text-bassani-700 font-semibold";
 
-  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"" }); setModal(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"", uom_id:p.uom_id?.[0]||"", tax_id:p.tax_id||"" }); setModal(true); };
+  const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"", barcode:"" }); setModal(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"", uom_id:p.uom_id?.[0]||"", tax_id:p.tax_id||"", barcode:p.barcode||"" }); setModal(true); };
 
   const save = async () => {
     if (!form.name) return toast.error("Product name required");
@@ -192,6 +192,11 @@ export function Products() {
         <DataTable
           columns={[
             { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
+            { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>
+              p.barcode
+                ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
+                : <span className="text-xs text-gray-300">—</span>
+            },
             { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"}, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
             { accessorKey:"list_price", header:"Sale Price", meta:{className:"hidden sm:table-cell"}, cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
             { accessorKey:"standard_price", header:"Cost", meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
@@ -230,6 +235,7 @@ export function Products() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormGroup label="Product Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Tincture 20ml THC" /></FormGroup>
             <FormGroup label="SKU / Reference"><Input value={form.default_code} onChange={e=>setForm({...form,default_code:e.target.value})} placeholder="THC-TINC-20" /></FormGroup>
+            <FormGroup label="Barcode"><Input value={form.barcode} onChange={e=>setForm({...form,barcode:e.target.value})} placeholder="e.g. 6009123456789" /></FormGroup>
             <FormGroup label="Category"><Select value={form.categ_id} onChange={e=>setForm({...form,categ_id:parseInt(e.target.value)||""})}>
               <option value="">— Select category —</option>
               {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}

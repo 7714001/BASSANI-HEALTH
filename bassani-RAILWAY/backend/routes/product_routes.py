@@ -20,6 +20,7 @@ class ProductCreate(BaseModel):
     description: Optional[str] = None
     uom_id: Optional[int] = None                # Unit of measure (for grams etc.)
     tax_id: Optional[int] = None                # Customer Tax (account.tax), single select
+    barcode: Optional[str] = None                # EAN-13 / Code-128 / custom
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -31,6 +32,7 @@ class ProductUpdate(BaseModel):
     uom_id: Optional[int] = None
     tax_id: Optional[int] = None
     active: Optional[bool] = None
+    barcode: Optional[str] = None
 
 class StockAdjustment(BaseModel):
     qty: float
@@ -58,7 +60,7 @@ PRODUCT_FIELDS = [
     "id", "name", "display_name", "default_code", "type", "categ_id",
     "lst_price", "standard_price", "uom_id",
     "qty_available", "virtual_available", "taxes_id",
-    "description", "active", "product_tmpl_id",
+    "description", "active", "product_tmpl_id", "barcode",
 ]
 
 
@@ -354,6 +356,43 @@ def archive_uom(
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/barcode/{barcode_value}")
+async def get_product_by_barcode(barcode_value: str, current_user: dict = Depends(get_current_user)):
+    """
+    Look up a product by its Odoo barcode — used by the quote builder's
+    barcode scan (USB scanner or camera) and, in future, the packer scan-to-tick
+    flow. Scoped to the caller's resolved warehouse/company, same as every
+    other stock-aware product read. Registered ahead of GET /{product_id} so
+    "barcode" is never mistaken for a product_id path segment.
+    """
+    odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
+    company_id = get_company_id(odoo, warehouse_id)
+    try:
+        matches = odoo.search_read(
+            "product.product",
+            domain=[("barcode", "=", barcode_value), ("active", "=", True)],
+            fields=PRODUCT_FIELDS,
+            limit=2,
+            context=odoo_context(warehouse_id, company_id),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"No product found for barcode {barcode_value}")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Barcode {barcode_value} matches more than one product — check Odoo for a duplicate barcode",
+        )
+
+    product = matches[0]
+    product["list_price"] = product.pop("lst_price", 0)
+    _attach_tax_rates(odoo, [product], company_id)
+    return product
+
+
 @router.get("/{product_id}")
 async def get_product(product_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single product variant by its Odoo product.product ID."""
@@ -400,6 +439,8 @@ async def create_product(
         vals["description"] = product.description
     if product.uom_id:
         vals["uom_id"] = product.uom_id
+    if product.barcode:
+        vals["barcode"] = product.barcode
 
     audit_after = dict(vals)
     if product.tax_id:
