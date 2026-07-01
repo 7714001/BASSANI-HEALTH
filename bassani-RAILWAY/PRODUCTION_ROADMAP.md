@@ -1442,7 +1442,7 @@ Changes to the existing Sales Ticket system (Phase 8):
 
 ## Phase 12 — Barcode Integration
 
-**Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. Warehouse packers can scan item barcodes on their handheld to tick items instead of tapping checkboxes — faster, more accurate, glove-friendly.
+**Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. The vault team leader scans finished goods batches in at the vault as they arrive from production, and scans them out at dispatch — creating the physical handoff record that bridges the Phase 13 production chain to the commercial order pipeline.
 
 **Estimate:** 1–2 weeks  
 **Status:** 🟡 In Progress — 12.0 complete  
@@ -1452,18 +1452,22 @@ Changes to the existing Sales Ticket system (Phase 8):
 
 Odoo stores a `barcode` field on every `product.product` record — EAN-13, Code-128, or any custom format. This field is already part of the Odoo data model and does not require any module to be installed. The portal currently ignores it entirely.
 
-Three distinct integration points are possible and all are in scope:
+Three distinct integration points are in scope:
 
 1. **Quote builder** — scan a physical barcode to look up and add a product line, eliminating typed search for catalogue items that have been barcoded
 2. **Label printing** — generate print-ready barcode labels from the Products page, so the warehouse can label stock without a separate label management system
-3. **Packing floor** — scan item barcodes to tick items on a packer's handheld rather than tapping touch targets, which is faster for gloved hands and reduces mis-ticks
+3. **Vault movement scanning** — the team leader (warehouse supervisor role) at the vault scans batches as they arrive from production (Vault IN) and scans orders at dispatch (Vault OUT); this is not a per-packer handheld flow — packers work under their team leader who handles the scanning station and marks completion
+
+**Operational model (confirmed 2026-07-01):** Packers do not have their own scanning devices. Team leaders manage their packing team and are responsible for recording completions. The scanner sits at the vault — the physical boundary between the manufacturing/production side and the commercial/sales side. Scanning IN records finished goods entering the vault from production (creating or linking to an Odoo stock lot). Scanning OUT confirms goods leaving the vault on a dispatched order.
+
+**Batch suffix progression and who creates it:** The batch suffix is *generated and advanced by Phase 13 production module events*, not by the vault scan. By the time a batch arrives at the vault, it already carries its full suffix (e.g. `-MP3G`) on the label applied during the production stage that produced it. The vault IN scan reads that label and records the receipt — it doesn't create the suffix. Phase 13 is what generates and advances suffixes as material moves through cultivation → manufacturing → packaging stages.
 
 **Barcode scanner hardware:** USB and Bluetooth scanners emulate keyboard input — when a barcode is scanned, the scanner types the barcode digits into whatever input field is focused, followed by an Enter key. This means USB scanner support in any input field requires zero code changes — the scanner just types. Camera scanning uses `@zxing/browser` (the browser port of the ZXing barcode library — cross-platform, works in Chrome, Firefox, Safari, and Android WebView).
 
 **Barcode types supported:** EAN-13 (most common for cannabis products in SA), Code-128 (alphanumeric, common for internal warehouse labels), QR Code.
 
 **New npm dependencies (frontend only — no backend packages needed):**
-- `@zxing/browser` — camera-based barcode scanning (React SPA and packer.html)
+- `@zxing/browser` — camera-based barcode scanning (React SPA and supervisor.html vault scanner)
 - `JsBarcode` — barcode SVG generation for label printing (React SPA only)
 
 ---
@@ -1538,34 +1542,50 @@ USB and Bluetooth scanners emulate a keyboard — they type the barcode value an
 
 ---
 
-### 12.3 — Packer Handheld Scan-to-Tick
+### 12.3 — Vault Movement Scanning (Team Leader)
 
-**Goal:** Packers can scan a product's barcode on their handheld device to tick an order line item, rather than tapping a touch target on screen. Faster, more accurate for gloved hands, and eliminates the risk of tapping the wrong item on a small screen.
+**Goal:** The team leader (warehouse_supervisor role) scans finished goods batches in and out at the vault using a USB scanner or tablet camera. Vault IN records stock received from the production floor into Odoo. Vault OUT confirms items dispatched on a packing board order. This is the physical junction point between the Phase 13 production chain and the commercial order pipeline.
 
-**Data model change — barcode on packing board items:**
+> **Not a per-packer handheld flow.** Packers are supervised by their team leader, who handles scanning. The scanner station lives at the vault, not in the hands of each individual packer. The `packer.html` per-packer device concept is not applicable here — team leaders work from `supervisor.html` or the vault scanner interface. `packer.html` may be repurposed or retired as this model solidifies.
 
-Currently the `packing_board` MongoDB document's `items` array contains: `{ product_id, name, qty, ticked }`. We need to add `barcode` so the packer handheld can match a scan against items without calling Odoo at scan time.
+**Interface — `vault.html` (new standalone page, same pattern as `supervisor.html`):**
 
-- [ ] When a packing board entry is created (in `packing_board_routes.py::confirm_order()` and `packing_board_routes.py::_do_adopt()`), batch-fetch the `barcode` field for all `product_id` values in the order lines from Odoo — one batched `read()` call, not one per line
-- [ ] Store `barcode` (string or `null`) on each item in the `items` array in MongoDB alongside existing fields
-- [ ] **Backfill endpoint:** `POST /api/packing/backfill-barcodes` (admin/super_admin only) — iterates all existing packing board entries, fetches missing barcodes from Odoo, writes them back; idempotent; run once after deploy
+A new dedicated vault scanning screen accessible to `warehouse_supervisor` role (same JWT login-gate pattern as `supervisor.html`). Two tabs:
 
-**`packer.html` changes:**
+**Tab 1 — Vault IN (Goods Receipt from Production)**
 
-- [ ] Add `@zxing/browser` to the packer page (bundled as a standalone script via CDN or built with the frontend build step, whichever is simpler given `packer.html` is a standalone HTML file outside the React SPA)
-- [ ] Add a "Scan to Tick" toggle button at the top of the packer's order view — off by default; when toggled on:
-  - Activates the rear-facing camera via ZXing in a persistent scanning strip at the top of the screen (not a modal — continuous scanning mode so the packer doesn't have to re-tap to scan each item)
-  - A scan-zone overlay shows the active capture area
-- [ ] On barcode detected:
-  - Look up the decoded value against the `items` array on the currently-open order (match on `barcode` field)
-  - If matched and not yet ticked: auto-tick that item (calls the existing `tick_item` WebSocket action — identical to tapping the tick button manually); brief green flash on the matched row
-  - If matched and already ticked: amber flash and a small "Already ticked" toast — not an error, just feedback
-  - If no match in current order: red flash and "Barcode not in this order" toast — prevents cross-order misfires
-  - Scanner continues running after a match — the packer can scan the next item immediately without interaction
-- [ ] The existing manual tick buttons remain — scan mode is additive, not a replacement; packers can mix scanning and tapping
-- [ ] When all items on an order are ticked (whether by scan or tap), the existing "All items packed" visual remains unchanged
+- [ ] Scan input field prominent at top — USB scanner types barcode and hits Enter automatically; camera scan button available as fallback
+- [ ] On scan: calls `GET /api/products/barcode/{value}` (Phase 12.0 endpoint) to identify the product
+- [ ] System displays: product name, SKU, current vault stock, and (once Phase 13 is live) the matched batch ID from the production module
+- [ ] Team leader enters: **quantity received** and **batch/lot ID** (free-text for Phase 12; auto-populated by Phase 13 when built — the label arriving from production already has the full batch ID including suffix printed on it)
+- [ ] New backend endpoint: `POST /api/vault/receive`:
+  - Creates an Odoo stock receipt (`stock.picking`, picking type `incoming`, validated immediately) for the resolved warehouse's input location
+  - Creates or updates an Odoo `stock.lot` with the provided lot/batch ID string on the received product
+  - Writes a portal-side `vault_movements` MongoDB document: `{ type: "in", product_id, product_name, barcode, lot_id, qty, actor_id, actor_name, warehouse_id, received_at, linked_batch_id (Phase 13 ref, nullable) }`
+  - Audit-logged: `vault.receive` with product, lot, qty, actor
+- [ ] On success: confirmation flash + running tally of received items in the current session (so team leader can verify their delivery against a packing slip)
+- [ ] If barcode not found in Odoo (404 from barcode lookup): warn clearly — "Product not found for this barcode. Has it been added to the product catalogue?" — do not proceed
 
-**`supervisor.html` — no changes needed.** The supervisor sees tick status updates in real time via the existing WebSocket regardless of whether ticks came from button taps or barcode scans — the action path is identical.
+**Tab 2 — Vault OUT (Dispatch Confirmation)**
+
+- [ ] Displays the current packing board queue for the team leader's warehouse — open orders with packing in progress or ready
+- [ ] Team leader selects an order to dispatch
+- [ ] Scan mode activates: scan each item barcode to confirm it's leaving the vault
+- [ ] On scan match against the order's items (matched via `barcode` field stored on packing board `items` — see data model below):
+  - Item ticked on the packing board (fires the existing `tick_item` WebSocket action — same path as supervisor manually ticking)
+  - Green flash on matched row
+- [ ] If all items scanned: "Ready to dispatch" confirmation prompt → team leader confirms → order status updated to dispatched; triggers the existing "ready for collection" email flow
+- [ ] Manual tick fallback remains — team leader can tap items if scanner unavailable; scan is additive, not a replacement
+
+**Data model change — barcode on packing board items (needed for Vault OUT scan matching):**
+
+- [ ] When a packing board entry is created (`packing_board_routes.py::confirm_order()` and `_do_adopt()`), batch-fetch the `barcode` field for all `product_id` values from Odoo — one batched `read()`, not one per line
+- [ ] Store `barcode` (string or `null`) on each item in the `items` array alongside existing `{ product_id, name, qty, ticked }`
+- [ ] **Backfill endpoint:** `POST /api/packing/backfill-barcodes` (admin/super_admin only) — iterates existing packing board entries, fetches missing barcodes from Odoo, writes them back; idempotent; run once after deploy
+
+**Phase 13 linkage (design constraint for Phase 12 implementation):**
+
+The vault IN endpoint is designed to accept a `linked_batch_id` reference that Phase 13 will populate once the production module exists. For Phase 12, this field is always `null` — the team leader manually types the batch ID from the physical label. When Phase 13 ships, the vault scan will auto-match the scanned barcode to an open production batch record, and the `linked_batch_id` will be written automatically. Phase 12 must not design the vault receipt endpoint in a way that prevents this linkage later — the `vault_movements` document must always carry the `linked_batch_id` field, even if null.
 
 ---
 
@@ -1579,15 +1599,20 @@ Currently the `packing_board` MongoDB document's `items` array contains: `{ prod
 - [ ] A product with a barcode shows a Print Label button; a product without a barcode shows the button as disabled with a tooltip
 - [ ] Printing a single label opens the browser print dialog with only the label visible — no portal chrome
 - [ ] Printing 4 selected products prints 4 labels tiled on one page
-- [ ] A packer enables scan mode; scans a barcode; the matching item ticks and the packing board display updates in real time
-- [ ] Scanning the same barcode twice shows "Already ticked" feedback
-- [ ] Scanning a barcode from a different order shows "Barcode not in this order" and does not tick anything
+- [ ] `vault.html` is accessible to warehouse_supervisor role and requires JWT login (same gate as `supervisor.html`)
+- [ ] Team leader scans a barcode on Vault IN tab — product is identified, qty entered, stock receipt created in Odoo with correct lot/batch ID, `vault_movements` document written to MongoDB, audit entry logged
+- [ ] Team leader scans an unrecognised barcode — clear "product not found" warning shown, no receipt created
+- [ ] On Vault OUT tab, scanning an item barcode ticks it on the packing board display in real time
+- [ ] When all items on an order are scanned out, the dispatch confirmation prompt appears
+- [ ] `vault_movements` documents include `linked_batch_id: null` field (ready for Phase 13 auto-population)
 - [ ] Packing board entries created before this deploy can have barcodes backfilled via the admin endpoint
-- [ ] All scan-sourced ticks appear in `audit_logs` with actor identity — same as manual ticks
+- [ ] All vault IN/OUT actions appear in `audit_logs` with actor identity (warehouse_supervisor)
 
 ### Notes
 
 > **Sub-deploy 1 (2026-06-29):** 12.0 Backend foundation. `barcode` added to `PRODUCT_FIELDS`, `ProductCreate`, and `ProductUpdate` — writes go through the existing template-level write path (Phase 3.1's established pattern for this catalog: name/SKU/price/category/tax are template-level, no per-variant overrides exposed). New `GET /api/products/barcode/{barcode_value}` registered ahead of `GET /{product_id}` in the route file (literal path segments must come before the `{product_id}: int` catch-all, or "barcode" would be parsed as an int and 422 before ever reaching the new route). Gated by `get_current_user` only — deliberately broader than the original spec's `require_admin`/`tickets.sales` suggestion, to match the existing `GET /api/products/` gate and to cover the reseller order cart (8.12) as well as the staff quote builder, since both are legitimate places to scan a barcode. Frontend: Barcode column on the Products table (`hidden lg:table-cell` — lower priority than SKU, which already shows inline) and a Barcode input on the create/edit form. 12.1 (quote builder scan) is next — will wire the lookup endpoint into both the staff quote builder and the reseller cart via a shared `BarcodeScanner` component.
+
+> **2026-07-01 — Operational model confirmed, Phase 12.3 rewritten:** Business confirmed that packers do NOT have their own scanning devices. The barcode scanner sits at the vault — the boundary between the production floor and the commercial side. Team leaders (warehouse_supervisor role) operate the scanner station: scanning finished goods batches IN to the vault as they arrive from manufacturing, and scanning items OUT on dispatch. Phase 12.3 has been completely redesigned from "Packer Handheld Scan-to-Tick" to "Vault Movement Scanning (Team Leader)" — a new `vault.html` interface with two tabs (Vault IN / Vault OUT), a new `POST /api/vault/receive` backend endpoint that creates Odoo stock receipts and `vault_movements` MongoDB documents, and the existing packing board tick action wired to the Vault OUT scan. Key design constraint: the `vault_movements` document carries a `linked_batch_id` field (null in Phase 12) that Phase 13 will populate once the production module generates batch IDs — the Phase 12 implementation must not close that door.
 
 ---
 
@@ -1640,7 +1665,65 @@ The portal already operates as two conceptual halves that share infrastructure. 
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-**The barcode (Phase 12) is the junction point.** The barcode/lot number on a finished goods label is the same identifier that traces back through manufacturing to the cultivation batch. One scan on the commercial side (a packer ticking an item) creates a traceable link to the SAHPRA batch record on the production side. This is the traceability chain SAHPRA compliance requires.
+**The vault scanner (Phase 12.3) is the junction point.** When finished goods arrive at the vault from production, the team leader scans the batch label — the barcode/lot number on that label is the same identifier that traces back through manufacturing to the cultivation batch. The vault IN scan is what converts a Phase 13 production batch into Phase 12 commercial stock. The vault OUT scan on dispatch is what links a sale order to the specific physical batch that fulfilled it. This is the traceability chain SAHPRA compliance requires.
+
+---
+
+### Data Model Philosophy — Same Pattern as Sales Tickets
+
+This is already stated in the Architecture Principles above, but it is worth making explicit for Phase 13 because the temptation to build custom MongoDB logbooks will be strong.
+
+**The Sales Ticket pattern is the template for every Phase 13 module:**
+
+```
+SALES TICKET (existing — correct pattern)
+──────────────────────────────────────────
+MongoDB  →  sales_tickets collection
+           { stage, assigned_to, inbox_item_id, notes, created_at }
+           Tracks: pipeline stage, who owns it, portal-layer metadata
+
+Odoo     →  sale.order  (the quote, the prices, the line items)
+           account.move  (the invoice)
+           stock.picking  (the delivery)
+
+The portal NEVER rebuilds these Odoo objects. It creates them in Odoo
+and tracks the workflow state in MongoDB on top.
+```
+
+**Apply the same split to Phase 13:**
+
+```
+MANUFACTURING SESSION (Phase 13 — same pattern)
+────────────────────────────────────────────────
+MongoDB  →  production_sessions collection
+           { stage, tl_verified_by, qa_verified_by, rp_released_by,
+             batch_id, notes, created_at }
+           Tracks: approval workflow state, portal-layer sign-off chain
+
+Odoo     →  mrp.production  (the manufacturing order — inputs, outputs,
+                              quantities, lot numbers, by-products)
+           stock.picking    (internal transfer between locations)
+           stock.lot        (the batch ID as the lot name)
+           purchase.order   (supplier receipts for gummies)
+
+The portal creates these Odoo objects. It NEVER rebuilds them in MongoDB.
+```
+
+**What belongs in MongoDB (genuinely no Odoo equivalent):**
+- `cultivation_batches` — GACP room/row/plant tracking (plants are not Odoo inventory items before harvest)
+- `yield_bands` — per-strain expected yield ranges, auto-calibrating from completed harvests
+- `batch_investigations` — out-of-band yield investigation records and resolutions
+- `sahpra_reports` — compliance report submissions, field mappings, submission status
+- `signature_events` — Annex 11 §30 re-authentication events at sign-off (the who/when/what of a formal e-signature)
+- `production_sessions` — workflow state overlay on top of Odoo `mrp.production` (same role as `sales_tickets` over `sale.order`)
+
+**What must NOT be in MongoDB:**
+- Manufacturing input/output quantities (these are on the Odoo MO)
+- Stock movements between locations (these are Odoo `stock.picking`)
+- Lot/batch stock levels (these are Odoo `stock.quant`)
+- Finished goods on hand (Odoo `qty_available` per lot)
+
+If we store these in MongoDB we create a parallel ledger — the exact violation the Architecture Principles prohibit.
 
 ---
 
@@ -1707,17 +1790,95 @@ Production staff never need to see the commercial side (resellers, commissions, 
 
 ---
 
-### Core Concepts to Model (draft — not final until SAHPRA requirements obtained)
+### Batch Numbering Standard (CONFIRMED — Bassani's own protocol, V6)
+
+Unlike the rest of this concept section, batch numbering is **not speculative**. Bassani Health already operates an internal "Medicinal Cannabis Batch Traceability Standard (V6)" document defining the exact format. Any cultivation/manufacturing module must implement this scheme, not invent a new one.
+
+**Base batch ID format:** `BH` + batch-type code + strain short name + sequence + date, e.g. `BHAPIBBY-001-010126`
+- `BH` — Bassani Health
+- `API` — single-source mixed-strain batch (literal "API" as placeholder when multiple strains in one room); or the strain's own shortcode for single-strain batches (e.g. `BHDSD...` for Dos Si Dos)
+- `BBY` — Strain Short Name / shortcode (3-letter code from the Shortcodes master list, >70 strains already defined)
+- `001` — sequential batch number for that strain
+- `010126` — date, `DDMMYY`
+
+**Gummy and non-flower products use a different prefix:** `BHG[flavour_shortcode]-[instance]-[DDMMYY]` e.g. `BHGPIN-001-181225` (Pineapple gummies, lot 1, packed 18 Dec 2025). These are received-from-supplier goods, not cultivated — they have expiry dates and a completely separate production flow (goods receipt → packing → secondary packing) without the GACP cultivation stages.
+
+**Post-harvest stage suffixes** (appended to the base ID with a hyphen as material is processed):
+
+| Stage | Suffix | Description |
+|---|---|---|
+| Drying | `-D` | Material in the drying room |
+| Unmanicured | `-U` | Dried flower before trim/manicure |
+| Manicured | `-M` | Premium flower after trim/pops removal — sub-graded as Bigs, Mids, Small in practice |
+| Pops | `-P` | Small buds — parallel **byproduct** stream, NOT waste |
+| Trim | `-T` | Leaf material — also a **byproduct** stream, NOT waste |
+| Pops Crushed (standard) | `-PC` | Pops material crushed for standard pre-rolls |
+| Trim Crushed (budget) | `-TC` | Trim material crushed for budget pre-rolls |
+| Pre-Roll from Pops | `-PCPR` | Standard finished pre-roll |
+| Pre-Roll from Trim | `-TCPR` | Budget finished pre-roll |
+
+**Finished goods packaging suffixes** (appended at the primary packing stage):
+
+| Finished Good | Suffix |
+|---|---|
+| Pop Top Tube — standard pre-roll | `PCPRPTT` |
+| Pop Top Tube — budget pre-roll | `TCPRPTT` |
+| Mylar Bag 1g (Manicured flower) | `MP1G` |
+| Mylar Bag 3g (Manicured flower) | `MP3G` |
+| Mylar Bag 5g (Manicured flower) | `MP5G` |
+| Mylar Bag 1g (Pops flower) | `PP1G` |
+| Mylar Bag 3g (Pops flower) | `PP3G` |
+| Mylar Bag 5g (Pops flower) | `PP5G` |
+| Jar — standard pre-roll | `PCPRPJR` |
+| Jar — budget pre-roll | `TCPRPJR` |
+
+**Blending convention:** When multiple cultivation batches are mixed, the prefix changes from `BHAPI` to `BHB` (Blend), followed by the strain short name **with no hyphen**, an instance count, and the blend date: `BHBBBY-003-220426`. A blend record links back to every parent API batch it was made from — this is the actual traceability mechanism, not something to design from scratch.
+
+**Implementation requirement:** Batch IDs must be **generated by the portal, not typed by staff**. The live logbook data already shows inconsistent manual ID formatting (e.g. `BHADNS-240426`, `BHADNS240426-M`, `BHADNS-210526-M` all appearing for the same strain). Free-text entry creates SAHPRA audit exposure. The portal must enforce the standard format at entry time.
+
+**Implementation implication:** batch ID generation should be a single deterministic function (strain code, sequence, date, optional stage/blend params in → formatted ID out), not free text entry — consistency of this format is what makes the traceability chain auditable.
+
+### The 8 Logbooks = 8 Portal Modules (CONFIRMED from live operational data)
+
+The production team is currently filling in 8 separate Excel sheets. Each becomes one portal form/module in Phase 13. These are active today, not theoretical.
+
+**Column guide:** "Odoo object" is what the portal creates in Odoo for this stage. "MongoDB overlay" is the portal-layer workflow state tracking on top (same pattern as `sales_tickets` over `sale.order`). If Odoo already handles the data, we do not store it again in MongoDB.
+
+| Logbook | What it captures | Odoo object (source of truth) | MongoDB overlay (portal layer only) |
+|---|---|---|---|
+| GACP Logbook | Plants per room, per row, per strain — flowering dates, expected harvest | None — plants are not in Odoo before harvest; the harvest output creates the first `stock.lot` | `cultivation_batches` — room, row, plant count, strain, expected harvest, batch ID generated here |
+| Dry Room Logbook | Batch IN/OUT as material moves between locations | `stock.picking` (internal transfer: Grow Room location → Dry Room location in Odoo) | None — the Odoo transfer IS the record; portal just creates and validates it |
+| Manicuring Logbook | Input batch → output per grade (Bigs/Mids/Small/Pops) + waste, per staff | `mrp.production` — input lot consumed, output lots produced (Bigs/Mids/Small as separate lots, Pops as by-product lot), waste as scrap | `production_sessions` — TL sign-off state, per-staff output attribution (Odoo MO doesn't track which staff member produced which grade) |
+| Crush Logbook | Weight before/after crushing + waste — requires TL + QA dual sign-off | `mrp.production` — input lot (Pops or Trim) consumed, output lot (Crushed) produced, waste recorded | `production_sessions` — TL verification + QA verification state; neither exists natively in Odoo |
+| Pre Roll Logbook | Per-staff rolling output, cone batches, grading | `mrp.production` — input lots (crushed + cones) consumed, output pre-roll lot produced, waste recorded | `production_sessions` — per-staff output attribution, cone batch reference, TL sign-off state |
+| Gummy Manufacturing | Supplier receipts + in-house packing lots, expiry dates | `purchase.order` receipt (supplier → Odoo stock, expiry date on `stock.lot`) + `mrp.production` for repack if quantities are broken down | `production_sessions` — defect/shortage notes, packing session sign-off (Odoo PO receipt doesn't capture these) |
+| Packing Logbook | Batch → finished SKU → primary packaging run | `mrp.production` — bulk lot consumed, finished SKU units produced with full batch ID as lot name, packaging component consumed | `production_sessions` — sign-off workflow state (TL → QA → RP before vault receipt is triggered) |
+| 2ndary Packing Logbook | Client-specific secondary packing | `mrp.production` — primary packed units consumed, client-packaged units produced | `production_sessions` — sign-off state, client reference |
+
+**Key fields in live data (unchanged from logbook review):**
+- GACP: Recorded Date, Flowering Date, Room, Row, Strain, Qty (plants), Expected Harvest Date, Batch ID
+- Dry Room: Date, Movement (IN/OUT), Strain, Batch Number, Quantity, Grading
+- Manicuring: Date, Received Batch, Strain, Size (Bigs/Mids/Small/Pops), Input Qty (g), Output Batch, Output Size, Output Qty (g), Waste (g), Staff Name
+- Crush: Date, Batch, Strain, Material Used, Weight Before (g), Weight After (g), Waste (g), **TL Verification**, **QA Verification**
+- Pre Roll: Date, Starting Weight, Waste, Received Batch, Cone Batch, Pre Roll Type, Qty (units), Pre Roll Batch Ref, Net Weight (g), Staff Name, Team Leader, Sub Category (Budget/Standard), Strain, Grading, Cone Size
+- Gummy: Flavour, Shortcode, Strength, Invoice, Qty Received, Date Received, Lot Instance, Qty Packed, Defects/Shortages, Date Packed, Bassani Lot ID, Expiry Date
+- Packing: Date, Batch Number, Packing Batch Number, Item Description, Quantity (g/units)
+- 2ndary Packing: Date, Packing Batch Number, Item Description, Batch Number, Quantity
+
+Each of these is one input form in the portal with real-time validation, batch ID auto-generation (not typed), and actor identity captured automatically from the logged-in user — replacing the manual name column and eliminating format inconsistency.
 
 **Grow Room**
-- Physical room identifier, capacity (max plants), current strain(s), status (active/idle/cleaning)
+- Physical room identifier (F1–F7 etc.), capacity (max plants), current strain(s), status (active/idle/cleaning)
 - Links to Odoo `stock.warehouse` / `stock.location` for the physical space
+- Rooms currently in active use: F1 (autoflower/AT tracks), F4, F5, F6, F7 — each with row-level plant tracking
 
-**Cultivation Batch**
-- Strain, plant count, planting date, assigned grow room
-- Stage progression: `propagation → veg → flower → harvest → drying → curing`
-- Each stage transition logged with actor and timestamp
-- Destruction events: plants that die or are destroyed before harvest must be recorded (SAHPRA tracks plant-level losses)
+**Cultivation Batch (GACP Logbook replacement)**
+- Tracked at **row level within each room** — not batch level. E.g. Room F4 has 6 rows, each with its own plant count and its own entry. Batch ID is the same across all rows of a room (they're all the same harvest batch), but plant counts are recorded per row.
+- Entry: Recorded Date, Flowering Date, Room ID, Row ID, Strain Name, Plant Count (Qty), Expected Harvest Date → portal generates the Batch ID
+- Stage column exists in the spreadsheet but is never filled in — stage is implied by which logbook the entry is in. The portal should derive/assign stage automatically as material moves through logbooks.
+- Destruction events: plants that die before harvest recorded separately from byproduct streams
+
+**Manicured flower has sub-grades beyond M/P/T** — the live manicuring logbook tracks 4 size grades: **Bigs, Mids, Small** (all fall under the `-M` batch suffix) plus **Pops** (byproduct, `-P` suffix). The portal manicuring form must let staff log output separately per grade per session, since packing uses specific grades for specific SKUs (e.g., 5g Mylar bags get Bigs, 1g bags get Mids/Small etc.)
 
 **Yield Band**
 - Per strain: historical average yield per plant (g dry weight), expressed as a [min, max] band
@@ -1732,24 +1893,28 @@ Production staff never need to see the commercial side (resellers, commissions, 
   - Above band: positive investigation ("what contributed to higher yield?" — environment, strain selection, nutrients)
   - Below band: negative investigation ("what caused the shortfall?" — potential damage, theft, disease, environmental failure); full pipeline backtrace available
 
-**Manufacturing Batch**
-- Links one or more cultivation batches (the raw material)
-- Process type: extraction, tincture formulation, capsule filling, etc.
-- Input weights, output weights, waste recorded
-- Lab test results attached (cannabinoid profile, contaminant screen)
-- RP sign-off required before batch can proceed to packing
+**Manufacturing Batch / Blend Record**
+- A Manufacturing Batch is an Odoo `mrp.production` (Manufacturing Order) — the portal creates it via XML-RPC; Odoo records input lots consumed, output lots produced, by-products, and waste quantities. The portal does not store these weights in MongoDB.
+- Single-source batch stays on the `BHAPI...` lot ID. Mixing two or more cultivation batches triggers a Blend Record: the portal creates a new Odoo `mrp.production` consuming the parent lots and producing a new `BHB...` lot. The blend linkage (which parent lots feed this batch) is Odoo's native MO component traceability — no MongoDB document needed for this.
+- Process type (crush, pre-roll, extraction, tincture, capsule) maps to Odoo's Bill of Materials — each process type has a BoM in Odoo defining standard inputs, outputs, and by-products.
+- Lab test results: attached as documents to the `mrp.production` record in Odoo (Odoo supports attachments natively on any record).
+- RP sign-off: the portal records an e-signature event in MongoDB (`signature_events`) and calls `mrp.production` → action_done (validate the MO) via XML-RPC. The Odoo MO is the authoritative record; the `signature_event` is the compliance overlay.
 
 **Finished Goods Receipt**
-- When a manufacturing batch passes QA/RP sign-off, it triggers a stock receipt into Odoo
-- `stock.lot` created in Odoo with the batch number as lot name
-- `barcode` set on the `product.product` record (or on the lot)
-- Qty enters the vault → appears in the reseller product catalog
+- When the portal validates the packing MO in Odoo (`mrp.production::action_done`), Odoo automatically:
+  - Creates the finished goods `stock.lot` with the full batch ID string as the lot name (e.g. `BHAPIBBY-001-010126-MP3G`)
+  - Moves the produced qty into the finished goods location
+  - Records the component lots consumed (full traceability chain in Odoo natively)
+- The portal then triggers the Phase 12.3 Vault IN: creates an Odoo `stock.picking` (internal transfer from finished goods location to the vault/resellable stock location) and validates it
+- `barcode` (Phase 12) is set on the `product.product` record — distinct from the lot ID but linked; one barcode per SKU, many lots per SKU over time
+- Once the vault transfer is validated: qty appears in `qty_available` in the reseller/Store product catalogue — no manual stock adjustment, no MongoDB stock record
 
-**SAHPRA Reporting**
-- Lot-level audit trail: cultivation batch → manufacturing batch → finished goods → every order that dispensed units from that lot
+**Traceability Chain — confirmed end-to-end (see Store Onboarding Agreement below)**
+- Cultivation batch → manufacturing/blend batch → finished goods lot/barcode → Sale Order → **Delivery Note** → **Named Patient**, cross-referenced against their **Script** and **SAHPRA Section 21 Authorisation**
+- This is not a theoretical nice-to-have — Section 10.3 of Bassani's Store Onboarding Agreement makes Bassani's own order/batch records the audit trail that proves lawful supply; a gap anywhere in this chain is a real compliance exposure, not just an internal reporting gap
 - Plant count accuracy: planted vs harvested vs destroyed vs transferred
 - Destruction records: date, reason, witness, quantity
-- *(Exact report format and fields: to be obtained from SAHPRA or Bassani's compliance officer before any schema is finalised)*
+- *(Exact SAHPRA report format/fields: still to be obtained — the batch ID scheme and chain endpoints are now confirmed, but the regulator's specific submission format is not)*
 
 ---
 
@@ -1766,14 +1931,15 @@ On top of the compliance foundation, the yield band system provides operational 
 
 ### What Needs to Happen Before Scoping Can Start
 
-1. **Obtain SAHPRA reporting requirements** — the actual fields, data format, and submission mechanism. This is the non-negotiable foundation; everything else depends on it. Annex 11 tells us how the software must behave; SAHPRA tells us what data it must capture.
-2. **Confirm EU GMP Annex 11 applies to Bassani's licence** — ask Bassani's compliance officer whether SAHPRA explicitly requires Annex 11 for their licence category (almost certain yes for medicinal cannabis, but confirm before treating it as a hard requirement).
-3. **Walk through Bassani's current cultivation workflow** — how they currently track plant counts, stages, and weights (spreadsheets? paper? Odoo?). The portal must map to how they actually work, not how GrowerIQ assumed a generic producer works.
-4. **Determine scale integration feasibility** — Annex 11 §17 flags manual weight transcription as a risk requiring mitigation. GrowerIQ's answer is automated scale integration (weight transfers directly from digital scale to system). Do the GACP facility scales have USB/serial output? This eliminates the most auditor-scrutinised data entry point in the whole system.
-5. **Confirm which roles/staff would use the production portal** — named individuals, as was done for the commercial side in Phase 8.
-6. **Confirm Odoo lot/serial number usage** — whether Odoo is currently configured for lot tracking on finished goods, and whether the manufacturing (MRP) module is in use or if finished goods are received manually.
-7. **Agree on yield band methodology** — fixed band set by production manager, or auto-calibrating from historical harvests over time, or both.
-8. **Confirm data retention period** — Annex 11 §18 requires data retention for the length of the retention period required by the most stringent applicable jurisdiction. GrowerIQ retains for 7 years. Confirm with Bassani's compliance officer what SAHPRA requires and ensure MongoDB backup policy explicitly covers it.
+1. **Obtain SAHPRA reporting requirements** — ⚠️ **Still the primary blocker.** The batch ID scheme, workflow, staff, and module scope are all now confirmed. What remains is the regulator's specific report/submission format and field requirements.
+2. **Confirm EU GMP Annex 11 applies to Bassani's licence** — ask Bassani's compliance officer to confirm formally (almost certain yes, but needs written confirmation before treating as hard requirement).
+3. ✅ **Walk through current cultivation workflow** — **answered by the logbook.** 8 Excel sheets currently in active use (data dated May–June 2026). Each sheet maps directly to one portal module. See table above.
+4. **Determine scale integration feasibility** — Annex 11 §17 risk. Weight entry currently manual in the logbook (grams typed in free text). Confirm whether GACP facility scales have USB/serial output for direct data capture — this is the highest-risk manual entry point for SAHPRA audit.
+5. ✅ **Roles/staff who use the production portal** — **partially answered.** Floor staff visible in live logbook data: Linda, Pamela, Nkateko, Lebo, Risuna, Meltah, Tristan, Cullen, Salome, Clyde, Itumeleng, Puleng. Supervisory roles: Team Leader (TL verification on Crush logbook), QA verification (separate from RP), RP (batch release). Need to confirm named individuals for TL and QA roles specifically, and whether any of the commercial portal's named staff (Cullen Grant — QA Manager, Rookshanna — RP) also appear in production sign-offs.
+6. **Confirm Odoo lot/serial number usage** — whether Odoo is currently configured for lot tracking on finished goods. The lot name should be the full batch ID string (e.g. `BHAPIBBY-001-010126-PCPRPTT`) — needs verification against current Odoo config.
+7. **Agree on yield band methodology** — fixed band set by production manager, or auto-calibrating from historical harvests, or both. The GACP logbook tracks expected harvest dates but not expected yield weights — yield bands would be a new data capture not currently in any spreadsheet.
+8. **Confirm data retention period** — GrowerIQ: 7 years; Store Onboarding Agreement: 5 years for dispensing records. Confirm SAHPRA production-side requirement specifically.
+9. **Determine where the cultivation traceability chain terminates in the existing commercial portal** — see related Section 21 gap finding below. This may require Phase 8 hardening work before Phase 13 can deliver end-to-end traceability.
 
 ---
 
@@ -1782,6 +1948,12 @@ On top of the compliance foundation, the yield band system provides operational 
 > **2026-06-29:** Concept recorded following a business meeting with GrowerIQ and a brainstorming session. Bassani Health's decision is to build in-house rather than license GrowerIQ — retaining data ownership, tighter integration with the commercial portal, and avoiding a third-party subscription. The Phase 12 barcode infrastructure is the direct foundation this phase builds on. No design or implementation work to begin until SAHPRA reporting requirements are in hand and the cultivation workflow has been walked through with the production team.
 
 > **2026-06-29 — EU GMP Annex 11 analysis:** GrowerIQ shared their EU GMP Annex 11 (Computerised Systems) compliance document. Key findings: (1) The existing portal already satisfies the majority of Annex 11 requirements — audit trail §22, named user identity §25–28, secure API §16, backups §19, incident management §29 are all covered by Phases 0, 1, and 6. (2) The single significant gap is **electronic signatures** (§30–31): Annex 11 requires re-authentication at the point of critical sign-off events (batch release, QA/RP approval), not just a session-token-authenticated button click. This must be built as a shared e-signature module for both Phase 13 (production batch sign-off) and retrofitted to the commercial packing board QA/RP approvals. (3) Scale integration (§17) is the recommended mitigation for manual weight transcription risk — worth confirming whether GACP facility scales support it. (4) Data retention of 7 years is GrowerIQ's standard — confirm SAHPRA's specific requirement before setting the Railway MongoDB backup retention policy. Document reference: `EU GMP Annex11 & GrowerIQ Compliance (1).pdf`.
+
+> **2026-07-01 — Odoo-vs-MongoDB split clarified, data model philosophy documented:** The existing architecture principle ("Odoo is the financial source of truth / MongoDB handles portal-layer concerns only") was already stated in the roadmap header but needed to be applied explicitly to Phase 13. The Sales Ticket pattern is the correct template: `sales_tickets` in MongoDB tracks pipeline stage/workflow state; the actual `sale.order`, `account.move`, and `stock.picking` all live in Odoo. Phase 13 follows the same split: `production_sessions` in MongoDB tracks approval workflow state (TL/QA/RP sign-offs); the actual manufacturing operations (`mrp.production`), stock movements (`stock.picking`), lot numbers (`stock.lot`), and stock levels (`stock.quant`) all live in Odoo. The 8 logbook table has been updated with an "Odoo object" column explicitly mapping each logbook to the Odoo model it creates. The only genuinely custom MongoDB collections are: `cultivation_batches` (GACP plant/room tracking — no Odoo equivalent before harvest), `yield_bands`, `batch_investigations`, `sahpra_reports`, `signature_events`, and `production_sessions` (workflow overlay). Everything else uses Odoo natively via the portal's XML-RPC layer.
+
+> **2026-06-30 — Operational logbook reviewed (`Logbook Example for Nick Cannaverse.xlsx`):** This is the single most concrete source document for Phase 13 to date — it is the actual Excel-based system the production team is running today. 13 sheets confirmed: Index, Batch Naming, Packing Batch Shortcode, Product Naming Rules, Shortcode for products, GACP Logbook, Dry Room Logbook, Manicuring Logbook, Crush Logbook, Pre Roll Logbook, Gummy Manufacturing, Packing Logbook, 2ndary Packing Logbook. Each logbook sheet = one portal form/module. Live data confirmed from May–June 2026. Key discoveries vs prior speculation: (1) The batch suffix scheme is more complete than the V6 PDF — includes standard vs budget branching at Crush (`PC`/`TC`), pre-roll (`PCPR`/`TCPR`), and 10 distinct finished goods packaging suffixes (PTT/PJR/MP1G–5G/PP1G–5G). (2) Gummy products follow a separate lot numbering scheme (`BHG[flavour]-[instance]-[DDMMYY]`) with a distinct packing flow (supplier receipt → packing → expiry). (3) Manicured flower sub-grades: Bigs, Mids, Small (all under the `-M` suffix) plus Pops — live data tracks per-staff, per-grade output. (4) GACP logbook is row-level inside rooms (Room F4 Row 1–6 etc.), not batch-level. (5) Multiple intermediate verifications before RP sign-off: Team Leader (TL) + QA on the Crush logbook — the portal needs at least 3 approval levels per stage. (6) Batch ID format inconsistency in live data confirms portal-enforced ID generation is essential, not optional. (7) ~70 strain shortcodes already defined in the "Shortcode for products" sheet — the portal inherits this master list at launch. Remaining gap: yield bands (not tracked in any current spreadsheet) and SAHPRA report format (primary blocker).
+
+> **2026-06-30 — Batch traceability standard + Store Onboarding Agreement reviewed:** Two further source documents confirmed concrete details that were previously speculative in this phase. (1) `Medicinal Cannabis Batch Traceability Guide V6.pdf` — Bassani's own internal batch numbering protocol (not invented by this roadmap): base ID format `BH[API|B][strain][seq]-[date]`, single-letter post-harvest stage suffixes (D/U/M/P/T), compound processing suffixes (MC, MCPR), and a distinct blending convention (`BHB` prefix) for multi-batch blends with traceability back to every parent batch. This has fully replaced the placeholder cultivation-batch lifecycle and stage model in this section — see "Batch Numbering Standard" above. (2) `Bassani_Health_Store_Onboarding_Agreement_v1.pdf` (Section 21 Collection Point legal framework) — confirms the traceability chain must terminate at a **Delivery Note** linking dispensed units to a **Named Patient**, their **Script**, and their **SAHPRA Section 21 Authorisation** (medicine-specific, quantity-specific, 6-month validity). Section 10.3 of that agreement makes Bassani's own order records the legal audit trail proving lawful supply to each "Store" (the agreement's term for what the portal calls a reseller) — a volume mismatch is treated as prima facie evidence of illicit sourcing. **Separate but related finding, not folded into Phase 13:** the existing live portal's Section 21 check (`backend/routes/script_routes.py`) is a single `s21script` string + expiry date — materially thinner than what this agreement requires (a structured, medicine-specific, quantity-specific Authorisation Letter, validated per order). This is a gap in the *current, already-shipped* order flow, not a future production-tracking concept — flagged to the business for a decision on whether to scope it (likely as Phase 8 hardening) before further Phase 13 work proceeds. Document references: `Medicinal Cannabis Batch Traceability Guide V6.pdf`, `Bassani_Health_Store_Onboarding_Agreement_v1.pdf`.
 
 ---
 

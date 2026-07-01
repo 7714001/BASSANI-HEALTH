@@ -29,6 +29,14 @@ const MOVE_TYPE_META = {
 };
 const MOVE_OUT_TYPES = new Set(["delivery", "adjustment_out", "consumed", "vendor_return"]);
 
+// Extracts the variant label from an Odoo display_name.
+// Odoo appends variant attribute values in parentheses: "Product Name (Variant)"
+// Returns the parenthetical string, or null for single-variant products.
+const getVariantLabel = (p) => {
+  const m = ((p.display_name || p.name) || "").match(/\(([^)]+)\)$/);
+  return m ? m[1] : null;
+};
+
 export function Products() {
   const { user, can } = useAuth();
   const [products,   setProducts  ] = useState([]);
@@ -36,6 +44,7 @@ export function Products() {
   const [loading,    setLoading   ] = useState(true);
   const [search,     setSearch    ] = useState("");
   const [cat,        setCat       ] = useState("all");
+  const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
   const [uoms,        setUoms       ] = useState([]);
   const [taxes,       setTaxes      ] = useState([]);
@@ -186,8 +195,18 @@ export function Products() {
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
           <ChipRow>
-            {["all",...categories.map(c=>c.name)].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setPagination(p => ({...p, pageIndex:0})); }} />)}
+            {["all",...categories.map(c=>c.name)].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }} />)}
           </ChipRow>
+          {(() => {
+            const opts = cat === "all" ? [] : Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
+            return opts.length > 0 ? (
+              <ChipRow>
+                {["all", ...opts].map(v => (
+                  <FilterPill key={v} label={v === "all" ? "All Variants" : v} active={variant === v} onClick={() => setVariant(v)} />
+                ))}
+              </ChipRow>
+            ) : null;
+          })()}
         </div>
         <DataTable
           columns={[
@@ -224,7 +243,7 @@ export function Products() {
             } },
             ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
           ]}
-          data={products} loading={loading} total={total}
+          data={variant === "all" ? products : products.filter(p => getVariantLabel(p) === variant)} loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
           sorting={sorting} onSortingChange={u=>{ setSorting(typeof u==="function"?u(sorting):u); setPagination(p=>({...p,pageIndex:0})); }}
           manualPagination manualSorting
@@ -656,6 +675,7 @@ export function Orders() {
   const [cartProdsLoading, setCartProdsLoading] = useState(false);
   const [cartProdSearch,   setCartProdSearch  ] = useState("");
   const [cartProdCat,      setCartProdCat     ] = useState("all");
+  const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,             setCart            ] = useState([]);
   const [cartNote,         setCartNote        ] = useState("");
@@ -693,7 +713,7 @@ export function Orders() {
   }, [cartCustSearch, cartCustDropOpen]);
 
   const openNewOrder = () => {
-    setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartStockFilter("all"); setCartNote("");
+    setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartProdVariant("all"); setCartStockFilter("all"); setCartNote("");
     setCartCustSearch(""); setCartCustResults([]); setCartSelectedCust(null);
     setCartCustDropOpen(false); setCartSubmitting(false);
     loadCartProducts();
@@ -760,14 +780,19 @@ export function Orders() {
   };
 
   const cartProductCategories = ["all", ...Array.from(new Set(cartProducts.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
+  const cartVariantOptions    = cartProdCat === "all" ? [] :
+    Array.from(new Set(
+      cartProducts.filter(p => (p.categ_id?.[1] || "") === cartProdCat).map(p => getVariantLabel(p)).filter(Boolean)
+    )).sort();
   const cartFilteredProducts  = cartProducts
     .filter(p => {
       const q          = cartProdSearch.toLowerCase();
       const inStock     = (p.virtual_available ?? 0) > 0;
       const matchQ      = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
       const matchCat    = cartProdCat === "all" || (p.categ_id?.[1] || "") === cartProdCat;
+      const matchVariant = cartProdVariant === "all" || getVariantLabel(p) === cartProdVariant;
       const matchStock  = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
-      return matchQ && matchCat && matchStock;
+      return matchQ && matchCat && matchVariant && matchStock;
     })
     .sort((a, b) => {
       const aIn = (a.virtual_available ?? 0) > 0;
@@ -871,12 +896,19 @@ export function Orders() {
               />
               <ChipRow>
                 {cartProductCategories.map(c => (
-                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c} onClick={() => setCartProdCat(c)} />
+                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c} onClick={() => { setCartProdCat(c); setCartProdVariant("all"); }} />
                 ))}
                 <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
                 <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
                 <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
               </ChipRow>
+              {cartVariantOptions.length > 0 && (
+                <ChipRow>
+                  {["all", ...cartVariantOptions].map(v => (
+                    <FilterPill key={v} label={v === "all" ? "All" : v} active={cartProdVariant === v} onClick={() => setCartProdVariant(v)} />
+                  ))}
+                </ChipRow>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-6">
               {cartProdsLoading && <LoadingState />}
