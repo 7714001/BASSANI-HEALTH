@@ -30,7 +30,7 @@ const NAV = [
     { label: "UOM",         path: "/catalogue/uom",        icon: Ruler, permission: "products.manage" },
   ]},
   { label: "Customers",    path: "/customers",   icon: Users,           section: "Main",     permission: "customers.view"      },
-  { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view" },
+  { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view", showApplicationsBadge: true },
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
   { label: "Resellers",    path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
   { label: "Commission",   path: "/commission",  icon: Percent,         section: "Resellers",permission: "commission.view"     },
@@ -60,7 +60,8 @@ export function Sidebar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { open, close } = useContext(SidebarContext);
-  const [inboxCount, setInboxCount] = useState(0);
+  const [inboxCount,        setInboxCount       ] = useState(0);
+  const [pendingAppsCount,  setPendingAppsCount ] = useState(0);
 
   useEffect(() => {
     if (!can("inbox.view")) return;
@@ -72,6 +73,17 @@ export function Sidebar() {
     const id = setInterval(fetchCount, 60000);
     return () => clearInterval(id);
   }, [can]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const fetchCount = () =>
+      api.get("/api/onboarding/", { params: { status: "pending", limit: 1, offset: 0 } })
+        .then(r => setPendingAppsCount(r.data.total || 0))
+        .catch(() => {});
+    fetchCount();
+    const id = setInterval(fetchCount, 60000);
+    return () => clearInterval(id);
+  }, [isAdmin]);
 
   const isReseller = user?.role === "reseller";
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
@@ -120,7 +132,7 @@ export function Sidebar() {
                 item.children
                   ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
                   : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
-                      badge={item.showInboxBadge ? inboxCount : 0} />
+                      badge={item.showInboxBadge ? inboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
               )}
             </div>
           ))
