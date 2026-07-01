@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { CheckCircle, XCircle, Clock, Eye, FileText, Download, Loader2 } from "lucide-react";
-import { useAuth } from "../AuthContext";
+import { useNavigate } from "react-router-dom";
+import { CheckCircle, XCircle, Clock, ArrowRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import {
-  TopBar, DataTable, FilterPill, ChipRow, Modal,
-  FormGroup, BtnPrimary, BtnSecondary, fmtDate,
-} from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, fmtDate } from "../components/UI";
 
-// ── Status helpers ─────────────────────────────────────────────────────────────
+// ── Status badge ───────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
   pending:  { label: "Pending",  cls: "bg-amber-50 text-amber-700",  icon: Clock },
@@ -26,251 +23,43 @@ function StatusBadge({ status }) {
   );
 }
 
-// ── Detail section ─────────────────────────────────────────────────────────────
-
-function DetailRow({ label, value }) {
-  if (!value) return null;
-  return (
-    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0">
-      <span className="text-xs text-gray-400 font-medium shrink-0 mr-4">{label}</span>
-      <span className="text-xs font-semibold text-gray-800 text-right">{value}</span>
-    </div>
-  );
-}
-
-function Section({ title, children }) {
-  return (
-    <div className="mb-4">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{title}</p>
-      <div className="bg-gray-50 rounded-xl px-4 py-1">{children}</div>
-    </div>
-  );
-}
-
-// ── Review modal ───────────────────────────────────────────────────────────────
-
-function DocumentsSection({ appId }) {
-  const [docs,    setDocs   ] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.get(`/api/onboarding/${appId}/documents`)
-      .then(r => setDocs(r.data.documents || []))
-      .catch(() => setDocs([]))
-      .finally(() => setLoading(false));
-  }, [appId]);
-
-  if (loading) return (
-    <div className="flex items-center gap-2 py-3 text-xs text-gray-400">
-      <Loader2 size={12} className="animate-spin" /> Loading documents…
-    </div>
-  );
-
-  if (!docs || docs.length === 0) return (
-    <div className="py-3 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 border border-amber-100">
-      No documents uploaded with this application.
-    </div>
-  );
-
-  return (
-    <div className="space-y-1.5">
-      {docs.map((d, i) => (
-        <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileText size={12} className="text-bassani-600 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-gray-700 truncate">{d.label || d.doc_type}</p>
-              {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
-            </div>
-          </div>
-          {d.download_url ? (
-            <a href={d.download_url} target="_blank" rel="noreferrer"
-              className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 shrink-0 ml-3 transition-colors">
-              <Download size={11} />
-              Download
-            </a>
-          ) : (
-            <span className="text-[10px] text-gray-400 shrink-0 ml-3">Unavailable</span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ReviewModal({ app, onClose, onApprove, onReject, canApprove, canReject }) {
-  const [rejectMode,   setRejectMode  ] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const [loading,      setLoading     ] = useState(false);
-
-  const handleApprove = async () => {
-    setLoading(true);
-    try {
-      await onApprove(app.id);
-      onClose();
-    } finally { setLoading(false); }
-  };
-
-  const handleReject = async () => {
-    if (!rejectReason.trim()) return toast.error("Please enter a reason for rejection");
-    setLoading(true);
-    try {
-      await onReject(app.id, rejectReason.trim());
-      onClose();
-    } finally { setLoading(false); }
-  };
-
-  const addressParts = [app.street, app.suburb, app.city, app.province, app.postal_code, app.country].filter(Boolean);
-
-  return (
-    <Modal title={`Review Application — ${app.id}`} onClose={onClose} size="lg">
-      <div className="flex items-center gap-2 mb-4">
-        <StatusBadge status={app.status} />
-        <span className="text-xs text-gray-400">
-          Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> on {fmtDate(app.submitted_at)}
-        </span>
-      </div>
-
-      {app.status === "rejected" && app.rejection_reason && (
-        <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700">
-          <strong>Rejection reason:</strong> {app.rejection_reason}
-        </div>
-      )}
-
-      <div className="max-h-[50vh] overflow-y-auto space-y-0 pr-1">
-        <Section title="Business Details">
-          <DetailRow label="Company Name"       value={app.company_name} />
-          <DetailRow label="Trading Name"       value={app.trading_name} />
-          <DetailRow label="Business Type"      value={app.business_type} />
-          <DetailRow label="Registration No."   value={app.registration_number} />
-          <DetailRow label="VAT Number"         value={app.vat_number} />
-        </Section>
-
-        <Section title="Primary Contact">
-          <DetailRow label="Name"       value={app.contact_name} />
-          <DetailRow label="Position"   value={app.contact_position} />
-          <DetailRow label="Email"      value={app.contact_email} />
-          <DetailRow label="Phone"      value={app.contact_phone} />
-          <DetailRow label="Alt. Phone" value={app.contact_alt_phone} />
-        </Section>
-
-        <Section title="Business Address">
-          <DetailRow label="Address"  value={addressParts.join(", ")} />
-        </Section>
-
-        <Section title="Additional Information">
-          <DetailRow label="Monthly Volume"  value={app.ordering_volume} />
-          <DetailRow label="Referral Source" value={app.referral_source} />
-          <DetailRow label="Notes"           value={app.notes} />
-        </Section>
-
-        <div className="mb-4">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Supporting Documents</p>
-          <DocumentsSection appId={app.id} />
-        </div>
-      </div>
-
-      {app.status === "pending" && (canApprove || canReject) && (
-        <>
-          {rejectMode ? (
-            <div className="mt-4 space-y-3">
-              <FormGroup label="Reason for rejection">
-                <textarea
-                  value={rejectReason}
-                  onChange={e => setRejectReason(e.target.value)}
-                  rows={3}
-                  placeholder="Provide a clear reason that will be visible to the reseller…"
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-200 resize-none placeholder-gray-400"
-                  autoFocus
-                />
-              </FormGroup>
-              <div className="flex justify-end gap-2">
-                <BtnSecondary onClick={() => setRejectMode(false)} disabled={loading}>Cancel</BtnSecondary>
-                <button onClick={handleReject} disabled={loading}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50">
-                  {loading ? "Rejecting…" : "Confirm Rejection"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4 flex justify-between gap-2">
-              {canReject && (
-                <button onClick={() => setRejectMode(true)}
-                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg transition-colors">
-                  Reject
-                </button>
-              )}
-              {canApprove && (
-                <BtnPrimary onClick={handleApprove} loading={loading}>
-                  Approve & Create Customer
-                </BtnPrimary>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </Modal>
-  );
-}
-
 // ── Main view ──────────────────────────────────────────────────────────────────
 
+const FILTERS = [
+  { key: "pending",  label: "Pending" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all",      label: "All" },
+];
+
 export default function CustomerApplications() {
-  const { can } = useAuth();
+  const navigate = useNavigate();
   const [applications, setApplications] = useState([]);
   const [total,        setTotal        ] = useState(0);
   const [loading,      setLoading      ] = useState(true);
   const [filter,       setFilter       ] = useState("pending");
-  const [reviewing,    setReviewing    ] = useState(null);
   const [pagination,   setPagination   ] = useState({ pageIndex: 0, pageSize: 25 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {
-        limit:  pagination.pageSize,
-        offset: pagination.pageIndex * pagination.pageSize,
-        status: filter,
-      };
-      const r = await api.get("/api/onboarding/", { params });
-      setApplications(r.data.applications || []);
-      setTotal(r.data.total || 0);
-    } catch { toast.error("Failed to load applications"); }
-    finally { setLoading(false); }
+      const { data } = await api.get("/api/onboarding/", {
+        params: {
+          limit:  pagination.pageSize,
+          offset: pagination.pageIndex * pagination.pageSize,
+          status: filter,
+        },
+      });
+      setApplications(data.applications || []);
+      setTotal(data.total || 0);
+    } catch {
+      toast.error("Failed to load applications");
+    } finally {
+      setLoading(false);
+    }
   }, [filter, pagination]);
 
   useEffect(() => { load(); }, [load]);
-
-  const approve = async (id) => {
-    try {
-      await api.put(`/api/onboarding/${id}/approve`);
-      toast.success("Customer approved and created in Odoo");
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Approval failed");
-      throw e;
-    }
-  };
-
-  const reject = async (id, reason) => {
-    try {
-      await api.put(`/api/onboarding/${id}/reject`, { reason });
-      toast.success("Application rejected");
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Rejection failed");
-      throw e;
-    }
-  };
-
-  const FILTERS = [
-    { key: "pending",  label: "Pending" },
-    { key: "approved", label: "Approved" },
-    { key: "rejected", label: "Rejected" },
-    { key: "all",      label: "All" },
-  ];
-
-  const pendingCount = applications.filter(a => a.status === "pending").length;
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -323,29 +112,19 @@ export default function CustomerApplications() {
               cell: ({ row: { original: a } }) => <StatusBadge status={a.status} /> },
             { id: "actions", header: "", enableSorting: false,
               cell: ({ row: { original: a } }) => (
-                <button onClick={() => setReviewing(a)}
+                <button onClick={() => navigate(`/applications/${a.id}`)}
                   className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-700 font-semibold hover:underline">
-                  <Eye size={12} />
                   {a.status === "pending" ? "Review" : "View"}
+                  <ArrowRight size={11} />
                 </button>
               )},
           ]}
           data={applications} loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
+          onRowClick={a => navigate(`/applications/${a.id}`)}
           manualPagination
         />
       </main>
-
-      {reviewing && (
-        <ReviewModal
-          app={reviewing}
-          onClose={() => setReviewing(null)}
-          onApprove={approve}
-          onReject={reject}
-          canApprove={can("customers.approve_onboarding")}
-          canReject={can("customers.reject_onboarding")}
-        />
-      )}
     </div>
   );
 }

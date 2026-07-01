@@ -23,7 +23,8 @@ import Scripts          from "./views/Scripts";
 import HcpRegister      from "./views/HcpRegister";
 import Targets               from "./views/Targets";
 import CustomerOnboarding    from "./views/CustomerOnboarding";
-import CustomerApplications  from "./views/CustomerApplications";
+import CustomerApplications       from "./views/CustomerApplications";
+import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
 import ResellerProfile       from "./views/ResellerProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
@@ -156,6 +157,9 @@ export default function App() {
         } />
         <Route path="/applications" element={
           <ProtectedRoute adminOnly><AppLayout><CustomerApplications /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/applications/:id" element={
+          <ProtectedRoute adminOnly><AppLayout><CustomerApplicationDetail /></AppLayout></ProtectedRoute>
         } />
         <Route path="/resellers" element={
           <ProtectedRoute adminOnly><AppLayout><Resellers /></AppLayout></ProtectedRoute>
