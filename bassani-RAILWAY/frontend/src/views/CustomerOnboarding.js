@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, Building2, User, MapPin, ClipboardList } from "lucide-react";
+import {
+  CheckCircle, Building2, User, MapPin, ClipboardList,
+  FileText, Download, Mail, Upload, X, Loader2, AlertCircle,
+} from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 
@@ -33,23 +36,35 @@ const REFERRAL_SOURCES = [
 ];
 
 const STEPS = [
-  { label: "Business Details",  icon: Building2 },
-  { label: "Primary Contact",   icon: User },
-  { label: "Business Address",  icon: MapPin },
-  { label: "Additional Info",   icon: ClipboardList },
+  { label: "Documents",        icon: FileText },
+  { label: "Business Details", icon: Building2 },
+  { label: "Primary Contact",  icon: User },
+  { label: "Business Address", icon: MapPin },
+  { label: "Additional Info",  icon: ClipboardList },
+];
+
+const TEMPLATES = [
+  { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
+  { filename: "customer-information-form.pdf",  label: "Customer Information Form" },
+  { filename: "nda.pdf",                        label: "NDA" },
+  { filename: "tqa.pdf",                        label: "TQA Document" },
+];
+
+const REQUIRED_DOCS = [
+  { type: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
+  { type: "customer_information_form",  label: "Signed Customer Information Form" },
+  { type: "nda",                        label: "Signed NDA" },
+  { type: "tqa",                        label: "Signed TQA Document" },
+  { type: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
 ];
 
 const BLANK = {
-  // Step 1
   company_name: "", trading_name: "", registration_number: "",
   vat_number: "", business_type: "Pharmacy",
-  // Step 2
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "",
-  // Step 3
   street: "", suburb: "", city: "", province: "",
   postal_code: "", country: "South Africa",
-  // Step 4
   ordering_volume: "", referral_source: "", notes: "",
 };
 
@@ -92,34 +107,109 @@ function Textarea({ value, onChange, placeholder, rows = 3 }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function CustomerOnboarding() {
-  const navigate = useNavigate();
-  const [step,        setStep       ] = useState(0);
-  const [form,        setForm       ] = useState(BLANK);
-  const [submitting,  setSubmitting ] = useState(false);
-  const [reference,   setReference  ] = useState(null);
+  const navigate  = useNavigate();
+  const [sessionId]            = useState(() => crypto.randomUUID());
+  const [step,        setStep ]        = useState(0);
+  const [form,        setForm ]        = useState(BLANK);
+  const [submitting,  setSubmitting ]  = useState(false);
+  const [reference,   setReference ]   = useState(null);
+
+  // Step 0 — document state
+  const [uploads,       setUploads      ] = useState({});   // { doc_type: { label, filename, r2_key, size } }
+  const [uploadingDoc,  setUploadingDoc ] = useState(null); // doc_type currently uploading
+  const [removingDoc,   setRemovingDoc  ] = useState(null); // doc_type currently removing
+  const [emailTarget,   setEmailTarget  ] = useState("");
+  const [emailSending,  setEmailSending ] = useState(false);
+  const fileInputRefs = useRef({});
 
   const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+
+  // ── Document helpers ────────────────────────────────────────────────────────
+
+  const downloadTemplate = async (filename, label) => {
+    try {
+      const res = await api.get(`/api/onboarding/templates/download/${filename}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a   = document.createElement("a");
+      a.href = url; a.download = label + ".pdf"; a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Download failed — file may not be available yet");
+    }
+  };
+
+  const emailTemplates = async () => {
+    if (!emailTarget.trim()) return toast.error("Enter the customer's email address");
+    setEmailSending(true);
+    try {
+      await api.post("/api/onboarding/templates/email", { to_email: emailTarget.trim() });
+      toast.success("Documents sent to " + emailTarget.trim());
+      setEmailTarget("");
+    } catch {
+      toast.error("Failed to send email");
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const uploadDoc = async (docType, file) => {
+    setUploadingDoc(docType);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post(
+        `/api/onboarding/documents/upload?session_id=${sessionId}&doc_type=${docType}`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      setUploads(prev => ({ ...prev, [docType]: data }));
+      toast.success("Document uploaded");
+    } catch {
+      toast.error("Upload failed — please try again");
+    } finally {
+      setUploadingDoc(null);
+    }
+  };
+
+  const removeDoc = async (docType) => {
+    setRemovingDoc(docType);
+    try {
+      await api.delete(`/api/onboarding/documents/${sessionId}/${docType}`);
+      setUploads(prev => { const n = { ...prev }; delete n[docType]; return n; });
+    } catch {
+      toast.error("Failed to remove document");
+    } finally {
+      setRemovingDoc(null);
+    }
+  };
 
   // ── Validation ──────────────────────────────────────────────────────────────
 
   const validateStep = () => {
     if (step === 0) {
-      if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
+      const missing = REQUIRED_DOCS.filter(d => !uploads[d.type]);
+      if (missing.length) {
+        toast.error(`Upload all required documents (${missing.length} remaining)`);
+        return false;
+      }
     }
     if (step === 1) {
+      if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
+    }
+    if (step === 2) {
       if (!form.contact_name.trim())  { toast.error("Contact name is required"); return false; }
       if (!form.contact_email.trim()) { toast.error("Contact email is required"); return false; }
       if (!form.contact_phone.trim()) { toast.error("Contact phone is required"); return false; }
     }
-    if (step === 2) {
+    if (step === 3) {
       if (!form.street.trim()) { toast.error("Street address is required"); return false; }
       if (!form.city.trim())   { toast.error("City is required"); return false; }
     }
     return true;
   };
 
-  const next = () => { if (validateStep()) setStep(s => s + 1); };
-  const back = () => setStep(s => s - 1);
+  const next   = () => { if (validateStep()) setStep(s => s + 1); };
+  const back   = () => setStep(s => s - 1);
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
@@ -127,7 +217,12 @@ export default function CustomerOnboarding() {
     if (!validateStep()) return;
     setSubmitting(true);
     try {
-      const { data } = await api.post("/api/onboarding/", form);
+      const payload = {
+        ...form,
+        document_session_id: sessionId,
+        documents: Object.values(uploads),
+      };
+      const { data } = await api.post("/api/onboarding/", payload);
       setReference(data.reference);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Submission failed. Please try again.");
@@ -149,7 +244,7 @@ export default function CustomerOnboarding() {
             <h2 className="text-xl font-bold text-gray-900 mb-2">Application Submitted</h2>
             <p className="text-gray-500 text-sm mb-5">
               Your onboarding application for <strong>{form.company_name}</strong> has been submitted
-              and is pending admin review. You will be notified once it has been approved.
+              with all supporting documents and is pending admin review.
             </p>
             <div className="bg-gray-50 rounded-xl p-4 mb-6">
               <p className="text-xs text-gray-400 font-medium mb-1">Reference Number</p>
@@ -160,7 +255,7 @@ export default function CustomerOnboarding() {
                 className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                 Back to Customers
               </button>
-              <button onClick={() => { setForm(BLANK); setStep(0); setReference(null); }}
+              <button onClick={() => { setForm(BLANK); setStep(0); setReference(null); setUploads({}); }}
                 className="flex-1 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 rounded-lg text-sm font-semibold text-white transition-colors">
                 Onboard Another
               </button>
@@ -171,9 +266,161 @@ export default function CustomerOnboarding() {
     );
   }
 
+  // ── Step 0 — Documents ──────────────────────────────────────────────────────
+
+  const uploadedCount = Object.keys(uploads).length;
+  const allUploaded   = uploadedCount === REQUIRED_DOCS.length;
+
+  const step0Content = (
+    <div className="space-y-6">
+
+      {/* Section A — share templates */}
+      <div>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+          Step A — Share documents with customer
+        </p>
+        <p className="text-xs text-gray-400 mb-3">
+          Download and send the four Bassani Health onboarding documents to your customer for completion and signing.
+        </p>
+        <div className="space-y-2 mb-4">
+          {TEMPLATES.map(t => (
+            <div key={t.filename} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={13} className="text-bassani-600 shrink-0" />
+                <span className="text-xs font-medium text-gray-700 truncate">{t.label}</span>
+              </div>
+              <button
+                onClick={() => downloadTemplate(t.filename, t.label)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 shrink-0 ml-3 transition-colors">
+                <Download size={12} />
+                Download
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Email to customer */}
+        <div className="border border-gray-100 rounded-xl p-4 bg-white">
+          <p className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
+            <Mail size={12} className="text-gray-400" />
+            Email all documents to customer
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={emailTarget}
+              onChange={e => setEmailTarget(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && emailTemplates()}
+              placeholder="customer@example.co.za"
+              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+            />
+            <button
+              onClick={emailTemplates}
+              disabled={emailSending || !emailTarget.trim()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+              {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+              Send Docs
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-100" />
+
+      {/* Section B — upload signed docs */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Step B — Upload signed documents &amp; CIPC
+          </p>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allUploaded ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+            {uploadedCount} / {REQUIRED_DOCS.length}
+          </span>
+        </div>
+
+        {!allUploaded && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-3">
+            <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">All 5 documents must be uploaded before you can continue.</p>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {REQUIRED_DOCS.map(doc => {
+            const uploaded  = uploads[doc.type];
+            const loading   = uploadingDoc === doc.type;
+            const removing  = removingDoc  === doc.type;
+
+            return (
+              <div key={doc.type}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
+                  uploaded ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+                }`}>
+
+                {/* Status icon */}
+                <div className="shrink-0">
+                  {loading ? (
+                    <Loader2 size={14} className="text-bassani-500 animate-spin" />
+                  ) : uploaded ? (
+                    <CheckCircle size={14} className="text-green-600" />
+                  ) : (
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300" />
+                  )}
+                </div>
+
+                {/* Label + filename */}
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-semibold truncate ${uploaded ? "text-green-800" : "text-gray-700"}`}>
+                    {doc.label}
+                  </p>
+                  {uploaded && (
+                    <p className="text-[10px] text-green-600 truncate mt-0.5">{uploaded.filename}</p>
+                  )}
+                </div>
+
+                {/* Action */}
+                {uploaded ? (
+                  <button
+                    onClick={() => removeDoc(doc.type)}
+                    disabled={!!removingDoc}
+                    title="Remove and re-upload"
+                    className="shrink-0 p-1 rounded hover:bg-green-100 text-green-600 hover:text-red-500 transition-colors disabled:opacity-50">
+                    {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                  </button>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      className="hidden"
+                      ref={el => { fileInputRefs.current[doc.type] = el; }}
+                      onChange={e => {
+                        if (e.target.files[0]) uploadDoc(doc.type, e.target.files[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => fileInputRefs.current[doc.type]?.click()}
+                      disabled={loading || !!uploadingDoc}
+                      className="shrink-0 flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors">
+                      <Upload size={11} />
+                      Upload
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
   // ── Step content ────────────────────────────────────────────────────────────
 
   const stepContent = [
+    step0Content,
+
     // Step 1 — Business Details
     <div key="1" className="space-y-4">
       <Field label="Registered Company Name" required>
@@ -269,9 +516,6 @@ export default function CustomerOnboarding() {
       <Field label="Additional Notes">
         <Textarea value={form.notes} onChange={upd("notes")} placeholder="Any special requirements, delivery preferences, or additional context…" rows={4} />
       </Field>
-      <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-        <strong>Documents:</strong> Additional compliance documents (e.g. licence copies, banking details) may be requested during the review process. Your account manager will follow up directly.
-      </div>
     </div>,
   ];
 
@@ -297,7 +541,7 @@ export default function CustomerOnboarding() {
           {/* Step indicators */}
           <div className="flex items-center gap-0">
             {STEPS.map((s, i) => {
-              const Icon = s.icon;
+              const Icon    = s.icon;
               const done    = i < step;
               const current = i === step;
               return (
@@ -305,7 +549,7 @@ export default function CustomerOnboarding() {
                   <div className={`flex items-center gap-2 shrink-0 ${current ? "text-bassani-700" : done ? "text-bassani-500" : "text-gray-300"}`}>
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors
                       ${current ? "border-bassani-600 bg-bassani-600 text-white"
-                               : done ? "border-bassani-500 bg-bassani-50 text-bassani-600"
+                               : done    ? "border-bassani-500 bg-bassani-50 text-bassani-600"
                                : "border-gray-200 bg-white text-gray-300"}`}>
                       {done ? <CheckCircle size={14} /> : <Icon size={14} />}
                     </div>
@@ -333,7 +577,7 @@ export default function CustomerOnboarding() {
             <div className="px-6 py-5">
               {stepContent[step]}
             </div>
-            <div className="px-6 py-4 bg-gray-50/50 rounded-b-2xl border-t border-gray-50 flex justify-between">
+            <div className="px-6 py-4 bg-gray-50/50 rounded-b-2xl border-t border-gray-50 flex justify-between items-center">
               {step > 0 ? (
                 <button onClick={back}
                   className="px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg hover:bg-white transition-colors">
@@ -346,8 +590,11 @@ export default function CustomerOnboarding() {
                 </button>
               )}
               {step < STEPS.length - 1 ? (
-                <button onClick={next}
-                  className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                <button
+                  onClick={next}
+                  disabled={step === 0 && !allUploaded}
+                  title={step === 0 && !allUploaded ? `${REQUIRED_DOCS.length - uploadedCount} document(s) still required` : undefined}
+                  className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors">
                   Continue →
                 </button>
               ) : (
@@ -359,16 +606,20 @@ export default function CustomerOnboarding() {
             </div>
           </div>
 
-          {/* Summary sidebar — show entered data as user progresses */}
-          {step > 0 && (
+          {/* Summary sidebar */}
+          {step > 1 && (
             <div className="bg-white rounded-xl border border-gray-100 px-5 py-4">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Application Summary</p>
               <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Documents</span>
+                  <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded ✓</span>
+                </div>
                 {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
                 {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}
-                {step > 1 && form.contact_name && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
-                {step > 1 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700">{form.contact_email}</span></div>}
-                {step > 2 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
+                {step > 2 && form.contact_name && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
+                {step > 2 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700">{form.contact_email}</span></div>}
+                {step > 3 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
               </div>
             </div>
           )}

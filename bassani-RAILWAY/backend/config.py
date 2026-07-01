@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     ms_client_id:      str = ""
     ms_client_secret:  str = ""
     ms_shared_mailbox: str = "orders@bassanihealth.com"
+    r2_account_id:        str = ""
+    r2_access_key_id:     str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket:            str = "bassani-health-docs"
+    r2_endpoint:          str = ""
 
     class Config:
         env_file = ".env"

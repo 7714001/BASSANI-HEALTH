@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { CheckCircle, XCircle, Clock, Eye } from "lucide-react";
+import { CheckCircle, XCircle, Clock, Eye, FileText, Download, Loader2 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -48,6 +48,55 @@ function Section({ title, children }) {
 }
 
 // ── Review modal ───────────────────────────────────────────────────────────────
+
+function DocumentsSection({ appId }) {
+  const [docs,    setDocs   ] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get(`/api/onboarding/${appId}/documents`)
+      .then(r => setDocs(r.data.documents || []))
+      .catch(() => setDocs([]))
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  if (loading) return (
+    <div className="flex items-center gap-2 py-3 text-xs text-gray-400">
+      <Loader2 size={12} className="animate-spin" /> Loading documents…
+    </div>
+  );
+
+  if (!docs || docs.length === 0) return (
+    <div className="py-3 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 border border-amber-100">
+      No documents uploaded with this application.
+    </div>
+  );
+
+  return (
+    <div className="space-y-1.5">
+      {docs.map((d, i) => (
+        <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText size={12} className="text-bassani-600 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-gray-700 truncate">{d.label || d.doc_type}</p>
+              {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
+            </div>
+          </div>
+          {d.download_url ? (
+            <a href={d.download_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 shrink-0 ml-3 transition-colors">
+              <Download size={11} />
+              Download
+            </a>
+          ) : (
+            <span className="text-[10px] text-gray-400 shrink-0 ml-3">Unavailable</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ReviewModal({ app, onClose, onApprove, onReject, canApprove, canReject }) {
   const [rejectMode,   setRejectMode  ] = useState(false);
@@ -114,6 +163,11 @@ function ReviewModal({ app, onClose, onApprove, onReject, canApprove, canReject 
           <DetailRow label="Referral Source" value={app.referral_source} />
           <DetailRow label="Notes"           value={app.notes} />
         </Section>
+
+        <div className="mb-4">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Supporting Documents</p>
+          <DocumentsSection appId={app.id} />
+        </div>
       </div>
 
       {app.status === "pending" && (canApprove || canReject) && (

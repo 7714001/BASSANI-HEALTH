@@ -11,6 +11,7 @@ FastAPI's BackgroundTasks so they never block an API response:
     background_tasks.add_task(send_welcome_email, username=..., ...)
 """
 
+import os
 import resend
 from config import get_settings
 
@@ -18,7 +19,13 @@ settings = get_settings()
 
 # ── Base send ──────────────────────────────────────────────────────────────────
 
-def _send(to: "str | list[str]", subject: str, html: str, reply_to: str = None) -> None:
+def _send(
+    to: "str | list[str]",
+    subject: str,
+    html: str,
+    reply_to: str = None,
+    attachments: list = None,
+) -> None:
     """Core send. Sync — always called from a BackgroundTask thread."""
     key = settings.resend_api_key
     if not key or key.startswith("re_your"):
@@ -35,6 +42,8 @@ def _send(to: "str | list[str]", subject: str, html: str, reply_to: str = None) 
         }
         if reply_to:
             payload["reply_to"] = reply_to
+        if attachments:
+            payload["attachments"] = attachments
         resend.Emails.send(payload)
     except Exception as exc:
         print(f"⚠️  Email send failed [{subject}]: {exc}")
@@ -548,6 +557,54 @@ def send_otp_email(email: str, name: str, otp: str) -> None:
 
 
 # ── Packing floor emails ───────────────────────────────────────────────────────
+
+def send_onboarding_templates(to_email: str, reseller_name: str) -> None:
+    """
+    Email all 4 Bassani onboarding template PDFs to a customer's email address.
+    Called by the reseller from Step 0 of the onboarding wizard.
+    Gracefully skips any template file that hasn't been placed in the static directory yet.
+    """
+    if not to_email:
+        return
+
+    _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
+    _TEMPLATES = [
+        ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
+        ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
+        ("nda.pdf",                        "Bassani Health NDA"),
+        ("tqa.pdf",                        "Bassani Health TQA Document"),
+    ]
+
+    attachments = []
+    for filename, display_name in _TEMPLATES:
+        fpath = os.path.join(_TEMPLATE_DIR, filename)
+        if os.path.exists(fpath):
+            with open(fpath, "rb") as f:
+                attachments.append({"filename": f"{display_name}.pdf", "content": list(f.read())})
+        else:
+            print(f"⚠️  Onboarding template not found, skipping: {filename}")
+
+    body = (
+        _h1("Bassani Health — Onboarding Documents")
+        + _p("Please find the required onboarding documents attached to this email.")
+        + _p("Complete and sign all four documents, then return them to your Bassani Health "
+             f"representative, <strong>{reseller_name}</strong>, to finalise your account setup.")
+        + _info_box([
+            ("Documents attached",   f"{len(attachments)} of 4"),
+            ("Your representative",  reseller_name),
+            ("Queries",              f'<a href="mailto:{settings.healthcare_email}" style="color:#0f6e56;">{settings.healthcare_email}</a>'),
+        ])
+        + _divider()
+        + _p("Once all documents are signed and returned, your account will be reviewed "
+             "and activated by the Bassani Health team.", muted=True)
+    )
+    _send(
+        to_email,
+        "Bassani Health — Onboarding Documents",
+        _wrap("Customer Onboarding", body),
+        attachments=attachments if attachments else None,
+    )
+
 
 def send_order_ready_for_collection(
     order_ref: str,

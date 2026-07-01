@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-06-29  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 8, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 7/8 complete — only staff account creation outstanding; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 pending); Phase 11 built and deployed, blocked on Azure credentials  
+**Last Updated:** 2026-07-01  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 7/8 complete — only staff account creation outstanding; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 pending); Phase 11 built and deployed, blocked on Azure credentials  
 
 ---
 
@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.5–7.7 complete) | 2026-06-24 · 7.7 — 2026-07-01 |
+| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–10 (8.1–8.12 code complete) — 2026-06-29 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 pending |
@@ -686,8 +686,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 **Goal:** Full end-to-end commercial coverage. Resellers have complete visibility of the customer lifecycle.  
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 Partial (7.4 deferred — needs Cloudflare R2)  
-**Completed:** 2026-06-23  
+**Status:** 🟢 Complete  
+**Completed:** 2026-06-23 · 7.4 — 2026-07-01  
 
 ### Tasks
 
@@ -711,13 +711,19 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Displayed as inline statement table in CustomerProfile.js with summary row
 
 #### 7.4 KYC Document Collection (Customer Onboarding — Step 4)
-- [ ] Add document upload capability to customer onboarding flow
-- [ ] Required documents: practice licence (or registration certificate), HPCSA/BHF registration number, physical address confirmation
-- [ ] Store documents in Cloudflare R2 (object storage) — reference URL in MongoDB `customer_onboarding` record
-- [ ] Admin sees uploaded documents in the onboarding review panel
-- [ ] Block onboarding approval if required documents are not uploaded
+- [x] Provision Cloudflare R2 bucket (`bassani-health-docs`) — 5 Railway env vars set (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`)
+- [x] `services/r2_client.py` — async boto3 wrappers (`r2_put`, `r2_delete`, `r2_presign`) using `run_in_executor` to avoid blocking the event loop
+- [x] Step 0 added to onboarding wizard (before existing 4 steps) — Section A: download/email Bassani template docs; Section B: 5 named upload slots with per-slot spinner, remove button, progress counter
+- [x] 4 Bassani template PDFs served from `backend/static/onboarding-templates/` via `GET /api/onboarding/templates/download/{filename}`; blob-streamed to browser via axios for clean filename on download
+- [x] `POST /api/onboarding/templates/email` — sends all 4 template PDFs as Resend attachments to a given customer email; called from the wizard email input
+- [x] `POST /api/onboarding/documents/upload?session_id=&doc_type=` — uploads file to R2 under `onboarding/sessions/{session_id}/{doc_type}.ext`; returns metadata stored in component state
+- [x] `DELETE /api/onboarding/documents/{session_id}/{doc_type}` — removes from R2 before submission
+- [x] `OnboardingApplication` model extended with `document_session_id` + `documents[]`; submission payload includes both; backend enforces all 5 doc types present before accepting
+- [x] `GET /api/onboarding/{app_id}/documents` — generates 1-hour presigned R2 URLs for each uploaded document; gated by `customers.approve_onboarding`
+- [x] Admin ReviewModal (`CustomerApplications.js`) — new "Supporting Documents" section loads and renders presigned download links for each uploaded file
+- [x] `PUT /api/onboarding/{app_id}/approve` — hard-blocks approval if any of the 5 required document types are missing from the application record
 
-> **Deferred:** 7.4 requires Cloudflare R2 setup (object storage). No R2 bucket available yet — will revisit when infrastructure is provisioned.
+> **Required documents (5, all mandatory):** Signed Store Onboarding Agreement · Signed Customer Information Form · Signed NDA · Signed TQA Document · CIPC Company Registration Certificate
 
 #### 7.5 Backorder Visibility
 - [x] Delivery endpoint (`/deliveries`) exposes `is_backorder` flag and `lines` with `qty_ordered` / `qty_done`
@@ -759,7 +765,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
 - [x] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
 - [x] A customer's account statement shows their balance, all invoices, and all payments
-- [ ] Customer onboarding cannot be approved without at least one document uploaded *(7.4 — deferred)*
+- [x] Customer onboarding cannot be approved without all 5 required documents uploaded (enforced at both submission and approval)
 - [x] Backorder quantities are visible on the order detail page when Odoo has a backorder picking
 - [x] Clicking the history icon on any product shows its complete stock movement trail — receipts, deliveries, transfers, and adjustments — with move type labels and ± quantities
 - [x] Admin can toggle any product variant into/out of the reseller catalog from the Products table
@@ -769,7 +775,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 ### Notes
 - 7.1 + 7.5 were implemented together — delivery endpoint returns both regular and backorder pickings with per-line fulfilment. UI surfaces in both OrderView.js (reseller order detail) and SalesTickets.js (staff ticket detail).
 - 7.2 credit note requests are tracked in MongoDB (not Odoo) since Odoo credit note creation is a finance-team action; portal tracks the request lifecycle (pending → acknowledged).
-- 7.4 blocked on R2 — no object storage provisioned yet. All other items complete.
+- 7.4 complete 2026-07-01 — Cloudflare R2 provisioned (`bassani-health-docs` bucket). Document flow: reseller downloads/emails 4 Bassani template PDFs to customer → customer signs → reseller uploads 5 signed docs (4 templates + CIPC) → admin reviews with presigned download links → approval gated on all 5 being present. MongoDB backups are handled natively by Railway — R2 is used for document storage only (roadmap infrastructure table updated accordingly).
 - 7.6 added after business meeting 2026-06-24 — they recognised the value of Odoo's traceability screen and wanted it surfaced in the portal. Inter-warehouse transfers are covered automatically via the location `usage=internal` classification.
 - 7.7 added 2026-07-01 — came out of a business meeting. Resellers were seeing all Odoo products regardless of relevance. Implemented as a portal-layer MongoDB catalog config (not an Odoo change) consistent with the middleware architecture principle. Toggle column on Products table; server-side filter on all reseller product API calls.
 
@@ -1039,7 +1045,8 @@ These apply throughout all phases and to all future development.
 | Email | Resend | Transactional email | Free / $20/month Pro |
 | Error monitoring | Sentry | Exception tracking and alerting | Free / $26/month |
 | Frontend CDN | Cloudflare Pages | Static file serving | Free |
-| Backups | Cloudflare R2 | MongoDB daily dumps | Free (10GB) |
+| Document storage | Cloudflare R2 | Onboarding documents (signed contracts, CIPC) | Free (10GB) |
+| Backups | Railway | MongoDB point-in-time recovery (native) | Included |
 | SSL | Cloudflare / Let's Encrypt | TLS termination | Free |
 
 ---

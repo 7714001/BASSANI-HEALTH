@@ -1,13 +1,19 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
+import os
 import uuid
 from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
-from services.email_service import send_onboarding_submitted, send_onboarding_approved, send_onboarding_rejected
+from services.email_service import (
+    send_onboarding_submitted, send_onboarding_approved,
+    send_onboarding_rejected, send_onboarding_templates,
+)
+from services.r2_client import r2_put, r2_delete, r2_presign
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -16,15 +22,39 @@ SA_PROVINCES = [
     "Limpopo", "Mpumalanga", "North West", "Free State", "Northern Cape",
 ]
 
+_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
+
+# Hardcoded manifest — prevents directory traversal, controls display names
+TEMPLATES: dict[str, str] = {
+    "store-onboarding-agreement.pdf": "Store Onboarding Agreement",
+    "customer-information-form.pdf":  "Customer Information Form",
+    "nda.pdf":                        "NDA",
+    "tqa.pdf":                        "TQA Document",
+}
+
+# All five are required before an application can be submitted or approved
+REQUIRED_DOC_TYPES: dict[str, str] = {
+    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
+    "customer_information_form":  "Signed Customer Information Form",
+    "nda":                        "Signed NDA",
+    "tqa":                        "Signed TQA Document",
+    "cipc_certificate":           "CIPC Company Registration Certificate",
+}
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class OnboardingApplication(BaseModel):
+    # Step 0 — Documents (uploaded to R2 before form submission)
+    document_session_id: Optional[str] = None
+    documents:           Optional[list] = []
+
     # Step 1 — Business details
     company_name:        str
     trading_name:        Optional[str] = ""
     registration_number: Optional[str] = ""
     vat_number:          Optional[str] = ""
-    business_type:       str = "Pharmacy"   # Pharmacy | Dispensary | Healthcare Provider | Wellness Centre | Private Practice | Other
+    business_type:       str = "Pharmacy"
 
     # Step 2 — Primary contact
     contact_name:      str
@@ -42,57 +72,121 @@ class OnboardingApplication(BaseModel):
     country:     str = "South Africa"
 
     # Step 4 — Additional information
-    ordering_volume:  Optional[str] = ""   # < 10 / 10-50 / 50-100 / 100+
-    referral_source:  Optional[str] = ""
-    notes:            Optional[str] = ""
+    ordering_volume: Optional[str] = ""
+    referral_source: Optional[str] = ""
+    notes:           Optional[str] = ""
 
 
 class RejectBody(BaseModel):
     reason: str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+class TemplateEmailBody(BaseModel):
+    to_email: str
 
-@router.post("/")
-async def submit_application(
-    application: OnboardingApplication,
+
+# ── Template endpoints ────────────────────────────────────────────────────────
+
+@router.get("/templates")
+async def list_templates(current_user: dict = Depends(get_current_user)):
+    """List available Bassani onboarding template documents."""
+    result = []
+    for filename, label in TEMPLATES.items():
+        fpath = os.path.join(_TEMPLATE_DIR, filename)
+        result.append({
+            "filename": filename,
+            "label":    label,
+            "available": os.path.exists(fpath),
+        })
+    return {"templates": result}
+
+
+@router.get("/templates/download/{filename}")
+async def download_template(filename: str, current_user: dict = Depends(get_current_user)):
+    """Stream a Bassani onboarding template PDF for download."""
+    if filename not in TEMPLATES:
+        raise HTTPException(status_code=404, detail="Template not found")
+    fpath = os.path.join(_TEMPLATE_DIR, filename)
+    if not os.path.exists(fpath):
+        raise HTTPException(status_code=404, detail="Template file not yet available on this server")
+    return FileResponse(fpath, media_type="application/pdf", filename=filename)
+
+
+@router.post("/templates/email")
+async def email_templates(
+    body: TemplateEmailBody,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    """Reseller submits a customer onboarding application for admin review."""
-    if current_user.get("role") != "reseller":
-        raise HTTPException(status_code=403, detail="Only resellers can submit onboarding applications")
+    """Email all four Bassani template PDFs to the customer's email address."""
+    if not body.to_email.strip():
+        raise HTTPException(status_code=400, detail="Email address required")
 
     reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-    if not reseller:
-        raise HTTPException(status_code=400, detail="Reseller profile not found")
+    reseller_name = reseller.get("name", current_user.get("username", "")) if reseller else current_user.get("username", "")
 
-    ref = f"APP-{str(uuid.uuid4())[:8].upper()}"
-
-    doc = {
-        "id":           ref,
-        "reseller_id":  reseller["id"],
-        "reseller_name": reseller.get("name", current_user.get("username", "")),
-        "status":       "pending",
-        "submitted_at": datetime.now(timezone.utc),
-        "reviewed_at":  None,
-        "reviewed_by":  None,
-        "rejection_reason": None,
-        "odoo_partner_id":  None,
-        **application.model_dump(),
-    }
-    await col("customer_onboarding").insert_one(doc)
-    await audit_log("onboarding.submit", "customer_onboarding", ref,
-                    entity_label=application.company_name, user=current_user,
-                    reseller_id=reseller["id"])
     background_tasks.add_task(
-        send_onboarding_submitted,
-        company_name=application.company_name,
-        reseller_name=reseller.get("name", current_user.get("username", "")),
-        app_ref=ref,
+        send_onboarding_templates,
+        to_email=body.to_email.strip(),
+        reseller_name=reseller_name,
     )
-    return {"success": True, "reference": ref}
+    return {"success": True}
 
+
+# ── Document upload endpoints ─────────────────────────────────────────────────
+
+@router.post("/documents/upload")
+async def upload_document(
+    session_id: str,
+    doc_type:   str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload a signed document or CIPC certificate to R2 for an onboarding session."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can upload onboarding documents")
+    if doc_type not in REQUIRED_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
+
+    ext = os.path.splitext(file.filename or "")[1] or ".pdf"
+    key = f"onboarding/sessions/{session_id}/{doc_type}{ext}"
+    contents = await file.read()
+
+    await r2_put(key, contents, file.content_type or "application/octet-stream")
+
+    return {
+        "doc_type":    doc_type,
+        "label":       REQUIRED_DOC_TYPES[doc_type],
+        "r2_key":      key,
+        "filename":    file.filename,
+        "size":        len(contents),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.delete("/documents/{session_id}/{doc_type}")
+async def delete_document(
+    session_id: str,
+    doc_type:   str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove an uploaded document from R2 (before the application is submitted)."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can remove onboarding documents")
+    if doc_type not in REQUIRED_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
+
+    # Try both .pdf and other common extensions
+    for ext in [".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"]:
+        key = f"onboarding/sessions/{session_id}/{doc_type}{ext}"
+        try:
+            await r2_delete(key)
+        except Exception:
+            pass
+    return {"success": True}
+
+
+# ── Application list / detail endpoints ───────────────────────────────────────
 
 @router.get("/pending-count")
 async def pending_count(current_user: dict = Depends(require_admin)):
@@ -129,6 +223,85 @@ async def list_applications(
     return {"applications": apps, "total": total}
 
 
+@router.post("/")
+async def submit_application(
+    application: OnboardingApplication,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reseller submits a customer onboarding application for admin review."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can submit onboarding applications")
+
+    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=400, detail="Reseller profile not found")
+
+    # Enforce all 5 required documents before submission
+    submitted_types = {d.get("doc_type") for d in (application.documents or [])}
+    missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required documents: {', '.join(missing)}",
+        )
+
+    ref = f"APP-{str(uuid.uuid4())[:8].upper()}"
+
+    doc = {
+        "id":                  ref,
+        "reseller_id":         reseller["id"],
+        "reseller_name":       reseller.get("name", current_user.get("username", "")),
+        "status":              "pending",
+        "submitted_at":        datetime.now(timezone.utc),
+        "reviewed_at":         None,
+        "reviewed_by":         None,
+        "rejection_reason":    None,
+        "odoo_partner_id":     None,
+        "document_session_id": application.document_session_id,
+        "documents":           application.documents or [],
+        **{k: v for k, v in application.model_dump().items()
+           if k not in ("document_session_id", "documents")},
+    }
+    await col("customer_onboarding").insert_one(doc)
+    await audit_log("onboarding.submit", "customer_onboarding", ref,
+                    entity_label=application.company_name, user=current_user,
+                    reseller_id=reseller["id"])
+    background_tasks.add_task(
+        send_onboarding_submitted,
+        company_name=application.company_name,
+        reseller_name=reseller.get("name", current_user.get("username", "")),
+        app_ref=ref,
+    )
+    return {"success": True, "reference": ref}
+
+
+@router.get("/{app_id}/documents")
+async def get_application_documents(
+    app_id: str,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """Return presigned R2 download URLs for all uploaded documents on an application."""
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    docs = app.get("documents") or []
+    result = []
+    for d in docs:
+        key = d.get("r2_key")
+        if key:
+            try:
+                url = await r2_presign(key, expires=3600)
+                result.append({**d, "download_url": url})
+            except Exception:
+                result.append({**d, "download_url": None})
+        else:
+            result.append({**d, "download_url": None})
+
+    return {"documents": result}
+
+
 @router.get("/{app_id}")
 async def get_application(app_id: str, current_user: dict = Depends(get_current_user)):
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
@@ -142,18 +315,31 @@ async def get_application(app_id: str, current_user: dict = Depends(get_current_
 
 
 @router.put("/{app_id}/approve")
-async def approve_application(app_id: str, background_tasks: BackgroundTasks, current_user: dict = Depends(require_permission("customers.approve_onboarding"))):
+async def approve_application(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
     """
     Approve an onboarding application:
-    1. Create res.partner in Odoo
-    2. Insert customer_ownership record linking partner to reseller
-    3. Mark application as approved
+    1. Verify all 5 required documents are present
+    2. Create res.partner in Odoo
+    3. Insert customer_ownership record linking partner to reseller
+    4. Mark application as approved
     """
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     if app["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Application is already {app['status']}")
+
+    submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
+    missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot approve — missing required documents: {', '.join(missing)}",
+        )
 
     odoo = get_odoo_client()
     notes_parts = [f"Type: {app.get('business_type', '')}"]
@@ -171,13 +357,13 @@ async def approve_application(app_id: str, background_tasks: BackgroundTasks, cu
         "customer_rank": 1,
         "comment":       " | ".join(notes_parts),
     }
-    if app.get("contact_email"):  vals["email"]  = app["contact_email"]
-    if app.get("contact_phone"):  vals["phone"]  = app["contact_phone"]
-    if app.get("street"):         vals["street"] = app["street"]
+    if app.get("contact_email"):  vals["email"]   = app["contact_email"]
+    if app.get("contact_phone"):  vals["phone"]   = app["contact_phone"]
+    if app.get("street"):         vals["street"]  = app["street"]
     if app.get("suburb"):         vals["street2"] = app["suburb"]
-    if app.get("city"):           vals["city"]   = app["city"]
-    if app.get("postal_code"):    vals["zip"]    = app["postal_code"]
-    if app.get("vat_number"):     vals["vat"]    = app["vat_number"]
+    if app.get("city"):           vals["city"]    = app["city"]
+    if app.get("postal_code"):    vals["zip"]     = app["postal_code"]
+    if app.get("vat_number"):     vals["vat"]     = app["vat_number"]
 
     try:
         partner_id = odoo.create("res.partner", vals)

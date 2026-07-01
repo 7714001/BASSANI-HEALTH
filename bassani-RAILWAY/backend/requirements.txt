@@ -20,3 +20,4 @@ websockets==12.0
 slowapi==0.1.9
 sentry-sdk[fastapi]
 python-json-logger
+boto3==1.34.144

@@ -33,5 +33,6 @@ Thumbs.db
 
 # Documents
 *.pdf
+!backend/static/onboarding-templates/*.pdf
 *.xls
 *.xlsx
