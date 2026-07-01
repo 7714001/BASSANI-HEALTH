@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -6,6 +6,7 @@ from auth import get_current_user, require_admin, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
+from services.email_service import send_welcome_email
 
 router = APIRouter(prefix="/api/resellers", tags=["resellers"])
 
@@ -115,6 +116,7 @@ async def get_reseller(
 @router.post("/")
 async def create_reseller(
     reseller: ResellerCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin),
 ):
     """
@@ -161,7 +163,10 @@ async def create_reseller(
         "reseller_id": reseller_id,
         "active": True,
         "created_at": now,
+        "must_change_password": True,
     }
+    if reseller.email:
+        user_doc["email"] = reseller.email
     user_result = await col("users").insert_one(user_doc)
     user_id = str(user_result.inserted_id)
 
@@ -201,6 +206,13 @@ async def create_reseller(
     await audit_log("reseller.create", "reseller", reseller_id, entity_label=reseller.name,
                     user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": reseller.username},
                     reseller_id=reseller_id)
+    if reseller.email:
+        background_tasks.add_task(
+            send_welcome_email,
+            username=reseller.username,
+            name=reseller.name,
+            email=reseller.email,
+        )
     return {"success": True, "reseller_id": reseller_id, "user_id": user_id}
 
 

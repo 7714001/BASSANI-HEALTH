@@ -259,10 +259,12 @@ export function Products() {
                 const active = catalog.has(p.id);
                 return (
                   <button
+                    role="switch"
+                    aria-checked={active}
                     onClick={e => { e.stopPropagation(); toggleCatalog(p.id); }}
                     title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
-                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none ${active ? "bg-bassani-600" : "bg-gray-200"}`}>
-                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${active ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-2 ${active ? "bg-bassani-600" : "bg-gray-300"}`}>
+                    <span className={`pointer-events-none h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${active ? "translate-x-5" : "translate-x-0"}`} />
                   </button>
                 );
               }
