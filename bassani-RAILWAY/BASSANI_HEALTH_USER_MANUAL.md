@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 29 June 2026
+**Last Updated:** 1 July 2026
 
 ---
 
@@ -48,6 +48,11 @@ Before the first user logs in, the following must be set in Railway's environmen
 | `MS_CLIENT_ID` | Azure app client ID for M365 mailbox integration | From Azure Portal → App registrations → your app |
 | `MS_CLIENT_SECRET` | Azure app secret for M365 mailbox integration | Generated in Azure Portal → Certificates & secrets |
 | `MS_SHARED_MAILBOX` | The shared mailbox to monitor for inbound sales emails | e.g. `orders@bassanihealth.com` |
+| `R2_ACCOUNT_ID` | Cloudflare R2 account identifier — used to build the endpoint URL | Found on your Cloudflare R2 dashboard → Account Details |
+| `R2_ACCESS_KEY_ID` | R2 API access key ID (S3-compatible) | Generated in the Cloudflare R2 dashboard → API Tokens tab |
+| `R2_SECRET_ACCESS_KEY` | R2 API secret access key | Generated alongside `R2_ACCESS_KEY_ID` — shown once, copy immediately |
+| `R2_BUCKET` | Name of the R2 bucket that stores all uploaded documents | Must match the bucket you created in the Cloudflare R2 dashboard (e.g. `bassani-health-docs`) |
+| `R2_ENDPOINT` | Full S3-compatible endpoint URL for your R2 bucket | Format: `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
 | `SENTRY_DSN` | Error monitoring | From your Sentry.io project settings (optional but recommended) |
 
 > **Security note:** The system will refuse to start if `JWT_SECRET` is still set to its default placeholder. This is intentional — a weak JWT secret is a serious security risk.
@@ -217,7 +222,8 @@ MongoDB is your portal's primary database — it stores reseller profiles, commi
 
 ## Before Go-Live Checklist
 
-- [ ] All environment variables set in Railway
+- [ ] All environment variables set in Railway (including the 5 R2 variables)
+- [ ] R2 bucket created in Cloudflare and named to match `R2_BUCKET`
 - [ ] Super admin password changed from temporary
 - [ ] `REQUIRE_2FA_ADMIN=true` set in Railway and OTP email delivery confirmed working
 - [ ] `SUPER_ADMIN_EMAIL` set so super admin receives OTP codes
@@ -643,9 +649,26 @@ Click any customer to open their full profile. You will see:
 - Outstanding invoices and balance
 - Their credit limit and how much of it is used
 - The reseller who onboarded them (if applicable)
+- Their delivery addresses
+- Their onboarding and compliance documents
 - Their full account statement (all invoices and credit notes)
 
 **Credit Hold:** If a customer appears with a red "Credit Hold" badge, they are over their Odoo credit limit. Orders for this customer will produce a warning at quote stage and a hard block at confirmation stage (unless you override).
+
+**Customer Documents:**
+The **Documents** section on a customer's profile shows all compliance documents associated with that customer:
+- **Onboarding documents** — the signed agreements and CIPC certificate submitted by the reseller during the customer's onboarding application. These carry an "Onboarding" badge and cannot be deleted from this view (they are permanently attached to the approved application).
+- **Admin-uploaded documents** — any additional documents uploaded directly by an admin. These carry an "Admin Upload" badge and can be deleted from this view.
+
+To upload a document to a customer profile:
+1. Open the customer's profile
+2. Scroll to the **Documents** section
+3. Click **Upload document**
+4. Enter a label (e.g. "Updated NDA 2026")
+5. Select the file — the upload begins automatically on file selection
+6. A green confirmation appears when the upload is complete
+
+All documents are stored in Cloudflare R2 and served via secure, time-limited download links. Click **Download** next to any document to access it.
 
 ### Orders
 
@@ -679,6 +702,41 @@ For an unpaid invoice, click **Register Payment**, select the payment journal, e
 **Requesting a credit note:**
 On any posted invoice, click **Request CN** to log a credit note request. Enter the reason. The finance team will process the actual credit note in Odoo. The portal tracks the request (pending → acknowledged) so nothing falls through the cracks.
 
+### Customer Applications
+
+*Requires `customers.view` permission*
+
+Go to **Applications** to review customer onboarding applications submitted by resellers. A badge on the sidebar menu shows the number of applications currently awaiting review — this count refreshes automatically every minute.
+
+**Application list:**
+Filter by status using the chips at the top — Pending, Approved, Rejected, or All. Each row shows the business name, the reseller who submitted it, the contact details, submission date, and current status. Click any row or the Review/View button to open the full application.
+
+**Reviewing an application:**
+The application detail page is a two-column view:
+- **Left column:** Full business details, primary contact, business address, additional information, and all submitted documents
+- **Right column (sidebar):** Application metadata and action buttons
+
+**Documents:** The Documents section on the application shows all five documents the reseller uploaded — the four signed templates plus the CIPC certificate. Click **Download** next to any document to access the secure download link.
+
+**Approving an application** *(requires `customers.approve_onboarding`)*:
+1. Open the application
+2. Review all details and confirm all 5 documents are present and correct
+3. Click **Approve & Create Customer** in the right sidebar
+4. The system creates the customer in Odoo automatically and links them to the reseller's account
+5. The reseller receives an approval email
+6. The application status updates to **Approved** on the page — no navigation away required
+
+> If any of the 5 documents are missing, the approval button will be blocked with an error listing which documents are absent.
+
+**Rejecting an application** *(requires `customers.reject_onboarding`)*:
+1. Click **Reject Application**
+2. A text field appears — enter a clear reason for rejection (this is sent to the reseller)
+3. Click **Confirm Rejection**
+4. The reseller receives a rejection email with your reason
+5. The application status updates to **Rejected** — the rejection reason is displayed on the application for future reference
+
+---
+
 ### Resellers
 
 *Requires `resellers.view` permission*
@@ -688,7 +746,29 @@ Go to **Resellers** to manage your reseller network.
 Each reseller's profile shows:
 - Their contact details and assigned warehouse
 - Their order history and total revenue
-- Their activity feed (every action they have taken in the portal — orders placed, customers onboarded, etc.)
+- Their linked customers with the ability to link or unlink accounts
+- Their activity feed — every significant action recorded in the audit trail (orders placed, customers linked, applications submitted, etc.)
+
+**Linking an existing customer to a reseller:**
+Customers created through the onboarding wizard are automatically linked to the submitting reseller. However, an admin can also manually link any existing Odoo customer to a reseller — for example, if a customer was created directly in Odoo before the portal existed, or if account management responsibility is being transferred.
+
+1. Open the reseller's profile
+2. In the **Customers** section, click **Link Customer** (top-right of the section, or the link at the bottom of the list)
+3. A search modal opens — type at least 2 characters to search Odoo customers by name or email
+4. Click **Link** next to the correct customer
+5. The customer is added to the reseller's account immediately and appears in the list
+
+> If the customer is already linked to a different reseller, the link will be blocked with a clear error message showing which reseller currently owns that account.
+
+**Unlinking a customer from a reseller:**
+1. Open the reseller's profile
+2. In the **Customers** section, click **Unlink** on the customer row
+3. A confirmation dialog appears — confirm the action
+4. The customer is removed from the reseller's account
+
+> Unlinking does not delete the customer from Odoo — it only removes the ownership association. The customer's orders, invoices, and history remain intact. The reseller will no longer be able to place orders for this customer or see them in their customer list.
+
+Both link and unlink actions are recorded in the audit trail and appear in the reseller's Activity section.
 
 ### Commission
 
@@ -754,9 +834,23 @@ Click any row to see the before/after detail. This is your definitive record of 
 ## Resellers
 
 **Role in system:** `reseller`  
-**Access:** Products, Orders, Customers (own), Commission, Invoices (own), Sales Tickets
+**Access:** Products (catalog view), Orders, Customers (own), Commission, Invoices (own), Sales Tickets, Onboarding Docs
 
 Resellers are external business partners who sell Bassani Health products to their customers (pharmacies, clinics, dispensaries, etc.).
+
+### Product Catalog
+
+Go to **Products** to browse the Bassani Health product catalog. This is a read-only view showing only the products that Bassani admin has made available to resellers.
+
+Each product shows:
+- Product name and SKU
+- Category
+- Sale price (the price you order at)
+- **Available Stock** — the forecasted quantity available for new orders. This is the same figure the order cart uses when you place an order. If this is 0 or negative, those units are committed to existing orders
+
+**Filtering by category:** The category chips at the top of the page show only the categories that have products in the current catalog — no empty categories appear. Click a category chip to filter. If a category has product variants (e.g. different strengths or sizes), a second row of chips appears below letting you narrow further.
+
+> You do not see internal stock figures, cost prices, or any stock movement history. Available Stock is the only quantity shown and it is the one that matters for ordering.
 
 ### Placing an Order
 
@@ -782,17 +876,57 @@ If you believe a statement is incorrect:
 2. Enter your reason
 3. The admin team will review and respond — you will receive an email when resolved
 
+### Onboarding Docs — Quick Access
+
+Before you start an onboarding application, you may need to send the Bassani Health template documents to your prospective customer so they can read, sign, and return them.
+
+Go to **Onboarding Docs** in the sidebar. From here you can:
+
+- **Download** any of the four template documents directly to your device:
+  - Store Onboarding Agreement
+  - Customer Information Form
+  - NDA
+  - TQA Document
+- **Email all four templates** to your customer by entering their email address and clicking **Send Documents** — the files are delivered as attachments from the Bassani Health email system
+
+This page is available at any time, not just during an active onboarding. Use it whenever a prospect asks for the documents before you have started the application.
+
+---
+
 ### Onboarding a New Customer
 
 When you bring on a new pharmacy, clinic, or dispensary:
 
 1. Go to **Customers** → click **Onboard Customer**
-2. Complete the four-step application:
+2. The wizard opens at **Step 0 — Documents** (this step must be completed before you can proceed)
+
+#### Step 0 — Documents
+
+This step has two sections:
+
+**Section A — Share documents with customer**  
+If you haven't already sent the template documents, you can download or email them from here. These are the blank templates your customer needs to complete and sign.
+
+**Section B — Upload signed documents**  
+Before the application can be submitted, all five of the following documents must be uploaded:
+- Signed Store Onboarding Agreement
+- Signed Customer Information Form
+- Signed NDA
+- Signed TQA Document
+- CIPC Company Registration Certificate
+
+For each document, click the upload area, select the file from your device, and wait for the green tick to confirm the upload succeeded. You can remove and re-upload any document before submitting. The progress counter in the top right of this section shows how many of the five have been uploaded (e.g. `3 / 5`).
+
+> **You cannot proceed to Step 1 until all 5 documents are uploaded.** The Continue button remains disabled until every slot is filled.
+
+> **Documents are uploaded to secure cloud storage (Cloudflare R2) as you go** — they are attached to the application the moment you upload them, not when you submit. If you close the browser and return, you will need to start a new application and re-upload.
+
+3. Once all 5 documents are uploaded, click **Continue** to proceed through the remaining steps:
    - Step 1: Business details (company name, VAT, registration number)
    - Step 2: Primary contact
    - Step 3: Business address
    - Step 4: Ordering volume and additional information
-3. Submit the application
+4. Review the summary and click **Submit Application**
 
 The Bassani admin team is notified by email. Once they approve the application, the customer is created in Odoo and you receive confirmation. The customer is linked to your account — their orders count toward your commission turnover.
 
@@ -895,13 +1029,22 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Tick items on handheld | Packer |
 | Generate commission statements | Admin with `commission.generate_statements` |
 | Mark commission statement paid | Admin with `commission.mark_paid` |
-| Approve customer onboarding | Admin with `customers.approve_onboarding` |
+| Approve customer onboarding application | Admin with `customers.approve_onboarding` |
+| Reject customer onboarding application | Admin with `customers.reject_onboarding` |
+| Download application documents | Admin with `customers.approve_onboarding` |
+| Upload document to customer profile | Admin with `customers.manage` |
+| Link existing customer to reseller | Admin only |
+| Unlink customer from reseller | Admin only |
 | Record invoice payment | Admin with `invoices.record_payment` |
 | Create/edit admin accounts | Super Admin only |
 | Configure commission tiers | Admin with `commission.configure_tiers` |
 | View audit trail | Admin with `audit.view` |
 | Override order pipeline stage | Admin with `tickets.manage` |
+| Download onboarding template docs | Any authenticated user |
+| Email onboarding template docs to customer | Any authenticated user |
+| Upload signed documents (onboarding wizard) | Reseller |
+| Browse reseller product catalog | Reseller |
 
 ---
 
-*This manual covers the system as built through Phase 11 (Sales Inbox / Microsoft 365 integration and email OTP two-factor authentication). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+*This manual covers the system as built through Phase 12 (product barcodes, reseller catalog, customer onboarding document collection, Cloudflare R2 document storage, dedicated application review page, customer profile documents, reseller customer linking, and the reseller product catalog view). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
