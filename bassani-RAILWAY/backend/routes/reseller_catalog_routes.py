@@ -43,9 +43,7 @@ async def toggle_catalog_product(
         entity_type="product",
         entity_id=str(product_id),
         entity_label=str(product_id),
-        actor_username=current_user.get("username"),
-        actor_id=str(current_user.get("_id", "")),
-        actor_role=current_user.get("role"),
+        user=current_user,
         detail={"product_id": product_id, "catalog_size": len(sorted_ids)},
     )
     return {"product_ids": sorted_ids, "action": action}
