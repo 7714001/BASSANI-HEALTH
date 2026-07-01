@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus } from "lucide-react";
+import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -29,6 +29,152 @@ function Section({ title, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+// ── Customer Documents Section ─────────────────────────────────────────────────
+
+const SOURCE_BADGE = {
+  onboarding: { label: "Onboarding", cls: "bg-bassani-50 text-bassani-700" },
+  admin:      { label: "Admin Upload", cls: "bg-purple-50 text-purple-700" },
+};
+
+function DocumentsSection({ customerId, canUpload }) {
+  const [docs,        setDocs       ] = useState([]);
+  const [docsLoading, setDocsLoading] = useState(true);
+  const [uploading,   setUploading  ] = useState(false);
+  const [deleting,    setDeleting   ] = useState(null);
+  const [showUpload,  setShowUpload ] = useState(false);
+  const [label,       setLabel      ] = useState("");
+  const fileRef = useRef(null);
+
+  const loadDocs = () => {
+    setDocsLoading(true);
+    api.get(`/api/customers/${customerId}/documents`)
+      .then(r => setDocs(r.data.documents || []))
+      .catch(() => toast.error("Failed to load documents"))
+      .finally(() => setDocsLoading(false));
+  };
+
+  useEffect(() => { loadDocs(); }, [customerId]); // eslint-disable-line
+
+  const handleUpload = async (file) => {
+    if (!label.trim()) return toast.error("Enter a document label first");
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      await api.post(`/api/customers/${customerId}/documents/upload?label=${encodeURIComponent(label.trim())}`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      toast.success("Document uploaded");
+      setLabel("");
+      setShowUpload(false);
+      loadDocs();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Upload failed");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const handleDelete = async (doc) => {
+    setDeleting(doc.id);
+    try {
+      await api.delete(`/api/customers/${customerId}/documents/${doc.id}`);
+      toast.success("Document removed");
+      setDocs(prev => prev.filter(d => d.id !== doc.id));
+    } catch {
+      toast.error("Failed to remove document");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return (
+    <Section title={`Documents (${docs.length})`}>
+      {docsLoading ? (
+        <p className="text-sm text-gray-400 px-5 py-4">Loading…</p>
+      ) : docs.length === 0 ? (
+        <div className="px-5 py-4">
+          <p className="text-sm text-gray-400">No documents on file for this customer.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-50">
+          {docs.map((d, i) => {
+            const badge = SOURCE_BADGE[d.source] || SOURCE_BADGE.admin;
+            return (
+              <div key={d.id || d.r2_key || i} className="flex items-center gap-4 px-5 py-3">
+                <div className="w-8 h-8 bg-bassani-50 rounded-lg flex items-center justify-center shrink-0">
+                  <FileText size={14} className="text-bassani-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {d.download_url ? (
+                    <a href={d.download_url} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                      <Download size={12} /> Download
+                    </a>
+                  ) : (
+                    <span className="text-[10px] text-gray-400">Unavailable</span>
+                  )}
+                  {canUpload && d.source === "admin" && (
+                    <button onClick={() => handleDelete(d)} disabled={deleting === d.id}
+                      className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
+                      {deleting === d.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {canUpload && (
+        <div className="px-5 py-3 border-t border-gray-50 space-y-3">
+          {!showUpload ? (
+            <button onClick={() => setShowUpload(true)}
+              className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors">
+              <Upload size={14} /> Upload document
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-40">
+                <p className="text-xs text-gray-400 mb-1">Document label</p>
+                <Input
+                  value={label}
+                  onChange={e => setLabel(e.target.value)}
+                  placeholder="e.g. Signed NDA"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-1">File</p>
+                <input ref={fileRef} type="file"
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                  disabled={uploading}
+                  onChange={e => { if (e.target.files[0]) handleUpload(e.target.files[0]); }}
+                  className="block text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-bassani-50 file:text-bassani-700 hover:file:bg-bassani-100 cursor-pointer disabled:opacity-50"
+                />
+              </div>
+              {uploading && <Loader2 size={16} className="animate-spin text-bassani-600 mb-1.5" />}
+              <button onClick={() => { setShowUpload(false); setLabel(""); }}
+                className="text-xs text-gray-400 hover:text-gray-600 mb-1.5 transition-colors">
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -296,6 +442,9 @@ export default function CustomerProfile() {
               </div>
             )}
           </Section>
+
+          {/* Documents */}
+          <DocumentsSection customerId={id} canUpload={!!canManageAddresses} />
 
           {/* Recent orders */}
           <Section title={`Recent Orders (${recent_orders.length})`}>

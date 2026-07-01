@@ -25,6 +25,7 @@ import Targets               from "./views/Targets";
 import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications       from "./views/CustomerApplications";
 import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
+import OnboardingDocs             from "./views/OnboardingDocs";
 import ResellerProfile       from "./views/ResellerProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
@@ -154,6 +155,9 @@ export default function App() {
         } />
         <Route path="/onboard" element={
           <ProtectedRoute><AppLayout><CustomerOnboarding /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/onboarding-docs" element={
+          <ProtectedRoute><AppLayout><OnboardingDocs /></AppLayout></ProtectedRoute>
         } />
         <Route path="/applications" element={
           <ProtectedRoute adminOnly><AppLayout><CustomerApplications /></AppLayout></ProtectedRoute>

@@ -1,13 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronDown, ShoppingCart, TrendingUp, Users, CreditCard,
-  FileText, Clock, Building2, History,
+  FileText, Clock, Building2, History, Plus, X, Search, Loader2, Link2, Unlink,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { Badge, BtnSecondary, LoadingState, fmtR, fmtDate } from "../components/UI";
+import { Badge, BtnSecondary, LoadingState, fmtR, fmtDate, Modal } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -24,16 +24,113 @@ function KpiCard({ label, value, sub, icon: Icon, accent }) {
   );
 }
 
-function Section({ title, children }) {
+function Section({ title, action, children }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-50">
+      <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
         <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
+        {action}
       </div>
       {children}
     </div>
   );
 }
+
+// ── Link customer modal ────────────────────────────────────────────────────────
+
+function LinkCustomerModal({ resellerId, onClose, onLinked }) {
+  const [query,    setQuery   ] = useState("");
+  const [results,  setResults ] = useState([]);
+  const [searching,setSearching] = useState(false);
+  const [linking,  setLinking ] = useState(null);
+  const debounce = useRef(null);
+
+  useEffect(() => {
+    if (!query.trim() || query.trim().length < 2) { setResults([]); return; }
+    clearTimeout(debounce.current);
+    debounce.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const { data } = await api.get("/api/customers/search", { params: { q: query.trim(), limit: 8 } });
+        setResults(data.customers || []);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(debounce.current);
+  }, [query]);
+
+  const handleLink = async (customer) => {
+    setLinking(customer.id);
+    try {
+      await api.post(`/api/resellers/${resellerId}/customers/link`, { odoo_partner_id: customer.id });
+      toast.success(`${customer.name} linked to reseller`);
+      onLinked(customer);
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link customer");
+    } finally {
+      setLinking(null);
+    }
+  };
+
+  return (
+    <Modal title="Link Customer to Reseller" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-xs text-gray-500">
+          Search for an existing Bassani customer and link them to this reseller's account.
+          The reseller will then be able to place orders for this customer.
+        </p>
+
+        {/* Search input */}
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by customer name or email…"
+            autoFocus
+            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+          />
+          {searching && <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />}
+        </div>
+
+        {/* Results */}
+        {results.length > 0 ? (
+          <div className="border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
+            {results.map(c => (
+              <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                <div className="w-7 h-7 rounded-full bg-bassani-100 flex items-center justify-center shrink-0">
+                  <Building2 size={12} className="text-bassani-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400 truncate">{[c.email, c.city].filter(Boolean).join(" · ")}</p>
+                </div>
+                <button
+                  onClick={() => handleLink(c)}
+                  disabled={!!linking}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shrink-0">
+                  {linking === c.id ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
+                  Link
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : query.trim().length >= 2 && !searching ? (
+          <p className="text-sm text-gray-400 text-center py-4">No customers found for "{query}"</p>
+        ) : query.trim().length > 0 && query.trim().length < 2 ? (
+          <p className="text-xs text-gray-400 text-center py-2">Type at least 2 characters to search</p>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 
 const STATE_LABEL   = { draft:"Quotation", sale:"Confirmed", done:"Done", cancel:"Cancelled", sent:"Sent" };
 const PAYMENT_LABEL = { not_paid:"Unpaid", partial:"Partial", in_payment:"In Payment", paid:"Paid" };
@@ -42,14 +139,17 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function ResellerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
-  const [data,    setData   ] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activity, setActivity] = useState([]);
+  const { can, isAdmin } = useAuth();
+  const [data,        setData      ] = useState(null);
+  const [loading,     setLoading   ] = useState(true);
+  const [activity,    setActivity  ] = useState([]);
+  const [customers,   setCustomers ] = useState([]);
+  const [showLink,    setShowLink  ] = useState(false);
+  const [unlinking,   setUnlinking ] = useState(null);
 
   useEffect(() => {
     api.get(`/api/resellers/${id}/profile`)
-      .then(r => setData(r.data))
+      .then(r => { setData(r.data); setCustomers(r.data.customers || []); })
       .catch(() => { toast.error("Failed to load reseller profile"); navigate("/resellers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
@@ -61,10 +161,28 @@ export default function ResellerProfile() {
       .catch(() => {});
   }, [id, can]);
 
+  const handleUnlink = async (customer) => {
+    if (!window.confirm(`Remove ${customer.name} from this reseller's account?\n\nThis will prevent the reseller from placing orders for this customer.`)) return;
+    setUnlinking(customer.id);
+    try {
+      await api.delete(`/api/resellers/${id}/customers/${customer.id}/unlink`);
+      toast.success(`${customer.name} unlinked`);
+      setCustomers(prev => prev.filter(c => c.id !== customer.id));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to unlink customer");
+    } finally {
+      setUnlinking(null);
+    }
+  };
+
+  const handleLinked = (customer) => {
+    setCustomers(prev => [...prev, { id: customer.id, name: customer.name, email: customer.email, city: customer.city, phone: null }]);
+  };
+
   if (loading) return <LoadingState />;
   if (!data)   return null;
 
-  const { reseller: r, fy_label, stats, customers, recent_orders, commission_bills } = data;
+  const { reseller: r, fy_label, stats, recent_orders, commission_bills } = data;
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -109,62 +227,32 @@ export default function ResellerProfile() {
               </div>
             </div>
 
-            {/* Bank details */}
             {r.bank_name && (
               <div className="mt-5 pt-5 border-t border-gray-50 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                {r.bank_name             && <div><p className="text-xs text-gray-400 mb-0.5">Bank</p><p className="font-medium text-gray-700">{r.bank_name}</p></div>}
-                {r.bank_account_holder   && <div><p className="text-xs text-gray-400 mb-0.5">Account Holder</p><p className="font-medium text-gray-700">{r.bank_account_holder}</p></div>}
-                {r.bank_account_number   && <div><p className="text-xs text-gray-400 mb-0.5">Account Number</p><p className="font-medium text-gray-700">{r.bank_account_number}</p></div>}
-                {r.bank_branch_code      && <div><p className="text-xs text-gray-400 mb-0.5">Branch Code</p><p className="font-medium text-gray-700">{r.bank_branch_code}</p></div>}
+                {r.bank_name           && <div><p className="text-xs text-gray-400 mb-0.5">Bank</p><p className="font-medium text-gray-700">{r.bank_name}</p></div>}
+                {r.bank_account_holder && <div><p className="text-xs text-gray-400 mb-0.5">Account Holder</p><p className="font-medium text-gray-700">{r.bank_account_holder}</p></div>}
+                {r.bank_account_number && <div><p className="text-xs text-gray-400 mb-0.5">Account Number</p><p className="font-medium text-gray-700">{r.bank_account_number}</p></div>}
+                {r.bank_branch_code    && <div><p className="text-xs text-gray-400 mb-0.5">Branch Code</p><p className="font-medium text-gray-700">{r.bank_branch_code}</p></div>}
               </div>
             )}
           </div>
 
           {/* KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <KpiCard
-              label="Customers Onboarded"
-              value={stats.customer_total}
+            <KpiCard label="Customers" value={customers.length}
               sub={stats.pending_applications > 0 ? `${stats.pending_applications} pending approval` : "All active"}
-              icon={Users}
-              accent="bg-purple-600"
-            />
-            <KpiCard
-              label="Total Orders"
-              value={stats.total_orders}
-              sub="All time"
-              icon={ShoppingCart}
-              accent="bg-bassani-600"
-            />
-            <KpiCard
-              label="All-time Commission"
-              value={fmtR(stats.total_commission)}
-              sub={`${stats.total_orders} orders`}
-              icon={TrendingUp}
-              accent="bg-emerald-500"
-            />
-            <KpiCard
-              label="This Month Commission"
-              value={fmtR(stats.month_commission)}
-              sub={`${stats.month_orders} orders`}
-              icon={CreditCard}
-              accent="bg-blue-500"
-            />
-            <KpiCard
-              label={`${fy_label} Commission`}
-              value={fmtR(stats.fy_commission)}
-              sub={`${stats.fy_orders} orders`}
-              icon={FileText}
-              accent="bg-violet-500"
-            />
+              icon={Users} accent="bg-purple-600" />
+            <KpiCard label="Total Orders" value={stats.total_orders} sub="All time"
+              icon={ShoppingCart} accent="bg-bassani-600" />
+            <KpiCard label="All-time Commission" value={fmtR(stats.total_commission)} sub={`${stats.total_orders} orders`}
+              icon={TrendingUp} accent="bg-emerald-500" />
+            <KpiCard label="This Month Commission" value={fmtR(stats.month_commission)} sub={`${stats.month_orders} orders`}
+              icon={CreditCard} accent="bg-blue-500" />
+            <KpiCard label={`${fy_label} Commission`} value={fmtR(stats.fy_commission)} sub={`${stats.fy_orders} orders`}
+              icon={FileText} accent="bg-violet-500" />
             {stats.pending_applications > 0 && (
-              <KpiCard
-                label="Pending Applications"
-                value={stats.pending_applications}
-                sub="Awaiting admin review"
-                icon={Clock}
-                accent="bg-amber-500"
-              />
+              <KpiCard label="Pending Applications" value={stats.pending_applications} sub="Awaiting admin review"
+                icon={Clock} accent="bg-amber-500" />
             )}
           </div>
 
@@ -201,37 +289,78 @@ export default function ResellerProfile() {
           </Section>
 
           {/* Customers */}
-          <Section title={`Customers (${customers.length})`}>
+          <Section
+            title={`Customers (${customers.length})`}
+            action={isAdmin && (
+              <button onClick={() => setShowLink(true)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                <Plus size={13} /> Link Customer
+              </button>
+            )}
+          >
             {customers.length === 0 ? (
-              <p className="text-sm text-gray-400 px-5 py-4">No customers onboarded yet.</p>
+              <div className="px-5 py-6 text-center">
+                <p className="text-sm text-gray-400 mb-3">No customers linked to this reseller yet.</p>
+                {isAdmin && (
+                  <button onClick={() => setShowLink(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                    <Link2 size={12} /> Link an existing customer
+                  </button>
+                )}
+              </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-xs text-gray-500">
-                    <th className="text-left px-5 py-2.5 font-medium">Name</th>
-                    <th className="text-left px-5 py-2.5 font-medium">Email</th>
-                    <th className="text-left px-5 py-2.5 font-medium">City</th>
-                    <th className="text-left px-5 py-2.5 font-medium">Phone</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customers.map(c => (
-                    <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-bassani-100 flex items-center justify-center">
-                            <Building2 size={11} className="text-bassani-600" />
-                          </div>
-                          <span className="font-medium text-gray-900">{c.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-500">{c.email || "—"}</td>
-                      <td className="px-5 py-3 text-gray-500">{c.city || "—"}</td>
-                      <td className="px-5 py-3 text-gray-500">{c.phone || "—"}</td>
+              <>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-xs text-gray-500">
+                      <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Email</th>
+                      <th className="text-left px-5 py-2.5 font-medium">City</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Phone</th>
+                      {isAdmin && <th className="w-16 px-5 py-2.5" />}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {customers.map(c => (
+                      <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-bassani-100 flex items-center justify-center shrink-0">
+                              <Building2 size={11} className="text-bassani-600" />
+                            </div>
+                            <span className="font-medium text-gray-900">{c.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-gray-500">{c.email || "—"}</td>
+                        <td className="px-5 py-3 text-gray-500">{c.city  || "—"}</td>
+                        <td className="px-5 py-3 text-gray-500">{c.phone || "—"}</td>
+                        {isAdmin && (
+                          <td className="px-5 py-3 text-right">
+                            <button
+                              onClick={() => handleUnlink(c)}
+                              disabled={unlinking === c.id}
+                              title="Unlink customer from reseller"
+                              className="flex items-center gap-1 text-[11px] font-medium text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50 ml-auto">
+                              {unlinking === c.id
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : <Unlink size={12} />}
+                              Unlink
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {isAdmin && (
+                  <div className="px-5 py-3 border-t border-gray-50">
+                    <button onClick={() => setShowLink(true)}
+                      className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors">
+                      <Plus size={14} /> Link another customer
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </Section>
 
@@ -304,6 +433,14 @@ export default function ResellerProfile() {
 
         </div>
       </main>
+
+      {showLink && (
+        <LinkCustomerModal
+          resellerId={id}
+          onClose={() => setShowLink(false)}
+          onLinked={handleLinked}
+        />
+      )}
     </div>
   );
 }

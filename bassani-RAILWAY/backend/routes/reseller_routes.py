@@ -431,6 +431,86 @@ async def reseller_profile(
     }
 
 
+# ── Customer link / unlink (admin) ───────────────────────────────────────────
+
+class LinkCustomerBody(BaseModel):
+    odoo_partner_id: int
+
+@router.post("/{reseller_id}/customers/link")
+async def link_customer_to_reseller(
+    reseller_id: str,
+    body: LinkCustomerBody,
+    current_user: dict = Depends(require_admin),
+):
+    """Admin links an existing Odoo customer to a reseller's account."""
+    reseller = await col("resellers").find_one({"id": reseller_id}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=404, detail="Reseller not found")
+
+    odoo = get_odoo_client()
+    records = odoo.read("res.partner", [body.odoo_partner_id], fields=["id", "name"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Customer not found in Odoo")
+
+    existing = await col("customer_ownership").find_one({"odoo_partner_id": body.odoo_partner_id})
+    if existing:
+        if existing.get("reseller_id") == reseller_id:
+            raise HTTPException(status_code=409, detail="Customer is already linked to this reseller")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Customer is already linked to reseller '{existing.get('reseller_name', 'another reseller')}'"
+        )
+
+    await col("customer_ownership").insert_one({
+        "odoo_partner_id":     body.odoo_partner_id,
+        "reseller_id":         reseller_id,
+        "reseller_name":       reseller["name"],
+        "created_at":          datetime.now(timezone.utc),
+        "created_by_username": current_user.get("username", ""),
+        "linked_by_admin":     True,
+    })
+    await audit_log(
+        "reseller.customer_linked", "customer_ownership", reseller_id,
+        entity_label=records[0]["name"], user=current_user,
+        detail={"odoo_partner_id": body.odoo_partner_id},
+    )
+    return {"success": True, "customer_name": records[0]["name"]}
+
+
+@router.delete("/{reseller_id}/customers/{odoo_partner_id}/unlink")
+async def unlink_customer_from_reseller(
+    reseller_id: str,
+    odoo_partner_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Admin removes a customer link from a reseller. Does not affect the Odoo customer record."""
+    ownership = await col("customer_ownership").find_one({
+        "odoo_partner_id": odoo_partner_id,
+        "reseller_id":     reseller_id,
+    })
+    if not ownership:
+        raise HTTPException(status_code=404, detail="Customer is not linked to this reseller")
+
+    await col("customer_ownership").delete_one({
+        "odoo_partner_id": odoo_partner_id,
+        "reseller_id":     reseller_id,
+    })
+
+    odoo = get_odoo_client()
+    try:
+        records = odoo.read("res.partner", [odoo_partner_id], fields=["name"])
+        customer_name = records[0]["name"] if records else str(odoo_partner_id)
+    except Exception:
+        customer_name = str(odoo_partner_id)
+
+    await audit_log(
+        "reseller.customer_unlinked", "customer_ownership", reseller_id,
+        entity_label=customer_name, user=current_user,
+        detail={"odoo_partner_id": odoo_partner_id},
+    )
+    return {"success": True}
+
+
 @router.get("/{reseller_id}/stats")
 async def reseller_stats(
     reseller_id: str,

@@ -48,11 +48,12 @@ const NAV = [
 ];
 
 const RESELLER_NAV = [
-  { label: "Dashboard",    path: "/",           icon: LayoutDashboard },
-  { label: "Products",     path: "/products",   icon: Package         },
-  { label: "My Customers", path: "/customers",  icon: Users           },
-  { label: "Orders",       path: "/orders",     icon: ShoppingCart    },
-  { label: "Commission",   path: "/commission", icon: Percent         },
+  { label: "Dashboard",       path: "/",                icon: LayoutDashboard },
+  { label: "Products",        path: "/products",        icon: Package         },
+  { label: "My Customers",    path: "/customers",       icon: Users           },
+  { label: "Orders",          path: "/orders",          icon: ShoppingCart    },
+  { label: "Commission",      path: "/commission",      icon: Percent         },
+  { label: "Onboarding Docs", path: "/onboarding-docs", icon: FileText        },
 ];
 
 export function Sidebar() {

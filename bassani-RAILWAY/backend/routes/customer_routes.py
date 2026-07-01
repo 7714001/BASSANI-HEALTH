@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -6,6 +8,7 @@ from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
+from services.r2_client import r2_put, r2_delete, r2_presign
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -566,3 +569,121 @@ def archive_customer(
         return {"success": True, "message": "Customer archived"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+# ── Customer documents ────────────────────────────────────────────────────────
+
+@router.get("/{customer_id}/documents")
+async def list_customer_documents(
+    customer_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return all documents linked to a customer profile:
+    - Signed onboarding docs submitted via the wizard (from customer_onboarding via customer_ownership)
+    - Any docs manually uploaded by admins (from customer_documents collection)
+    Presigned R2 download URLs are generated for each.
+    """
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        if not reseller:
+            raise HTTPException(status_code=403, detail="Access denied")
+        ownership_check = await col("customer_ownership").find_one({
+            "reseller_id": reseller["id"],
+            "odoo_partner_id": customer_id,
+        })
+        if not ownership_check:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    docs = []
+
+    # Onboarding docs — resolve via customer_ownership → customer_onboarding
+    ownership = await col("customer_ownership").find_one({"odoo_partner_id": customer_id}, NO_ID)
+    if ownership and ownership.get("onboarding_ref"):
+        app = await col("customer_onboarding").find_one({"id": ownership["onboarding_ref"]}, NO_ID)
+        if app:
+            for d in (app.get("documents") or []):
+                key = d.get("r2_key")
+                url = None
+                if key:
+                    try:
+                        url = await r2_presign(key)
+                    except Exception:
+                        pass
+                docs.append({**d, "source": "onboarding", "download_url": url})
+
+    # Admin-uploaded docs
+    admin_docs = await col("customer_documents").find(
+        {"odoo_partner_id": customer_id}, NO_ID
+    ).to_list(length=100)
+    for d in admin_docs:
+        key = d.get("r2_key")
+        url = None
+        if key:
+            try:
+                url = await r2_presign(key)
+            except Exception:
+                pass
+        docs.append({
+            "id":           d["id"],
+            "doc_type":     "admin_upload",
+            "label":        d.get("label", d.get("filename", "Document")),
+            "filename":     d.get("filename"),
+            "r2_key":       key,
+            "size":         d.get("size"),
+            "uploaded_at":  d.get("uploaded_at"),
+            "uploaded_by":  d.get("uploaded_by"),
+            "source":       "admin",
+            "download_url": url,
+        })
+
+    return {"documents": docs, "total": len(docs)}
+
+
+@router.post("/{customer_id}/documents/upload")
+async def upload_customer_document(
+    customer_id: int,
+    label: str = Query(..., description="Document label"),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    """Admin uploads a document directly to a customer profile, stored in R2."""
+    contents = await file.read()
+    ext      = os.path.splitext(file.filename or "")[1] or ".pdf"
+    doc_id   = str(uuid.uuid4())
+    key      = f"customers/{customer_id}/{doc_id}{ext}"
+
+    await r2_put(key, contents, content_type=file.content_type or "application/octet-stream")
+
+    doc = {
+        "id":              doc_id,
+        "odoo_partner_id": customer_id,
+        "label":           label.strip(),
+        "filename":        file.filename,
+        "r2_key":          key,
+        "size":            len(contents),
+        "uploaded_at":     datetime.now(timezone.utc),
+        "uploaded_by":     current_user.get("username", ""),
+    }
+    await col("customer_documents").insert_one({**doc})
+    return {"success": True, "doc": doc}
+
+
+@router.delete("/{customer_id}/documents/{doc_id}")
+async def delete_customer_document(
+    customer_id: int,
+    doc_id: str,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    """Delete an admin-uploaded customer document from R2 and MongoDB."""
+    doc = await col("customer_documents").find_one({"id": doc_id, "odoo_partner_id": customer_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    key = doc.get("r2_key")
+    if key:
+        try:
+            await r2_delete(key)
+        except Exception:
+            pass
+    await col("customer_documents").delete_one({"id": doc_id})
+    return {"success": True}
