@@ -334,9 +334,10 @@ from routes.script_routes        import router as script_router
 from routes.onboarding_routes    import router as onboarding_router
 from routes.target_routes        import router as target_router
 from routes.packing_board_routes import router as packing_board_router
-from routes.warehouse_routes      import router as warehouse_router
-from routes.ticket_routes         import router as ticket_router
-from routes.inbox_routes          import router as inbox_router
+from routes.warehouse_routes          import router as warehouse_router
+from routes.ticket_routes             import router as ticket_router
+from routes.inbox_routes              import router as inbox_router
+from routes.reseller_catalog_routes   import router as reseller_catalog_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -346,6 +347,7 @@ for router in [
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
     warehouse_router, ticket_router, inbox_router,
+    reseller_catalog_router,
 ]:
     app.include_router(router)
 

@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.6 complete) | 2026-06-24 |
+| 7 | Missing Commercial Workflows | 🟡 Partial (7.4 deferred — R2 needed; 7.5–7.7 complete) | 2026-06-24 · 7.7 — 2026-07-01 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–10 (8.1–8.12 code complete) — 2026-06-29 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 pending |
@@ -736,6 +736,25 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Frontend: small `History` icon button in the On Hand column of the Products table — opens a modal (consistent with the existing Reservations drill-down)
 - [x] Modal: optional date-from / date-to filter with a "Filter" button that re-fetches; colour-coded move type badge per row; ± qty with sign colouring (red for outbound, green for inbound); `from → to` location path + formatted date below each row
 
+#### 7.7 — Reseller Product Catalog Configuration
+
+**Goal:** Admin controls which products (at variant level) are visible to resellers. Resellers only see and can order products explicitly added to the catalog. Admins see all products regardless.
+
+**Architecture:** Portal-layer concern — visibility control is not an Odoo concept. A single `reseller_catalog` MongoDB document holds the list of allowed `product.product` IDs. Stock, price, and tax data all still come from Odoo; only visibility is controlled at the portal layer. Same philosophy as `sales_tickets` over `sale.order` — MongoDB adds the portal layer, Odoo retains the source-of-truth records.
+
+- [x] `GET /api/reseller-catalog/` — returns `{ product_ids: [...] }` for any authenticated user (resellers use it to know what they can see; not needed in practice since the filter is server-side, but available)
+- [x] `POST /api/reseller-catalog/toggle/{product_id}` — adds product if absent, removes if present; requires `products.manage`; audit-logged as `reseller_catalog.added` / `reseller_catalog.removed`
+- [x] `list_products()` — if caller role is `reseller`, fetches catalog IDs from MongoDB and appends `("id", "in", catalog_ids)` to the Odoo domain before querying; returns empty list if catalog is unconfigured (safe default — resellers see nothing until explicitly configured)
+- [x] `get_product_by_barcode()` — same catalog gate applied to barcode lookups for reseller-role callers
+- [x] `reseller_catalog` MongoDB collection — single document `{ _id: "global", product_ids: [int, ...], updated_by }`, upserted on every toggle
+- [x] Products admin table — new **Reseller** column (toggle switch per row, `hidden sm:table-cell`) visible only to `products.manage` users; optimistic UI update, confirmed by server response; audit-logged on every change
+
+**Design decisions:**
+- **Global catalog, not per-reseller** — all resellers see the same configured set. Per-reseller overrides can be layered on top later without breaking this structure.
+- **Variant level** — `product.product` IDs, not template IDs. Allows selling 3g bags but not 5g of the same strain if needed. Consistent with how the rest of the portal treats products (Phase 3.1).
+- **Unconfigured = empty** — if no products have been toggled in, resellers see nothing. Safer than showing everything by default.
+- **No new page** — toggle lives in the existing Products table column. Admin sees catalog status alongside stock and price in context.
+
 ### Definition of Done
 - [x] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
 - [x] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
@@ -743,12 +762,16 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [ ] Customer onboarding cannot be approved without at least one document uploaded *(7.4 — deferred)*
 - [x] Backorder quantities are visible on the order detail page when Odoo has a backorder picking
 - [x] Clicking the history icon on any product shows its complete stock movement trail — receipts, deliveries, transfers, and adjustments — with move type labels and ± quantities
+- [x] Admin can toggle any product variant into/out of the reseller catalog from the Products table
+- [x] A reseller's product list and order cart only show catalog products — no Odoo trip needed to enforce this
+- [x] Toggling a product on/off produces an audit log entry with actor identity
 
 ### Notes
 - 7.1 + 7.5 were implemented together — delivery endpoint returns both regular and backorder pickings with per-line fulfilment. UI surfaces in both OrderView.js (reseller order detail) and SalesTickets.js (staff ticket detail).
 - 7.2 credit note requests are tracked in MongoDB (not Odoo) since Odoo credit note creation is a finance-team action; portal tracks the request lifecycle (pending → acknowledged).
 - 7.4 blocked on R2 — no object storage provisioned yet. All other items complete.
 - 7.6 added after business meeting 2026-06-24 — they recognised the value of Odoo's traceability screen and wanted it surfaced in the portal. Inter-warehouse transfers are covered automatically via the location `usage=internal` classification.
+- 7.7 added 2026-07-01 — came out of a business meeting. Resellers were seeing all Odoo products regardless of relevance. Implemented as a portal-layer MongoDB catalog config (not an Odoo change) consistent with the middleware architecture principle. Toggle column on Products table; server-side filter on all reseller product API calls.
 
 ---
 

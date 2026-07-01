@@ -5,6 +5,7 @@ from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
 from middleware.audit import audit_log
+from database import col
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -147,6 +148,15 @@ async def list_products(
     # Category filter using Odoo's categ_id.name
     if category and category != "all":
         domain.append(("categ_id.name", "ilike", category))
+
+    # Resellers only see products explicitly added to the reseller catalog.
+    # Admins and other roles see everything (no domain restriction added).
+    if current_user.get("role") == "reseller":
+        catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
+        catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
+        if not catalog_ids:
+            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+        domain.append(("id", "in", catalog_ids))
 
     warehouse_id = warehouse_id or await resolve_warehouse_id(current_user)
     company_id = get_company_id(odoo, warehouse_id)
@@ -368,10 +378,19 @@ async def get_product_by_barcode(barcode_value: str, current_user: dict = Depend
     odoo = get_odoo_client()
     warehouse_id = await resolve_warehouse_id(current_user)
     company_id = get_company_id(odoo, warehouse_id)
+
+    barcode_domain = [("barcode", "=", barcode_value), ("active", "=", True)]
+    if current_user.get("role") == "reseller":
+        catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
+        catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
+        if not catalog_ids:
+            raise HTTPException(status_code=404, detail=f"No product found for barcode {barcode_value}")
+        barcode_domain.append(("id", "in", catalog_ids))
+
     try:
         matches = odoo.search_read(
             "product.product",
-            domain=[("barcode", "=", barcode_value), ("active", "=", True)],
+            domain=barcode_domain,
             fields=PRODUCT_FIELDS,
             limit=2,
             context=odoo_context(warehouse_id, company_id),

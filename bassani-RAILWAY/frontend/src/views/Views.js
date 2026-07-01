@@ -46,6 +46,7 @@ export function Products() {
   const [cat,        setCat       ] = useState("all");
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
+  const [catalog,    setCatalog   ] = useState(new Set());
   const [uoms,        setUoms       ] = useState([]);
   const [taxes,       setTaxes      ] = useState([]);
   const [modal,       setModal      ] = useState(false);
@@ -126,6 +127,9 @@ export function Products() {
     api.get("/api/products/taxes")
       .then(r => setTaxes(r.data.taxes || []))
       .catch(() => {});
+    api.get("/api/reseller-catalog/")
+      .then(r => setCatalog(new Set(r.data.product_ids || [])))
+      .catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -145,6 +149,14 @@ export function Products() {
   useEffect(() => { load(); }, [load]);
 
   const stockColor = (qty) => qty <= 0 ? "text-red-600 font-semibold" : qty < 10 ? "text-amber-600 font-semibold" : "text-bassani-700 font-semibold";
+
+  const toggleCatalog = async (productId) => {
+    setCatalog(prev => { const n = new Set(prev); n.has(productId) ? n.delete(productId) : n.add(productId); return n; }); // optimistic
+    try {
+      const r = await api.post(`/api/reseller-catalog/toggle/${productId}`);
+      setCatalog(new Set(r.data.product_ids));
+    } catch { toast.error("Failed to update reseller catalog"); }
+  };
 
   const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"", barcode:"" }); setModal(true); };
   const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"", uom_id:p.uom_id?.[0]||"", tax_id:p.tax_id||"", barcode:p.barcode||"" }); setModal(true); };
@@ -241,6 +253,20 @@ export function Products() {
                 </span>
               );
             } },
+            ...(can("products.manage") ? [{
+              id:"catalog", header:"Reseller", enableSorting:false, meta:{className:"hidden sm:table-cell"},
+              cell:({ row:{original:p} }) => {
+                const active = catalog.has(p.id);
+                return (
+                  <button
+                    onClick={e => { e.stopPropagation(); toggleCatalog(p.id); }}
+                    title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none ${active ? "bg-bassani-600" : "bg-gray-200"}`}>
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${active ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                  </button>
+                );
+              }
+            }] : []),
             ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
           ]}
           data={variant === "all" ? products : products.filter(p => getVariantLabel(p) === variant)} loading={loading} total={total}
