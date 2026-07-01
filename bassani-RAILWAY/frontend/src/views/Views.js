@@ -39,6 +39,7 @@ const getVariantLabel = (p) => {
 
 export function Products() {
   const { user, can } = useAuth();
+  const isReseller = user?.role === "reseller";
   const [products,   setProducts  ] = useState([]);
   const [total,      setTotal     ] = useState(0);
   const [loading,    setLoading   ] = useState(true);
@@ -201,8 +202,13 @@ export function Products() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher
-        actions={can("products.manage") && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
+      <TopBar
+        title="Products"
+        subtitle={isReseller ? `${total} products in catalog` : `${total} products synced from Odoo`}
+        onRefresh={load}
+        showWarehouseSwitcher={!isReseller}
+        actions={can("products.manage") && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>}
+      />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
@@ -222,45 +228,58 @@ export function Products() {
         </div>
         <DataTable
           columns={[
-            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
-            { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>
+            { accessorKey:"name", header:"Product / SKU",
+              cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
+            ...(!isReseller ? [{ accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>
               p.barcode
                 ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
                 : <span className="text-xs text-gray-300">—</span>
+            }] : []),
+            { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"},
+              accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
+            { accessorKey:"list_price", header:"Sale Price", meta:{className:"hidden sm:table-cell"},
+              cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
+            ...(!isReseller ? [
+              { accessorKey:"standard_price", header:"Cost", meta:{className:"hidden md:table-cell"},
+                cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
+              { accessorKey:"tax_rate", header:"Tax", enableSorting:false, meta:{className:"hidden md:table-cell"},
+                cell:({ row:{original:p} })=>
+                  (p.tax_rate ?? 0) > 0
+                    ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
+                    : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
+              },
+              { accessorKey:"qty_available", header:"On Hand", enableSorting:false,
+                cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button></span>; } },
+            ] : []),
+            { accessorKey:"virtual_available", header: isReseller ? "Available Stock" : "Forecasted",
+              enableSorting:false, meta:{className: isReseller ? undefined : "hidden md:table-cell"},
+              cell:({ row:{original:p} }) => {
+                const forecasted = p.virtual_available ?? 0;
+                if (isReseller) {
+                  return <span className={stockColor(forecasted)}>{forecasted}</span>;
+                }
+                const onHand = p.qty_available ?? 0;
+                const tiedUp = onHand - forecasted > 0.001;
+                return (
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-gray-500">{forecasted}</span>
+                    {tiedUp && (
+                      <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="See which orders this stock is tied up in"
+                        className="text-amber-500 hover:text-amber-600 transition-colors">
+                        <PackageSearch size={13} />
+                      </button>
+                    )}
+                  </span>
+                );
+              }
             },
-            { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"}, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
-            { accessorKey:"list_price", header:"Sale Price", meta:{className:"hidden sm:table-cell"}, cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
-            { accessorKey:"standard_price", header:"Cost", meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
-            { accessorKey:"tax_rate", header:"Tax", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>
-              (p.tax_rate ?? 0) > 0
-                ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
-                : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
-            },
-            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button></span>; } },
-            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>{
-              const onHand = p.qty_available ?? 0;
-              const forecasted = p.virtual_available ?? 0;
-              const tiedUp = onHand - forecasted > 0.001;
-              return (
-                <span className="flex items-center gap-1.5">
-                  <span className="text-gray-500">{forecasted}</span>
-                  {tiedUp && (
-                    <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="See which orders this stock is tied up in"
-                      className="text-amber-500 hover:text-amber-600 transition-colors">
-                      <PackageSearch size={13} />
-                    </button>
-                  )}
-                </span>
-              );
-            } },
             ...(can("products.manage") ? [{
               id:"catalog", header:"Reseller", enableSorting:false, meta:{className:"hidden sm:table-cell"},
               cell:({ row:{original:p} }) => {
                 const active = catalog.has(p.id);
                 return (
                   <button
-                    role="switch"
-                    aria-checked={active}
+                    role="switch" aria-checked={active}
                     onClick={e => { e.stopPropagation(); toggleCatalog(p.id); }}
                     title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
                     className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-2 ${active ? "bg-bassani-600" : "bg-gray-300"}`}>
@@ -269,9 +288,12 @@ export function Products() {
                 );
               }
             }] : []),
-            ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
+            ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false,
+              cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div>
+            }] : []),
           ]}
-          data={variant === "all" ? products : products.filter(p => getVariantLabel(p) === variant)} loading={loading} total={total}
+          data={variant === "all" ? products : products.filter(p => getVariantLabel(p) === variant)}
+          loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
           sorting={sorting} onSortingChange={u=>{ setSorting(typeof u==="function"?u(sorting):u); setPagination(p=>({...p,pageIndex:0})); }}
           manualPagination manualSorting

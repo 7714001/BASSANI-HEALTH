@@ -182,11 +182,39 @@ async def list_products(
 
 
 @router.get("/categories")
-def list_categories(current_user: dict = Depends(get_current_user)):
-    """All product.category records from Odoo — used for the category dropdown and the
-    Categories management page. Reading directly (not derived from products) so new
-    categories appear immediately, before any products are assigned to them."""
+async def list_categories(current_user: dict = Depends(get_current_user)):
+    """All product.category records from Odoo.
+    For resellers: filtered to only categories that have at least one catalog product,
+    so the category chips on their product page are scoped to what they can see.
+    For admins/staff: all categories (used for dropdowns and the Categories page)."""
     odoo = get_odoo_client()
+
+    if current_user.get("role") == "reseller":
+        catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
+        catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
+        if not catalog_ids:
+            return {"categories": []}
+        try:
+            products = odoo.search_read(
+                "product.product",
+                domain=[("id", "in", catalog_ids), ("active", "=", True)],
+                fields=["categ_id"],
+                limit=2000,
+            )
+            cat_ids = list({p["categ_id"][0] for p in products if p.get("categ_id")})
+            if not cat_ids:
+                return {"categories": []}
+            categories = odoo.search_read(
+                "product.category",
+                domain=[("id", "in", cat_ids)],
+                fields=["id", "name", "complete_name", "parent_id"],
+                limit=500,
+                order="complete_name asc",
+            )
+            return {"categories": categories}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
     try:
         categories = odoo.search_read(
             "product.category",
