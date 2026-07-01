@@ -26,6 +26,7 @@ import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications       from "./views/CustomerApplications";
 import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
 import OnboardingDocs             from "./views/OnboardingDocs";
+import ResellerCatalog           from "./views/ResellerCatalog";
 import ResellerProfile       from "./views/ResellerProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
@@ -142,7 +143,11 @@ export default function App() {
           <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>
         } />
         <Route path="/products" element={
-          <ProtectedRoute><AppLayout><Products /></AppLayout></ProtectedRoute>
+          <ProtectedRoute>
+            <AppLayout>
+              {user?.role === "reseller" ? <ResellerCatalog /> : <Products />}
+            </AppLayout>
+          </ProtectedRoute>
         } />
         <Route path="/customers" element={
           <ProtectedRoute><AppLayout><Customers /></AppLayout></ProtectedRoute>
