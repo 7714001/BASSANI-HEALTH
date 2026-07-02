@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket, Tag, Ruler, Mail,
+  ScrollText, Target, ClipboardCheck, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -30,6 +30,7 @@ const NAV = [
     { label: "UOM",         path: "/catalogue/uom",        icon: Ruler, permission: "products.manage" },
   ]},
   { label: "Customers",    path: "/customers",   icon: Users,           section: "Main",     permission: "customers.view"      },
+  { label: "Suppliers",    path: "/suppliers",   icon: Truck,           section: "Main",     permission: "suppliers.view"      },
   { label: "Applications", path: "/applications",icon: ClipboardCheck,  section: "Main",     adminOnly: true, permission: "customers.view", showApplicationsBadge: true },
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
   { label: "Resellers",    path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },

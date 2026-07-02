@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 |
+| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–10 (8.1–8.12 code complete) — 2026-06-29 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 pending |
@@ -818,6 +818,31 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - 7.4 complete 2026-07-01 — Cloudflare R2 provisioned (`bassani-health-docs` bucket). Document flow: reseller downloads/emails 4 Bassani template PDFs to customer → customer signs → reseller uploads 5 signed docs (4 templates + CIPC) → admin reviews with presigned download links → approval gated on all 5 being present. MongoDB backups are handled natively by Railway — R2 is used for document storage only (roadmap infrastructure table updated accordingly).
 - 7.6 added after business meeting 2026-06-24 — they recognised the value of Odoo's traceability screen and wanted it surfaced in the portal. Inter-warehouse transfers are covered automatically via the location `usage=internal` classification.
 - 7.7 added 2026-07-01 — came out of a business meeting. Resellers were seeing all Odoo products regardless of relevance. Implemented as a portal-layer MongoDB catalog config (not an Odoo change) consistent with the middleware architecture principle. Toggle column on Products table; server-side filter on all reseller product API calls.
+- 7.9 complete 2026-07-02 — Suppliers identified as an active Odoo concept (cannabis cultivators, gummy manufacturers) with no portal visibility. Lightweight read-only supplier layer added as Phase 13 foundation. New `suppliers.view` / `suppliers.manage` permission domain; finance role gets view by default. Supplier list (`/suppliers`) and 360 profile (`/suppliers/:id`) surface partner details, vendor bills, purchase orders, goods receipts, and Odoo-configured products supplied. No write operations — portal reads from Odoo; Phase 13 will add goods receipt and batch traceability workflows on top of this.
+
+#### 7.9 — Supplier Layer (Phase 13 Foundation)
+
+> **Added 2026-07-02** — Bassani's Odoo instance has active suppliers (cannabis cultivators and gummy manufacturers) with no visibility in the portal. The field-parity principle requires any entity visible in Odoo to be surfaceable in the portal. Phase 13 will need supplier-linked batch traceability; this phase builds the foundation it can integrate into.
+
+**Goal:** Read-only supplier visibility in the portal, gated behind a new `suppliers.view` permission. Finance can see what Bassani owes suppliers and the purchase history behind it. Phase 13 plugs batch/lot receipts into the Goods Receipts section without needing a new supplier layer.
+
+**Design decisions:**
+- **Read-only** — no PO creation or vendor bill management in the portal yet. Procurement staff use Odoo directly; this phase is about visibility, not write-back.
+- **New permission domain** — `suppliers: { view, manage }` added to `DEFAULT_ADMIN_PERMISSIONS`, `FULL_PERMISSIONS`, and all role defaults. Finance gets `view: true` by default. All other ticket roles default to `view: false`.
+- **Sidebar placement** — "Suppliers" sits below "Customers" in the Main section, sharing the same conceptual space (external parties in Odoo's partner registry).
+- **Phase 13 hook** — the Goods Receipts section (`stock.picking` incoming, state=done) is exactly the entry point for batch traceability. Phase 13 adds a lot/batch column to those rows and links them to the cultivation module.
+- **Products Supplied** — sourced from `product.supplierinfo`, deduplicated by template. Shows which SKUs Bassani sources from each supplier. Archived templates shown with a badge rather than hidden.
+
+### Definition of Done
+- [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
+- [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
+- [x] Supplier list view with name, type badge (Customer/Supplier/Both), email, phone, payment terms
+- [x] Supplier 360 profile: header card, KPI row (confirmed POs, total spend, outstanding balance, products supplied), and four data sections
+- [x] Goods receipts sourced from completed incoming stock pickings linked to the supplier
+- [x] Products supplied sourced from `product.supplierinfo`, deduplicated by product template
+- [x] `suppliers.view` / `suppliers.manage` added to all permission dicts in `auth.py`
+- [x] Finance role defaults to `suppliers.view: true`; all ticket roles default to `false`
+- [x] "Suppliers" nav item in sidebar, gated by `suppliers.view`, with Truck icon
 
 ---
 

@@ -28,6 +28,8 @@ import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
 import OnboardingDocs             from "./views/OnboardingDocs";
 import ResellerCatalog           from "./views/ResellerCatalog";
 import ResellerProfile       from "./views/ResellerProfile";
+import Suppliers             from "./views/Suppliers";
+import SupplierProfile       from "./views/SupplierProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
 import SalesInbox            from "./views/SalesInbox";
@@ -154,6 +156,12 @@ export default function App() {
         } />
         <Route path="/customers/:id" element={
           <ProtectedRoute><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/suppliers" element={
+          <ProtectedRoute><AppLayout><Suppliers /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/suppliers/:id" element={
+          <ProtectedRoute><AppLayout><SupplierProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders" element={
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>
