@@ -89,6 +89,28 @@ class TemplateEmailBody(BaseModel):
     to_email: str
 
 
+class UpdateApplicationBody(BaseModel):
+    company_name:        Optional[str] = None
+    trading_name:        Optional[str] = None
+    registration_number: Optional[str] = None
+    vat_number:          Optional[str] = None
+    business_type:       Optional[str] = None
+    contact_name:        Optional[str] = None
+    contact_position:    Optional[str] = None
+    contact_email:       Optional[str] = None
+    contact_phone:       Optional[str] = None
+    contact_alt_phone:   Optional[str] = None
+    street:              Optional[str] = None
+    suburb:              Optional[str] = None
+    city:                Optional[str] = None
+    province:            Optional[str] = None
+    postal_code:         Optional[str] = None
+    country:             Optional[str] = None
+    ordering_volume:     Optional[str] = None
+    referral_source:     Optional[str] = None
+    notes:               Optional[str] = None
+
+
 # ── Template endpoints ────────────────────────────────────────────────────────
 
 @router.get("/templates")
@@ -289,12 +311,22 @@ async def submit_application(
 @router.get("/{app_id}/documents")
 async def get_application_documents(
     app_id: str,
-    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Return presigned R2 download URLs for all uploaded documents on an application."""
+    """Return presigned R2 download URLs for all uploaded documents on an application.
+    Admins require customers.approve_onboarding; resellers may view their own application's docs."""
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        if not reseller or app.get("reseller_id") != reseller["id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        perms = current_user.get("permissions", {})
+        if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
+            raise HTTPException(status_code=403, detail="Permission denied")
 
     docs = app.get("documents") or []
     result = []
@@ -322,6 +354,103 @@ async def get_application(app_id: str, current_user: dict = Depends(get_current_
         if not reseller or app.get("reseller_id") != reseller["id"]:
             raise HTTPException(status_code=403, detail="Access denied")
     return app
+
+
+@router.put("/{app_id}")
+async def update_application(
+    app_id: str,
+    body: UpdateApplicationBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reseller updates the text fields of their own pending application."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can update applications")
+    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=403, detail="Reseller profile not found")
+
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.get("reseller_id") != reseller["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if app.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Only pending applications can be updated")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided")
+    updates["updated_at"] = datetime.now(timezone.utc)
+
+    await col("customer_onboarding").update_one({"id": app_id}, {"$set": updates})
+    await audit_log("onboarding.update", "customer_onboarding", app_id,
+                    entity_label=app.get("company_name", ""), user=current_user,
+                    reseller_id=reseller["id"], after=updates)
+    return {"success": True}
+
+
+@router.post("/{app_id}/documents/{doc_type}")
+async def replace_application_document(
+    app_id: str,
+    doc_type: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Reseller replaces a specific document on their own pending application."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can replace application documents")
+    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=403, detail="Reseller profile not found")
+
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.get("reseller_id") != reseller["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if app.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Only pending applications can be updated")
+    if doc_type not in REQUIRED_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
+
+    session_id = app.get("document_session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Application has no document session")
+
+    # Remove old file(s) for this doc type from R2
+    for ext in [".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"]:
+        try:
+            await r2_delete(f"onboarding/sessions/{session_id}/{doc_type}{ext}")
+        except Exception:
+            pass
+
+    # Upload new file
+    ext = os.path.splitext(file.filename or "")[1] or ".pdf"
+    key = f"onboarding/sessions/{session_id}/{doc_type}{ext}"
+    contents = await file.read()
+    await r2_put(key, contents, file.content_type or "application/octet-stream")
+
+    now = datetime.now(timezone.utc)
+    new_doc = {
+        "doc_type":    doc_type,
+        "label":       REQUIRED_DOC_TYPES[doc_type],
+        "r2_key":      key,
+        "filename":    file.filename,
+        "size":        len(contents),
+        "uploaded_at": now,
+    }
+
+    # Replace the existing doc in the documents array
+    docs = [d for d in (app.get("documents") or []) if d.get("doc_type") != doc_type]
+    docs.append(new_doc)
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"documents": docs, "updated_at": now}},
+    )
+    await audit_log("onboarding.replace_document", "customer_onboarding", app_id,
+                    entity_label=app.get("company_name", ""), user=current_user,
+                    reseller_id=reseller["id"], after={"doc_type": doc_type, "filename": file.filename})
+    return new_doc
 
 
 @router.put("/{app_id}/approve")

@@ -26,7 +26,9 @@ import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications       from "./views/CustomerApplications";
 import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
 import OnboardingDocs             from "./views/OnboardingDocs";
-import ResellerCatalog           from "./views/ResellerCatalog";
+import ResellerCatalog               from "./views/ResellerCatalog";
+import ResellerApplications          from "./views/ResellerApplications";
+import ResellerApplicationDetail     from "./views/ResellerApplicationDetail";
 import ResellerProfile       from "./views/ResellerProfile";
 import Suppliers             from "./views/Suppliers";
 import SupplierProfile       from "./views/SupplierProfile";
@@ -225,6 +227,13 @@ export default function App() {
         } />
         <Route path="/catalogue/uom" element={
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
+        } />
+
+        <Route path="/my-applications" element={
+          <ProtectedRoute><AppLayout><ResellerApplications /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/my-applications/:id" element={
+          <ProtectedRoute><AppLayout><ResellerApplicationDetail /></AppLayout></ProtectedRoute>
         } />
 
         {/* Catch-all */}
