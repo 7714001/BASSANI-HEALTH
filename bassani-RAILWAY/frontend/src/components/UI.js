@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -43,9 +43,10 @@ const NAV = [
   { label: "Sales Inbox",    path: "/inbox",           icon: Mail,   section: "Tickets", permission: "inbox.view", showInboxBadge: true },
   { label: "Sales Tickets", path: "/tickets/sales",  icon: Ticket, section: "Tickets", permissions: ["tickets.sales", "tickets.finance_confirm"] },
   { label: "Orders Tickets",path: "/tickets/orders", icon: Ticket, section: "Tickets", permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
-  { label: "Users",        path: "/users",       icon: UserCog,         section: "Admin",    permission: "users.manage"        },
-  { label: "Warehouses",   path: "/warehouses",  icon: Warehouse,       section: "Admin",    permission: "warehouse.supervise" },
-  { label: "Audit Trail",  path: "/audit",       icon: History,         section: "Admin",    permission: "audit.view"          },
+  { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
+  { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
+  { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
+  { label: "Email Routing", path: "/settings/email-routing", icon: Settings, section: "Admin", superAdminOnly: true              },
 ];
 
 const RESELLER_NAV = [
@@ -91,6 +92,7 @@ export function Sidebar() {
   const isReseller = user?.role === "reseller";
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
   const items      = rawItems.filter(i => {
+    if (i.superAdminOnly && !user?.is_super_admin) return false;
     if (i.adminOnly && !isAdmin) return false;
     if (i.children) return true; // NavGroup filters its own children
     // Permission-gated items apply to admin-tier AND ticketing-role accounts

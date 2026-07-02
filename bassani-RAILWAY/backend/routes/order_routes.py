@@ -9,6 +9,7 @@ from database import col, NO_ID
 from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
+from routes.settings_routes import get_email_routing
 from services.email_service import send_order_placed, send_order_confirmed, send_order_cancelled
 
 logger = logging.getLogger(__name__)
@@ -482,6 +483,7 @@ async def create_order(
                 _order_ref = _name_rows[0]["name"] if _name_rows else f"#{odoo_order_id}"
             except Exception:
                 _order_ref = f"#{odoo_order_id}"
+            _routing = await get_email_routing()
             background_tasks.add_task(
                 send_order_placed,
                 order_ref=_order_ref,
@@ -489,6 +491,7 @@ async def create_order(
                 order_total=original_subtotal,
                 reseller_name=reseller_profile.get("name", ""),
                 reseller_email=reseller_profile["email"],
+                cc=_routing["order_cc"] or None,
             )
 
     await audit_log("order.create", "order", odoo_order_id, entity_label=customer_name if order.reseller_id else "",
@@ -739,6 +742,7 @@ async def confirm_order(
     if comm_lookup and comm_lookup.get("reseller_id"):
         _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _reseller and _reseller.get("email"):
+            _routing = await get_email_routing()
             background_tasks.add_task(
                 send_order_confirmed,
                 order_ref=pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}",
@@ -746,6 +750,7 @@ async def confirm_order(
                 order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
                 reseller_name=comm_lookup.get("reseller_name", ""),
                 reseller_email=_reseller["email"],
+                cc=_routing["order_cc"] or None,
             )
 
     return {

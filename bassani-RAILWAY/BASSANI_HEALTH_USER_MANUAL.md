@@ -215,6 +215,60 @@ Until the domain is verified, emails will send from Resend's sandbox domain. Rea
 
 ---
 
+## Step 8a — Configure Email Routing (Super Admin)
+
+The portal sends automated notifications to different recipients depending on the event. By default, new application notifications go to the `SUPPORT_EMAIL` environment variable and order-ready notifications go to all users with the `warehouse_supervisor` role. You can override and extend these without touching Railway environment variables.
+
+Go to **Admin > Email Routing** in the left sidebar (visible to Super Admin only).
+
+### Application Submitted Notifications
+
+When a reseller submits a new customer onboarding application, the portal notifies the addresses in this list. If the list is empty, the `SUPPORT_EMAIL` env var is used as the fallback.
+
+Add every address that should receive application review notifications — for example, the operations manager and any admin staff who review applications.
+
+### Order Ready for Collection
+
+When an order passes QA and RP review and is cleared for dispatch, all portal users with the `warehouse_supervisor` role are notified automatically. Add extra addresses here for distribution lists or staff who should be notified but do not have portal accounts (e.g. `warehouse@bassanihealth.com`).
+
+### Order CC
+
+These addresses are CC'd on every "Order Received" and "Order Confirmed" email sent to resellers. Useful for an operations inbox or account management team that wants visibility on all reseller orders without receiving individual assignment notifications.
+
+> **How to add an address:** Type the email and press Enter or comma. Click the tag to remove it. Press **Save Changes** when done. Changes take effect immediately for all future notifications.
+
+---
+
+## Automated Email Reference
+
+The table below documents every automated email the portal sends, when it fires, and who receives it.
+
+| Email | Trigger | Recipient(s) |
+|---|---|---|
+| **Welcome to Bassani Health** | A super admin or admin creates a new staff account | The new staff member (their registered email) |
+| **Your sign-in code** | A user with 2FA enabled logs in | The user logging in |
+| **Order Received** | A reseller submits a new order through the portal | The reseller + Order CC list (if configured) |
+| **Order Confirmed** | An admin or sales staff confirms the order (converts quotation to sale order) | The reseller + Order CC list (if configured) |
+| **Order Cancellation** | An admin or sales staff cancels an order | The reseller |
+| **New Assignment** | A sales ticket is assigned to a staff member | The assigned staff member |
+| **New Customer Application** | A reseller submits an onboarding application | Addresses in the Application Submitted list (or `SUPPORT_EMAIL` fallback) |
+| **Customer Approved** | An admin approves an onboarding application | The reseller who submitted it; optionally the customer contact email |
+| **Application Not Approved** | An admin rejects an onboarding application | The reseller who submitted it |
+| **Your onboarding documents** | A reseller uses "Send Documents" in the onboarding wizard | The customer email address entered by the reseller |
+| **Commission Statement Ready** | An admin generates a monthly commission statement | The reseller |
+| **Commission Paid** | An admin marks a commission statement as paid | The reseller |
+| **Commission Dispute Resolved** | An admin resolves a commission dispute | The reseller |
+| **Ready for Collection** | An order passes both QA and RP approval on the packing board | All `warehouse_supervisor` portal users + any extra addresses in the Order Ready list |
+
+**Notes:**
+
+- All emails are sent from `noreply@bassanihealth.com` via Resend. The sender name is always "Bassani Health".
+- No email ever contains Odoo, MongoDB, or internal system names. Internal identifiers appear in the portal only.
+- If the Resend API key is missing or set to a placeholder, email sends are skipped silently and logged to the Railway console. No crash, no blocked response.
+- The customer approval email optionally copies the customer's own contact email. This only fires if the application includes a contact email address.
+
+---
+
 ## Step 9 — Enable Error Monitoring (Sentry)
 
 1. Create a free account at sentry.io
@@ -1112,6 +1166,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Unlink customer from reseller | Admin only |
 | Record invoice payment | Admin with `invoices.record_payment` |
 | Create/edit admin accounts | Super Admin only |
+| Configure email routing | Super Admin only |
 | Configure commission tiers | Admin with `commission.configure_tiers` |
 | View audit trail | Admin with `audit.view` |
 | Override order pipeline stage | Admin with `tickets.manage` |

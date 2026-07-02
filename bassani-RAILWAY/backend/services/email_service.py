@@ -25,6 +25,7 @@ def _send(
     html: str,
     reply_to: str = None,
     attachments: list = None,
+    cc: "str | list[str] | None" = None,
 ) -> None:
     """Core send. Sync — always called from a BackgroundTask thread."""
     key = settings.resend_api_key
@@ -44,6 +45,8 @@ def _send(
             payload["reply_to"] = reply_to
         if attachments:
             payload["attachments"] = attachments
+        if cc:
+            payload["cc"] = cc if isinstance(cc, list) else [cc]
         resend.Emails.send(payload)
     except Exception as exc:
         print(f"Email send failed [{subject}]: {exc}")
@@ -209,6 +212,7 @@ def send_order_placed(
     order_total: float,
     reseller_name: str,
     reseller_email: str,
+    cc: "list[str] | None" = None,
 ) -> None:
     """Sent to the reseller when their portal order is submitted."""
     if not reseller_email:
@@ -229,7 +233,7 @@ def send_order_placed(
              "and is in the fulfilment queue.", muted=True)
     )
     _send(reseller_email, f"Order Received: {order_ref}",
-          _wrap(body))
+          _wrap(body), cc=cc or None)
 
 
 def send_order_confirmed(
@@ -238,6 +242,7 @@ def send_order_confirmed(
     order_total: float,
     reseller_name: str,
     reseller_email: str,
+    cc: "list[str] | None" = None,
 ) -> None:
     """Sent to the reseller when a quotation is confirmed."""
     if not reseller_email:
@@ -257,7 +262,7 @@ def send_order_confirmed(
         + _p("You will be notified as soon as the order is ready for collection.", muted=True)
     )
     _send(reseller_email, f"Order Confirmed: {order_ref}",
-          _wrap(body))
+          _wrap(body), cc=cc or None)
 
 
 def send_order_cancelled(
@@ -336,8 +341,10 @@ def send_onboarding_submitted(
     company_name: str,
     reseller_name: str,
     app_ref: str,
+    to: "str | list[str] | None" = None,
 ) -> None:
-    """Sent to the admin support inbox when a reseller submits an onboarding application."""
+    """Sent to configured recipients when a reseller submits an onboarding application."""
+    resolved_to = to or settings.support_email
     body = (
         _h1("New customer application received")
         + _p("A reseller has submitted a customer onboarding application for review.")
@@ -350,7 +357,7 @@ def send_onboarding_submitted(
         + _divider()
         + _p("Log in to the portal to review and action this application.", muted=True)
     )
-    _send(settings.support_email, f"New Application: {company_name}",
+    _send(resolved_to, f"New Application: {company_name}",
           _wrap(body))
 
 

@@ -25,6 +25,7 @@ from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
+from routes.settings_routes import get_email_routing
 from services.email_service import send_order_ready_for_collection
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
@@ -458,7 +459,11 @@ async def complete_entry(
         {"role": "warehouse_supervisor", "email": {"$exists": True, "$ne": ""}},
         {"email": 1, "_id": 0},
     ).to_list(50)
+    _routing = await get_email_routing()
     _sup_emails = [u["email"] for u in _sups if u.get("email")]
+    for _extra in _routing.get("order_ready_extra_to", []):
+        if _extra and _extra not in _sup_emails:
+            _sup_emails.append(_extra)
     if _sup_emails:
         background_tasks.add_task(
             send_order_ready_for_collection,

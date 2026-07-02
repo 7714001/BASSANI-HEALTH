@@ -29,6 +29,7 @@ import OnboardingDocs             from "./views/OnboardingDocs";
 import ResellerCatalog               from "./views/ResellerCatalog";
 import ResellerApplications          from "./views/ResellerApplications";
 import ResellerApplicationDetail     from "./views/ResellerApplicationDetail";
+import EmailSettings                 from "./views/EmailSettings";
 import ResellerProfile       from "./views/ResellerProfile";
 import Suppliers             from "./views/Suppliers";
 import SupplierProfile       from "./views/SupplierProfile";
@@ -229,6 +230,9 @@ export default function App() {
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
         } />
 
+        <Route path="/settings/email-routing" element={
+          <ProtectedRoute><AppLayout><EmailSettings /></AppLayout></ProtectedRoute>
+        } />
         <Route path="/my-applications" element={
           <ProtectedRoute><AppLayout><ResellerApplications /></AppLayout></ProtectedRoute>
         } />

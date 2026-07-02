@@ -9,6 +9,7 @@ from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
+from routes.settings_routes import get_email_routing
 from services.email_service import (
     send_onboarding_submitted, send_onboarding_approved,
     send_onboarding_rejected, send_onboarding_templates,
@@ -299,11 +300,13 @@ async def submit_application(
     await audit_log("onboarding.submit", "customer_onboarding", ref,
                     entity_label=application.company_name, user=current_user,
                     reseller_id=reseller["id"])
+    routing = await get_email_routing()
     background_tasks.add_task(
         send_onboarding_submitted,
         company_name=application.company_name,
         reseller_name=reseller.get("name", current_user.get("username", "")),
         app_ref=ref,
+        to=routing["application_submitted_to"],
     )
     return {"success": True, "reference": ref}
 
