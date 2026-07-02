@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
-  MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle,
+  MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle, Eye, X,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -64,11 +64,50 @@ function MetaRow({ label, value }) {
   );
 }
 
+// ── PDF viewer modal ───────────────────────────────────────────────────────────
+
+function PdfViewer({ doc, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-full max-w-5xl" style={{ height: "90vh" }}
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText size={15} className="text-bassani-600 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900 truncate">{doc.label || doc.doc_type}</p>
+              {doc.filename && <p className="text-[10px] text-gray-400 truncate">{doc.filename}</p>}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0 ml-4">
+            <a href={doc.download_url} target="_blank" rel="noreferrer"
+              className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+              <Download size={12} /> Download
+            </a>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        {/* PDF iframe */}
+        <iframe
+          src={doc.download_url}
+          title={doc.label || doc.doc_type}
+          className="flex-1 w-full rounded-b-2xl"
+          style={{ border: "none" }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Documents section ──────────────────────────────────────────────────────────
 
 function DocumentsCard({ appId }) {
   const [docs,    setDocs   ] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [viewing, setViewing] = useState(null);
 
   useEffect(() => {
     api.get(`/api/onboarding/${appId}/documents`)
@@ -78,43 +117,51 @@ function DocumentsCard({ appId }) {
   }, [appId]);
 
   return (
-    <Card icon={FileText} title="Supporting Documents">
-      {loading ? (
-        <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-          <Loader2 size={13} className="animate-spin" /> Loading documents…
-        </div>
-      ) : !docs || docs.length === 0 ? (
-        <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-          <AlertTriangle size={14} className="text-amber-500 shrink-0" />
-          <p className="text-xs text-amber-700 font-medium">No documents were uploaded with this application.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {docs.map((d, i) => (
-            <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 bg-bassani-50 rounded-lg flex items-center justify-center shrink-0">
-                  <FileText size={14} className="text-bassani-600" />
+    <>
+      {viewing && <PdfViewer doc={viewing} onClose={() => setViewing(null)} />}
+      <Card icon={FileText} title="Supporting Documents">
+        {loading ? (
+          <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+            <Loader2 size={13} className="animate-spin" /> Loading documents…
+          </div>
+        ) : !docs || docs.length === 0 ? (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+            <AlertTriangle size={14} className="text-amber-500 shrink-0" />
+            <p className="text-xs text-amber-700 font-medium">No documents were uploaded with this application.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {docs.map((d, i) => (
+              <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 bg-bassani-50 rounded-lg flex items-center justify-center shrink-0">
+                    <FileText size={14} className="text-bassani-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type}</p>
+                    {d.filename && <p className="text-[10px] text-gray-400 truncate mt-0.5">{d.filename}</p>}
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type}</p>
-                  {d.filename && <p className="text-[10px] text-gray-400 truncate mt-0.5">{d.filename}</p>}
-                </div>
+                {d.download_url ? (
+                  <div className="flex items-center gap-3 shrink-0 ml-4">
+                    <button onClick={() => setViewing(d)}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                      <Eye size={12} /> View
+                    </button>
+                    <a href={d.download_url} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">
+                      <Download size={12} /> Download
+                    </a>
+                  </div>
+                ) : (
+                  <span className="text-[10px] text-gray-400 shrink-0 ml-4">Unavailable</span>
+                )}
               </div>
-              {d.download_url ? (
-                <a href={d.download_url} target="_blank" rel="noreferrer"
-                  className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 shrink-0 ml-4 transition-colors">
-                  <Download size={12} />
-                  Download
-                </a>
-              ) : (
-                <span className="text-[10px] text-gray-400 shrink-0 ml-4">Unavailable</span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
+            ))}
+          </div>
+        )}
+      </Card>
+    </>
   );
 }
 
