@@ -1,8 +1,8 @@
 """
-Bassani Health — Transactional Email Service
+Bassani Health Transactional Email Service
 
 All emails use Resend. If RESEND_API_KEY is not set or is a placeholder,
-sends are logged to stdout and skipped (graceful degradation — no crash,
+sends are logged to stdout and skipped (graceful degradation, no crash,
 no blocked response).
 
 All public functions are synchronous and intended to be called via
@@ -17,7 +17,7 @@ from config import get_settings
 
 settings = get_settings()
 
-# ── Base send ──────────────────────────────────────────────────────────────────
+# Base send
 
 def _send(
     to: "str | list[str]",
@@ -30,7 +30,7 @@ def _send(
     key = settings.resend_api_key
     if not key or key.startswith("re_your"):
         recipients = to if isinstance(to, str) else ", ".join(to)
-        print(f"📧 [email skipped — no API key] → {recipients} | {subject}")
+        print(f"[email skipped - no API key] to={recipients} subject={subject}")
         return
     try:
         resend.api_key = key
@@ -46,12 +46,12 @@ def _send(
             payload["attachments"] = attachments
         resend.Emails.send(payload)
     except Exception as exc:
-        print(f"⚠️  Email send failed [{subject}]: {exc}")
+        print(f"Email send failed [{subject}]: {exc}")
 
 
-# ── HTML primitives ────────────────────────────────────────────────────────────
+# HTML primitives
 
-def _wrap(subtitle: str, body_html: str) -> str:
+def _wrap(body_html: str) -> str:
     """Branded email shell. Table-based for cross-client compatibility."""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -59,6 +59,12 @@ def _wrap(subtitle: str, body_html: str) -> str:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <style>
+    @media only screen and (max-width:480px) {{
+      .bh-body   {{ padding: 24px 16px 20px !important; }}
+      .bh-footer {{ padding: 16px 20px !important; }}
+    }}
+  </style>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5f9;">
@@ -71,43 +77,31 @@ def _wrap(subtitle: str, body_html: str) -> str:
 
         <!-- Header -->
         <tr>
-          <td style="background:#0f6e56;padding:26px 36px;border-radius:12px 12px 0 0;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td>
-                  <p style="margin:0;color:#ffffff;font-size:17px;font-weight:700;
-                             letter-spacing:-0.2px;line-height:1;">Bassani Health</p>
-                  <p style="margin:5px 0 0;color:rgba(255,255,255,0.6);font-size:11px;
-                             letter-spacing:0.8px;text-transform:uppercase;">{subtitle}</p>
-                </td>
-                <td align="right" style="vertical-align:middle;">
-                  <img src="https://portal.bassanihealth.com/logo.png"
-                       alt="Bassani Health"
-                       width="80" height="auto"
-                       style="display:block;border:0;outline:none;" />
-                </td>
-              </tr>
-            </table>
+          <td style="border-radius:12px 12px 0 0;overflow:hidden;line-height:0;font-size:0;padding:0;">
+            <img src="https://portal.bassanihealth.com/logo.png"
+                 alt="Bassani Health"
+                 width="600"
+                 style="width:100%;max-width:600px;height:auto;display:block;border:0;outline:none;" />
           </td>
         </tr>
 
         <!-- Body -->
         <tr>
-          <td style="padding:36px 36px 28px;">
+          <td class="bh-body" style="padding:32px 28px 24px;">
             {body_html}
           </td>
         </tr>
 
         <!-- Footer -->
         <tr>
-          <td style="background:#f8fafc;border-top:1px solid #e2e8f0;
-                     padding:18px 36px;border-radius:0 0 12px 12px;">
+          <td class="bh-footer" style="background:#f8fafc;border-top:1px solid #e2e8f0;
+                     padding:18px 28px;border-radius:0 0 12px 12px;">
             <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
               Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami
             </p>
             <p style="margin:5px 0 0;font-size:11px;color:#cbd5e1;line-height:1.6;">
               This is an automated message from the Bassani Health operations portal.
-              Please do not reply to this email.
+              Please do not reply directly to this email.
             </p>
           </td>
         </tr>
@@ -179,7 +173,7 @@ def _mono(text: str) -> str:
             f'color:#0f172a;padding:2px 7px;border-radius:4px;font-size:13px;">{text}</code>')
 
 
-# ── Account emails ─────────────────────────────────────────────────────────────
+# Account emails
 
 def send_welcome_email(username: str, name: str, email: str) -> None:
     """Sent when an admin creates a new portal account."""
@@ -190,8 +184,8 @@ def send_welcome_email(username: str, name: str, email: str) -> None:
         _h1("Welcome to Bassani Health")
         + _p(f"Hi {name or username},")
         + _p("Your account on the Bassani Health operations portal has been created. "
-             "Use the credentials below to sign in — you will be asked to set a new "
-             "password before you can access the portal.")
+             "Use the credentials below to sign in. You will be prompted to set a new "
+             "password the first time you access the portal.")
         + _info_box([
             ("Username", _mono(username)),
             ("Temporary password", "Provided to you separately by your administrator"),
@@ -199,15 +193,15 @@ def send_welcome_email(username: str, name: str, email: str) -> None:
         ])
         + _button("Sign in to the portal", url)
         + _divider()
-        + _p("Keep your password private and do not share it. "
-             f'If you need help, contact <a href="mailto:{settings.support_email}" '
+        + _p("Keep your password private and do not share it with anyone. "
+             f'If you need assistance, contact <a href="mailto:{settings.support_email}" '
              f'style="color:#0f6e56;">{settings.support_email}</a>.', muted=True)
     )
     _send(email, "Your Bassani Health portal account is ready",
-          _wrap("Account created", body))
+          _wrap(body))
 
 
-# ── Order emails ───────────────────────────────────────────────────────────────
+# Order emails
 
 def send_order_placed(
     order_ref: str,
@@ -222,7 +216,7 @@ def send_order_placed(
     body = (
         _h1("Order received")
         + _p(f"Hi {reseller_name},")
-        + _p("Your order has been submitted and is now with the Bassani Health team for review.")
+        + _p("Your order has been submitted and is now with the Bassani Health team for processing.")
         + _info_box([
             ("Order reference", f"<strong>{order_ref}</strong>"),
             ("Customer", customer_name),
@@ -231,11 +225,11 @@ def send_order_placed(
         ])
         + _button("View order", f"{settings.portal_url}/orders")
         + _divider()
-        + _p("You will receive a follow-up notification once the order has been confirmed "
+        + _p("You will receive a notification once the order has been confirmed "
              "and is in the fulfilment queue.", muted=True)
     )
-    _send(reseller_email, f"Order received — {order_ref}",
-          _wrap("Order submitted", body))
+    _send(reseller_email, f"Order Received: {order_ref}",
+          _wrap(body))
 
 
 def send_order_confirmed(
@@ -260,10 +254,10 @@ def send_order_confirmed(
         ], tint="#f0fdf4", border="#86efac")
         + _button("Track your order", f"{settings.portal_url}/orders")
         + _divider()
-        + _p("You will be notified once the order is ready for collection.", muted=True)
+        + _p("You will be notified as soon as the order is ready for collection.", muted=True)
     )
-    _send(reseller_email, f"Order confirmed — {order_ref}",
-          _wrap("Order confirmed", body))
+    _send(reseller_email, f"Order Confirmed: {order_ref}",
+          _wrap(body))
 
 
 def send_order_cancelled(
@@ -278,7 +272,8 @@ def send_order_cancelled(
     body = (
         _h1("Order cancelled")
         + _p(f"Hi {reseller_name},")
-        + _p("The following order has been cancelled.")
+        + _p("We would like to let you know that the following order has been cancelled. "
+             "Please review the details below.")
         + _info_box([
             ("Order reference", f"<strong>{order_ref}</strong>"),
             ("Customer", customer_name),
@@ -286,15 +281,15 @@ def send_order_cancelled(
         ], tint="#fef2f2", border="#fca5a5")
         + _button("View orders", f"{settings.portal_url}/orders")
         + _divider()
-        + _p(f'If you believe this is an error, contact us at '
+        + _p(f'If you believe this is an error, please contact us at '
              f'<a href="mailto:{settings.support_email}" style="color:#0f6e56;">'
              f'{settings.support_email}</a>.', muted=True)
     )
-    _send(reseller_email, f"Order cancelled — {order_ref}",
-          _wrap("Order cancelled", body))
+    _send(reseller_email, f"Order Cancellation: {order_ref}",
+          _wrap(body))
 
 
-# ── Ticket emails ──────────────────────────────────────────────────────────────
+# Ticket emails
 
 _STAGE_LABELS = {
     "open": "New Inquiry",
@@ -320,7 +315,7 @@ def send_ticket_assigned(
     body = (
         _h1("A ticket has been assigned to you")
         + _p(f"Hi {assignee_name},")
-        + _p("The following sales ticket requires your attention.")
+        + _p("The following sales ticket has been assigned to you and requires your attention.")
         + _info_box([
             ("Ticket", f"<strong>{ticket_ref}</strong>"),
             ("Customer", customer_name),
@@ -331,11 +326,11 @@ def send_ticket_assigned(
         + _p("Log in to the portal to view the full ticket history and take action.",
              muted=True)
     )
-    _send(assignee_email, f"Ticket assigned — {customer_name}",
-          _wrap("Ticket assignment", body))
+    _send(assignee_email, f"New Assignment: {customer_name}",
+          _wrap(body))
 
 
-# ── Customer onboarding emails ─────────────────────────────────────────────────
+# Customer onboarding emails
 
 def send_onboarding_submitted(
     company_name: str,
@@ -353,10 +348,10 @@ def send_onboarding_submitted(
         ])
         + _button("Review application", f"{settings.portal_url}/applications")
         + _divider()
-        + _p("Log in to the portal to approve or reject this application.", muted=True)
+        + _p("Log in to the portal to review and action this application.", muted=True)
     )
-    _send(settings.support_email, f"New application — {company_name}",
-          _wrap("Customer onboarding", body))
+    _send(settings.support_email, f"New Application: {company_name}",
+          _wrap(body))
 
 
 def send_onboarding_approved(
@@ -378,29 +373,30 @@ def send_onboarding_approved(
             ], tint="#f0fdf4", border="#86efac")
             + _button("View customers", f"{settings.portal_url}/customers")
             + _divider()
-            + _p("The customer's Odoo record has been created and linked to your reseller profile.",
+            + _p("The customer's account has been created and linked to your reseller profile.",
                  muted=True)
         )
-        _send(reseller_email, f"Customer approved — {company_name}",
-              _wrap("Onboarding approved", body))
+        _send(reseller_email, f"Customer Approved: {company_name}",
+              _wrap(body))
 
     if customer_contact_email:
         c_body = (
             _h1("Your account has been activated")
             + _p(f"Dear {company_name},")
             + _p("We are pleased to confirm that your account with Bassani Health has been activated. "
-                 "Your assigned representative will be in touch to assist you.")
+                 "Your assigned representative will be in touch shortly to assist you.")
             + _info_box([
                 ("Organisation", company_name),
                 ("Your representative", reseller_name),
                 ("Status", _badge("Active", "#059669")),
             ], tint="#f0fdf4", border="#86efac")
             + _divider()
-            + _p(f'For queries, contact us at <a href="mailto:{settings.healthcare_email}" '
+            + _p(f'Should you have any questions, please contact us at '
+                 f'<a href="mailto:{settings.healthcare_email}" '
                  f'style="color:#0f6e56;">{settings.healthcare_email}</a>.', muted=True)
         )
         _send(customer_contact_email, "Your Bassani Health account is active",
-              _wrap("Account activated", c_body))
+              _wrap(c_body))
 
 
 def send_onboarding_rejected(
@@ -414,24 +410,24 @@ def send_onboarding_rejected(
         return
     extra = [("Reason", reason)] if reason else []
     body = (
-        _h1("Customer application not approved")
+        _h1("Application not approved")
         + _p(f"Hi {reseller_name},")
         + _p("Unfortunately, the following customer application could not be approved at this time.")
         + _info_box([
             ("Customer", f"<strong>{company_name}</strong>"),
-            ("Status", _badge("Not approved", "#dc2626")),
+            ("Status", _badge("Declined", "#dc2626")),
         ] + extra, tint="#fef2f2", border="#fca5a5")
         + _button("View applications", f"{settings.portal_url}/applications")
         + _divider()
-        + _p(f'If you have questions, contact the Bassani Health team at '
+        + _p(f'If you have any questions, please reach out to the Bassani Health team at '
              f'<a href="mailto:{settings.healthcare_email}" style="color:#0f6e56;">'
              f'{settings.healthcare_email}</a>.', muted=True)
     )
-    _send(reseller_email, f"Customer application update — {company_name}",
-          _wrap("Application update", body))
+    _send(reseller_email, f"Application Update: {company_name}",
+          _wrap(body))
 
 
-# ── Commission emails ──────────────────────────────────────────────────────────
+# Commission emails
 
 def send_statement_generated(
     month_label: str,
@@ -446,7 +442,7 @@ def send_statement_generated(
     if not reseller_email:
         return
     body = (
-        _h1(f"Commission statement — {month_label}")
+        _h1(f"Commission statement for {month_label}")
         + _p(f"Hi {reseller_name},")
         + _p(f"Your commission statement for <strong>{month_label}</strong> has been generated "
              "and is ready for review in the portal.")
@@ -460,10 +456,10 @@ def send_statement_generated(
         + _button("View statement", f"{settings.portal_url}/commission")
         + _divider()
         + _p("Payment will be processed by the Bassani Health finance team. "
-             "You will receive a confirmation email once payment has been made.", muted=True)
+             "You will receive a confirmation once payment has been made.", muted=True)
     )
-    _send(reseller_email, f"Commission statement ready — {month_label}",
-          _wrap("Monthly commission", body))
+    _send(reseller_email, f"Commission Statement Ready: {month_label}",
+          _wrap(body))
 
 
 def send_statement_paid(
@@ -480,22 +476,24 @@ def send_statement_paid(
     body = (
         _h1("Commission payment confirmed")
         + _p(f"Hi {reseller_name},")
-        + _p(f"Your commission payment for <strong>{month_label}</strong> has been processed.")
+        + _p(f"Your commission payment for <strong>{month_label}</strong> has been processed "
+             "and is on its way to you.")
         + _info_box([
             ("Period", month_label),
             ("Amount paid",
              f'<strong style="font-size:16px;color:#059669;">R{commission_amount:,.2f}</strong>'),
-            ("Payment reference", payment_reference or "—"),
-            ("Payment date", payment_date or "—"),
+            ("Payment reference", payment_reference or "Not provided"),
+            ("Payment date", payment_date or "Not provided"),
             ("Status", _badge("Paid", "#059669")),
         ], tint="#f0fdf4", border="#86efac")
         + _button("View commission history", f"{settings.portal_url}/commission")
         + _divider()
-        + _p(f"Payment was made via {settings.bank_name} · Account {settings.bank_account} "
-             f"· Branch {settings.bank_branch}.", muted=True)
+        + _p(f"Payment was processed through {settings.bank_name}, "
+             f"account number {settings.bank_account}, "
+             f"branch code {settings.bank_branch}.", muted=True)
     )
-    _send(reseller_email, f"Commission paid — {month_label}",
-          _wrap("Commission payment", body))
+    _send(reseller_email, f"Commission Paid: {month_label}",
+          _wrap(body))
 
 
 def send_dispute_resolved(
@@ -510,20 +508,21 @@ def send_dispute_resolved(
     body = (
         _h1("Commission dispute resolved")
         + _p(f"Hi {reseller_name},")
-        + _p(f"Your dispute for the <strong>{month_label}</strong> commission statement has been reviewed and resolved.")
+        + _p(f"Your dispute for the <strong>{month_label}</strong> commission statement "
+             "has been reviewed and resolved by our finance team.")
         + _info_box([
             ("Period", month_label),
             ("Resolution", resolve_notes or "No additional notes provided"),
         ])
         + _button("View statement", f"{settings.portal_url}/commission")
         + _divider()
-        + _p("If you have further questions, please contact your account manager.", muted=True)
+        + _p("If you have any further questions, please contact your account manager.", muted=True)
     )
-    _send(reseller_email, f"Commission dispute resolved — {month_label}",
-          _wrap("Commission Update", body))
+    _send(reseller_email, f"Commission Dispute Update: {month_label}",
+          _wrap(body))
 
 
-# ── 2FA / OTP emails ──────────────────────────────────────────────────────────
+# 2FA / OTP emails
 
 def send_otp_email(email: str, name: str, otp: str) -> None:
     """Sent when a staff member's login triggers the email OTP 2FA step."""
@@ -535,29 +534,33 @@ def send_otp_email(email: str, name: str, otp: str) -> None:
         + (
             '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">'
             '<tr><td align="center">'
-            f'<p style="font-size:42px;font-weight:800;letter-spacing:12px;color:#0f172a;margin:0;'
-            f'font-family:\'Courier New\',monospace;background:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-radius:12px;padding:18px 32px;display:inline-block;">{otp}</p>'
+            '<table cellpadding="0" cellspacing="0" border="0">'
+            '<tr><td style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;'
+            'padding:18px 32px;text-align:center;">'
+            f'<span style="font-size:36px;font-weight:800;letter-spacing:8px;color:#0f172a;'
+            f'font-family:\'Courier New\',monospace;">{otp}</span>'
+            '</td></tr></table>'
             '</td></tr></table>'
         )
         + _divider()
-        + _p("Do not share this code with anyone — Bassani Health staff will never ask for it.", muted=True)
+        + _p("Do not share this code with anyone. Bassani Health staff will never ask you for it.", muted=True)
         + _p(
-            f'If you did not attempt to sign in, your password may be compromised. '
-            f'Change it immediately at <a href="{settings.portal_url}" style="color:#0f6e56;">{settings.portal_url}</a>.',
+            f'If you did not request this code, please ignore this email and consider '
+            f'updating your password as a precaution at '
+            f'<a href="{settings.portal_url}" style="color:#0f6e56;">{settings.portal_url}</a>.',
             muted=True,
         )
     )
-    _send(email, "Your Bassani Health sign-in code", _wrap("Two-factor authentication", body))
+    _send(email, "Your Bassani Health sign-in code", _wrap(body))
 
 
-# ── Packing floor emails ───────────────────────────────────────────────────────
+# Onboarding document emails
 
 def send_onboarding_templates(to_email: str, reseller_name: str) -> None:
     """
-    Email all 4 Bassani onboarding template PDFs to a customer's email address.
+    Emails all 4 Bassani onboarding template PDFs to a customer's email address.
     Called by the reseller from Step 0 of the onboarding wizard.
-    Gracefully skips any template file that hasn't been placed in the static directory yet.
+    Gracefully skips any template file that has not yet been placed in the static directory.
     """
     if not to_email:
         return
@@ -577,10 +580,10 @@ def send_onboarding_templates(to_email: str, reseller_name: str) -> None:
             with open(fpath, "rb") as f:
                 attachments.append({"filename": f"{display_name}.pdf", "content": list(f.read())})
         else:
-            print(f"⚠️  Onboarding template not found, skipping: {filename}")
+            print(f"Onboarding template not found, skipping: {filename}")
 
     body = (
-        _h1("Bassani Health — Onboarding Documents")
+        _h1("Your onboarding documents")
         + _p("Please find the required onboarding documents attached to this email.")
         + _p("Complete and sign all four documents, then return them to your Bassani Health "
              f"representative, <strong>{reseller_name}</strong>, to finalise your account setup.")
@@ -595,11 +598,13 @@ def send_onboarding_templates(to_email: str, reseller_name: str) -> None:
     )
     _send(
         to_email,
-        "Bassani Health — Onboarding Documents",
-        _wrap("Customer Onboarding", body),
+        "Bassani Health Onboarding Documents",
+        _wrap(body),
         attachments=attachments if attachments else None,
     )
 
+
+# Packing floor emails
 
 def send_order_ready_for_collection(
     order_ref: str,
@@ -607,7 +612,7 @@ def send_order_ready_for_collection(
     packer_name: str,
     supervisor_emails: list,
 ) -> None:
-    """Sent to warehouse supervisors when an order completes QA + RP and is ready."""
+    """Sent to warehouse supervisors when an order completes QA and RP review and is ready."""
     if not supervisor_emails:
         return
     body = (
@@ -616,11 +621,11 @@ def send_order_ready_for_collection(
         + _info_box([
             ("Order reference", f"<strong>{order_ref}</strong>"),
             ("Customer", customer_name),
-            ("Packed by", packer_name or "—"),
+            ("Packed by", packer_name or "Not provided"),
             ("Status", _badge("Ready for collection", "#059669")),
         ], tint="#f0fdf4", border="#86efac")
         + _divider()
         + _p("Please arrange collection or dispatch at your earliest convenience.", muted=True)
     )
-    _send(supervisor_emails, f"Ready for collection — {order_ref}",
-          _wrap("Packing floor", body))
+    _send(supervisor_emails, f"Ready for Collection: {order_ref}",
+          _wrap(body))
