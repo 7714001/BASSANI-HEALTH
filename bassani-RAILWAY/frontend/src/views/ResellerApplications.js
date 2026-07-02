@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ChevronRight } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ChevronRight, Plus } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, FilterPill, ChipRow, fmtDate } from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, fmtDate, BtnPrimary } from "../components/UI";
 
 const STATUS_CFG = {
   pending:  { label: "Pending",  cls: "bg-amber-50 text-amber-700",  icon: Clock        },
@@ -106,6 +106,7 @@ export default function ResellerApplications() {
         title="My Applications"
         subtitle={`${total} application${total !== 1 ? "s" : ""}`}
         onRefresh={load}
+        actions={<BtnPrimary onClick={() => navigate("/onboard")}><Plus size={14} className="mr-1" />Start Application</BtnPrimary>}
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4">

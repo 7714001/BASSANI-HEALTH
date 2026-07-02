@@ -49,13 +49,13 @@ const NAV = [
 ];
 
 const RESELLER_NAV = [
-  { label: "Dashboard",       path: "/",                 icon: LayoutDashboard },
-  { label: "Products",        path: "/products",         icon: Package         },
-  { label: "My Customers",    path: "/customers",        icon: Users           },
-  { label: "Orders",          path: "/orders",           icon: ShoppingCart    },
-  { label: "Commission",      path: "/commission",       icon: Percent         },
-  { label: "Onboarding Docs", path: "/onboarding-docs",  icon: FileText        },
-  { label: "My Applications", path: "/my-applications",  icon: ClipboardList   },
+  { label: "Dashboard",  path: "/",         icon: LayoutDashboard, section: "Main" },
+  { label: "Products",   path: "/products", icon: Package,         section: "Main" },
+  { label: "Orders",     path: "/orders",   icon: ShoppingCart,    section: "Main" },
+  { label: "Commission", path: "/commission", icon: Percent,       section: "Main" },
+  { label: "My Customers",    path: "/customers",        icon: Users,         section: "Customers" },
+  { label: "My Applications", path: "/my-applications",  icon: ClipboardList, section: "Customers" },
+  { label: "Onboarding Docs", path: "/onboarding-docs",  icon: FileText,      section: "Customers" },
 ];
 
 export function Sidebar() {
@@ -125,21 +125,17 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-0.5">
-        {isReseller ? (
-          items.map((item) => <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate} />)
-        ) : (
-          sections.map((section) => (
-            <div key={section}>
-              <p className="text-slate-600 text-[10px] font-bold uppercase tracking-widest px-2 pt-4 pb-1.5">{section}</p>
-              {items.filter((i) => i.section === section).map((item) =>
-                item.children
-                  ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
-                  : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
-                      badge={item.showInboxBadge ? inboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
-              )}
-            </div>
-          ))
-        )}
+        {sections.map((section) => (
+          <div key={section}>
+            <p className="text-slate-600 text-[10px] font-bold uppercase tracking-widest px-2 pt-4 pb-1.5">{section}</p>
+            {items.filter((i) => i.section === section).map((item) =>
+              item.children
+                ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
+                : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
+                    badge={item.showInboxBadge ? inboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
+            )}
+          </div>
+        ))}
       </nav>
 
       {/* User */}
