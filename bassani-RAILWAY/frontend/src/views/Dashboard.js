@@ -35,7 +35,7 @@ export default function Dashboard() {
         {loading && <LoadingState />}
         {error   && <ErrorState message={error} onRetry={load} />}
         {data    && (
-          <div className="space-y-5 max-w-6xl">
+          <div className="space-y-5">
 
             {/* Reseller KPI row — admins skip this and go straight to Channel Performance */}
             {isReseller && (
