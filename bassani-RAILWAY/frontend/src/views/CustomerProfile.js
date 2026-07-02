@@ -4,7 +4,7 @@ import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCar
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { Badge, BtnPrimary, BtnSecondary, Input, Select, Modal, FormGroup, LoadingState, fmtR, fmtDate } from "../components/UI";
+import { Badge, BtnPrimary, BtnSecondary, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -188,12 +188,17 @@ export default function CustomerProfile() {
   const { user } = useAuth();
   const canManageAddresses = user?.permissions?.customers?.manage;
 
+  const INV_PAGE_SIZE  = 10;
+  const STMT_PAGE_SIZE = 15;
+
   const [data,         setData        ] = useState(null);
   const [loading,      setLoading     ] = useState(true);
   const [stmt,         setStmt        ] = useState(null);
   const [stmtLoading,  setStmtLoading ] = useState(false);
   const [stmtFrom,     setStmtFrom    ] = useState("");
   const [stmtTo,       setStmtTo      ] = useState("");
+  const [invPage,      setInvPage     ] = useState(0);
+  const [stmtPage,     setStmtPage    ] = useState(0);
 
   // ── Addresses ─────────────────────────────────────────────────────────────
   const [addresses,  setAddresses ] = useState([]);
@@ -271,6 +276,7 @@ export default function CustomerProfile() {
       if (stmtTo)   params.date_to   = stmtTo;
       const r = await api.get(`/api/customers/${id}/statement`, { params });
       setStmt(r.data);
+      setStmtPage(0);
     } catch {
       toast.error("Failed to load account statement");
     } finally {
@@ -284,6 +290,7 @@ export default function CustomerProfile() {
   if (!data)   return null;
 
   const { customer: c, stats, recent_orders, outstanding_invoices, ownership } = data;
+  const invSlice  = outstanding_invoices.slice(invPage * INV_PAGE_SIZE,  (invPage  + 1) * INV_PAGE_SIZE);
   const typeMatch = c.comment?.match(/Type: (\w+)/);
   const customerType = typeMatch?.[1] || null;
   const isSection21 = c.comment?.includes("Section 21: Registered");
@@ -483,41 +490,45 @@ export default function CustomerProfile() {
             {outstanding_invoices.length === 0 ? (
               <p className="text-sm text-gray-400 px-5 py-4">No outstanding invoices.</p>
             ) : (
-              <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-xs text-gray-500">
-                    <th className="text-left px-5 py-2.5 font-medium">Invoice #</th>
-                    <th className="text-left px-5 py-2.5 font-medium">Date</th>
-                    <th className="text-left px-5 py-2.5 font-medium">Due</th>
-                    <th className="text-right px-5 py-2.5 font-medium">Total</th>
-                    <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
-                    <th className="text-left px-5 py-2.5 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outstanding_invoices.map(inv => {
-                    const overdue = inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date();
-                    return (
-                      <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
-                        <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
-                        <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
-                          {fmtDate(inv.invoice_date_due)}{overdue ? " ⚠" : ""}
-                        </td>
-                        <td className="px-5 py-3 text-right">{fmtR(inv.amount_total)}</td>
-                        <td className={`px-5 py-3 text-right font-semibold ${PAYMENT_COLOR[inv.payment_state] || ""}`}>
-                          {fmtR(inv.amount_residual)}
-                        </td>
-                        <td className="px-5 py-3">
-                          <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              </div>
+              <>
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-xs text-gray-500">
+                      <th className="text-left px-5 py-2.5 font-medium">Invoice #</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Date</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Due</th>
+                      <th className="text-right px-5 py-2.5 font-medium">Total</th>
+                      <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invSlice.map(inv => {
+                      const overdue = inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date();
+                      return (
+                        <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                          <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
+                          <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
+                          <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
+                            {fmtDate(inv.invoice_date_due)}{overdue ? " ⚠" : ""}
+                          </td>
+                          <td className="px-5 py-3 text-right">{fmtR(inv.amount_total)}</td>
+                          <td className={`px-5 py-3 text-right font-semibold ${PAYMENT_COLOR[inv.payment_state] || ""}`}>
+                            {fmtR(inv.amount_residual)}
+                          </td>
+                          <td className="px-5 py-3">
+                            <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                </div>
+                <PaginationBar page={invPage} pageSize={INV_PAGE_SIZE} total={outstanding_invoices.length}
+                  onChange={p => setInvPage(p)} />
+              </>
             )}
           </Section>
 
@@ -559,53 +570,60 @@ export default function CustomerProfile() {
                 {/* Transaction table */}
                 {stmt.invoices.length === 0 ? (
                   <p className="px-5 py-4 text-sm text-gray-400">No transactions in this period.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 text-xs text-gray-500">
-                        <th className="text-left px-5 py-2.5 font-medium">Ref</th>
-                        <th className="text-left px-5 py-2.5 font-medium">Type</th>
-                        <th className="text-left px-5 py-2.5 font-medium">Date</th>
-                        <th className="text-left px-5 py-2.5 font-medium">Due</th>
-                        <th className="text-right px-5 py-2.5 font-medium">Total</th>
-                        <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
-                        <th className="text-left px-5 py-2.5 font-medium">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stmt.invoices.map(inv => {
-                        const isCN = inv.move_type === "out_refund";
-                        const overdue = !isCN && inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date() && inv.payment_state !== "paid";
-                        return (
-                          <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                            <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
-                            <td className="px-5 py-3">
-                              {isCN
-                                ? <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">Credit Note</span>
-                                : <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-semibold">Invoice</span>
-                              }
-                            </td>
-                            <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
-                            <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
-                              {inv.invoice_date_due ? fmtDate(inv.invoice_date_due) : "—"}{overdue ? " ⚠" : ""}
-                            </td>
-                            <td className={`px-5 py-3 text-right font-semibold ${isCN ? "text-purple-700" : ""}`}>
-                              {isCN ? `(${fmtR(inv.amount_total)})` : fmtR(inv.amount_total)}
-                            </td>
-                            <td className={`px-5 py-3 text-right font-semibold ${inv.amount_residual > 0 ? "text-red-600" : "text-gray-400"}`}>
-                              {inv.amount_residual > 0 ? fmtR(inv.amount_residual) : "—"}
-                            </td>
-                            <td className="px-5 py-3">
-                              <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
-                            </td>
+                ) : (() => {
+                  const stmtSlice = stmt.invoices.slice(stmtPage * STMT_PAGE_SIZE, (stmtPage + 1) * STMT_PAGE_SIZE);
+                  return (
+                    <>
+                      <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-xs text-gray-500">
+                            <th className="text-left px-5 py-2.5 font-medium">Ref</th>
+                            <th className="text-left px-5 py-2.5 font-medium">Type</th>
+                            <th className="text-left px-5 py-2.5 font-medium">Date</th>
+                            <th className="text-left px-5 py-2.5 font-medium">Due</th>
+                            <th className="text-right px-5 py-2.5 font-medium">Total</th>
+                            <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
+                            <th className="text-left px-5 py-2.5 font-medium">Status</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  </div>
-                )}
+                        </thead>
+                        <tbody>
+                          {stmtSlice.map(inv => {
+                            const isCN = inv.move_type === "out_refund";
+                            const overdue = !isCN && inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date() && inv.payment_state !== "paid";
+                            return (
+                              <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                                <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
+                                <td className="px-5 py-3">
+                                  {isCN
+                                    ? <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">Credit Note</span>
+                                    : <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-semibold">Invoice</span>
+                                  }
+                                </td>
+                                <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
+                                <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
+                                  {inv.invoice_date_due ? fmtDate(inv.invoice_date_due) : "—"}{overdue ? " ⚠" : ""}
+                                </td>
+                                <td className={`px-5 py-3 text-right font-semibold ${isCN ? "text-purple-700" : ""}`}>
+                                  {isCN ? `(${fmtR(inv.amount_total)})` : fmtR(inv.amount_total)}
+                                </td>
+                                <td className={`px-5 py-3 text-right font-semibold ${inv.amount_residual > 0 ? "text-red-600" : "text-gray-400"}`}>
+                                  {inv.amount_residual > 0 ? fmtR(inv.amount_residual) : "—"}
+                                </td>
+                                <td className="px-5 py-3">
+                                  <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      </div>
+                      <PaginationBar page={stmtPage} pageSize={STMT_PAGE_SIZE} total={stmt.invoices.length}
+                        onChange={p => setStmtPage(p)} />
+                    </>
+                  );
+                })()}
               </>
             ) : null}
           </Section>

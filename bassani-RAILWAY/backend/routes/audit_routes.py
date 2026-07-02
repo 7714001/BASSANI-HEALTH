@@ -23,6 +23,7 @@ async def get_audit_log(
     date_from:   Optional[str] = None,   # ISO date, e.g. "2026-06-01"
     date_to:     Optional[str] = None,
     limit:       int = 100,
+    offset:      int = 0,
     _: dict = Depends(require_permission("audit.view")),
 ):
     query: dict = {}
@@ -37,14 +38,16 @@ async def get_audit_log(
         if date_to:   date_range["$lte"] = datetime.fromisoformat(date_to)
         query["created_at"] = date_range
 
+    total = await col("audit_logs").count_documents(query)
     logs = await (
         col("audit_logs")
         .find(query, NO_ID)
         .sort("created_at", -1)
+        .skip(offset)
         .limit(limit)
         .to_list(limit)
     )
-    return {"logs": logs, "total": len(logs)}
+    return {"logs": logs, "total": total}
 
 
 @router.get("/actions")

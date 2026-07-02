@@ -344,6 +344,26 @@ export function BtnSecondary({ children, onClick, disabled, loading, size = "md"
   );
 }
 
+export function PaginationBar({ page, pageSize, total, onChange }) {
+  const pageCount = Math.ceil(total / pageSize);
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-50 text-xs text-gray-400">
+      <span>{total} total · Page {page + 1} of {pageCount}</span>
+      <div className="flex gap-1">
+        <button disabled={page === 0} onClick={() => onChange(page - 1)}
+          className="px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          Previous
+        </button>
+        <button disabled={page >= pageCount - 1} onClick={() => onChange(page + 1)}
+          className="px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function BtnDanger({ children, onClick, disabled, loading, size = "sm" }) {
   const p = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";
   return (

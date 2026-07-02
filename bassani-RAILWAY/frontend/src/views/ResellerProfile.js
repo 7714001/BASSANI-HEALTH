@@ -7,7 +7,7 @@ import {
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { Badge, BtnSecondary, LoadingState, fmtR, fmtDate, Modal } from "../components/UI";
+import { Badge, BtnSecondary, LoadingState, PaginationBar, fmtR, fmtDate, Modal } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -140,10 +140,17 @@ export default function ResellerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { can, isAdmin } = useAuth();
+  const ACT_PAGE_SIZE = 20;
+  const CUST_PAGE_SIZE = 15;
+
   const [data,        setData      ] = useState(null);
   const [loading,     setLoading   ] = useState(true);
   const [activity,    setActivity  ] = useState([]);
+  const [actTotal,    setActTotal  ] = useState(0);
+  const [actPage,     setActPage   ] = useState(0);
+  const [actLoading,  setActLoading] = useState(false);
   const [customers,   setCustomers ] = useState([]);
+  const [custPage,    setCustPage  ] = useState(0);
   const [showLink,    setShowLink  ] = useState(false);
   const [unlinking,   setUnlinking ] = useState(null);
 
@@ -156,10 +163,14 @@ export default function ResellerProfile() {
 
   useEffect(() => {
     if (!can("audit.view")) return;
-    api.get("/api/audit/", { params: { reseller_id: id, limit: 50 } })
-      .then(r => setActivity(r.data.logs))
-      .catch(() => {});
-  }, [id, can]);
+    setActLoading(true);
+    api.get("/api/audit/", { params: { reseller_id: id, limit: ACT_PAGE_SIZE, offset: actPage * ACT_PAGE_SIZE } })
+      .then(r => { setActivity(r.data.logs); setActTotal(r.data.total); })
+      .catch(() => {})
+      .finally(() => setActLoading(false));
+  }, [id, can, actPage]); // eslint-disable-line
+
+  const custSlice = customers.slice(custPage * CUST_PAGE_SIZE, (custPage + 1) * CUST_PAGE_SIZE);
 
   const handleUnlink = async (customer) => {
     if (!window.confirm(`Remove ${customer.name} from this reseller's account?\n\nThis will prevent the reseller from placing orders for this customer.`)) return;
@@ -321,7 +332,7 @@ export default function ResellerProfile() {
                     </tr>
                   </thead>
                   <tbody>
-                    {customers.map(c => (
+                    {custSlice.map(c => (
                       <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
@@ -352,6 +363,8 @@ export default function ResellerProfile() {
                     ))}
                   </tbody>
                 </table>
+                <PaginationBar page={custPage} pageSize={CUST_PAGE_SIZE} total={customers.length}
+                  onChange={p => setCustPage(p)} />
                 {isAdmin && (
                   <div className="px-5 py-3 border-t border-gray-50">
                     <button onClick={() => setShowLink(true)}
@@ -405,28 +418,34 @@ export default function ResellerProfile() {
 
           {/* Activity / audit trail */}
           {can("audit.view") && (
-            <Section title={`Activity (${activity.length})`}>
-              {activity.length === 0 ? (
+            <Section title={`Activity (${actTotal})`}>
+              {actLoading ? (
+                <p className="text-sm text-gray-400 px-5 py-4">Loading activity…</p>
+              ) : activity.length === 0 ? (
                 <p className="text-sm text-gray-400 px-5 py-4">No recorded activity for this reseller yet.</p>
               ) : (
-                <div className="divide-y divide-gray-50">
-                  {activity.map((a, i) => (
-                    <div key={i} className="px-5 py-3 flex items-start gap-3">
-                      <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center shrink-0 mt-0.5">
-                        <History size={13} className="text-gray-400" />
+                <>
+                  <div className="divide-y divide-gray-50">
+                    {activity.map((a, i) => (
+                      <div key={i} className="px-5 py-3 flex items-start gap-3">
+                        <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center shrink-0 mt-0.5">
+                          <History size={13} className="text-gray-400" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-gray-800">
+                            <span className="font-mono text-xs text-gray-500">{a.action}</span>
+                            {a.entity_label && <span className="text-gray-600"> — {a.entity_label}</span>}
+                          </p>
+                          <p className="text-[11px] text-gray-400 mt-0.5">
+                            {a.actor_username || "system"} · {a.created_at ? new Date(a.created_at).toLocaleString("en-ZA") : "—"}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-gray-800">
-                          <span className="font-mono text-xs text-gray-500">{a.action}</span>
-                          {a.entity_label && <span className="text-gray-600"> — {a.entity_label}</span>}
-                        </p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">
-                          {a.actor_username || "system"} · {a.created_at ? new Date(a.created_at).toLocaleString("en-ZA") : "—"}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  <PaginationBar page={actPage} pageSize={ACT_PAGE_SIZE} total={actTotal}
+                    onChange={p => setActPage(p)} />
+                </>
               )}
             </Section>
           )}
