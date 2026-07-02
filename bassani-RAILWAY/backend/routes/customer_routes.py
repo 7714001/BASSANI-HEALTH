@@ -64,7 +64,7 @@ class AddressUpdate(BaseModel):
 
 CUSTOMER_FIELDS = [
     "id", "name", "ref", "email", "phone", "street", "city", "zip",
-    "country_id", "customer_rank", "credit_limit", "credit",
+    "country_id", "customer_rank", "supplier_rank", "credit_limit", "credit",
     "property_payment_term_id", "active", "comment",
 ]
 
@@ -95,6 +95,7 @@ def _attach_credit_hold(customers: list) -> None:
 async def list_customers(
     search: Optional[str] = None,
     customer_type: Optional[str] = None,
+    mode: Optional[str] = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
     sort_by: str = Query("name"),
@@ -105,7 +106,12 @@ async def list_customers(
     sort_by  = sort_by  if sort_by  in _SORTABLE       else "name"
     sort_dir = sort_dir if sort_dir in ("asc", "desc") else "asc"
     odoo = get_odoo_client()
-    domain = [("customer_rank", ">", 0), ("active", "=", True)]
+
+    # mode=partner: search all active partners (customer or supplier) — used by reseller wizard
+    if mode == "partner":
+        domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0)]
+    else:
+        domain = [("customer_rank", ">", 0), ("active", "=", True)]
 
     if search:
         domain.append("|")

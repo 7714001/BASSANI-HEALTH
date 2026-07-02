@@ -1446,6 +1446,7 @@ export function Resellers() {
   const [rSellerUploadingDoc, setRSellerUploadingDoc] = useState(null);
   const [rSellerRemovingDoc,  setRSellerRemovingDoc ] = useState(null);
   const [rSellerCustHasDocs,  setRSellerCustHasDocs ] = useState(null); // null=unknown, true/false
+  const [rStep,               setRStep              ] = useState(1);
 
   const load = async () => {
     setLoading(true);
@@ -1465,7 +1466,7 @@ export function Resellers() {
     const t = setTimeout(async () => {
       setCustomerLoading(true);
       try {
-        const params = { limit: 20 };
+        const params = { limit: 20, mode: "partner" };
         if (customerSearch.length >= 2) params.search = customerSearch;
         const r = await api.get("/api/customers/", { params });
         setCustomers(r.data.customers || []);
@@ -1514,6 +1515,7 @@ export function Resellers() {
     setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false);
     setRSellerSessionId(rSellerGenSession()); setRSellerStagedDocs([]);
     setRSellerUploadingDoc(null); setRSellerRemovingDoc(null); setRSellerCustHasDocs(null);
+    setRStep(1);
     setModal(true);
   };
 
@@ -1644,161 +1646,251 @@ export function Resellers() {
       </main>
 
       {modal && (
-        <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-2xl">
+        <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-xl">
 
-          {/* Section 1 — Odoo vendor partner link (optional) */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Odoo Vendor Profile <span className="text-gray-300 font-normal normal-case">(optional — used for commission billing)</span></p>
-          <div className="relative mb-4">
-            {selectedCustomer ? (
-              /* Selected state — show chip with clear button */
-              <div className="flex items-center gap-3 border border-bassani-300 bg-bassani-50 rounded-xl px-4 py-2.5">
-                <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-bassani-800 truncate">{selectedCustomer.name}</p>
-                  {selectedCustomer.email && <p className="text-xs text-gray-400 truncate">{selectedCustomer.email}</p>}
+          {/* Step indicator */}
+          {(() => {
+            const STEPS = ["Odoo & Docs", "Business", "Login", "Financials"];
+            return (
+              <div className="flex items-center gap-0 mb-6">
+                {STEPS.map((label, i) => {
+                  const n     = i + 1;
+                  const done  = rStep > n;
+                  const active = rStep === n;
+                  return (
+                    <div key={n} className="flex items-center flex-1 last:flex-none">
+                      <div className="flex flex-col items-center gap-1 shrink-0">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors
+                          ${done  ? "bg-green-500 text-white" :
+                            active ? "bg-bassani-600 text-white" :
+                                     "bg-gray-100 text-gray-400"}`}>
+                          {done ? "✓" : n}
+                        </div>
+                        <span className={`text-[10px] font-medium ${active ? "text-bassani-700" : "text-gray-400"}`}>{label}</span>
+                      </div>
+                      {i < STEPS.length - 1 && (
+                        <div className={`flex-1 h-px mx-1 mb-3 ${rStep > n ? "bg-green-400" : "bg-gray-200"}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {/* ── Step 1: Odoo Partner Link + Documents ── */}
+          {rStep === 1 && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Odoo Partner <span className="text-red-400 font-normal normal-case">* required</span></p>
+                <p className="text-xs text-gray-400 mb-2">Required for commission payouts — when a statement is paid, a vendor bill is raised against this partner in Odoo. Selecting a partner here will also pre-fill their business details on the next step.</p>
+                <div className="relative">
+                  {selectedCustomer ? (
+                    <div className="flex items-center gap-3 border border-bassani-300 bg-bassani-50 rounded-xl px-4 py-2.5">
+                      <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-bassani-800 truncate">{selectedCustomer.name}</p>
+                        {selectedCustomer.email && <p className="text-xs text-gray-400 truncate">{selectedCustomer.email}</p>}
+                      </div>
+                      {(() => {
+                        const isCust = (selectedCustomer.customer_rank || 0) > 0;
+                        const isSupp = (selectedCustomer.supplier_rank || 0) > 0;
+                        if (isCust && isSupp) return <span className="text-[9px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded shrink-0">Cust & Supplier</span>;
+                        if (isSupp) return <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0">Supplier</span>;
+                        return <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded shrink-0">Customer</span>;
+                      })()}
+                      <button onClick={clearCustomer} className="text-gray-400 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input value={customerSearch} onChange={e=>setCustomerSearch(e.target.value)}
+                        onFocus={()=>setCustDropdownOpen(true)} onBlur={()=>setTimeout(()=>setCustDropdownOpen(false),150)}
+                        placeholder="Click to browse or type to search…" className="pr-10" autoFocus />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                        <ChevronDown size={15} className={custDropdownOpen?"rotate-180 transition-transform":"transition-transform"} />
+                      </span>
+                    </div>
+                  )}
+                  {custDropdownOpen && !selectedCustomer && (
+                    <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
+                      {customerLoading && <p className="px-4 py-3 text-xs text-gray-400">Loading partners…</p>}
+                      {!customerLoading && customers.length === 0 && <p className="px-4 py-3 text-xs text-gray-400">No partners found</p>}
+                      {customers.map(c=>(
+                        <button key={c.id} onMouseDown={()=>selectCustomer(c)}
+                          className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-gray-900">{c.name}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
+                              {(() => {
+                                const isCust = (c.customer_rank || 0) > 0;
+                                const isSupp = (c.supplier_rank || 0) > 0;
+                                if (isCust && isSupp) return <span className="text-[9px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Cust & Supplier</span>;
+                                if (isSupp) return <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Supplier</span>;
+                                return <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Customer</span>;
+                              })()}
+                            </div>
+                          </div>
+                          {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <button onClick={clearCustomer}
-                  className="text-gray-400 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
               </div>
-            ) : (
-              /* Search state — input with chevron */
-              <div className="relative">
-                <Input
-                  value={customerSearch}
-                  onChange={e=>setCustomerSearch(e.target.value)}
-                  onFocus={()=>setCustDropdownOpen(true)}
-                  onBlur={()=>setTimeout(()=>setCustDropdownOpen(false), 150)}
-                  placeholder="Click to browse or type to search…"
-                  className="pr-10"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                  <ChevronDown size={15} className={custDropdownOpen ? "rotate-180 transition-transform" : "transition-transform"} />
-                </span>
-              </div>
-            )}
 
-            {/* Dropdown list */}
-            {custDropdownOpen && !selectedCustomer && (
-              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-56 overflow-y-auto">
-                {customerLoading && (
-                  <p className="px-4 py-3 text-xs text-gray-400">Loading customers…</p>
-                )}
-                {!customerLoading && customers.length === 0 && (
-                  <p className="px-4 py-3 text-xs text-gray-400">No customers found</p>
-                )}
-                {customers.map(c=>(
-                  <button key={c.id} onMouseDown={()=>selectCustomer(c)}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-gray-900">{c.name}</span>
-                      {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
-                    </div>
-                    {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Section 2 — Onboarding documents */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
-            Onboarding Documents
-            {selectedCustomer && rSellerCustHasDocs === null && <span className="text-gray-300 font-normal normal-case ml-1">(checking…)</span>}
-            {!rSellerDocsRequired && <span className="text-green-600 font-normal normal-case ml-1">(on file for this customer)</span>}
-          </p>
-          {rSellerDocsRequired ? (
-            <div className="space-y-2 mb-4">
-              {RESELLER_REQUIRED_DOC_TYPES.map(dt => {
-                const uploaded   = rSellerStagedDocs.find(d => d.doc_type === dt.key);
-                const isUploading = rSellerUploadingDoc === dt.key;
-                const isRemoving  = rSellerRemovingDoc  === dt.key;
-                return (
-                  <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
-                      {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
-                    </div>
-                    {uploaded ? (
-                      <button onClick={()=>rSellerRemoveDoc(dt.key)} disabled={isRemoving}
-                        className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
-                        {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
-                      </button>
-                    ) : (
-                      <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
-                        {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
-                        Upload
-                        <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
-                          onChange={e=>{ if(e.target.files[0]) rSellerUploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
-                      </label>
-                    )}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
+                  Onboarding Documents
+                  {selectedCustomer && rSellerCustHasDocs === null && <span className="text-gray-300 font-normal normal-case ml-1">(checking…)</span>}
+                </p>
+                {!rSellerDocsRequired ? (
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-green-200 bg-green-50">
+                    <span className="text-green-600 text-sm">✓</span>
+                    <p className="text-xs text-green-700 font-medium">Onboarding documents already on file for {selectedCustomer?.name}.</p>
                   </div>
-                );
-              })}
-              <p className="text-[11px] text-gray-400">{rSellerStagedDocs.length} of {RESELLER_REQUIRED_DOC_TYPES.length} uploaded</p>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-lg border border-green-200 bg-green-50">
-              <span className="text-green-600 text-sm">✓</span>
-              <p className="text-xs text-green-700 font-medium">Onboarding documents already on file for {selectedCustomer?.name}.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {RESELLER_REQUIRED_DOC_TYPES.map(dt => {
+                      const uploaded    = rSellerStagedDocs.find(d => d.doc_type === dt.key);
+                      const isUploading = rSellerUploadingDoc === dt.key;
+                      const isRemoving  = rSellerRemovingDoc  === dt.key;
+                      return (
+                        <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
+                            {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
+                          </div>
+                          {uploaded ? (
+                            <button onClick={()=>rSellerRemoveDoc(dt.key)} disabled={isRemoving}
+                              className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
+                              {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
+                            </button>
+                          ) : (
+                            <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
+                              {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
+                              Upload
+                              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
+                                onChange={e=>{ if(e.target.files[0]) rSellerUploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
+                            </label>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <p className="text-[11px] text-gray-400">{rSellerStagedDocs.length} of {RESELLER_REQUIRED_DOC_TYPES.length} uploaded</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <BtnPrimary onClick={() => {
+                  if (!selectedCustomer) return toast.error("An Odoo partner link is required. Search and select a partner above.");
+                  if (rSellerDocsRequired) {
+                    const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
+                    if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
+                  }
+                  setRStep(2);
+                }}>Next →</BtnPrimary>
+              </div>
             </div>
           )}
 
-          {/* Section 3 — Business details */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></FormGroup>
-            <FormGroup label="Type"><Select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
-            <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
-            <FormGroup label="Contact Person"><Input value={form.contact_person} onChange={e=>setForm({...form,contact_person:e.target.value})} /></FormGroup>
-            <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
-            <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></FormGroup>
-            <FormGroup label="Warehouse" className="sm:col-span-2">
-              <Select value={form.warehouse_id} onChange={e=>setForm({...form,warehouse_id:e.target.value})}>
-                <option value="">— No warehouse assigned —</option>
-                {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
-              </Select>
-              <p className="text-[11px] text-gray-400 mt-1">This reseller's orders will draw stock from the selected warehouse.</p>
-            </FormGroup>
-          </div>
-
-          {/* Section 3 — Portal login */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Portal Login Credentials</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="Username" required><Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" /></FormGroup>
-            <FormGroup label="Password" required><Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" /></FormGroup>
-          </div>
-
-          {/* Section 4 — Registration */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="Company Reg Number">
-              <Input value={form.company_reg_number} onChange={e=>setForm({...form,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
-            </FormGroup>
-            <div className="space-y-2">
-              <FormGroup label="VAT">
-                <label className="flex items-center gap-2 cursor-pointer h-9">
-                  <input type="checkbox" checked={form.vat_registered} onChange={e=>setForm({...form,vat_registered:e.target.checked,vat_number:e.target.checked?form.vat_number:""})}
-                    className="w-4 h-4 accent-bassani-600" />
-                  <span className="text-sm text-gray-700">VAT registered</span>
-                </label>
-              </FormGroup>
-              {form.vat_registered && (
-                <FormGroup label="VAT Number"><Input value={form.vat_number} onChange={e=>setForm({...form,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+          {/* ── Step 2: Business Details ── */}
+          {rStep === 2 && (
+            <div className="space-y-4">
+              {selectedCustomer && (
+                <p className="text-xs text-bassani-600 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+                  Pre-filled from <span className="font-semibold">{selectedCustomer.name}</span> — review and adjust as needed.
+                </p>
               )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} autoFocus /></FormGroup>
+                <FormGroup label="Type"><Select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
+                <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
+                <FormGroup label="Contact Person"><Input value={form.contact_person} onChange={e=>setForm({...form,contact_person:e.target.value})} /></FormGroup>
+                <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
+                <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></FormGroup>
+                <FormGroup label="Warehouse" className="sm:col-span-2">
+                  <Select value={form.warehouse_id} onChange={e=>setForm({...form,warehouse_id:e.target.value})}>
+                    <option value="">— No warehouse assigned —</option>
+                    {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                  </Select>
+                  <p className="text-[11px] text-gray-400 mt-1">This reseller's orders will draw stock from the selected warehouse.</p>
+                </FormGroup>
+              </div>
+              <div className="flex justify-between">
+                <BtnSecondary onClick={()=>setRStep(1)}>← Back</BtnSecondary>
+                <BtnPrimary onClick={() => {
+                  if (!form.name) return toast.error("Business name is required");
+                  if (!form.seller_code) return toast.error("Seller code is required");
+                  setRStep(3);
+                }}>Next →</BtnPrimary>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Section 5 — Banking */}
-          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="Bank Name"><Input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} placeholder="e.g. FNB" /></FormGroup>
-            <FormGroup label="Account Holder"><Input value={form.bank_account_holder} onChange={e=>setForm({...form,bank_account_holder:e.target.value})} /></FormGroup>
-            <FormGroup label="Account Number"><Input value={form.bank_account_number} onChange={e=>setForm({...form,bank_account_number:e.target.value})} /></FormGroup>
-            <FormGroup label="Branch Code"><Input value={form.bank_branch_code} onChange={e=>setForm({...form,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
-          </div>
+          {/* ── Step 3: Login Credentials ── */}
+          {rStep === 3 && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">Set the portal login credentials for this reseller. They will be required to change their password on first login.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormGroup label="Username" required>
+                  <Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" autoFocus />
+                </FormGroup>
+                <FormGroup label="Password" required>
+                  <Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" />
+                </FormGroup>
+              </div>
+              <div className="flex justify-between">
+                <BtnSecondary onClick={()=>setRStep(2)}>← Back</BtnSecondary>
+                <BtnPrimary onClick={() => {
+                  if (!form.username) return toast.error("Username is required");
+                  if (!form.password) return toast.error("Password is required");
+                  if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+                  setRStep(4);
+                }}>Next →</BtnPrimary>
+              </div>
+            </div>
+          )}
 
+          {/* ── Step 4: Financials ── */}
+          {rStep === 4 && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormGroup label="Company Reg Number">
+                    <Input value={form.company_reg_number} onChange={e=>setForm({...form,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
+                  </FormGroup>
+                  <div className="space-y-2">
+                    <FormGroup label="VAT">
+                      <label className="flex items-center gap-2 cursor-pointer h-9">
+                        <input type="checkbox" checked={form.vat_registered} onChange={e=>setForm({...form,vat_registered:e.target.checked,vat_number:e.target.checked?form.vat_number:""})} className="w-4 h-4 accent-bassani-600" />
+                        <span className="text-sm text-gray-700">VAT registered</span>
+                      </label>
+                    </FormGroup>
+                    {form.vat_registered && (
+                      <FormGroup label="VAT Number"><Input value={form.vat_number} onChange={e=>setForm({...form,vat_number:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormGroup label="Bank Name"><Input value={form.bank_name} onChange={e=>setForm({...form,bank_name:e.target.value})} placeholder="e.g. FNB" /></FormGroup>
+                  <FormGroup label="Account Holder"><Input value={form.bank_account_holder} onChange={e=>setForm({...form,bank_account_holder:e.target.value})} /></FormGroup>
+                  <FormGroup label="Account Number"><Input value={form.bank_account_number} onChange={e=>setForm({...form,bank_account_number:e.target.value})} /></FormGroup>
+                  <FormGroup label="Branch Code"><Input value={form.bank_branch_code} onChange={e=>setForm({...form,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
+                </div>
+              </div>
+              <div className="flex justify-between">
+                <BtnSecondary onClick={()=>setRStep(3)} disabled={saving}>← Back</BtnSecondary>
+                <BtnPrimary onClick={save} loading={saving}>Create Reseller</BtnPrimary>
+              </div>
+            </div>
+          )}
 
-          <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Reseller</BtnPrimary></div>
         </Modal>
       )}
 

@@ -687,7 +687,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Full end-to-end commercial coverage. Resellers have complete visibility of the customer lifecycle.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟢 Complete  
-**Completed:** 2026-06-23 · 7.4 — 2026-07-01  
+**Completed:** 2026-06-23 · 7.4 — 2026-07-01 · 7.8 — 2026-07-02  
 
 ### Tasks
 
@@ -761,6 +761,39 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - **Unconfigured = empty** — if no products have been toggled in, resellers see nothing. Safer than showing everything by default.
 - **No new page** — toggle lives in the existing Products table column. Admin sees catalog status alongside stock and price in context.
 
+#### 7.8 — Admin Customer Creation & Duplicate Prevention
+
+> **Added 2026-07-02** — Admin-side customer creation was missing several compliance fields and had no duplicate guard. The reseller document upload flow also had no admin equivalent, meaning admins had to work around the reseller wizard to get documents onto a customer profile.
+
+**Goal:** Enforce clean data at the point of customer creation. Every new Odoo customer created through the portal must pass a duplicate check (hard block, no override), carry VAT registration and postal code for compliance, and arrive with all five signed onboarding documents attached. Reseller creation gets the same document step, skipped automatically when the linked customer already has documents on file.
+
+- [x] `GET /api/customers/check-duplicate` — fast preflight check; searches Odoo `res.partner` for an exact email or VAT match across active customers; returns `{ duplicates: [...] }` with the conflicting partner's name/email/VAT; used by the Add Customer wizard's search step
+- [x] `GET /api/customers/{id}/has-documents` — checks the `customer_documents` collection and the linked onboarding application for any uploaded files; returns `{ has_documents: bool }`; used by the reseller creation wizard to decide whether to require document upload for the selected customer
+- [x] `PUT /api/onboarding/{app_id}/approve-link` — alternative approval path for applications that surface a duplicate at review time: links the application's reseller to an *existing* Odoo partner instead of creating a new one; marks the application approved and sends the same approval email; audit-logged as `onboarding.approve_link` with `linked_to_existing: true`; resolves the catch-22 where a well-documented application is blocked only because the customer already exists
+- [x] `CustomerCreate` Pydantic model extended with `vat`, `document_session_id`, and `documents[]` fields
+- [x] Hard duplicate block in `create_customer` (admin path only) — checks Odoo for a matching email or VAT before any write; returns HTTP 409 with the conflicting customer's details if matched; no override available; reseller applications are exempt (they go through the onboarding approval flow, which has its own duplicate check)
+- [x] VAT registration number (`vat`) and postal code (`zip`) written to Odoo on admin-side customer creation — compliance requirement
+- [x] Staged onboarding documents persisted into `customer_documents` collection on customer creation — every admin-created customer arrives with all five signed documents already on their profile, with `doc_type`, `r2_key`, `uploaded_by`, and timestamp recorded
+- [x] Hard duplicate check added inside `approve_application` before Odoo partner creation — catches the case where a matching partner appears between application submission and admin approval; returns 409 directing admin to use `approve-link` instead
+- [x] `upload_document` and `delete_document` in `onboarding_routes.py` extended to allow admin users alongside resellers; admin identity check uses `customers.manage` permission rather than role string
+- [x] **Add Customer wizard** redesigned as a 3-step flow (replaces the single-form modal):
+  - **Step 1 — Search:** live name search against Odoo; "Continue" button hard-disabled until the search returns zero results; amber warning shown when results are present; prevents a near-duplicate from slipping through on a name variation
+  - **Step 2 — Documents:** upload panel for all 5 required document types (`store_onboarding_agreement`, `customer_information_form`, `nda`, `tqa`, `cipc_certificate`); per-slot upload/remove with spinner and R2 staging; progress counter (`{n} of 5 uploaded`); "Continue to Details" disabled until all 5 slots are filled
+  - **Step 3 — Details:** VAT registration number, email, phone, credit limit, customer type, street address, city, postal code, Section 21 checkbox; responsive grid layout
+  - Step indicator bar at top with green checkmarks for completed steps
+- [x] `ResellerCreate` Pydantic model extended with `document_session_id` and `documents[]`
+- [x] Add Reseller modal extended with a conditional document upload step:
+  - When no customer is selected, or the selected customer has no documents on file: shows the 5-doc upload panel (same pattern as the customer wizard)
+  - When the selected customer already has documents on file: shows a green "Documents on file — upload not required" confirmation banner; upload step skipped
+  - The `has-documents` check fires immediately when a customer is selected; conservative null handling (`rSellerCustHasDocs !== true`) shows the upload panel until the check confirms otherwise
+- [x] `effective_partner_id` pattern in `create_reseller` — if no Odoo partner is linked but documents were uploaded, a new `res.partner` is created in Odoo using the reseller's name/email/VAT before the documents are persisted; eliminates the edge case where staged documents have no partner to attach to
+
+**Design decisions:**
+- **Duplicate block is a hard stop, not a warning with an override** — the business explicitly decided against an override; dirty data entering Odoo is more expensive to correct than a blocked entry that sends admin to investigate first.
+- **Admin document upload reuses the existing R2 staging path** (`onboarding/sessions/{session_id}/{doc_type}{ext}`) — no new infrastructure; the `upload_document` endpoint already handles R2 correctly and only needed an admin identity check added.
+- **`approve-link` is the resolution path, not rejection** — when an application surfaces a duplicate at approval time, the admin links it to the existing partner rather than rejecting a properly-documented application. The reseller gets their customer linked; the duplicate is never created.
+- **Customer banking details are not collected** — Bassani pays resellers (commission); customers pay Bassani (invoicing). Banking details are a reseller-level concern only, not a customer-level one.
+
 ### Definition of Done
 - [x] An order with a dispatched delivery shows the tracking reference and carrier name in the portal
 - [x] An out_refund invoice is visible in the reseller's invoice list with a "Credit Note" badge
@@ -771,8 +804,15 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Admin can toggle any product variant into/out of the reseller catalog from the Products table
 - [x] A reseller's product list and order cart only show catalog products — no Odoo trip needed to enforce this
 - [x] Toggling a product on/off produces an audit log entry with actor identity
+- [x] A new customer cannot be created via the admin portal if any existing Odoo customer shares their email or VAT number — hard 409, no override
+- [x] The Add Customer wizard blocks progression past Step 1 until the name search returns zero results
+- [x] Every admin-created customer requires all 5 signed onboarding documents before the create button is enabled, and those documents land on the customer profile immediately after creation
+- [x] An application that would create a duplicate customer can be resolved via `approve-link` — linking the reseller to the existing Odoo partner without creating a duplicate
+- [x] Admin users can upload and delete documents via the onboarding upload endpoints (not reseller-only)
+- [x] VAT registration number and postal code are captured on the customer creation form and written to Odoo
 
 ### Notes
+- 7.8 complete 2026-07-02 — Admin customer creation overhauled: 3-step wizard (search → docs → details) replaces the previous single-form modal. Hard duplicate block on email and VAT at both the frontend (search step gated) and backend (HTTP 409 before any Odoo write). VAT and postal code added as compliance fields. All 5 onboarding documents now required for every admin-created customer, staged to Cloudflare R2 and persisted to `customer_documents` on creation. The `upload_document` endpoint opened to admin users (was reseller-only). Reseller creation wizard extended with the same document step, conditionally skipped when the linked customer already has documents on file. New `approve-link` endpoint resolves the case where an application surfaces a duplicate at approval time — admin can link the application to the existing Odoo partner rather than rejecting a fully-documented application. Banking details deliberately excluded from customer creation — Bassani pays resellers (commission); customers pay Bassani (invoicing); banking is a reseller-level concern only.
 - 7.1 + 7.5 were implemented together — delivery endpoint returns both regular and backorder pickings with per-line fulfilment. UI surfaces in both OrderView.js (reseller order detail) and SalesTickets.js (staff ticket detail).
 - 7.2 credit note requests are tracked in MongoDB (not Odoo) since Odoo credit note creation is a finance-team action; portal tracks the request lifecycle (pending → acknowledged).
 - 7.4 complete 2026-07-01 — Cloudflare R2 provisioned (`bassani-health-docs` bucket). Document flow: reseller downloads/emails 4 Bassani template PDFs to customer → customer signs → reseller uploads 5 signed docs (4 templates + CIPC) → admin reviews with presigned download links → approval gated on all 5 being present. MongoDB backups are handled natively by Railway — R2 is used for document storage only (roadmap infrastructure table updated accordingly).

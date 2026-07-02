@@ -23,7 +23,7 @@ class ResellerCreate(BaseModel):
     email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
-    odoo_partner_id: Optional[int] = None   # Odoo vendor partner for commission billing — optional
+    odoo_partner_id: int                     # Odoo partner for commission billing — required; creates vendor bill on payout
     warehouse_id: Optional[int] = None      # Odoo stock.warehouse this reseller's orders draw from
     username: str                           # Login username for the reseller portal
     password: str                           # Hashed immediately — never stored plain
@@ -131,48 +131,30 @@ async def create_reseller(
     """
     odoo = get_odoo_client()
 
-    # Validate Odoo partner exists when provided
-    if reseller.odoo_partner_id:
-        try:
-            partners = odoo.read(
-                "res.partner",
-                [reseller.odoo_partner_id],
-                fields=["id", "name", "email"],
-            )
-            if not partners:
-                raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
+    # Validate Odoo partner exists — required for commission vendor bill creation
+    try:
+        partners = odoo.read(
+            "res.partner",
+            [reseller.odoo_partner_id],
+            fields=["id", "name", "email"],
+        )
+        if not partners:
+            raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
 
     # Uniqueness checks before any writes
     if await col("resellers").find_one({"seller_code": reseller.seller_code.upper()}):
         raise HTTPException(status_code=400, detail=f"Seller code '{reseller.seller_code}' already exists")
-    if reseller.odoo_partner_id and await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
+    if await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
         raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a reseller")
     if await col("users").find_one({"username": reseller.username}):
         raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
 
     now = datetime.now(timezone.utc)
     reseller_id = f"reseller_{reseller.seller_code.lower()}"
-
-    # If no Odoo partner linked but docs were uploaded, create a new partner so docs have a home
-    effective_partner_id = reseller.odoo_partner_id
-    if effective_partner_id is None and reseller.documents:
-        try:
-            partner_vals: dict = {
-                "name": reseller.name,
-                "company_type": "company",
-                "customer_rank": 1,
-                "comment": f"Type: Distributor | Reseller: {reseller.seller_code.upper()}",
-            }
-            if reseller.email:   partner_vals["email"]   = reseller.email
-            if reseller.phone:   partner_vals["phone"]   = reseller.phone
-            if reseller.vat_number: partner_vals["vat"]  = reseller.vat_number
-            effective_partner_id = odoo.create("res.partner", partner_vals)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to create Odoo partner for reseller: {str(e)}")
 
     # Step 1 — create login account
     user_doc = {
@@ -201,7 +183,7 @@ async def create_reseller(
         "phone": reseller.phone,
         "address": reseller.address,
         "default_commission": COMMISSION_RATE,
-        "odoo_partner_id": effective_partner_id,
+        "odoo_partner_id": reseller.odoo_partner_id,
         "warehouse_id": reseller.warehouse_id,
         "user_id": user_id,
         "company_reg_number": reseller.company_reg_number or "",
@@ -224,20 +206,19 @@ async def create_reseller(
         raise HTTPException(status_code=500, detail=f"Reseller creation failed — login account rolled back: {str(e)}")
 
     # Persist staged onboarding documents into customer_documents
-    if effective_partner_id:
-        for doc in (reseller.documents or []):
-            if doc.get("r2_key"):
-                await col("customer_documents").insert_one({
-                    "id":              str(uuid.uuid4()),
-                    "odoo_partner_id": effective_partner_id,
-                    "label":           doc.get("label") or doc.get("doc_type") or "Document",
-                    "filename":        doc.get("filename"),
-                    "r2_key":          doc.get("r2_key"),
-                    "size":            doc.get("size"),
-                    "doc_type":        doc.get("doc_type"),
-                    "uploaded_at":     now,
-                    "uploaded_by":     current_user.get("username", ""),
-                })
+    for doc in (reseller.documents or []):
+        if doc.get("r2_key"):
+            await col("customer_documents").insert_one({
+                "id":              str(uuid.uuid4()),
+                "odoo_partner_id": reseller.odoo_partner_id,
+                "label":           doc.get("label") or doc.get("doc_type") or "Document",
+                "filename":        doc.get("filename"),
+                "r2_key":          doc.get("r2_key"),
+                "size":            doc.get("size"),
+                "doc_type":        doc.get("doc_type"),
+                "uploaded_at":     now,
+                "uploaded_by":     current_user.get("username", ""),
+            })
 
     await audit_log("reseller.create", "reseller", reseller_id, entity_label=reseller.name,
                     user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": reseller.username},

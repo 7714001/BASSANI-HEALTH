@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 1 July 2026
+**Last Updated:** 2 July 2026
 
 ---
 
@@ -156,16 +156,34 @@ Set these bands to match your actual reseller agreement. Changes to tiers are re
 
 Resellers are external business partners who place orders on behalf of their customers. Each reseller needs:
 - A portal login (username + password)
-- Their Odoo partner ID (so the system can link their orders to the right Odoo record)
+- An Odoo partner link (mandatory — explained below)
 - An assigned warehouse (their orders draw from this vault)
 - A commission tier assignment (if they participate in the commission programme)
 
-To add a reseller:
-1. Go to **Resellers** in the sidebar
-2. Click **Add Reseller**
-3. Fill in their business name, contact email, and Odoo partner ID
-4. Select their assigned warehouse
-5. This automatically creates a portal login for them — share the credentials securely
+**Why the Odoo partner link is mandatory**
+
+When a commission statement is marked as paid, the system creates a vendor bill (creditor invoice) in Odoo against the reseller's partner record. This is how the payment flows into your accounts — Odoo cannot create the bill without knowing which partner to bill to. A reseller cannot be saved without this link.
+
+The partner does not need to be set up as a supplier in Odoo — a customer-only partner works just as well. Odoo allows any partner to receive a vendor bill regardless of their rank. If the reseller is both a customer and a supplier (e.g. they also purchase direct), both badges will show in the search results.
+
+To add a reseller — the wizard has 4 steps:
+
+**Step 1 — Odoo Partner and Documents**
+1. Go to **Resellers** in the sidebar and click **Add Reseller**
+2. Type to search Odoo partners by name — results show whether each partner is a Customer, Supplier, or both
+3. Select the correct partner. Their business details will pre-fill on the next step
+4. If the partner does not yet have onboarding documents on file, a document upload section appears. Upload all 5 required documents. If documents are already on file, a confirmation banner replaces the upload section
+
+**Step 2 — Business Details**
+Review and adjust the pre-filled name, email, phone, and seller code. The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
+
+**Step 3 — Login Credentials**
+Set the portal username and password. The reseller will be required to change their password on first login.
+
+**Step 4 — Financials**
+Enter company registration number, VAT details, and banking information. These are used for commission statement records.
+
+Click **Create Reseller** on the final step. A welcome email is sent automatically to the reseller's email address.
 
 ---
 
@@ -642,6 +660,52 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 Go to **Customers** to see your active account list (pulled from Odoo).
 
+**Adding a New Customer** *(requires `customers.manage` permission)*
+
+Click **Add Customer** to open the 3-step wizard. All three steps must be completed before the customer is created.
+
+**Step 1 — Search (duplicate check)**
+
+Type the customer's business name and wait for the search to run. The search checks Odoo live for any existing customers with a matching name.
+
+- If results appear, review them carefully. If none of them are the same business, refine your search and try variations of the name until no results appear. You cannot proceed while results are shown.
+- Once the search returns zero results, the **Continue** button activates and you can move to Step 2.
+
+> This step is a hard gate. The system also checks for duplicate email and VAT at Step 3 submission — if a match is found there, the creation is blocked with a clear message identifying the existing customer. There is no override. Investigate before creating.
+
+**Step 2 — Documents**
+
+Upload all five of the following signed documents before continuing:
+
+- Signed Store Onboarding Agreement
+- Signed Customer Information Form
+- Signed NDA
+- Signed TQA Document
+- CIPC Company Registration Certificate
+
+Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 5 uploaded`. The **Continue to Details** button is disabled until all five slots are filled.
+
+> Documents are staged to Cloudflare R2 as you upload them and will be attached to the customer's profile the moment the customer is created. If you close the browser before completing Step 3, you will need to start a new session and re-upload.
+
+**Step 3 — Details**
+
+Fill in the customer's information:
+
+- Business name (pre-filled from your Step 1 search)
+- Customer type (e.g. Pharmacy, Clinic)
+- Email address
+- Phone number
+- VAT registration number — required for compliance
+- Credit limit
+- Street address, city, postal code
+- Section 21 — tick this if the customer holds a SAHPRA Section 21 authorisation
+
+Click **Create Customer**. The customer is created in Odoo immediately and their documents are attached to their profile.
+
+> Banking details are not collected at the customer level. Bassani invoices customers directly and receives payment from them — banking details are a reseller-level concern (Bassani pays resellers commission) and are not needed here.
+
+---
+
 **Viewing a customer profile:**
 Click any customer to open their full profile. You will see:
 - Their lifetime orders and spend
@@ -727,6 +791,17 @@ The application detail page is a two-column view:
 6. The application status updates to **Approved** on the page — no navigation away required
 
 > If any of the 5 documents are missing, the approval button will be blocked with an error listing which documents are absent.
+
+**If approval is blocked by a duplicate customer:**
+
+When you click **Approve & Create Customer**, the system checks Odoo for a customer with a matching email or VAT before creating anything. If a match is found, the approval is blocked with a message identifying the existing customer.
+
+This means the customer already exists in Odoo — possibly created directly in Odoo before the portal existed, or via a previous admin-created entry. In this case you have two options:
+
+- **Link to the existing customer** — If the existing Odoo customer is the correct match for this application, use **Approve & Link to Existing Customer**. Enter the Odoo partner ID of the existing customer and confirm. The reseller is linked to that existing customer, the application's documents are attached to their profile, and the reseller receives the same approval email. No new Odoo record is created.
+- **Reject** — If the existing Odoo customer is a genuinely different business (name collision, not a true duplicate), reject this application with an explanation and ask the reseller to clarify.
+
+> Never create a duplicate customer in Odoo to work around the block. The duplicate check exists because dirty data causes incorrect stock reservations, billing confusion, and compliance exposure.
 
 **Rejecting an application** *(requires `customers.reject_onboarding`)*:
 1. Click **Reject Application**
@@ -1047,4 +1122,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-*This manual covers the system as built through Phase 12 (product barcodes, reseller catalog, customer onboarding document collection, Cloudflare R2 document storage, dedicated application review page, customer profile documents, reseller customer linking, and the reseller product catalog view). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+**Last Updated:** 2 July 2026
+
+*This manual covers the system as built through Phase 12 and the Phase 7.8 additions (3-step Add Customer wizard, hard duplicate prevention on email and VAT, VAT registration and postal code capture, mandatory onboarding documents for all customer creation paths, admin document upload capability, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
