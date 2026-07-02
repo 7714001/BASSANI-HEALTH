@@ -647,14 +647,14 @@ export function ChipRow({ children }) {
   return (
     <div className="flex items-center gap-1">
       <button type="button" onClick={() => scroll(-1)}
-        className="shrink-0 p-0.5 text-gray-300 hover:text-gray-500 transition-colors">
+        className="shrink-0 p-0.5 text-gray-500 hover:text-gray-700 transition-colors">
         <ChevronLeft size={15} />
       </button>
       <div ref={ref} className="flex gap-2 overflow-x-auto no-scrollbar flex-1 pb-0.5">
         {children}
       </div>
       <button type="button" onClick={() => scroll(1)}
-        className="shrink-0 p-0.5 text-gray-300 hover:text-gray-500 transition-colors">
+        className="shrink-0 p-0.5 text-gray-500 hover:text-gray-700 transition-colors">
         <ChevronRight size={15} />
       </button>
     </div>
