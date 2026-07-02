@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
+import uuid
 from auth import get_current_user, require_admin, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
@@ -33,6 +34,8 @@ class ResellerCreate(BaseModel):
     bank_account_holder: Optional[str] = ""
     bank_account_number: Optional[str] = ""
     bank_branch_code: Optional[str] = ""
+    document_session_id: Optional[str] = None
+    documents: Optional[list] = []
 
 class ResellerUpdate(BaseModel):
     name: Optional[str] = None
@@ -154,6 +157,23 @@ async def create_reseller(
     now = datetime.now(timezone.utc)
     reseller_id = f"reseller_{reseller.seller_code.lower()}"
 
+    # If no Odoo partner linked but docs were uploaded, create a new partner so docs have a home
+    effective_partner_id = reseller.odoo_partner_id
+    if effective_partner_id is None and reseller.documents:
+        try:
+            partner_vals: dict = {
+                "name": reseller.name,
+                "company_type": "company",
+                "customer_rank": 1,
+                "comment": f"Type: Distributor | Reseller: {reseller.seller_code.upper()}",
+            }
+            if reseller.email:   partner_vals["email"]   = reseller.email
+            if reseller.phone:   partner_vals["phone"]   = reseller.phone
+            if reseller.vat_number: partner_vals["vat"]  = reseller.vat_number
+            effective_partner_id = odoo.create("res.partner", partner_vals)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to create Odoo partner for reseller: {str(e)}")
+
     # Step 1 — create login account
     user_doc = {
         "username": reseller.username,
@@ -181,7 +201,7 @@ async def create_reseller(
         "phone": reseller.phone,
         "address": reseller.address,
         "default_commission": COMMISSION_RATE,
-        "odoo_partner_id": reseller.odoo_partner_id,
+        "odoo_partner_id": effective_partner_id,
         "warehouse_id": reseller.warehouse_id,
         "user_id": user_id,
         "company_reg_number": reseller.company_reg_number or "",
@@ -202,6 +222,22 @@ async def create_reseller(
     except Exception as e:
         await col("users").delete_one({"_id": user_result.inserted_id})
         raise HTTPException(status_code=500, detail=f"Reseller creation failed — login account rolled back: {str(e)}")
+
+    # Persist staged onboarding documents into customer_documents
+    if effective_partner_id:
+        for doc in (reseller.documents or []):
+            if doc.get("r2_key"):
+                await col("customer_documents").insert_one({
+                    "id":              str(uuid.uuid4()),
+                    "odoo_partner_id": effective_partner_id,
+                    "label":           doc.get("label") or doc.get("doc_type") or "Document",
+                    "filename":        doc.get("filename"),
+                    "r2_key":          doc.get("r2_key"),
+                    "size":            doc.get("size"),
+                    "doc_type":        doc.get("doc_type"),
+                    "uploaded_at":     now,
+                    "uploaded_by":     current_user.get("username", ""),
+                })
 
     await audit_log("reseller.create", "reseller", reseller_id, entity_label=reseller.name,
                     user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": reseller.username},

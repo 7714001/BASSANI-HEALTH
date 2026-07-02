@@ -22,10 +22,13 @@ class CustomerCreate(BaseModel):
     street: Optional[str] = None
     city: Optional[str] = None
     zip: Optional[str] = None
+    vat: Optional[str] = None
     customer_type: Optional[str] = "Pharmacy"
     section21_registered: bool = False
     credit_limit: float = 0.0
     property_payment_term_id: Optional[int] = None
+    document_session_id: Optional[str] = None
+    documents: Optional[list] = []
 
 class CustomerUpdate(BaseModel):
     name: Optional[str] = None
@@ -317,6 +320,45 @@ async def customer_account_statement(
     }
 
 
+@router.get("/check-duplicate")
+def check_duplicate_customer(
+    email: Optional[str] = Query(None),
+    vat: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Exact-match check for email or VAT before creating a new customer.
+    Returns any existing Odoo partners that match — used by the wizard to hard-block duplicates.
+    """
+    if not email and not vat:
+        return {"duplicates": []}
+    odoo = get_odoo_client()
+    domain = [("customer_rank", ">", 0), ("active", "=", True)]
+    conditions = []
+    if email:
+        conditions.append(("email", "=", email.strip().lower()))
+    if vat:
+        conditions.append(("vat", "=", vat.strip()))
+    if len(conditions) == 2:
+        domain += ["|"] + conditions
+    else:
+        domain += conditions
+    try:
+        matches = odoo.search_read(
+            "res.partner",
+            domain=domain,
+            fields=["id", "name", "email", "vat", "city"],
+            limit=5,
+        )
+        for c in matches:
+            for k, v in c.items():
+                if v is False:
+                    c[k] = None
+        return {"duplicates": matches}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.get("/search")
 def search_all_customers(
     q: str = Query(..., min_length=2),
@@ -368,6 +410,26 @@ def get_customer(customer_id: int, current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/{customer_id}/has-documents")
+async def customer_has_documents(
+    customer_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Quick check for the reseller/customer wizard — does this partner already have onboarding docs on file?"""
+    admin_count = await col("customer_documents").count_documents({"odoo_partner_id": customer_id})
+    if admin_count > 0:
+        return {"has_documents": True}
+    ownership = await col("customer_ownership").find_one({"odoo_partner_id": customer_id}, NO_ID)
+    if ownership and ownership.get("onboarding_ref"):
+        app = await col("customer_onboarding").find_one(
+            {"id": ownership["onboarding_ref"], "documents.0": {"$exists": True}},
+            {"_id": 1},
+        )
+        if app:
+            return {"has_documents": True}
+    return {"has_documents": False}
+
+
 @router.get("/{customer_id}/orders")
 def get_customer_orders(
     customer_id: int,
@@ -400,6 +462,39 @@ async def create_customer(
         raise HTTPException(status_code=403, detail="Not authorised")
 
     odoo = get_odoo_client()
+
+    # Hard duplicate block — admin path only (resellers use claim flow instead)
+    if role != "reseller":
+        dup_conditions = []
+        if customer.email:
+            dup_conditions.append(("email", "=", customer.email.strip().lower()))
+        if customer.vat:
+            dup_conditions.append(("vat", "=", customer.vat.strip()))
+        if dup_conditions:
+            dup_domain = [("customer_rank", ">", 0), ("active", "=", True)]
+            if len(dup_conditions) == 2:
+                dup_domain += ["|"] + dup_conditions
+            else:
+                dup_domain += dup_conditions
+            try:
+                matches = odoo.search_read(
+                    "res.partner", domain=dup_domain,
+                    fields=["id", "name", "email", "vat"], limit=1,
+                )
+                if matches:
+                    m = {k: (None if v is False else v) for k, v in matches[0].items()}
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": "A customer with this email or VAT number already exists.",
+                            "existing": m,
+                        },
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
     notes = f"Type: {customer.customer_type}"
     if customer.section21_registered:
         notes += " | Section 21: Registered"
@@ -416,6 +511,7 @@ async def create_customer(
     if customer.street:   vals["street"] = customer.street
     if customer.city:     vals["city"]   = customer.city
     if customer.zip:      vals["zip"]    = customer.zip
+    if customer.vat:      vals["vat"]    = customer.vat
     if customer.property_payment_term_id:
         vals["property_payment_term_id"] = customer.property_payment_term_id
 
@@ -434,6 +530,21 @@ async def create_customer(
             "created_at":           datetime.now(timezone.utc),
             "created_by_username":  current_user.get("username", ""),
         })
+
+    # Persist staged onboarding documents into customer_documents
+    for doc in (customer.documents or []):
+        if doc.get("r2_key"):
+            await col("customer_documents").insert_one({
+                "id":              str(uuid.uuid4()),
+                "odoo_partner_id": customer_id,
+                "label":           doc.get("label") or doc.get("doc_type") or "Document",
+                "filename":        doc.get("filename"),
+                "r2_key":          doc.get("r2_key"),
+                "size":            doc.get("size"),
+                "doc_type":        doc.get("doc_type"),
+                "uploaded_at":     datetime.now(timezone.utc),
+                "uploaded_by":     current_user.get("username", ""),
+            })
 
     return {"success": True, "customer_id": customer_id}
 

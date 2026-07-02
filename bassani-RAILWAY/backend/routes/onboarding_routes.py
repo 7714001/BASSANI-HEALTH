@@ -81,6 +81,10 @@ class RejectBody(BaseModel):
     reason: str
 
 
+class ApproveLinkBody(BaseModel):
+    odoo_partner_id: int
+
+
 class TemplateEmailBody(BaseModel):
     to_email: str
 
@@ -143,8 +147,11 @@ async def upload_document(
     current_user: dict = Depends(get_current_user),
 ):
     """Upload a signed document or CIPC certificate to R2 for an onboarding session."""
-    if current_user.get("role") != "reseller":
-        raise HTTPException(status_code=403, detail="Only resellers can upload onboarding documents")
+    role  = current_user.get("role")
+    perms = current_user.get("permissions", {})
+    is_admin = current_user.get("is_super_admin") or perms.get("customers", {}).get("manage")
+    if role != "reseller" and not is_admin:
+        raise HTTPException(status_code=403, detail="Not authorised to upload onboarding documents")
     if doc_type not in REQUIRED_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
 
@@ -171,8 +178,11 @@ async def delete_document(
     current_user: dict = Depends(get_current_user),
 ):
     """Remove an uploaded document from R2 (before the application is submitted)."""
-    if current_user.get("role") != "reseller":
-        raise HTTPException(status_code=403, detail="Only resellers can remove onboarding documents")
+    role  = current_user.get("role")
+    perms = current_user.get("permissions", {})
+    is_admin = current_user.get("is_super_admin") or perms.get("customers", {}).get("manage")
+    if role != "reseller" and not is_admin:
+        raise HTTPException(status_code=403, detail="Not authorised to remove onboarding documents")
     if doc_type not in REQUIRED_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
 
@@ -342,6 +352,38 @@ async def approve_application(
         )
 
     odoo = get_odoo_client()
+
+    # Duplicate check — block if email or VAT already exists in Odoo
+    dup_conditions = []
+    if app.get("contact_email"):
+        dup_conditions.append(("email", "=", app["contact_email"].strip().lower()))
+    if app.get("vat_number"):
+        dup_conditions.append(("vat", "=", app["vat_number"].strip()))
+    if dup_conditions:
+        dup_domain = [("customer_rank", ">", 0), ("active", "=", True)]
+        if len(dup_conditions) == 2:
+            dup_domain += ["|"] + dup_conditions
+        else:
+            dup_domain += dup_conditions
+        try:
+            dup_matches = odoo.search_read(
+                "res.partner", domain=dup_domain,
+                fields=["id", "name", "email", "vat"], limit=1,
+            )
+            if dup_matches:
+                m = {k: (None if v is False else v) for k, v in dup_matches[0].items()}
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "A customer with this email or VAT number already exists.",
+                        "existing": m,
+                    },
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo duplicate check failed: {str(e)}")
+
     notes_parts = [f"Type: {app.get('business_type', '')}"]
     if app.get("registration_number"):
         notes_parts.append(f"Reg: {app['registration_number']}")
@@ -404,6 +446,63 @@ async def approve_application(
         )
 
     return {"success": True, "odoo_partner_id": partner_id}
+
+
+@router.put("/{app_id}/approve-link")
+async def approve_application_link(
+    app_id: str,
+    body: ApproveLinkBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Approve an application by linking it to an existing Odoo customer rather than creating a new one.
+    Used when the duplicate check at approval time surfaces an existing partner that matches.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Application is already {app['status']}")
+
+    odoo = get_odoo_client()
+    records = odoo.read("res.partner", [body.odoo_partner_id], fields=["id", "name"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Odoo partner not found")
+
+    await col("customer_ownership").insert_one({
+        "odoo_partner_id":     body.odoo_partner_id,
+        "reseller_id":         app["reseller_id"],
+        "reseller_name":       app.get("reseller_name", ""),
+        "created_at":          datetime.now(timezone.utc),
+        "created_by_username": current_user.get("username", ""),
+        "onboarding_ref":      app_id,
+    })
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {
+            "status":          "approved",
+            "odoo_partner_id": body.odoo_partner_id,
+            "reviewed_at":     datetime.now(timezone.utc),
+            "reviewed_by":     current_user.get("username", ""),
+        }},
+    )
+    await audit_log("onboarding.approve_link", "customer_onboarding", app_id,
+                    entity_label=app.get("company_name", ""), user=current_user,
+                    detail={"odoo_partner_id": body.odoo_partner_id, "linked_to_existing": True},
+                    reseller_id=app.get("reseller_id"))
+
+    _res = await col("resellers").find_one({"id": app.get("reseller_id")}, {"email": 1, "_id": 0})
+    if _res and _res.get("email"):
+        background_tasks.add_task(
+            send_onboarding_approved,
+            company_name=app.get("company_name", ""),
+            reseller_name=app.get("reseller_name", ""),
+            reseller_email=_res["email"],
+            customer_contact_email=app.get("contact_email"),
+        )
+
+    return {"success": True, "odoo_partner_id": body.odoo_partner_id}
 
 
 @router.put("/{app_id}/reject")

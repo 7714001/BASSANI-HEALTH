@@ -457,13 +457,24 @@ export function Customers() {
   };
 
   // Admin add-customer modal state
-  const BLANK_FORM = { name:"", email:"", phone:"", street:"", city:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false };
-  const [form,         setForm        ] = useState(BLANK_FORM);
-  const [nameSearch,   setNameSearch  ] = useState("");
-  const [nameResults,  setNameResults ] = useState([]);
-  const [nameSearching,setNameSearching] = useState(false);
-  const [step,         setStep        ] = useState("search");
-  const [claiming,     setClaiming    ] = useState(false);
+  const BLANK_FORM = { name:"", email:"", phone:"", street:"", city:"", zip:"", vat:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false };
+  const REQUIRED_DOC_TYPES = [
+    { key:"store_onboarding_agreement", label:"Signed Store Onboarding Agreement" },
+    { key:"customer_information_form",  label:"Signed Customer Information Form"  },
+    { key:"nda",                        label:"Signed NDA"                        },
+    { key:"tqa",                        label:"Signed TQA Document"               },
+    { key:"cipc_certificate",           label:"CIPC Company Registration Certificate" },
+  ];
+  const [form,           setForm          ] = useState(BLANK_FORM);
+  const [nameSearch,     setNameSearch    ] = useState("");
+  const [nameResults,    setNameResults   ] = useState([]);
+  const [nameSearching,  setNameSearching ] = useState(false);
+  const [step,           setStep          ] = useState("search");
+  const [claiming,       setClaiming      ] = useState(false);
+  const [sessionId,      setSessionId     ] = useState("");
+  const [stagedDocs,     setStagedDocs    ] = useState([]);
+  const [uploadingDoc,   setUploadingDoc  ] = useState(null);
+  const [removingDoc,    setRemovingDoc   ] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -507,9 +518,44 @@ export function Customers() {
     return () => clearTimeout(t);
   }, [nameSearch, modal, step]);
 
+  const genSessionId = () => (
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
   const openModal = () => {
+    const sid = genSessionId();
     setForm(BLANK_FORM); setNameSearch(""); setNameResults([]);
-    setStep("search"); setModal(true);
+    setStep("search"); setSessionId(sid); setStagedDocs([]);
+    setUploadingDoc(null); setRemovingDoc(null);
+    setModal(true);
+  };
+
+  const uploadDoc = async (docKey, docLabel, file) => {
+    setUploadingDoc(docKey);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api.post(
+        `/api/onboarding/documents/upload?session_id=${sessionId}&doc_type=${docKey}`,
+        fd, { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setStagedDocs(prev => {
+        const without = prev.filter(d => d.doc_type !== docKey);
+        return [...without, { ...r.data, label: docLabel }];
+      });
+    } catch { toast.error(`Failed to upload ${docLabel}`); }
+    finally { setUploadingDoc(null); }
+  };
+
+  const removeDoc = async (docKey) => {
+    setRemovingDoc(docKey);
+    try {
+      await api.delete(`/api/onboarding/documents/${sessionId}/${docKey}`);
+      setStagedDocs(prev => prev.filter(d => d.doc_type !== docKey));
+    } catch { toast.error("Failed to remove document"); }
+    finally { setRemovingDoc(null); }
   };
 
   const claim = async (customer) => {
@@ -524,12 +570,26 @@ export function Customers() {
 
   const save = async () => {
     if (!form.name) return toast.error("Name required");
+    const missingDocs = REQUIRED_DOC_TYPES.filter(t => !stagedDocs.find(d => d.doc_type === t.key));
+    if (missingDocs.length) return toast.error(`Please upload: ${missingDocs.map(d => d.label).join(", ")}`);
     setSaving(true);
     try {
-      const payload = { ...form, credit_limit: parseFloat(form.credit_limit) || 0 };
+      const payload = {
+        ...form,
+        credit_limit: parseFloat(form.credit_limit) || 0,
+        document_session_id: sessionId,
+        documents: stagedDocs,
+      };
       await api.post("/api/customers/", payload);
       toast.success("Customer created"); setModal(false); load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.existing) {
+        toast.error(`Duplicate found: ${detail.existing.name} already exists with this email or VAT number.`);
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Save failed");
+      }
+    }
     finally { setSaving(false); }
   };
 
@@ -717,10 +777,22 @@ export function Customers() {
 
       {modal && (
         <Modal title="Add Customer" onClose={()=>setModal(false)}>
-          {step === "search" ? (
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 mb-5">
+            {["search","docs","create"].map((s,i)=>(
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${step===s?"bg-bassani-600 text-white":["search","docs","create"].indexOf(step)>i?"bg-green-500 text-white":"bg-gray-100 text-gray-400"}`}>{["search","docs","create"].indexOf(step)>i?"✓":i+1}</div>
+                <span className={`text-xs font-medium ${step===s?"text-bassani-700":"text-gray-400"}`}>{["Search","Documents","Details"][i]}</span>
+                {i<2&&<div className="w-6 h-px bg-gray-200 mx-1"/>}
+              </div>
+            ))}
+          </div>
+
+          {/* ── Step 1: Search ── */}
+          {step === "search" && (
             <>
               <p className="text-sm text-gray-500 mb-3">
-                Search for the customer first — if they already exist in the system you can link them to your account without creating a duplicate.
+                Search for the customer first. If they already exist, select them rather than creating a duplicate.
               </p>
               <FormGroup label="Customer Name">
                 <div className="relative">
@@ -729,44 +801,99 @@ export function Customers() {
                 </div>
               </FormGroup>
               {nameResults.length > 0 && (
-                <div className="mt-2 border border-gray-100 rounded-xl overflow-hidden">
-                  <p className="text-xs text-gray-400 px-3 py-2 bg-gray-50 font-medium">Existing customers found</p>
-                  {nameResults.map(c => (
-                    <div key={c.id} className="flex items-center justify-between px-3 py-2.5 border-t border-gray-50 hover:bg-gray-50">
-                      <div>
-                        <p className="text-sm font-medium text-gray-800">{c.name}</p>
-                        <p className="text-xs text-gray-400">{[c.city, c.email].filter(Boolean).join(" · ") || "No contact info"}</p>
+                <>
+                  <div className="mt-2 border border-amber-100 rounded-xl overflow-hidden">
+                    <p className="text-xs text-amber-700 px-3 py-2 bg-amber-50 font-medium">Existing customers found — select one below or refine your search to confirm this is a new customer</p>
+                    {nameResults.map(c => (
+                      <div key={c.id} className="flex items-center justify-between px-3 py-2.5 border-t border-gray-50 hover:bg-gray-50">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">{c.name}</p>
+                          <p className="text-xs text-gray-400">{[c.city, c.email].filter(Boolean).join(" · ") || "No contact info"}</p>
+                        </div>
+                        <BtnPrimary size="sm" onClick={()=>claim(c)} loading={claiming}>Select</BtnPrimary>
                       </div>
-                      <BtnPrimary size="sm" onClick={()=>claim(c)} loading={claiming}>
-                        {isReseller ? "Link to my account" : "Select"}
-                      </BtnPrimary>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-2 text-center">None of these match? Refine your search until no results appear, then you can proceed.</p>
+                </>
               )}
               {nameSearch.length >= 2 && !nameSearching && nameResults.length === 0 && (
-                <p className="text-xs text-gray-400 mt-2 text-center">No existing customers found for "{nameSearch}"</p>
+                <p className="text-xs text-green-600 mt-2 text-center font-medium">No existing customers found for "{nameSearch}"</p>
               )}
               <div className="flex justify-between items-center mt-4 pt-3 border-t border-gray-100">
-                <span className="text-xs text-gray-400">Customer not in the system yet?</span>
-                <BtnSecondary onClick={()=>{ setForm({...BLANK_FORM, name:nameSearch}); setStep("create"); }}>Create New</BtnSecondary>
+                <span className="text-xs text-gray-400">
+                  {nameSearch.length < 2 ? "Type at least 2 characters to search first" : nameResults.length > 0 ? "Select a match above or keep searching" : "Customer confirmed as new"}
+                </span>
+                <BtnSecondary
+                  onClick={()=>{ setForm({...BLANK_FORM, name:nameSearch}); setStep("docs"); }}
+                  disabled={nameSearch.length < 2 || nameSearching || nameResults.length > 0}
+                >
+                  Continue
+                </BtnSecondary>
               </div>
             </>
-          ) : (
+          )}
+
+          {/* ── Step 2: Documents ── */}
+          {step === "docs" && (
             <>
               <button onClick={()=>setStep("search")} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
                 <ChevronDown size={12} className="-rotate-90"/>Back to search
+              </button>
+              <p className="text-sm text-gray-500 mb-4">Upload all five signed onboarding documents before creating the customer record.</p>
+              <div className="space-y-2 mb-5">
+                {REQUIRED_DOC_TYPES.map(dt => {
+                  const uploaded = stagedDocs.find(d => d.doc_type === dt.key);
+                  const isUploading = uploadingDoc === dt.key;
+                  const isRemoving  = removingDoc  === dt.key;
+                  return (
+                    <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
+                        {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
+                      </div>
+                      {uploaded ? (
+                        <button onClick={()=>removeDoc(dt.key)} disabled={isRemoving}
+                          className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
+                          {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
+                        </button>
+                      ) : (
+                        <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
+                          {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
+                          Upload
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
+                            onChange={e=>{ if(e.target.files[0]) uploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                <span className="text-xs text-gray-400">{stagedDocs.length} of {REQUIRED_DOC_TYPES.length} documents uploaded</span>
+                <BtnPrimary onClick={()=>setStep("create")} disabled={stagedDocs.length < REQUIRED_DOC_TYPES.length}>Continue to Details</BtnPrimary>
+              </div>
+            </>
+          )}
+
+          {/* ── Step 3: Customer details ── */}
+          {step === "create" && (
+            <>
+              <button onClick={()=>setStep("docs")} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
+                <ChevronDown size={12} className="-rotate-90"/>Back to documents
               </button>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Wellness Pharmacy" /></FormGroup>
                 <FormGroup label="Type"><Select value={form.customer_type} onChange={e=>setForm({...form,customer_type:e.target.value})}>{TYPES.map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
                 <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="orders@example.co.za" /></FormGroup>
                 <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="+27 11 555 1234" /></FormGroup>
-                <FormGroup label="City"><Input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} placeholder="Johannesburg" /></FormGroup>
+                <FormGroup label="VAT Registration Number"><Input value={form.vat} onChange={e=>setForm({...form,vat:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
                 <FormGroup label="Credit Limit (ZAR)"><Input type="number" value={form.credit_limit} onChange={e=>setForm({...form,credit_limit:e.target.value})} placeholder="50000" /></FormGroup>
+                <FormGroup label="Street Address" className="sm:col-span-2"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
+                <FormGroup label="City"><Input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} placeholder="Johannesburg" /></FormGroup>
+                <FormGroup label="Postal Code"><Input value={form.zip} onChange={e=>setForm({...form,zip:e.target.value})} placeholder="2196" /></FormGroup>
               </div>
-              <FormGroup label="Address"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
-              <div className="flex items-center gap-2 mb-4"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
+              <div className="flex items-center gap-2 my-3"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
               <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Customer</BtnPrimary></div>
             </>
           )}
@@ -1306,6 +1433,20 @@ export function Resellers() {
   const [saving,                 setSaving                ] = useState(false);
   const [editSaving,             setEditSaving            ] = useState(false);
 
+  // Reseller add-wizard — doc staging
+  const RESELLER_REQUIRED_DOC_TYPES = [
+    { key:"store_onboarding_agreement", label:"Signed Store Onboarding Agreement" },
+    { key:"customer_information_form",  label:"Signed Customer Information Form"  },
+    { key:"nda",                        label:"Signed NDA"                        },
+    { key:"tqa",                        label:"Signed TQA Document"               },
+    { key:"cipc_certificate",           label:"CIPC Company Registration Certificate" },
+  ];
+  const [rSellerSessionId,    setRSellerSessionId   ] = useState("");
+  const [rSellerStagedDocs,   setRSellerStagedDocs  ] = useState([]);
+  const [rSellerUploadingDoc, setRSellerUploadingDoc] = useState(null);
+  const [rSellerRemovingDoc,  setRSellerRemovingDoc ] = useState(null);
+  const [rSellerCustHasDocs,  setRSellerCustHasDocs ] = useState(null); // null=unknown, true/false
+
   const load = async () => {
     setLoading(true);
     try { const r = await api.get("/api/resellers/"); setResellers(r.data.resellers); }
@@ -1339,6 +1480,7 @@ export function Resellers() {
     setCustDropdownOpen(false);
     setCustomers([]);
     setCustomerSearch("");
+    setRSellerCustHasDocs(null);
     setForm(f => ({
       ...f,
       odoo_partner_id: c.id,
@@ -1347,18 +1489,32 @@ export function Resellers() {
       phone:       f.phone       || c.phone        || "",
       seller_code: f.seller_code || c.ref          || "",
     }));
+    // Check if this customer already has onboarding docs on file
+    api.get(`/api/customers/${c.id}/has-documents`)
+      .then(r => setRSellerCustHasDocs(r.data.has_documents))
+      .catch(() => setRSellerCustHasDocs(false));
   };
 
   const clearCustomer = () => {
     setSelectedCustomer(null);
+    setRSellerCustHasDocs(null);
     setForm(f => ({ ...f, odoo_partner_id: "" }));
     setCustomerSearch("");
     setCustDropdownOpen(true);
   };
 
+  const rSellerGenSession = () => (
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
   const openModal = () => {
     setForm({ ...BLANK_FORM });
-    setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false); setModal(true);
+    setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false);
+    setRSellerSessionId(rSellerGenSession()); setRSellerStagedDocs([]);
+    setRSellerUploadingDoc(null); setRSellerRemovingDoc(null); setRSellerCustHasDocs(null);
+    setModal(true);
   };
 
   const openEdit = (r) => {
@@ -1412,10 +1568,43 @@ export function Resellers() {
     finally { setEditSaving(false); }
   };
 
+  // true when null (still checking) — conservative: require docs until confirmed otherwise
+  const rSellerDocsRequired = !selectedCustomer || rSellerCustHasDocs !== true;
+
+  const rSellerUploadDoc = async (docKey, docLabel, file) => {
+    setRSellerUploadingDoc(docKey);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api.post(
+        `/api/onboarding/documents/upload?session_id=${rSellerSessionId}&doc_type=${docKey}`,
+        fd, { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setRSellerStagedDocs(prev => {
+        const without = prev.filter(d => d.doc_type !== docKey);
+        return [...without, { ...r.data, label: docLabel }];
+      });
+    } catch { toast.error(`Failed to upload ${docLabel}`); }
+    finally { setRSellerUploadingDoc(null); }
+  };
+
+  const rSellerRemoveDoc = async (docKey) => {
+    setRSellerRemovingDoc(docKey);
+    try {
+      await api.delete(`/api/onboarding/documents/${rSellerSessionId}/${docKey}`);
+      setRSellerStagedDocs(prev => prev.filter(d => d.doc_type !== docKey));
+    } catch { toast.error("Failed to remove document"); }
+    finally { setRSellerRemovingDoc(null); }
+  };
+
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+    if (rSellerDocsRequired) {
+      const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
+      if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
+    }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -1423,6 +1612,8 @@ export function Resellers() {
       else delete payload.odoo_partner_id;
       if (payload.warehouse_id) payload.warehouse_id = parseInt(payload.warehouse_id);
       else delete payload.warehouse_id;
+      payload.document_session_id = rSellerSessionId;
+      payload.documents = rSellerDocsRequired ? rSellerStagedDocs : [];
       await api.post("/api/resellers/", payload);
       toast.success("Reseller created");
       setModal(false);
@@ -1509,7 +1700,50 @@ export function Resellers() {
             )}
           </div>
 
-          {/* Section 2 — Business details */}
+          {/* Section 2 — Onboarding documents */}
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
+            Onboarding Documents
+            {selectedCustomer && rSellerCustHasDocs === null && <span className="text-gray-300 font-normal normal-case ml-1">(checking…)</span>}
+            {!rSellerDocsRequired && <span className="text-green-600 font-normal normal-case ml-1">(on file for this customer)</span>}
+          </p>
+          {rSellerDocsRequired ? (
+            <div className="space-y-2 mb-4">
+              {RESELLER_REQUIRED_DOC_TYPES.map(dt => {
+                const uploaded   = rSellerStagedDocs.find(d => d.doc_type === dt.key);
+                const isUploading = rSellerUploadingDoc === dt.key;
+                const isRemoving  = rSellerRemovingDoc  === dt.key;
+                return (
+                  <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
+                      {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
+                    </div>
+                    {uploaded ? (
+                      <button onClick={()=>rSellerRemoveDoc(dt.key)} disabled={isRemoving}
+                        className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
+                        {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
+                      </button>
+                    ) : (
+                      <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
+                        {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
+                        Upload
+                        <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
+                          onChange={e=>{ if(e.target.files[0]) rSellerUploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-400">{rSellerStagedDocs.length} of {RESELLER_REQUIRED_DOC_TYPES.length} uploaded</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-lg border border-green-200 bg-green-50">
+              <span className="text-green-600 text-sm">✓</span>
+              <p className="text-xs text-green-700 font-medium">Onboarding documents already on file for {selectedCustomer?.name}.</p>
+            </div>
+          )}
+
+          {/* Section 3 — Business details */}
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></FormGroup>
