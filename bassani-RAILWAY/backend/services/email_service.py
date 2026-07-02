@@ -81,14 +81,10 @@ def _wrap(subtitle: str, body_html: str) -> str:
                              letter-spacing:0.8px;text-transform:uppercase;">{subtitle}</p>
                 </td>
                 <td align="right" style="vertical-align:middle;">
-                  <table cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td style="width:36px;height:36px;background:rgba(255,255,255,0.12);
-                                  border-radius:8px;text-align:center;vertical-align:middle;">
-                        <span style="color:#ffffff;font-size:18px;line-height:36px;">&#9679;</span>
-                      </td>
-                    </tr>
-                  </table>
+                  <img src="https://portal.bassanihealth.com/logo.png"
+                       alt="Bassani Health"
+                       width="80" height="auto"
+                       style="display:block;border:0;outline:none;" />
                 </td>
               </tr>
             </table>
@@ -107,8 +103,7 @@ def _wrap(subtitle: str, body_html: str) -> str:
           <td style="background:#f8fafc;border-top:1px solid #e2e8f0;
                      padding:18px 36px;border-radius:0 0 12px 12px;">
             <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
-              Bassani Health &nbsp;&middot;&nbsp; 15 Innovation Drive, Midrand, 1685
-              &nbsp;&middot;&nbsp; VAT: {settings.vat_number}
+              Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami
             </p>
             <p style="margin:5px 0 0;font-size:11px;color:#cbd5e1;line-height:1.6;">
               This is an automated message from the Bassani Health operations portal.
