@@ -4,7 +4,7 @@
 // The detail page embeds the live Odoo order document alongside ticket actions,
 // keeping the sales clerk in one place for the entire inquiry-to-payment cycle.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -131,6 +131,48 @@ export default function SalesTickets() {
   const [confirming, setConfirming]     = useState(false);
   const [sending, setSending]           = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
+
+  // ── WebSocket real-time updates ───────────────────────────────────────────
+  const wsRef        = useRef(null);
+  const reconnectRef = useRef(null);
+  const detailRef    = useRef(null);
+  const [wsConnected, setWsConnected] = useState(false);
+
+  useEffect(() => { detailRef.current = detail; }, [detail]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    let delay = 1000;
+    const connect = () => {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocol}://${window.location.host}/api/tickets/ws?token=${token}`);
+      wsRef.current = ws;
+      ws.onopen = () => { setWsConnected(true); delay = 1000; };
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type !== "ticket_update") return;
+          const changedId = msg.ticket_id;
+          api.get(`/api/tickets/${changedId}`).then(r => {
+            setTickets(prev => prev.map(t => t.id === changedId ? r.data : t));
+            if (detailRef.current?.id === changedId) refreshDetail(changedId);
+          }).catch(() => {});
+        } catch { /* ignore parse errors */ }
+      };
+      ws.onclose = () => {
+        setWsConnected(false);
+        reconnectRef.current = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 30000);
+      };
+      ws.onerror = () => ws.close();
+    };
+    connect();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+    };
+  }, []); // eslint-disable-line
 
   const openDetail = async (t) => {
     setDetail(null);
@@ -1358,9 +1400,17 @@ export default function SalesTickets() {
         title="Sales Tickets"
         subtitle="PO/RFQ → Quote → Sale Order → Invoice → Payment → Complete"
         onRefresh={load}
-        actions={canDrive && (
-          <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>
-        )}
+        actions={
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? "bg-green-500" : "bg-gray-300"}`} />
+              {wsConnected ? "Live" : "Reconnecting…"}
+            </span>
+            {canDrive && (
+              <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>
+            )}
+          </div>
+        }
       />
       <main className="flex-1 overflow-y-auto p-6">
         {loading ? <LoadingState /> : tickets.length === 0 ? (

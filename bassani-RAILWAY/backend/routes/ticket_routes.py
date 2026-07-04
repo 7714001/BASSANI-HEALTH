@@ -10,13 +10,15 @@ The Orders side of this handoff is NOT a separate collection — it's the
 existing `packing_board` document, extended in Phase 8.3. See
 `packing_board_routes.py` and the `orders_ticket_ref` field below.
 """
+import jwt
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import require_permission, require_any_permission
+from config import get_settings
+from auth import require_permission, require_any_permission, get_user_by_username
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col
@@ -27,6 +29,82 @@ from services.email_service import send_ticket_assigned
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+
+
+# ── Real-time connection manager ───────────────────────────────────────────────
+
+class TicketConnectionManager:
+    """Manages active WebSocket connections for real-time ticket push notifications.
+
+    Staff (any non-reseller role) receive every update.
+    Reseller connections receive only updates scoped to their own tickets.
+    Dead connections are pruned silently on the next broadcast.
+    """
+    def __init__(self):
+        self._conns: list[tuple] = []  # (ws, role, reseller_id_str | None)
+
+    async def connect(self, ws: WebSocket, role: str, reseller_id: str | None):
+        await ws.accept()
+        self._conns.append((ws, role, reseller_id))
+
+    def disconnect(self, ws: WebSocket):
+        self._conns = [(w, r, rid) for (w, r, rid) in self._conns if w is not ws]
+
+    async def broadcast(self, ticket_id: str, ticket_reseller_id: str | None = None):
+        payload = {"type": "ticket_update", "ticket_id": ticket_id}
+        dead: list = []
+        for ws, role, reseller_id in list(self._conns):
+            if role != "reseller" or reseller_id == ticket_reseller_id:
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+ticket_manager = TicketConnectionManager()
+
+
+# ── WebSocket endpoint ─────────────────────────────────────────────────────────
+
+@router.websocket("/ws")
+async def ticket_websocket(ws: WebSocket):
+    """Real-time ticket update stream. Any active portal user can subscribe.
+
+    Auth: JWT passed as ?token= query param (same pattern as the packing board).
+    On connect the server sends {type: "connected"}.
+    On any ticket mutation the server pushes {type: "ticket_update", ticket_id: "..."}.
+    No inbound messages are expected — the connection is server-push only.
+    """
+    cfg = get_settings()
+    token = ws.query_params.get("token", "")
+    try:
+        payload = jwt.decode(token, cfg.jwt_secret, algorithms=[cfg.jwt_algorithm])
+        username = payload.get("sub")
+        user = await get_user_by_username(username) if username else None
+        if not user or not user.get("active", True):
+            await ws.close(code=4001)
+            return
+    except Exception:
+        await ws.close(code=4001)
+        return
+
+    role = user.get("role", "")
+    reseller_id: str | None = None
+    if role == "reseller":
+        reseller_doc = await col("resellers").find_one({"user_id": user["id"]}, {"_id": 1})
+        reseller_id = str(reseller_doc["_id"]) if reseller_doc else None
+
+    await ticket_manager.connect(ws, role, reseller_id)
+    try:
+        await ws.send_json({"type": "connected"})
+        while True:
+            await ws.receive_text()  # keep-alive; no inbound messages expected
+    except WebSocketDisconnect:
+        ticket_manager.disconnect(ws)
+    except Exception:
+        ticket_manager.disconnect(ws)
+
 
 # Forward stages — a ticket normally moves left to right through these.
 STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "incomplete"]
@@ -309,6 +387,8 @@ async def update_ticket_stage(
         before={"status": ticket["status"], "exit_status": ticket.get("exit_status")},
         after={"status": body.status, "exit_status": body.exit_status},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     if _au and _au.get("email"):
         background_tasks.add_task(
             send_ticket_assigned,
@@ -372,6 +452,8 @@ async def confirm_payment(
         "ticket.confirm_payment", "ticket", ticket_id, entity_label=ticket.get("customer_name", ""),
         user=current_user, detail={"payment_state": invoice["payment_state"], "amount_residual": invoice["amount_residual"]},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True, "payment_state": invoice["payment_state"]}
 
 
@@ -479,6 +561,8 @@ async def create_order_from_ticket(
         user=current_user,
         after={"order_id": odoo_order_id, "status": "quote"},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True, "odoo_order_id": odoo_order_id}
 
 
@@ -555,6 +639,8 @@ async def cancel_order_from_ticket(
         user=current_user,
         detail={"order_id": order_id, "order_name": order["name"]},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True}
 
 
@@ -688,6 +774,8 @@ async def update_order_from_ticket(
         user=current_user,
         after={"order_id": order_id, "line_count": n, **ticket_field_updates},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True, "odoo_order_id": order_id}
 
 
@@ -775,6 +863,8 @@ async def send_quote(
         user=current_user,
         detail={"order_id": order_id, "order_name": order["name"], "email_sent": email_sent},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
 
     result: dict = {"success": True, "email_sent": email_sent}
     if warning:
@@ -927,6 +1017,8 @@ async def register_deposit(
         user=current_user,
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True, "invoice_id": invoice_id}
 
 
@@ -1116,6 +1208,8 @@ async def register_balance_payment(
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
                 "date": body.date, "payment_state": final_state, "amount_residual": final_residual},
     )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual}
 
 
