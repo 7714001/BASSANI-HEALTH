@@ -2,7 +2,6 @@ import xmlrpc.client
 import threading
 import logging
 import time
-import httpx
 from config import get_settings
 
 settings = get_settings()
@@ -111,50 +110,3 @@ _client = OdooClient()
 
 def get_odoo_client() -> OdooClient:
     return _client
-
-
-def fetch_odoo_report_pdf(report_name: str, record_id: int) -> bytes:
-    """Fetch an Odoo report PDF via HTTP session auth.
-
-    render_qweb_pdf is private in Odoo v17 and not callable via XML-RPC.
-    Authenticates via the JSON-RPC web session endpoint, extracts session_id
-    from the response body (more reliable than relying on httpx cookie carry),
-    and GETs the report controller URL with the session_id cookie set explicitly.
-    """
-    cfg = get_settings()
-    base = cfg.odoo_url.rstrip("/")
-    with httpx.Client(timeout=60, follow_redirects=True) as client:
-        auth_resp = client.post(
-            f"{base}/web/session/authenticate",
-            json={"jsonrpc": "2.0", "method": "call", "params": {
-                "db": cfg.odoo_db,
-                "login": cfg.odoo_username,
-                "password": cfg.odoo_password,
-            }},
-        )
-        auth_resp.raise_for_status()
-        auth_data = auth_resp.json()
-        result = auth_data.get("result") or {}
-        uid = result.get("uid")
-        if not uid:
-            raise RuntimeError(
-                f"Odoo web session authentication failed — check ODOO_USERNAME/ODOO_PASSWORD. "
-                f"Error: {auth_data.get('error', 'no uid returned')}"
-            )
-        # Extract session_id from body; fall back to Set-Cookie if absent
-        session_id = result.get("session_id") or auth_resp.cookies.get("session_id")
-        if not session_id:
-            raise RuntimeError("Odoo did not return a session_id after authentication")
-
-        pdf_resp = client.get(
-            f"{base}/report/pdf/{report_name}/{record_id}",
-            cookies={"session_id": session_id},
-        )
-        pdf_resp.raise_for_status()
-        content_type = pdf_resp.headers.get("content-type", "")
-        if not content_type.startswith("application/pdf"):
-            raise RuntimeError(
-                f"Odoo returned {content_type!r} for report '{report_name}' — "
-                f"check the report name is correct for this Odoo instance"
-            )
-        return pdf_resp.content

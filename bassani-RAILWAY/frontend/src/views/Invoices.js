@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, FileText } from "lucide-react";
+import { Printer, X, ExternalLink } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow,
   Modal, FormGroup, Textarea, BtnPrimary, BtnSecondary,
@@ -291,8 +291,6 @@ export default function Invoices() {
   const [viewInvoice, setViewInvoice] = useState(null);
   const [viewLoading, setViewLoading] = useState(false);
 
-  const [pdfLoading,   setPdfLoading  ] = useState(new Set());
-
   const [cnModal,      setCnModal     ] = useState(null);
   const [cnReason,     setCnReason    ] = useState("");
   const [cnSubmitting, setCnSubmitting] = useState(false);
@@ -335,20 +333,6 @@ export default function Invoices() {
 
   const openTicket = (ticketId) => {
     navigate("/tickets/sales", { state: { openTicketId: ticketId } });
-  };
-
-  const openPdf = async (inv) => {
-    setPdfLoading(prev => new Set(prev).add(inv.id));
-    try {
-      const res = await api.get(`/api/invoices/${inv.id}/pdf`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch {
-      toast.error("Could not load invoice PDF from Odoo");
-    } finally {
-      setPdfLoading(prev => { const s = new Set(prev); s.delete(inv.id); return s; });
-    }
   };
 
   const FILTERS = [
@@ -442,15 +426,6 @@ export default function Invoices() {
                     className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline disabled:opacity-40">
                     View
                   </button>
-                  {inv.has_pdf && (
-                    <button
-                      onClick={e => { e.stopPropagation(); openPdf(inv); }}
-                      disabled={pdfLoading.has(inv.id)}
-                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 font-medium hover:underline disabled:opacity-40">
-                      <FileText size={11} />
-                      {pdfLoading.has(inv.id) ? "Loading…" : "PDF"}
-                    </button>
-                  )}
                   {inv.linked_ticket_id && (
                     <button
                       onClick={e => { e.stopPropagation(); openTicket(inv.linked_ticket_id); }}

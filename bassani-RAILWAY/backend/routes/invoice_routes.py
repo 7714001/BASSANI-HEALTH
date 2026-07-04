@@ -1,6 +1,4 @@
-import base64
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type
@@ -118,26 +116,6 @@ async def list_invoices(
     else:
         for inv in invoices:
             inv["linked_ticket_id"] = None
-
-    # Batch-check which invoices have a stored PDF attachment
-    invoice_ids = [inv["id"] for inv in invoices]
-    if invoice_ids:
-        try:
-            pdf_attachments = odoo.search_read(
-                "ir.attachment",
-                [("res_model", "=", "account.move"), ("res_id", "in", invoice_ids), ("mimetype", "=", "application/pdf")],
-                ["res_id"],
-                limit=len(invoice_ids),
-            )
-            ids_with_pdf = {a["res_id"] for a in pdf_attachments}
-            for inv in invoices:
-                inv["has_pdf"] = inv["id"] in ids_with_pdf
-        except Exception:
-            for inv in invoices:
-                inv["has_pdf"] = False
-    else:
-        for inv in invoices:
-            inv["has_pdf"] = False
 
     return {"invoices": invoices, "total": total}
 
@@ -268,58 +246,6 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
-
-
-@router.get("/{invoice_id}/pdf")
-def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_user)):
-    """Stream the Odoo-generated invoice PDF.
-
-    Tries ir.attachment first (Odoo stores PDFs after posting/sending).
-    Falls back to rendering via ir.actions.report on demand.
-    """
-    odoo = get_odoo_client()
-
-    # Resolve invoice name for the filename
-    try:
-        records = odoo.read("account.move", [invoice_id], fields=["name"])
-        if not records:
-            raise HTTPException(status_code=404, detail="Invoice not found")
-        invoice_name = records[0].get("name", f"invoice-{invoice_id}").replace("/", "-")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
-
-    filename = f"{invoice_name}.pdf"
-
-    # Odoo stores PDFs as ir.attachment records after the invoice is first printed or emailed.
-    # This covers all invoices in a normal workflow. If no attachment exists the invoice
-    # has never been sent/printed from Odoo — return a clear 404 rather than trying to
-    # render on demand (Odoo v17 does not expose the render method via XML-RPC or HTTP
-    # with API-key credentials).
-    try:
-        attachments = odoo.search_read(
-            "ir.attachment",
-            [("res_model", "=", "account.move"), ("res_id", "=", invoice_id), ("mimetype", "=", "application/pdf")],
-            ["datas", "name"],
-            limit=1,
-            order="create_date desc",
-        )
-        if attachments and attachments[0].get("datas"):
-            raw = attachments[0]["datas"]
-            pdf_bytes = raw.data if hasattr(raw, "data") else base64.b64decode(raw)
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f'inline; filename="{filename}"'},
-            )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error reading attachment: {str(e)}")
-
-    raise HTTPException(
-        status_code=404,
-        detail="PDF not yet available. Open this invoice in Odoo and click Print or Send to generate it.",
-    )
 
 
 @router.post("/")
