@@ -6,12 +6,15 @@ import { TopBar, BtnPrimary, BtnSecondary, LoadingState } from "../components/UI
 
 const PROVIDERS = [
   { label: "Select provider…", value: "" },
+  { label: "Xneelo – custom domain (mail.yourdomain.com)", value: "xneelo_domain",
+    imap_host: "mail.yourdomain.com", imap_port: 993,
+    smtp_host: "smtp.yourdomain.com", smtp_port: 465 },
+  { label: "Xneelo – shared hosting (mail.xneelo.co.za)", value: "xneelo",
+    imap_host: "mail.xneelo.co.za",   imap_port: 993,
+    smtp_host: "smtp.xneelo.co.za",   smtp_port: 465 },
   { label: "Microsoft 365 (outlook.office365.com)", value: "m365",
     imap_host: "outlook.office365.com", imap_port: 993,
     smtp_host: "smtp.office365.com",   smtp_port: 587 },
-  { label: "Xneelo (imap.xneelo.co.za)", value: "xneelo",
-    imap_host: "imap.xneelo.co.za", imap_port: 993,
-    smtp_host: "smtp.xneelo.co.za", smtp_port: 587 },
   { label: "Gmail (imap.gmail.com)", value: "gmail",
     imap_host: "imap.gmail.com", imap_port: 993,
     smtp_host: "smtp.gmail.com",  smtp_port: 587 },
@@ -326,10 +329,10 @@ export default function MailboxSettings() {
           <div className="bg-white rounded-2xl border border-gray-100 px-6 py-5">
             <p className="text-xs font-bold text-gray-700 mb-2">Notes</p>
             <ul className="text-xs text-gray-500 space-y-1.5 leading-relaxed list-disc list-inside">
-              <li>Microsoft 365 mailboxes require IMAP to be enabled in the Exchange Admin Center. Basic Authentication must also be allowed for the mailbox (check with your M365 admin).</li>
-              <li>As an alternative to M365 IMAP, you can forward the sales mailbox to an Xneelo account and connect that instead.</li>
-              <li>Gmail requires an App Password (not your regular password) if 2-Step Verification is on.</li>
-              <li>Credentials are stored encrypted within the portal database and are never visible to non-super-admin users.</li>
+              <li><strong className="text-gray-600">Xneelo custom domain</strong> — IMAP: <code className="bg-gray-100 px-1 rounded">mail.yourdomain.com:993</code>, SMTP: <code className="bg-gray-100 px-1 rounded">smtp.yourdomain.com:465</code> (SSL). Use the mailbox password set in the Xneelo Control Panel.</li>
+              <li><strong className="text-gray-600">Microsoft 365</strong> — IMAP must be enabled in Exchange Admin and Basic Auth allowed for this mailbox. IMAP: <code className="bg-gray-100 px-1 rounded">outlook.office365.com:993</code>, SMTP: <code className="bg-gray-100 px-1 rounded">smtp.office365.com:587</code> (STARTTLS).</li>
+              <li><strong className="text-gray-600">Gmail</strong> — requires an App Password (not your regular password) if 2-Step Verification is on.</li>
+              <li>Credentials are stored in the portal database and are never visible to non-super-admin users.</li>
             </ul>
           </div>
 

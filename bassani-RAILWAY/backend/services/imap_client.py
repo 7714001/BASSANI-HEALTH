@@ -242,11 +242,25 @@ def _send_smtp_sync(
     if refs:
         msg["References"] = refs
     msg.attach(MIMEText(body_html, "html"))
-    with smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"]) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(cfg["smtp_username"], cfg["smtp_password"])
-        server.sendmail(cfg["mailbox_address"], [to_email], msg.as_string())
+
+    smtp_host = cfg["smtp_host"]
+    smtp_port = cfg["smtp_port"]
+    smtp_user = cfg["smtp_username"]
+    smtp_pass = cfg["smtp_password"]
+    raw       = msg.as_string()
+
+    if smtp_port == 465:
+        # Implicit SSL — Xneelo and some other providers
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(cfg["mailbox_address"], [to_email], raw)
+    else:
+        # STARTTLS — M365 (587), standard
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(cfg["mailbox_address"], [to_email], raw)
 
 
 def _test_connection_sync(cfg: dict) -> None:
