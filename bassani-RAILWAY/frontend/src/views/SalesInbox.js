@@ -123,7 +123,29 @@ function AttachmentList({ attachments, itemId }) {
 
 // ── ThreadRow ─────────────────────────────────────────────────────────────────
 
-function ThreadRow({ thread, isSelected, onClick }) {
+function ThreadStatusPill({ thread, onTicketClick }) {
+  if (thread.ticket_id) return (
+    <button
+      onClick={e => { e.stopPropagation(); onTicketClick(thread.ticket_id); }}
+      className="inline-flex items-center gap-1 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-100 rounded px-1.5 py-0.5 hover:bg-green-100 transition-colors flex-shrink-0"
+    >
+      <Ticket size={9} /> Ticket
+    </button>
+  );
+  if (thread.is_unknown_sender) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-red-50 text-red-600 border border-red-100 rounded px-1.5 py-0.5 flex-shrink-0">
+      <AlertCircle size={9} /> Unknown
+    </span>
+  );
+  if (thread.status === "pending_onboarding") return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-100 rounded px-1.5 py-0.5 flex-shrink-0">
+      Pending
+    </span>
+  );
+  return null;
+}
+
+function ThreadRow({ thread, isSelected, onClick, onTicketClick }) {
   const name   = thread.from_name || thread.from_email || "Unknown";
   const unread = thread.has_unread;
   return (
@@ -157,13 +179,13 @@ function ThreadRow({ thread, isSelected, onClick }) {
         <div className="flex items-center justify-between gap-2 mt-0.5">
           <span className="text-[11px] text-gray-400 truncate">{thread.body_preview}</span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {thread.is_unknown_sender && <AlertCircle size={10} className="text-amber-400" />}
-            {thread.has_attachments   && <Paperclip   size={10} className="text-gray-300" />}
+            {thread.has_attachments && <Paperclip size={10} className="text-gray-300" />}
             {thread.message_count > 1 && (
               <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">
                 {thread.message_count}
               </span>
             )}
+            <ThreadStatusPill thread={thread} onTicketClick={onTicketClick} />
           </div>
         </div>
       </div>
@@ -419,6 +441,10 @@ export default function SalesInbox() {
     }
   };
 
+  const goToTicket = (ticketId) => {
+    navigate("/tickets/sales", { state: { openTicketId: ticketId } });
+  };
+
   // ── Permission guard ─────────────────────────────────────────────────────────
 
   if (!can("inbox.view")) {
@@ -551,6 +577,7 @@ export default function SalesInbox() {
                 thread={thread}
                 isSelected={selectedThread?.id === thread.id}
                 onClick={() => openThread(thread)}
+                onTicketClick={goToTicket}
               />
             ))}
           </div>
@@ -591,9 +618,12 @@ export default function SalesInbox() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <StatusBadge status={selectedThread.status} />
                     {ticketId && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-lg px-2 py-0.5 font-medium">
-                        <CheckCircle2 size={10} className="text-green-500" /> Ticket
-                      </span>
+                      <button
+                        onClick={() => goToTicket(ticketId)}
+                        className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-lg px-2 py-0.5 font-medium hover:bg-green-100 transition-colors"
+                      >
+                        <CheckCircle2 size={10} className="text-green-500" /> View Ticket
+                      </button>
                     )}
                   </div>
                 </div>
