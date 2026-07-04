@@ -54,22 +54,34 @@ function AttachmentList({ attachments, itemId }) {
   if (!attachments || attachments.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2 mt-3">
-      {attachments.map(att => (
-        <a
-          key={att.id}
-          href={`/api/inbox/${itemId}/attachment/${att.id}`}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-100 transition-colors"
-        >
-          <Paperclip size={11} className="text-gray-400" />
-          {att.name}
-          {att.size_bytes > 0 && (
-            <span className="text-gray-400">({Math.round(att.size_bytes / 1024)} KB)</span>
-          )}
-          <ExternalLink size={10} className="text-gray-400" />
-        </a>
-      ))}
+      {attachments.map((att, i) => {
+        const url = att.id
+          ? `/api/inbox/${itemId}/attachment/${att.id}`
+          : att.imap_attachment_id
+          ? `/api/inbox/${itemId}/imap-attachment/${att.imap_attachment_id}`
+          : null;
+        const key = att.id || att.imap_attachment_id || i;
+        if (!url) return (
+          <span key={key}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-400 cursor-not-allowed"
+            title="Attachment too large to store (over 15 MB)"
+          >
+            <Paperclip size={11} /> {att.name}
+          </span>
+        );
+        return (
+          <a key={key} href={url} target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <Paperclip size={11} className="text-gray-400" />
+            {att.name}
+            {att.size_bytes > 0 && (
+              <span className="text-gray-400">({Math.round(att.size_bytes / 1024)} KB)</span>
+            )}
+            <ExternalLink size={10} className="text-gray-400" />
+          </a>
+        );
+      })}
     </div>
   );
 }
@@ -225,6 +237,10 @@ export default function SalesInbox() {
       toast.success("Reply sent");
       setReplying(false);
       setReplyText("");
+      // Reload thread so the sent reply appears immediately
+      const threadR = await api.get(`/api/inbox/${selected.id}/thread`);
+      setThread(threadR.data.thread || []);
+      setShowThread(true);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send reply");
     } finally {
@@ -412,16 +428,20 @@ export default function SalesInbox() {
                   </button>
                   {showThread && (
                     <div className="border-t border-gray-100 divide-y divide-gray-50">
-                      {thread.map((msg, i) => (
-                        <div key={msg.id} className={`px-5 py-4 ${msg.id === selected.id ? "bg-bassani-50" : ""}`}>
-                          <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
-                            <span className="font-medium text-gray-700">{msg.from_name}</span>
-                            <span>{fmtDate(msg.received_at)}</span>
-                            {msg.id === selected.id && <Badge color="blue">Current</Badge>}
+                      {thread.map((msg, i) => {
+                        const isOut = msg.is_outgoing;
+                        return (
+                          <div key={msg.id || i} className={`px-5 py-4 ${msg.id === selected.id ? "bg-bassani-50" : isOut ? "bg-teal-50" : ""}`}>
+                            <div className={`flex items-center gap-2 text-xs text-gray-500 mb-2 ${isOut ? "flex-row-reverse" : ""}`}>
+                              <span className={`font-medium ${isOut ? "text-teal-700" : "text-gray-700"}`}>{msg.from_name}</span>
+                              <span>{fmtDate(msg.received_at)}</span>
+                              {isOut && <Badge color="green">Sent</Badge>}
+                              {msg.id === selected.id && !isOut && <Badge color="blue">Current</Badge>}
+                            </div>
+                            <p className={`text-sm text-gray-700 line-clamp-3 ${isOut ? "text-right" : ""}`}>{msg.body_preview}</p>
                           </div>
-                          <p className="text-sm text-gray-700 line-clamp-3">{msg.body_preview}</p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

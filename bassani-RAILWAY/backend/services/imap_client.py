@@ -186,6 +186,9 @@ def _fetch_new_messages_sync(cfg: dict) -> list:
                         "name":         filename,
                         "content_type": part.get_content_type(),
                         "size_bytes":   len(payload),
+                        # bytes stored temporarily — _ingest_imap_message persists
+                        # them to sales_inbox_attachments and drops this key
+                        "_content":     payload if len(payload) <= 15_000_000 else b"",
                     })
             messages.append({
                 "imap_uid":     uid,
@@ -229,11 +232,16 @@ def _send_smtp_sync(
     body_html: str,
     in_reply_to: str = "",
     references: str = "",
-) -> None:
+) -> str:
+    """Send via SMTP and return the generated Message-ID."""
+    domain = cfg["mailbox_address"].split("@")[-1] if "@" in cfg["mailbox_address"] else "bassanihealth.com"
+    message_id = email.utils.make_msgid(domain=domain)
+
     msg = MIMEMultipart("alternative")
-    msg["From"] = cfg["mailbox_address"]
-    msg["To"]   = to_email
-    msg["Subject"] = subject
+    msg["Message-ID"] = message_id
+    msg["From"]       = cfg["mailbox_address"]
+    msg["To"]         = to_email
+    msg["Subject"]    = subject
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
     refs = references
@@ -261,6 +269,8 @@ def _send_smtp_sync(
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.sendmail(cfg["mailbox_address"], [to_email], raw)
+
+    return message_id
 
 
 def _test_connection_sync(cfg: dict) -> None:
@@ -298,11 +308,12 @@ async def send_reply(
     body_html: str,
     in_reply_to: str = "",
     references: str = "",
-) -> None:
+) -> str:
+    """Send reply and return the generated Message-ID for thread tracking."""
     cfg = get_config()
     if not cfg:
         raise RuntimeError("IMAP/SMTP not configured")
-    await asyncio.to_thread(_send_smtp_sync, cfg, to_email, subject, body_html, in_reply_to, references)
+    return await asyncio.to_thread(_send_smtp_sync, cfg, to_email, subject, body_html, in_reply_to, references)
 
 
 async def test_connection(cfg: dict) -> None:

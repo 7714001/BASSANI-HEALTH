@@ -23,7 +23,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from bson import ObjectId
+from bson import Binary as BsonBinary, ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -41,7 +41,10 @@ from services.graph_client import (
     send_reply as graph_send_reply,
 )
 from services.graph_subscription import get_client_state
+import re as _re
+
 from services.imap_client import (
+    get_config as get_imap_config,
     imap_configured,
     send_reply as imap_send_reply,
 )
@@ -260,20 +263,38 @@ async def _ingest_imap_message(msg: dict) -> None:
     customer_id, customer_name = await _resolve_customer(from_email)
     is_unknown = customer_id is None
 
-    # Thread detection via In-Reply-To header
+    # Thread detection: walk In-Reply-To then References to find any ancestor
+    # already in the inbox, even when the immediate parent is missing.
     is_reply = False
     thread_root_id: Optional[str] = None
     linked_ticket_id: Optional[str] = None
+
+    ancestor = None
     if in_reply_to:
-        parent = await col("sales_inbox").find_one(
+        ancestor = await col("sales_inbox").find_one(
             {"imap_message_id": in_reply_to},
             {"_id": 1, "ticket_id": 1, "thread_root_id": 1},
         )
-        if parent:
-            is_reply = True
-            thread_root_id = str(parent.get("thread_root_id") or parent["_id"])
-            linked_ticket_id = parent.get("ticket_id")
+    if not ancestor and references:
+        # Walk references newest-first to find the closest known ancestor
+        for ref_mid in reversed(references.split()):
+            ancestor = await col("sales_inbox").find_one(
+                {"imap_message_id": ref_mid.strip()},
+                {"_id": 1, "ticket_id": 1, "thread_root_id": 1},
+            )
+            if ancestor:
+                break
+    if ancestor:
+        is_reply = True
+        thread_root_id = str(ancestor.get("thread_root_id") or ancestor["_id"])
+        linked_ticket_id = ancestor.get("ticket_id")
 
+    # Strip attachment bytes before inserting the inbox doc — they're too large
+    # to embed and will be stored separately in sales_inbox_attachments.
+    attachments_meta = [
+        {k: v for k, v in att.items() if k != "_content"}
+        for att in attachments
+    ]
     doc = {
         "imap_message_id":   message_id,
         "imap_uid":          imap_uid,
@@ -286,7 +307,7 @@ async def _ingest_imap_message(msg: dict) -> None:
         "body_html":         body_html,
         "received_at":       received_at,
         "has_attachments":   has_att,
-        "attachments":       attachments,
+        "attachments":       attachments_meta,
         "customer_id":       customer_id,
         "customer_name":     customer_name,
         "is_unknown_sender": is_unknown,
@@ -298,7 +319,28 @@ async def _ingest_imap_message(msg: dict) -> None:
         "handled_by":        None,
         "handled_at":        None,
     }
-    await col("sales_inbox").insert_one(doc)
+    result = await col("sales_inbox").insert_one(doc)
+    item_id_str = str(result.inserted_id)
+
+    # Persist attachment bytes to sales_inbox_attachments (separate collection).
+    # Skips any attachment where _content is empty (over 15 MB — extremely rare).
+    for i, att in enumerate(attachments):
+        content = att.get("_content", b"")
+        if not content:
+            continue
+        att_result = await col("sales_inbox_attachments").insert_one({
+            "inbox_item_id": item_id_str,
+            "name":          att["name"],
+            "content_type":  att["content_type"],
+            "size_bytes":    att["size_bytes"],
+            "content":       BsonBinary(content),
+        })
+        # Patch the inbox doc with the attachment's storage ID so the
+        # download endpoint can resolve it without a collection scan.
+        await col("sales_inbox").update_one(
+            {"_id": result.inserted_id},
+            {"$set": {f"attachments.{i}.imap_attachment_id": str(att_result.inserted_id)}},
+        )
 
     # Mark read via IMAP so the mailbox stays clean
     if imap_uid:
@@ -434,7 +476,7 @@ async def list_inbox(
     if not inbox_configured():
         return {"items": [], "total": 0, "configured": False}
 
-    filt: dict = {}
+    filt: dict = {"is_outgoing": {"$ne": True}}  # outgoing copies live in thread view only
     if status and status != "all":
         filt["status"] = status
     elif not status:
@@ -510,6 +552,7 @@ async def download_attachment(
     attachment_id: str,
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
+    """Download an attachment from a Graph-sourced inbox message."""
     if not graph_configured():
         _not_configured()
 
@@ -519,8 +562,7 @@ async def download_attachment(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
-    # Verify the attachment belongs to this message before fetching
-    meta = next((a for a in item.get("attachments", []) if a["id"] == attachment_id), None)
+    meta = next((a for a in item.get("attachments", []) if a.get("id") == attachment_id), None)
     if not meta:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -535,6 +577,31 @@ async def download_attachment(
         content=content,
         media_type=content_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{item_id}/imap-attachment/{attachment_id}")
+async def download_imap_attachment(
+    item_id: str,
+    attachment_id: str,
+    current_user: dict = Depends(require_permission("inbox.view")),
+):
+    """Download an attachment stored from an IMAP-sourced inbox message."""
+    try:
+        att_oid = ObjectId(attachment_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    att = await col("sales_inbox_attachments").find_one(
+        {"_id": att_oid, "inbox_item_id": item_id}
+    )
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    return Response(
+        content=bytes(att["content"]),
+        media_type=att.get("content_type", "application/octet-stream"),
+        headers={"Content-Disposition": f'attachment; filename="{att["name"]}"'},
     )
 
 
@@ -744,6 +811,7 @@ async def reply_to_email(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
+    sent_message_id = None
     try:
         if graph_configured() and item.get("graph_message_id"):
             await graph_send_reply(item["graph_message_id"], body.body_html)
@@ -751,15 +819,55 @@ async def reply_to_email(
             subj = item.get("subject", "")
             if not subj.lower().startswith("re:"):
                 subj = f"Re: {subj}"
-            await imap_send_reply(
+            # Build references chain so email clients thread correctly
+            parent_mid = item.get("imap_message_id", "")
+            parent_refs = item.get("imap_references", "")
+            refs = f"{parent_refs} {parent_mid}".strip() if parent_mid else parent_refs
+            sent_message_id = await imap_send_reply(
                 to_email=item["from_email"],
                 subject=subj,
                 body_html=body.body_html,
-                in_reply_to=item.get("imap_message_id") or item.get("imap_in_reply_to", ""),
-                references=item.get("imap_references", ""),
+                in_reply_to=parent_mid,
+                references=refs,
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not send reply: {exc}")
+
+    # Persist the outgoing reply so it appears in the thread view.
+    # imap_message_id is stored so that the customer's next reply (which will
+    # carry In-Reply-To: <our message id>) is correctly detected as a thread
+    # reply rather than a new unhandled message.
+    now = datetime.now(timezone.utc)
+    actor = _actor(current_user)
+    preview = _re.sub(r"<[^>]+>", "", body.body_html)[:500].strip()
+    imap_cfg = get_imap_config()
+    from_email_out = imap_cfg["mailbox_address"] if imap_cfg else item.get("from_email", "")
+    thread_root = item.get("thread_root_id") or item_id
+    outgoing = {
+        "imap_message_id":     sent_message_id,   # enables thread detection for next reply
+        "imap_references":     item.get("imap_message_id", ""),
+        "from_email":          from_email_out,
+        "from_name":           actor,
+        "subject":             ("Re: " + item.get("subject", "")).replace("Re: Re: ", "Re: "),
+        "body_html":           body.body_html,
+        "body_preview":        preview,
+        "received_at":         now,
+        "is_outgoing":         True,
+        "is_reply":            True,
+        "has_attachments":     False,
+        "attachments":         [],
+        "thread_root_id":      thread_root,
+        "graph_conversation_id": item.get("graph_conversation_id"),
+        "customer_id":         item.get("customer_id"),
+        "customer_name":       item.get("customer_name"),
+        "is_unknown_sender":   False,
+        "ticket_id":           item.get("ticket_id"),
+        "status":              "sent",
+        "created_at":          now,
+        "handled_by":          current_user.get("username"),
+        "handled_at":          now,
+    }
+    await col("sales_inbox").insert_one(outgoing)
 
     background_tasks.add_task(
         audit_log,

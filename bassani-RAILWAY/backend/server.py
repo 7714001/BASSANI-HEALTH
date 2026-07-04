@@ -266,6 +266,7 @@ async def initialise_inbox():
     await col("sales_inbox").create_index([("thread_root_id", 1)])
     await col("sales_inbox").create_index([("from_email", 1)])
     await col("sales_inbox").create_index([("ticket_id", 1)])
+    await col("sales_inbox_attachments").create_index([("inbox_item_id", 1)])
 
     # Load IMAP credentials from MongoDB (falls back to env vars).
     # Must happen before graph/IMAP checks below.
