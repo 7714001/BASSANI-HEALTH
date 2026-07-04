@@ -442,7 +442,7 @@ export default function Invoices() {
                     className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline disabled:opacity-40">
                     View
                   </button>
-                  {inv.state === "posted" && (
+                  {inv.has_pdf && (
                     <button
                       onClick={e => { e.stopPropagation(); openPdf(inv); }}
                       disabled={pdfLoading.has(inv.id)}

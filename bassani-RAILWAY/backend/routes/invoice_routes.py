@@ -119,6 +119,26 @@ async def list_invoices(
         for inv in invoices:
             inv["linked_ticket_id"] = None
 
+    # Batch-check which invoices have a stored PDF attachment
+    invoice_ids = [inv["id"] for inv in invoices]
+    if invoice_ids:
+        try:
+            pdf_attachments = odoo.search_read(
+                "ir.attachment",
+                [("res_model", "=", "account.move"), ("res_id", "in", invoice_ids), ("mimetype", "=", "application/pdf")],
+                ["res_id"],
+                limit=len(invoice_ids),
+            )
+            ids_with_pdf = {a["res_id"] for a in pdf_attachments}
+            for inv in invoices:
+                inv["has_pdf"] = inv["id"] in ids_with_pdf
+        except Exception:
+            for inv in invoices:
+                inv["has_pdf"] = False
+    else:
+        for inv in invoices:
+            inv["has_pdf"] = False
+
     return {"invoices": invoices, "total": total}
 
 
