@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
 from auth import require_permission, require_any_permission, get_current_user
-from odoo_client import get_odoo_client, odoo as odoo_call, fetch_odoo_report_pdf
+from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
@@ -1043,7 +1043,6 @@ async def get_ticket_document(
         odoo_model = "account.move"
         filename = f"Invoice-{ticket.get('customer_name', ticket_id)}.pdf"
 
-    # ── Try stored attachment first ────────────────────────────────────────────
     try:
         attachments = odoo.search_read(
             "ir.attachment",
@@ -1053,29 +1052,20 @@ async def get_ticket_document(
             order="create_date desc",
         )
         if attachments and attachments[0].get("datas"):
-            pdf_bytes = base64.b64decode(attachments[0]["datas"])
+            raw = attachments[0]["datas"]
+            pdf_bytes = raw.data if hasattr(raw, "data") else base64.b64decode(raw)
             return Response(
                 content=pdf_bytes,
                 media_type="application/pdf",
                 headers={"Content-Disposition": f'inline; filename="{filename}"'},
             )
-    except Exception:
-        pass  # fall through to on-demand render
-
-    # ── Render on demand via Odoo HTTP report endpoint ─────────────────────────
-    report_name = _REPORT_NAMES[doc_type]
-    try:
-        pdf_bytes = fetch_odoo_report_pdf(report_name, record_id)
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="{filename}"'},
-        )
     except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not render {doc_type} PDF from Odoo: {str(e)}",
-        )
+        raise HTTPException(status_code=502, detail=f"Odoo error reading attachment: {str(e)}")
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"{doc_type.capitalize()} PDF not yet available. Open the record in Odoo and click Print or Send to generate it.",
+    )
 
 
 @router.post("/{ticket_id}/register-payment")

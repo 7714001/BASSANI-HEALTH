@@ -5,7 +5,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client, odoo as odoo_call, fetch_odoo_report_pdf
+from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
 
@@ -272,7 +272,11 @@ def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_us
 
     filename = f"{invoice_name}.pdf"
 
-    # ── Try stored attachment first ────────────────────────────────────────────
+    # Odoo stores PDFs as ir.attachment records after the invoice is first printed or emailed.
+    # This covers all invoices in a normal workflow. If no attachment exists the invoice
+    # has never been sent/printed from Odoo — return a clear 404 rather than trying to
+    # render on demand (Odoo v17 does not expose the render method via XML-RPC or HTTP
+    # with API-key credentials).
     try:
         attachments = odoo.search_read(
             "ir.attachment",
@@ -289,19 +293,13 @@ def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_us
                 media_type="application/pdf",
                 headers={"Content-Disposition": f'inline; filename="{filename}"'},
             )
-    except Exception:
-        pass  # fall through to on-demand render
-
-    # ── Render on demand via Odoo HTTP report endpoint ─────────────────────────
-    try:
-        pdf_bytes = fetch_odoo_report_pdf("account.report_invoice_with_payments", invoice_id)
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="{filename}"'},
-        )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not render invoice PDF from Odoo: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Odoo error reading attachment: {str(e)}")
+
+    raise HTTPException(
+        status_code=404,
+        detail="PDF not yet available. Open this invoice in Odoo and click Print or Send to generate it.",
+    )
 
 
 @router.post("/")
