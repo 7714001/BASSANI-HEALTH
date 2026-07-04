@@ -80,8 +80,7 @@ export default function SalesTickets() {
     if (!targetId || loading) return;
     const match = tickets.find(t => t.id === targetId);
     if (match) openDetail(match);
-    // openDetail is stable — intentionally omitted from deps to run once after load
-  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loading]); // eslint-disable-line
 
   // ── Create modal ──────────────────────────────────────────────────────────
   const [createModal, setCreateModal]       = useState(false);
