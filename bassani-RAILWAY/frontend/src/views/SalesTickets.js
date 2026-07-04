@@ -807,7 +807,7 @@ export default function SalesTickets() {
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-14 flex flex-col items-center justify-center gap-3">
                       <ShoppingCart size={36} className="text-gray-200" />
                       <p className="text-sm font-medium text-gray-300">No quote built yet</p>
-                      {detail.source === "direct" && canDrive && !detail.exit_status && (
+                      {(detail.source === "direct" || detail.source === "email") && canDrive && !detail.exit_status && (
                         <div className="mt-2">
                           <BtnPrimary onClick={() => openQuoteBuilder(detail)}>
                             <ShoppingCart size={14} />Build Quote
@@ -831,7 +831,7 @@ export default function SalesTickets() {
                         ? <Badge color={EXIT_COLOR[detail.exit_status]}>{EXIT_LABEL[detail.exit_status]}</Badge>
                         : <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>}
                       <Badge color={detail.source === "portal" ? "blue" : "gray"}>
-                        {detail.source === "portal" ? "Portal Order" : "Direct Inquiry"}
+                        {detail.source === "portal" ? "Portal Order" : detail.source === "email" ? "Email Inquiry" : "Direct Inquiry"}
                       </Badge>
                     </div>
                     <div className="space-y-1.5">
