@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-04  
+**Last Updated:** 2026-07-05  
 **Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 IMAP/SMTP path built and deployed — inbox live for any IMAP mailbox; M365 Graph path still available when Azure credentials provided; Phase 12 in progress (12.0 backend foundation complete)  
 
 ---
@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Mailbox Integration | 🟢 Live (IMAP path) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP alternative path built 2026-07-04 — works with Xneelo, M365 Basic Auth, or any IMAP provider · Super admin connects mailbox via Settings > Mailbox |
+| 11 | Mailbox Integration | 🟢 Live (IMAP path) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI with thread grouping, read/unread state, status pills, and ticket navigation — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1454,6 +1454,26 @@ Two backends are supported. Only one needs to be configured:
 - IMAP/Basic Auth must be enabled in Exchange Admin Center for the shared mailbox
 - Ask Tristan (M365 admin) to confirm. Command: `Get-CASMailbox orders@bassanihealth.com | Select ImapEnabled`
 - If Basic Auth is disabled tenant-wide, options: (a) re-enable for this mailbox only, (b) forward to an Xneelo account, (c) pursue Graph OAuth2 path when Azure creds are available
+
+### 11.B — Professional Inbox UI (Thread-Grouped, Read State, Pipeline Integration)
+
+**Completed 2026-07-05:**
+- [x] `list_inbox` replaced with MongoDB aggregation pipeline — one row per conversation (grouped by `thread_root_id`), ordered by most recent activity; `message_count`, `unread_count`, `has_unread` per row
+- [x] `is_read: False` set on ingest (Graph + IMAP); `is_read: True` on outgoing reply copies
+- [x] `_mark_thread_read()` helper + `POST /{id}/mark-read` endpoint; `GET /{id}/thread` auto-marks thread read as BackgroundTask
+- [x] Thread endpoint includes `body_html` and correctly includes the root message when navigating from a reply
+- [x] `status=open` default filter — excludes archived + ticket_created; `q` search across from_name, from_email, subject, body_preview
+- [x] `SalesInbox.js` — full two-panel redesign:
+  - Left panel: thread list with unread dot, initials avatar, bold unread state, message count badge
+  - Status tabs: Inbox / New / Pending / Done / Archived
+  - Debounced search
+  - Status pills per row: green **Ticket** (clickable, navigates to ticket), red **Unknown**, amber **Pending**
+  - Right panel: bubble-style message stream — incoming left/white, outgoing right/teal, date separators, auto-scroll to latest
+  - Reply compose pinned to bottom, Ctrl+Enter shortcut
+  - **View Ticket** button in thread header navigates to `/tickets/sales` with `openTicketId` state (reuses existing SalesTickets hook)
+- [x] Archive/Dismiss — available on all non-archived threads including `ticket_created`; button label is **Dismiss** when a ticket exists (communicates that the inbox entry is dismissed, not the ticket), **Archive** otherwise
+
+---
 
 ### Context
 

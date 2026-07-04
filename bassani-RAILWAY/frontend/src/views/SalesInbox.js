@@ -498,7 +498,7 @@ export default function SalesInbox() {
   const isUnknown       = selectedThread?.is_unknown_sender;
   const ticketId        = selectedThread?.ticket_id;
   const canCreateTicket = selectedThread != null && !isUnknown && !ticketId;
-  const canArchive      = selectedThread != null && !["archived", "ticket_created"].includes(selectedThread.status);
+  const canArchive      = selectedThread != null && selectedThread.status !== "archived";
 
   // ── Two-panel layout ─────────────────────────────────────────────────────────
 
@@ -677,7 +677,7 @@ export default function SalesInbox() {
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-700 transition-colors"
                     >
                       <Archive size={11} />
-                      {archiving ? "Archiving…" : "Archive"}
+                      {archiving ? "Dismissing…" : ticketId ? "Dismiss" : "Archive"}
                     </button>
                   )}
                 </div>

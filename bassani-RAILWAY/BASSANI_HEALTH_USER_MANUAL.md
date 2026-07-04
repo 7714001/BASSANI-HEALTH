@@ -434,104 +434,110 @@ Once an order is confirmed, it moves to the Orders team (Tshidi). You will see t
 
 **Access:** Sales role (`inbox.view` permission), Admins with `inbox.view`, Super Admin
 
-The Sales Inbox connects the `orders@bassanihealth.com` shared Microsoft 365 mailbox directly into the portal. Every email that arrives in that mailbox appears in the Inbox — no need to open Outlook. You can read, reply, create tickets, and archive without leaving the portal.
+The Sales Inbox connects the shared sales mailbox directly into the portal. Every email that arrives appears here — no need to open a separate email client. You can read, reply, create tickets, and clear the queue without leaving the portal. The mailbox is configured by a super admin in **Settings > Mailbox**.
 
-> **This requires Azure app credentials** (`MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`) set in Railway. Without them, the Inbox menu item will still appear but will show a "not configured" message. Contact your M365 admin (Tristan) to obtain these values.
+### Layout
 
-### The Inbox List
+The inbox uses a two-panel layout:
 
-Go to **Inbox** in the left sidebar to open the inbox view. You will see a list of email threads sorted by most recent first.
+- **Left panel** — the thread list. One row per conversation, ordered by most recent activity.
+- **Right panel** — the full conversation. Click any thread on the left to open it.
 
-Each thread shows:
-- The sender name and email address
+### The Thread List
+
+Each row shows:
+- A **blue dot** on the left if the thread has unread messages
+- The sender name (bold when unread)
 - The subject line
 - A preview of the latest message
-- When it was received
-- Its status: **Unread**, **Read**, or **Archived**
-- Whether it is already linked to a Sales Ticket (shows a ticket reference if so)
-- Whether the sender has been matched to a known Odoo customer (shows the customer name if matched)
+- The timestamp of the latest message
+- A message count badge if the thread has more than one message
 
-**Filter chips** at the top let you narrow down:
-- **All** — everything not archived
-- **Unread** — emails that haven't been opened yet
-- **Linked** — threads that already have a Sales Ticket created from them
-- **Unlinked** — threads with no ticket yet (your to-do pile)
-- **Archived** — dismissed/dealt-with emails
+**Status pill** (right edge of each row):
+- Green **Ticket** — a sales ticket has been created. Click it to jump straight to the ticket.
+- Red **Unknown** — the sender hasn't been matched to a customer yet. Action required before a ticket can be created.
+- Amber **Pending** — flagged for customer onboarding.
+- No pill — unhandled, customer matched. The thread is ready for a ticket to be created.
 
-### Reading an Email Thread
+**Status tabs** across the top of the list:
+- **Inbox** (default) — all active threads, excluding archived and done
+- **New** — unhandled only
+- **Pending** — threads flagged for customer onboarding
+- **Done** — threads where a ticket has been created
+- **Archived** — dismissed threads
 
-Click any thread to open the full conversation view. You will see:
-- All messages in the thread in chronological order (oldest at top, newest at bottom)
-- The full sender details and reply-to address
-- Any attachments (shown as download links)
+Use the **search bar** to filter by sender name, email address, or subject.
 
-The thread is automatically marked as **Read** when you open it.
+### Opening a Thread
+
+Click any row to open the conversation in the right panel. The thread displays all messages in chronological order with the oldest at the top and newest at the bottom. Incoming messages appear on the left (white), your replies on the right (teal).
+
+The thread is automatically marked as read when you open it.
 
 ### Customer Matching
 
-When an email arrives, the system tries to match the sender's email address to an Odoo customer automatically. If it finds a match, the customer's name appears on the thread in both the inbox list and the thread view.
+When an email arrives, the system tries to match the sender's email address to a known customer automatically. If matched, the customer's name appears in green at the top of the thread detail.
 
-**If the sender is not automatically matched:**
+**If the sender is not matched (red "Unknown" pill):**
 1. Open the thread
-2. Click **Link Customer** in the right panel
+2. Click **Link customer** in the action bar
 3. Search for the customer by name or email
-4. Select the correct customer from the results
-5. Click **Link**
+4. Select the correct customer
 
-The sender's email address is now remembered — future emails from the same address will auto-match to this customer.
+Or, if the sender represents a brand-new customer:
+1. Click **Start onboarding**
+2. Add an optional note
+3. Complete the onboarding in the Customers section, then return to link the customer and create a ticket
 
-### Creating a Sales Ticket from an Email
+### Creating a Sales Ticket
 
-When an email represents a new sales inquiry:
-
-1. Open the thread
-2. Click **Create Sales Ticket** in the right panel
-3. If a customer is already matched, the ticket is pre-populated with their details
-4. If no customer is matched yet, you will be prompted to link a customer or create a ticket as an unmatched inquiry
-5. Confirm — the ticket is created at `Open` stage, linked to this email thread
-
-Once a ticket is created:
-- The thread shows the ticket reference
-- The ticket's timeline shows it was created from this email thread
-- Opening the ticket later shows a link back to the inbox thread
-- From the ticket, you can use **Build Quote**, **Send Quote**, and all other normal Sales Ticket actions
-
-> You can only create one Sales Ticket per email thread. If the thread already has a linked ticket, the button changes to **View Ticket**.
-
-### Replying to an Email
-
-You can reply to any email thread directly from the portal — no need to open Outlook:
+Once a customer is matched:
 
 1. Open the thread
-2. Type your reply in the text box at the bottom of the thread view
-3. Click **Send Reply**
+2. Click **Create ticket** in the action bar
+3. A Sales Ticket is created at Open stage and linked to this thread
 
-The reply is sent from `orders@bassanihealth.com` via Microsoft 365 and appears as a new message in the thread. The sender receives it in their inbox as a normal email reply.
+Once created:
+- The green **View Ticket** button appears in the thread header — click it to go directly to the ticket
+- The green **Ticket** pill appears in the thread list row — click it to go to the ticket without opening the thread
+- All order lifecycle actions (quote, deposit, packing, payment confirmation) happen in the ticket from this point
 
-> Replies are sent via the Microsoft Graph API using the shared mailbox credentials. If the Azure credentials are not configured, the reply box will not appear.
+You can only create one ticket per thread.
 
-### Archiving a Thread
+### Replying
 
-When you have dealt with an email and do not want it cluttering the active inbox:
+The reply box is always visible at the bottom of the open thread:
 
-1. Open the thread (or hover over it in the list)
-2. Click **Archive**
+1. Type your reply
+2. Click **Send Reply** (or press Ctrl+Enter)
 
-Archived threads move to the **Archived** filter view. They are not deleted — you can search for or access them at any time. Archiving is reversible: open an archived thread and click **Unarchive** to move it back to the active inbox.
+The reply is sent from the shared mailbox and appears as a new message in the thread. It is also stored in the portal so the full conversation is always visible in one place.
 
-### Inbox and Sales Tickets Working Together
+### Clearing the Queue
 
-The inbox and tickets are designed to work hand-in-hand:
+**Unrelated email** (misdirected, spam, vendor correspondence that needs no action):
+1. Open the thread
+2. Click **Archive** in the action bar
 
-- An email arrives in `orders@bassanihealth.com`
-- It appears in the Inbox
-- Merveille reads it, links it to the customer, and creates a Sales Ticket
-- She builds the quote in the ticket and sends it via the ticket's **Send Quote** action
-- The customer replies — their reply appears in the same inbox thread
+The thread moves to the Archived tab and is removed from the active queue. It is not deleted.
+
+**Cold ticket** (a ticket was created but the deal went quiet and you want to clean up the inbox entry):
+1. Open the thread
+2. Click **Dismiss** in the action bar
+
+Dismiss works identically to Archive — the inbox entry is removed from the active queue. The linked ticket is not affected and remains on the ticket board exactly as it was.
+
+### How Inbox and Tickets Work Together
+
+- An email arrives in the shared sales mailbox
+- It appears in the Inbox under the **New** tab
+- Merveille opens it, links the customer, and clicks **Create ticket**
+- She builds the quote and sends it from within the ticket
+- The customer replies — their reply appears in the same inbox thread under **Inbox**
 - Merveille can reply from the portal or advance the ticket as needed
-- When the order is complete, she archives the thread
+- When the order is complete she clicks **Dismiss** to clean the inbox entry
 
-The inbox does not replace the ticket — it is the entry point. All order lifecycle actions (confirming, deposits, packing) happen in the ticket as normal.
+The inbox is the entry point. All order lifecycle actions happen in the ticket.
 
 ---
 
