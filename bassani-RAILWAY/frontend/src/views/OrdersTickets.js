@@ -12,7 +12,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock,
+  AlertTriangle, Package, Clock, Truck,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
@@ -97,6 +97,21 @@ export default function OrdersTickets() {
       await api.put(`/api/packing/${path}`, { order_id, ...extra });
       toast.success("Updated");
       await refreshDetail(order_id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
+    finally { setBusyId(null); }
+  };
+
+  const handleComplete = async () => {
+    setBusyId(detail.order_id);
+    try {
+      const r = await api.put("/api/packing/complete", { order_id: detail.order_id });
+      if (r.data.warning) {
+        toast.success("Order marked complete");
+        toast.error(`Delivery not validated in Odoo: ${r.data.warning}`, { duration: 8000 });
+      } else {
+        toast.success("Order complete — delivery validated in Odoo");
+      }
+      await refreshDetail(detail.order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
     finally { setBusyId(null); }
   };
@@ -290,6 +305,18 @@ export default function OrdersTickets() {
                           <span className="text-gray-400">{fmtDate(e.at)}</span>
                         </div>
                       ))}
+                      {detail.status === "complete" && detail.delivery_validated === true && (
+                        <div className="flex items-center gap-1.5 text-xs pt-0.5">
+                          <Truck size={10} className="text-green-400 shrink-0" />
+                          <span className="text-green-600 font-medium">Delivery validated in Odoo</span>
+                        </div>
+                      )}
+                      {detail.status === "complete" && detail.delivery_validated === false && (
+                        <div className="flex items-center gap-1.5 text-xs pt-0.5">
+                          <Truck size={10} className="text-amber-400 shrink-0" />
+                          <span className="text-amber-600 font-medium">Delivery not validated in Odoo</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -358,7 +385,7 @@ export default function OrdersTickets() {
                                 Both QA and RP have signed off. Complete this order.
                               </p>
                               <BtnPrimary
-                                onClick={() => act("complete", detail.order_id)}
+                                onClick={handleComplete}
                                 loading={busyId === detail.order_id}
                                 className="w-full justify-center"
                               >

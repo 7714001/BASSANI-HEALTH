@@ -494,6 +494,59 @@ export default function SalesTickets() {
     finally { setDepositSaving(false); }
   };
 
+  // ── Balance Payment Registration ─────────────────────────────────────────
+  const [balanceModal, setBalanceModal]     = useState(false);
+  const [balanceJournals, setBalanceJournals] = useState([]);
+  const [balanceForm, setBalanceForm]       = useState({ amount: "", date: "", journal_id: "", note: "" });
+  const [balanceSaving, setBalanceSaving]   = useState(false);
+  const [balanceInfo, setBalanceInfo]       = useState(null); // {amount_residual, invoice_name}
+
+  const openBalanceModal = async () => {
+    const today = new Date().toISOString().split("T")[0];
+    setBalanceForm({ amount: "", date: today, journal_id: "", note: "" });
+    setBalanceInfo(null);
+    try {
+      const [journalRes, balanceRes] = await Promise.all([
+        api.get("/api/tickets/payment-journals"),
+        api.get(`/api/tickets/${detail.id}/invoice-balance`),
+      ]);
+      const journals = journalRes.data.journals || [];
+      setBalanceJournals(journals);
+      const info = balanceRes.data;
+      setBalanceInfo(info);
+      setBalanceForm(f => ({
+        ...f,
+        amount:     info.amount_residual > 0 ? info.amount_residual.toFixed(2) : "",
+        journal_id: journals[0]?.id ? String(journals[0].id) : "",
+      }));
+    } catch { toast.error("Failed to load invoice balance"); }
+    setBalanceModal(true);
+  };
+
+  const registerBalance = async () => {
+    if (!balanceForm.amount || !balanceForm.date || !balanceForm.journal_id)
+      return toast.error("Amount, date and payment method are required");
+    setBalanceSaving(true);
+    const tid = detail.id;
+    try {
+      const r = await api.post(`/api/tickets/${tid}/register-payment`, {
+        amount:     parseFloat(balanceForm.amount),
+        date:       balanceForm.date,
+        journal_id: parseInt(balanceForm.journal_id),
+        note:       balanceForm.note || undefined,
+      });
+      const residual = r.data.amount_residual;
+      if (residual > 0) {
+        toast.success(`Payment registered — R${residual.toLocaleString("en-ZA", { minimumFractionDigits: 2 })} still outstanding`);
+      } else {
+        toast.success("Payment registered — invoice fully paid in Odoo");
+      }
+      setBalanceModal(false);
+      refreshDetail(tid);
+    } catch (e) { toast.error(e.response?.data?.detail || "Payment registration failed"); }
+    finally { setBalanceSaving(false); }
+  };
+
   // ── Quote totals ──────────────────────────────────────────────────────────
   const quoteSubtotal = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
   const quoteVat      = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (l._tax_rate / 100), 0);
@@ -804,6 +857,12 @@ export default function SalesTickets() {
                           </button>
                         )}
 
+                        {detail.payment_confirmed_at && detail.order_id && canFinance && (
+                          <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
+                            <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
+                          </button>
+                        )}
+
                         {/* Divider before destructive actions */}
                         {((detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive) || (!detail.order_id && canDrive)) && (
                           <div className="my-1 border-t border-gray-100" />
@@ -995,6 +1054,61 @@ export default function SalesTickets() {
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {/* Balance payment modal */}
+        {balanceModal && (
+          <Modal title="Register Balance Payment" onClose={() => setBalanceModal(false)}>
+            <p className="text-xs text-gray-500 mb-1">
+              Registers payment directly against the full sale invoice in Odoo. Use this for the remaining balance after the deposit — or for any partial payment toward the outstanding amount.
+            </p>
+            {balanceInfo?.invoice_name && (
+              <p className="text-xs text-blue-600 mb-4">
+                Invoice: {balanceInfo.invoice_name}
+                {balanceInfo.amount_residual > 0 && (
+                  <> — Outstanding: R{balanceInfo.amount_residual.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</>
+                )}
+              </p>
+            )}
+            <FormGroup label="Amount (ZAR)" required>
+              <Input
+                type="number" step="0.01" min="0.01"
+                value={balanceForm.amount}
+                onChange={e => setBalanceForm(f => ({ ...f, amount: e.target.value }))}
+                placeholder="e.g. 15000.00"
+                autoFocus
+              />
+            </FormGroup>
+            <FormGroup label="Payment Date" required>
+              <Input
+                type="date"
+                value={balanceForm.date}
+                onChange={e => setBalanceForm(f => ({ ...f, date: e.target.value }))}
+              />
+            </FormGroup>
+            <FormGroup label="Payment Method" required>
+              <Select
+                value={balanceForm.journal_id}
+                onChange={e => setBalanceForm(f => ({ ...f, journal_id: e.target.value }))}
+              >
+                <option value="">— Select —</option>
+                {balanceJournals.map(j => (
+                  <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
+                ))}
+              </Select>
+            </FormGroup>
+            <FormGroup label="Note">
+              <Input
+                value={balanceForm.note}
+                onChange={e => setBalanceForm(f => ({ ...f, note: e.target.value }))}
+                placeholder="e.g. EFT received 2026-07-04"
+              />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setBalanceModal(false)} disabled={balanceSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={registerBalance} loading={balanceSaving}>Register in Odoo</BtnPrimary>
             </div>
           </Modal>
         )}

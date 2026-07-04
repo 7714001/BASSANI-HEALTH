@@ -427,6 +427,56 @@ async def rp_approve(
     return {"success": True}
 
 
+def _validate_odoo_delivery(odoo_order_id: int) -> dict:
+    """Validate all assigned stock.picking records linked to an Odoo sale order.
+
+    Sets qty_done = reserved quantity on every move line before validating to
+    avoid the Immediate Transfer dialog. If button_validate returns a backorder
+    wizard dict (partial reservation), processes it best-effort so Odoo creates
+    the backorder automatically.
+
+    Returns {"success": bool, "pickings": [name, ...], "error": str|None}.
+    Never raises — caller always continues regardless of outcome.
+    """
+    _odoo = get_odoo_client()
+    try:
+        pickings = _odoo.search_read(
+            "stock.picking",
+            [("sale_id", "=", odoo_order_id), ("state", "=", "assigned")],
+            ["id", "name"],
+        )
+    except Exception as e:
+        return {"success": False, "pickings": [], "error": f"Could not fetch delivery orders from Odoo: {e}"}
+
+    if not pickings:
+        return {"success": False, "pickings": [], "error": "No delivery orders in Ready state found for this order"}
+
+    validated: list = []
+    errors: list = []
+    for picking in pickings:
+        pid = picking["id"]
+        pname = picking["name"]
+        try:
+            _odoo.execute("stock.picking", "action_set_quantities_to_reservation", [pid])
+            result = _odoo.execute("stock.picking", "button_validate", [pid])
+            if isinstance(result, dict) and result.get("res_model") == "stock.backorder.confirmation":
+                # Partial reservation — ask Odoo to auto-create a backorder
+                try:
+                    wiz_id = _odoo.create("stock.backorder.confirmation", {"pick_ids": [(4, pid)]})
+                    _odoo.execute("stock.backorder.confirmation", "process", [wiz_id])
+                except Exception:
+                    pass  # backorder wizard failed — picking validated with partial qty_done
+            validated.append(pname)
+        except Exception as e:
+            errors.append(f"{pname}: {e}")
+
+    if errors and not validated:
+        return {"success": False, "pickings": [], "error": "; ".join(errors)}
+    if errors:
+        return {"success": True, "pickings": validated, "error": f"Partial: {'; '.join(errors)}"}
+    return {"success": True, "pickings": validated, "error": None}
+
+
 @router.put("/complete")
 async def complete_entry(
     body: OrderIdBody,
@@ -445,14 +495,37 @@ async def complete_entry(
         raise HTTPException(status_code=400, detail="Both QA and RP approval are required before marking complete")
 
     now = datetime.now(timezone.utc)
+
+    # ── Odoo delivery validation (non-blocking) ────────────────────────────────
+    delivery_result: dict = {"success": False, "pickings": [], "error": "Not attempted"}
+    try:
+        odoo_order_id = int(entry["order_id"])
+        delivery_result = _validate_odoo_delivery(odoo_order_id)
+    except (ValueError, TypeError) as e:
+        delivery_result = {"success": False, "pickings": [], "error": f"Invalid order ID: {e}"}
+    except Exception as e:
+        delivery_result = {"success": False, "pickings": [], "error": str(e)}
+
     updated = await col("packing_board").find_one_and_update(
         {"order_id": body.order_id},
-        {"$set": {"status": "complete", "completed_at": now}},
+        {"$set": {
+            "status": "complete",
+            "completed_at": now,
+            "delivery_validated": delivery_result["success"],
+        }},
         return_document=True,
     )
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.complete", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await audit_log(
+        "packing.delivery_validated",
+        "packing_board",
+        body.order_id,
+        entity_label=body.order_id,
+        user=current_user,
+        detail=delivery_result,
+    )
     await _sync_sales_ticket(body.order_id, "complete")
 
     _sups = await col("users").find(
@@ -473,7 +546,13 @@ async def complete_entry(
             supervisor_emails=_sup_emails,
         )
 
-    return {"success": True}
+    response: dict = {"success": True, "delivery_validated": delivery_result["success"]}
+    if not delivery_result["success"]:
+        response["warning"] = (
+            delivery_result.get("error")
+            or "Delivery could not be validated in Odoo. Stock levels may not reflect this completion."
+        )
+    return response
 
 
 @router.put("/incomplete")

@@ -82,6 +82,13 @@ class TicketDepositRegister(BaseModel):
     note: Optional[str] = ""
 
 
+class TicketBalancePayment(BaseModel):
+    amount: float
+    date: str           # YYYY-MM-DD
+    journal_id: int
+    note: Optional[str] = ""
+
+
 class TicketFromOrder(BaseModel):
     order_id: int
 
@@ -921,6 +928,195 @@ async def register_deposit(
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
     )
     return {"success": True, "invoice_id": invoice_id}
+
+
+@router.get("/{ticket_id}/invoice-balance")
+async def get_invoice_balance(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Return the outstanding balance on the full sale invoice for this ticket.
+    Used by the Register Balance Payment modal to pre-populate the amount."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order on this ticket")
+
+    odoo = get_odoo_client()
+    try:
+        order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["invoice_ids", "name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not order_rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+
+    inv_ids = order_rows[0].get("invoice_ids", [])
+    if not inv_ids:
+        return {"invoice_id": None, "invoice_name": None, "amount_total": 0, "amount_residual": 0, "payment_state": "not_found"}
+
+    try:
+        invoices = odoo.read(
+            "account.move", inv_ids,
+            fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading invoices: {str(e)}")
+
+    # The full SO invoice is the customer invoice with the largest amount_total — down
+    # payment invoices are always smaller partial amounts against the same order.
+    out_invoices = [i for i in invoices if i.get("move_type") == "out_invoice"]
+    if not out_invoices:
+        return {"invoice_id": None, "invoice_name": None, "amount_total": 0, "amount_residual": 0, "payment_state": "not_found"}
+
+    full_invoice = max(out_invoices, key=lambda i: i.get("amount_total", 0))
+    return {
+        "invoice_id":      full_invoice["id"],
+        "invoice_name":    full_invoice["name"],
+        "amount_total":    full_invoice["amount_total"],
+        "amount_residual": full_invoice["amount_residual"],
+        "payment_state":   full_invoice["payment_state"],
+    }
+
+
+@router.post("/{ticket_id}/register-payment")
+async def register_balance_payment(
+    ticket_id: str,
+    body: TicketBalancePayment,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Register a balance (or partial) payment against the full sale invoice.
+
+    Unlike register-deposit (which creates a down payment invoice first), this
+    registers payment directly against the existing full invoice created at order
+    confirmation — keeping Odoo as the financial source of truth.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status") in ("cancelled", "not_interested"):
+        raise HTTPException(status_code=400, detail=f"Ticket is closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build the quote first")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    odoo = get_odoo_client()
+
+    # Resolve company context from the order
+    try:
+        order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["company_id", "state", "name", "invoice_ids"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not order_rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order_row = order_rows[0]
+    _co = order_row.get("company_id")
+    order_company_id = _co[0] if _co else None
+    _cctx = company_context(order_company_id)
+
+    # Find the full invoice — the out_invoice with the largest amount_total
+    inv_ids = order_row.get("invoice_ids", [])
+    if not inv_ids:
+        raise HTTPException(status_code=400, detail="No invoices found on this order — confirm the order first")
+
+    try:
+        invoices = odoo.read(
+            "account.move", inv_ids,
+            fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading invoices: {str(e)}")
+
+    out_invoices = [i for i in invoices if i.get("move_type") == "out_invoice"]
+    if not out_invoices:
+        raise HTTPException(status_code=400, detail="No customer invoice found for this order")
+
+    full_invoice = max(out_invoices, key=lambda i: i.get("amount_total", 0))
+    invoice_id = full_invoice["id"]
+
+    if full_invoice.get("payment_state") == "paid":
+        raise HTTPException(status_code=400, detail="This invoice is already fully paid in Odoo")
+    if full_invoice.get("amount_residual", 0) <= 0:
+        raise HTTPException(status_code=400, detail="No outstanding balance on this invoice")
+
+    # Register payment via Odoo wizard
+    pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
+    try:
+        pay_wizard_id = odoo_call(
+            "account.payment.register", "create",
+            [{
+                "amount": body.amount,
+                "journal_id": body.journal_id,
+                "payment_date": body.date,
+            }],
+            {"context": pay_ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+
+    try:
+        odoo_call(
+            "account.payment.register", "action_create_payments",
+            [[pay_wizard_id]],
+            {"context": pay_ctx},
+        )
+    except Exception as e:
+        # Verify payment actually landed despite XML-RPC serialisation quirk on action response
+        try:
+            updated = odoo.read("account.move", [invoice_id], fields=["payment_state", "amount_residual"])
+            if not updated or updated[0].get("payment_state") not in ("in_payment", "partial", "paid"):
+                raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+            final_state = updated[0]["payment_state"]
+            final_residual = updated[0]["amount_residual"]
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        logger.warning("balance_payment_response_error",
+                       extra={"invoice_id": invoice_id, "error": str(e)})
+    else:
+        try:
+            updated = odoo.read("account.move", [invoice_id], fields=["payment_state", "amount_residual"])
+            final_state = updated[0]["payment_state"] if updated else "unknown"
+            final_residual = updated[0]["amount_residual"] if updated else 0
+        except Exception:
+            final_state = "unknown"
+            final_residual = 0
+
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "balance_payment_by": current_user["id"],
+                "balance_payment_at": now,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now,
+                "note": body.note or f"Balance payment registered — R{body.amount:,.2f} via journal {body.journal_id}",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.register_payment", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
+                "date": body.date, "payment_state": final_state, "amount_residual": final_residual},
+    )
+    return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual}
 
 
 @router.post("/from-order")

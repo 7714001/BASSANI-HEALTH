@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-01  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 7/8 complete — only staff account creation outstanding; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 pending); Phase 11 built and deployed, blocked on Azure credentials  
+**Last Updated:** 2026-07-02  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 built and deployed, blocked on Azure credentials; Phase 12 in progress (12.0 backend foundation complete)  
 
 ---
 
@@ -13,15 +13,15 @@
 |-------|------|--------|-----------|
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
 | 1 | Security Hardening | 🟢 Complete | All items complete — 2026-06-29 (1.2 CORS + 1.5 email OTP 2FA) |
-| 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verified — 2026-06-29 |
+| 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verified — 2026-06-29 · 2.8 Email Routing Configuration (super admin) — 2026-07-02 |
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–10 (8.1–8.12 code complete) — 2026-06-29 |
+| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
-| 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 pending |
+| 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Microsoft 365 Mailbox Integration | 🟡 In Progress | All code built — 2026-06-29 · Blocked on: Azure app registration credentials from M365 admin (Tristan) |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
@@ -397,6 +397,23 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Verify sending domain is verified in Resend dashboard — `bassanihealth.com` verified 2026-06-29
 - [x] Confirm free tier limit (3,000/month, 100/day) is sufficient for current volume; upgrade to Pro ($20/month) if needed
 
+#### 2.8 Email Routing Configuration (Super Admin) — Added 2026-07-02
+
+**Goal:** Allow a super admin to configure which addresses receive automated notifications without requiring Railway env var changes. Three routing categories are configurable from the portal itself.
+
+- [x] New MongoDB collection `portal_settings`, document `{ _id: "email_routing" }` — stores the three routing arrays
+- [x] `backend/routes/settings_routes.py` — `GET /api/settings/email-routing` (returns config, super admin gated) and `PUT /api/settings/email-routing` (upserts, super admin gated)
+- [x] `get_email_routing()` shared async helper — imported by route files that send notification emails; reads from MongoDB, falls back to `SUPPORT_EMAIL` env var if unconfigured; single import point, no duplication
+- [x] Three configurable routing lists:
+  - `application_submitted_to` — who receives new customer application alerts (default: `SUPPORT_EMAIL` env var)
+  - `order_ready_extra_to` — extra recipients for "order ready for collection" (warehouse supervisors always auto-detected; this adds distribution lists or staff without portal accounts)
+  - `order_cc` — CC'd on all reseller-facing order placed and order confirmed emails (useful for an ops inbox)
+- [x] `email_service.py` `_send()` gained `cc` parameter; `send_onboarding_submitted` gained `to` override; `send_order_placed` and `send_order_confirmed` gained `cc`
+- [x] Call sites updated: `onboarding_routes.py`, `packing_board_routes.py`, `order_routes.py` — each fetches routing config and applies appropriate `to`/`cc` override before the `background_tasks.add_task()` call
+- [x] `frontend/src/views/EmailSettings.js` — super admin only view at `/settings/email-routing`; `EmailTagInput` component (tag pills, Enter/comma to add, Backspace to remove, email format validation); three `RoutingSection` cards with descriptions; amber "Super Admin only" info banner
+- [x] `superAdminOnly: true` nav item flag in `ADMIN_NAV` (in `UI.js`) — filter skips the item for non-super-admin users; only super admins see "Email Routing" in the sidebar
+- [x] User manual updated: Step 8a section and full Automated Email Reference table (14 emails, trigger, recipient)
+
 ### Definition of Done
 - [x] Place a test order → reseller receives confirmation email within 60 seconds
 - [x] Admin confirms order → reseller and customer both receive emails
@@ -410,6 +427,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 
 ### Notes
 > **2026-06-23:** All templates and route wiring complete. Dev account uses nick@rubixdevelopment.co.za Resend key — swap to client's key when credentials are available and verify the bassanihealth.com sending domain in the Resend dashboard. Graceful degradation is in place: if `RESEND_API_KEY` is unset, emails log a mock message and skip without crashing.
+
+> **2.8 (2026-07-02):** Email routing configuration. New `backend/routes/settings_routes.py` with `GET` / `PUT /api/settings/email-routing` (super admin gated via `_require_super_admin` dependency). `get_email_routing()` is a shared async helper imported by the three route files that fire notification emails (`onboarding_routes.py`, `packing_board_routes.py`, `order_routes.py`) — importing from a sibling route file is slightly unusual but avoids creating a new shared module for a single helper. `email_service.py` `_send()` gained a `cc` parameter; `send_onboarding_submitted` can now accept a `to` override list; `send_order_placed` and `send_order_confirmed` accept `cc`. Frontend: `EmailSettings.js` (new view) with `EmailTagInput` tag-pill component (email validation, duplicate detection, Backspace-to-remove-last). Sidebar: "Email Routing" nav item in the Admin section with `superAdminOnly: true` flag; `UI.js` nav filter checks this flag as the first gate before any permission check. All changes take effect immediately on next save — no server restart, no Railway env var change needed.
 
 ---
 
@@ -833,6 +852,23 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - **Phase 13 hook** — the Goods Receipts section (`stock.picking` incoming, state=done) is exactly the entry point for batch traceability. Phase 13 adds a lot/batch column to those rows and links them to the cultivation module.
 - **Products Supplied** — sourced from `product.supplierinfo`, deduplicated by template. Shows which SKUs Bassani sources from each supplier. Archived templates shown with a badge rather than hidden.
 
+#### 7.10 — Balance Payment Registration — Added 2026-07-04
+
+**Goal:** Finance can register the remaining balance payment against the full sale invoice directly from the Sales Ticket, without opening Odoo. Before this, the only portal payment action was deposit registration (which creates a down payment invoice). The final balance — typically due on collection — had no portal path, forcing finance to open Odoo's accounting module to register it.
+
+**Context:** Two separate invoices exist per confirmed order: (1) a down payment invoice created and paid via "Register Deposit"; (2) a full delivery invoice (`advance_payment_method: "delivered"`) created and posted at order confirmation in `order_routes.py`. The deposit partially reconciles against the full invoice in Odoo, reducing its `amount_residual`. "Register Balance Payment" targets this full invoice for the remaining balance.
+
+- [x] `GET /api/tickets/{ticket_id}/invoice-balance` — reads all `invoice_ids` from the Odoo sale order; filters for `out_invoice` type; returns the largest-amount invoice (the full SO invoice, not the smaller down payment invoice) with `amount_total`, `amount_residual`, `payment_state`, and `invoice_name`; used by the modal to pre-populate the amount and show outstanding balance context
+- [x] `POST /api/tickets/{ticket_id}/register-payment` — resolves full invoice via same logic; validates `amount_residual > 0` and invoice is not already `paid`; registers payment via `account.payment.register` wizard (same XML-RPC pattern as deposit); reads back `payment_state` and `amount_residual` after registration; stamps `balance_payment_by/at` on the ticket; adds to `stage_history`; audit-logged as `ticket.register_payment`
+- [x] "Register Balance Payment" button in the Sales Ticket sidebar — appears for `canFinance` users after `payment_confirmed_at` is set (deposit confirmed), regardless of pipeline stage — finance may need to register the balance at collection time even if the ticket is already in `confirmed_wip`
+- [x] Modal pre-populates amount with `amount_residual` from `GET invoice-balance`; shows invoice name and outstanding amount as a subtitle; same journal dropdown as deposit modal (reuses `GET /api/tickets/payment-journals`)
+- [x] Toast reports remaining outstanding amount if balance was partial, or "invoice fully paid" if `amount_residual = 0` after registration
+
+**Design decisions:**
+- **Targets the largest `out_invoice`** — most reliable way to distinguish the full SO invoice from down payment invoices without relying on Odoo's internal link fields; down payment invoices are always for smaller amounts than the full order value
+- **No gating on exit status** — balance payment can be registered even after the ticket is marked complete or the order is collected; finance may record payments after the physical handoff
+- **Allows partial payments** — `register-payment` can be called multiple times; each call registers however much finance enters and the residual is updated in Odoo; the portal doesn't enforce "must pay remainder in one go"
+
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
 - [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
@@ -843,6 +879,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] `suppliers.view` / `suppliers.manage` added to all permission dicts in `auth.py`
 - [x] Finance role defaults to `suppliers.view: true`; all ticket roles default to `false`
 - [x] "Suppliers" nav item in sidebar, gated by `suppliers.view`, with Truck icon
+- [x] Finance can register the remaining balance payment against the full sale invoice from the portal — no Odoo access required for any standard payment in the order lifecycle
 
 ---
 
@@ -1036,6 +1073,45 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 **Design decision — two different UIs for the same backend endpoint is correct, not duplication:** Staff (Merveille) know product names/SKUs and want to type-search quickly inside a ticket they're already working. Resellers are discovering what's available and want to browse/filter a catalogue. Both submit through the same pipeline-correct backend path; only the input UX differs by audience. Forcing one shared UI here would have been the wrong call.
 
+#### 8.13 — Reseller Application Management — Added 2026-07-02
+
+**Goal:** Resellers can view, edit, and manage their own customer onboarding applications entirely within the portal, without needing to contact an admin to check status or update details. An application can be revised after submission (fields and documents) while it is still under review.
+
+**Context:** Before this, `ResellerApplications.js` listed submitted applications with status badges but had no detail view or edit capability. Resellers had no way to replace a rejected document or correct an error in submitted fields without resubmitting an entirely new application.
+
+- [x] `PUT /api/onboarding/{id}` — partial update endpoint (Pydantic `model_dump(exclude_unset=True)`); reseller can update any non-locked field on their own application while it is still `pending` or `under_review`; admin can update any application they can view; audit-logged as `onboarding.update`
+- [x] `POST /api/onboarding/{id}/documents/{doc_type}` — replace a single document slot on an existing application; removes old R2 object, uploads new file, updates the `documents` array in MongoDB; requires ownership (reseller) or `customers.approve_onboarding` (admin); audit-logged as `onboarding.document_replaced`
+- [x] `frontend/src/views/ResellerApplicationDetail.js` — full detail view for resellers:
+  - Section-based read/edit layout: Business Details, Primary Contact, Business Address, Additional Information, Documents
+  - `editing` boolean toggles between read-only key-value display and editable form inputs
+  - `REQUIRED_DOC_TYPES` shows all 5 doc slots; missing docs show amber "Not uploaded" state
+  - Replace/Upload via file input; View (presigned PDF iframe) and Download for uploaded docs
+  - Save calls `PUT /api/onboarding/{id}` with only changed fields; replace calls `POST /api/onboarding/{id}/documents/{doc_type}`
+  - Status badge in header — reseller can see where their application is in the admin review queue
+- [x] `ResellerApplications.js` — "Start Application" button (`BtnPrimary`) in TopBar actions → navigates to `/onboard`
+- [x] Reseller sidebar nav reworked: `My Customers` and `My Applications` grouped under a `"Customers"` section (same section property pattern as admin NAV); `My Applications` tab removed from the Customers component in `Views.js` (was a tab inside the customers list — now a separate route)
+- [x] Routes: `/my-applications` → `ResellerApplications`, `/my-applications/:id` → `ResellerApplicationDetail` in `App.js`
+
+**Design decisions:**
+- **Edit while pending only** — backend does not hard-block edits at `approved` or `rejected` status, but the frontend shows the edit button only when status is `pending` or `under_review`; approved applications are immutable in practice.
+- **Document replacement reuses the same R2 key prefix** (`onboarding/sessions/{session_id}/{doc_type}`) — no new storage path; the existing presign and delete helpers cover it.
+- **Split from the Customers tab** — the previous tab-inside-customers pattern mixed two conceptually different things (active customers vs pending applications) and made both lists harder to use. Splitting them gives each its own URL, breadcrumb, and eventual pagination.
+
+#### 8.14 — Odoo Delivery Note Validation on Order Complete — Added 2026-07-04
+
+**Goal:** When an Orders Clerk marks an order Complete, the linked Odoo Delivery Note (`stock.picking`) is validated at the same time — reducing reserved stock to zero and recording the physical dispatch. Before this, the portal marked the packing board entry complete in MongoDB but left the Delivery Note in "Ready" state forever, meaning Odoo's On Hand stock figures were never decremented for portal-completed orders.
+
+**Context:** Odoo's three linked documents are `sale.order` (commercial) → `stock.picking` (logistics/Delivery Note) → `account.move` (invoice). Confirming a sale order auto-creates the Delivery Note in "assigned" (Ready) state. Validating the Delivery Note is what moves stock from On Hand to "Done" and triggers invoice creation if invoicing policy is "on delivery". This step was entirely missing from the portal's Order Complete action.
+
+- [x] `_validate_odoo_delivery(odoo_order_id: int) -> dict` — module-level sync helper in `packing_board_routes.py`; queries all `stock.picking` records for the sale order in `assigned` state; calls `action_set_quantities_to_reservation()` on each (sets `qty_done = reserved_qty`, bypasses Immediate Transfer dialog), then `button_validate()`; if `button_validate` returns a wizard dict (partial reservation), processes the backorder confirmation best-effort via `stock.backorder.confirmation.process()`; returns `{"success": bool, "pickings": [name, ...], "error": str|None}`; never raises — caller always continues
+- [x] `PUT /api/packing/complete` — delivery validation runs before the MongoDB update; `delivery_validated: bool` flag stored on the packing board document; two audit log entries written (`packing.complete` + `packing.delivery_validated`) with the full result detail; response includes `delivery_validated` flag and optional `warning` string if Odoo validation failed
+- [x] `OrdersTickets.js` — `handleComplete()` replaces the generic `act("complete", ...)` call; reads the response `warning` field and shows a persistent error toast alongside the success toast if delivery validation failed; `Truck` icon shown in the timestamps sidebar for completed orders: green "Delivery validated in Odoo" or amber "Delivery not validated in Odoo" based on `delivery_validated` flag
+
+**Design decisions:**
+- **Non-blocking by design** — if Odoo delivery validation fails (picking not found, Odoo down, partial stock), the order is still marked complete in MongoDB. Blocking the complete action on Odoo's response would hold up the warehouse floor for an ERP connectivity issue. The amber warning gives the clerk visibility without stopping them.
+- **`order_id` in packing board is the Odoo integer as string** — `int(entry["order_id"])` is the safe conversion. This was confirmed by reading `adopt_order()` which sets `order_id = str(body.order_id)` where `body.order_id` is the Odoo integer.
+- **`action_set_quantities_to_reservation()` before validate** — avoids the Odoo "Immediate Transfer" wizard that would otherwise prompt for `qty_done` on every move line. Since QA and RP have already signed off, we want to validate exactly what was reserved.
+
 ### Definition of Done
 - [x] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
 - [x] A direct inquiry (manually created ticket) can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
@@ -1045,10 +1121,17 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] An Orders ticket marked Incomplete or Cancelled automatically updates and notifies the originating Sales ticket, with a reason visible to Sales
 - [x] An unassigned ticket (from a reseller/admin-placed order) is visible to all `tickets.sales` users; any sales rep can claim it via "Assign to me"
 - [x] A reseller can browse the product catalogue, build a cart, and place an order from the portal — restored in 8.12 after being inadvertently removed in 8.9/8.10
+- [x] Marking an Orders ticket Complete validates the linked Odoo Delivery Note, decrementing On Hand stock — non-blocking with visible warning if Odoo validation fails
 - [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role — **pending: accounts not yet created (operational, no code required)**
 
 ### Notes
+> **Sub-deploy 12 (2026-07-04):** 8.14 Odoo Delivery Note validation on Order Complete. `_validate_odoo_delivery()` sync helper added to `packing_board_routes.py` — searches for `stock.picking` records in `assigned` state for the sale order, calls `action_set_quantities_to_reservation()` then `button_validate()` on each, handles backorder wizard best-effort. Non-blocking: if Odoo validation fails, the MongoDB document is still marked complete but stamped `delivery_validated: false`. Two audit log entries per completion: `packing.complete` (existing) + `packing.delivery_validated` (new, includes full result detail). `OrdersTickets.js`: `handleComplete()` replaces generic `act()` for the complete action; reads `warning` from response and shows a persistent error toast if delivery failed; `Truck` icon added to the timestamps sidebar showing green/amber delivery status on completed entries.
+
+> **Sub-deploy 11 (2026-07-02):** 8.13 Reseller Application Management. Backend: `PUT /api/onboarding/{id}` partial update endpoint using `model_dump(exclude_unset=True)` — resellers can update their own pending/under-review applications; `POST /api/onboarding/{id}/documents/{doc_type}` for per-slot document replacement (deletes old R2 object, uploads new, updates MongoDB array). Frontend: `ResellerApplicationDetail.js` (new file) — section-based read/edit layout with `editing` boolean toggle; all 5 document slots shown with status (uploaded / not uploaded); file input for replace/upload; presigned PDF iframe viewer; Save calls the partial update endpoint with only changed fields; replace calls `POST /api/onboarding/{id}/documents/{doc_type}`. `ResellerApplications.js` gained a "Start Application" `BtnPrimary` in the TopBar actions. The previous in-tab applications view inside `Customers.js` (in `Views.js`) was removed entirely — `custTab` state, `applications` state, `loadApplications` callback, `pendingApps` derived value, `APP_STATUS_CLS` constant, the tab bar JSX, and the entire applications list block were all deleted. The Customers component now always shows the customers table. Routes `/my-applications` and `/my-applications/:id` added to `App.js`.
+
 > **Sub-deploy 10 (2026-06-29):** 8.12 Reseller order cart restoration. Found while scoping barcode scanning for the quote builder — resellers had no UI to place a new order at all, a silent regression from 8.9/8.10's pipeline-enforcement cart removal (scoped to stop staff, but reseller and staff shared the same `Orders` component). Recovered the original product-catalogue cart UX directly from git history (`git show 0656395`) rather than rebuild from assumption, including the Section 21 script compliance check that had been dropped along with it. Zero backend changes — `POST /api/orders/` was correct the whole time; only the reseller's entry point to it was missing. New `ProductLineRow.js` shared component extracted from the Sales Ticket quote builder (used there for staff type-and-search; deliberately not reused in the reseller cart, which needs a browsable grid instead).
+
+> **Sub-deploy 11 (2026-07-02):** 8.13 Reseller Application Management. Backend: `PUT /api/onboarding/{id}` partial update endpoint using `model_dump(exclude_unset=True)` — resellers can update their own pending/under-review applications; `POST /api/onboarding/{id}/documents/{doc_type}` for per-slot document replacement (deletes old R2 object, uploads new, updates MongoDB array). Frontend: `ResellerApplicationDetail.js` (new file) — section-based read/edit layout with `editing` boolean toggle; all 5 document slots shown with status (uploaded / not uploaded); file input for replace/upload; presigned PDF iframe viewer; Save calls the partial update endpoint with only changed fields. `ResellerApplications.js` gained a "Start Application" `BtnPrimary` in the TopBar actions. The previous in-tab applications view inside `Customers.js` (in `Views.js`) was removed entirely — `custTab` state, `applications` state, `loadApplications` callback, `pendingApps` derived value, `APP_STATUS_CLS` constant, the tab bar JSX, and the entire applications list block were all deleted. The Customers component now always shows the customers table. Routes `/my-applications` and `/my-applications/:id` added to `App.js`.
 
 > **Sub-deploy 1 (2026-06-19):** 8.1 Roles & Permissions. Rather than adding the 5 new roles to `ADMIN_ROLES` (which would have also granted them every `require_admin`-gated endpoint across the whole portal — products, customers, resellers, etc., not just tickets), `require_permission()`'s role-gate was broadened to `ADMIN_ROLES | TICKET_ROLES` specifically, leaving `require_admin`/`ADMIN_ROLES` itself untouched. Each ticket role gets exactly one fixed permission via `TICKET_ROLE_PERMISSIONS` — there's no per-user customisation panel for these roles, unlike `admin`. **Bug fixed along the way:** the Sidebar's nav-item filter (`frontend/src/components/UI.js`) only permission-checked items when `isAdmin` was true, falling through to "show everything" otherwise — harmless before now because the only non-admin, non-reseller roles (`warehouse_supervisor`/`packer`) never reached the Sidebar at all (intercepted earlier in `App.js`'s `ProtectedRoute`). The new ticket roles do reach it, so this would have shown them the full nav (Products, Customers, Resellers, Invoices, etc.) with every click failing on the backend's 403. Fixed by permission-checking unconditionally. **Known gap, not fixed:** changing an existing user's `role` via `PUT /api/users/{id}` doesn't recompute their `permissions` object — this was already true for promoting someone to `admin` before this change, not something newly introduced. Role changes should go through deactivate-and-recreate until that's addressed separately.
 
@@ -1288,6 +1371,24 @@ The portal was built primarily for desktop/laptop use. Responsive Tailwind class
 
 ---
 
+### 10.6 — Profile Pagination & Sidebar Nav Grouping — 2026-07-02 ✅
+
+**Goal:** Tables that will grow unbounded over time must be paginated before they become a performance and usability problem. Sidebar nav items for resellers needed logical grouping to match admin nav sections.
+
+**Pagination:**
+- [x] New shared `PaginationBar` component exported from `components/UI.js` — accepts `{ page, pageSize, total, onChange }`; renders "X total · Page N of M" + Previous/Next buttons; self-hides when `pageCount <= 1`
+- [x] Reseller profile — activity/audit feed: server-side pagination (20/page); backend `GET /api/audit/` gained `offset` parameter; `count_documents(query)` used for real total (was `len(logs)` — wrong for paginated results); `actPage` / `actTotal` state in `ResellerProfile.js`; activity section shows loading state during page transitions
+- [x] Reseller profile — customers table: client-side pagination (15/page); `custSlice` computed from full loaded array; `custPage` state
+- [x] Customer profile — outstanding invoices: client-side pagination (10/page); `invSlice` from full loaded array; `invPage` state
+- [x] Customer profile — account statement rows: client-side pagination (15/page); IIFE pattern inside JSX computes `stmtSlice` locally (avoids adding state for a derived value); `stmtPage` state reset to 0 on `loadStatement` call
+
+**Reseller sidebar nav grouping:**
+- [x] RESELLER_NAV items gained `section` property — `"Main"` and `"Customers"` — matching the admin NAV structure
+- [x] Sidebar rendering unified: removed the `isReseller ? items.map(...) : sections.map(...)` branch; now always uses `sections.map` for both roles since both navs carry section metadata
+- [x] `My Customers` → section `"Customers"` · `My Applications` → section `"Customers"` · `Onboarding Docs` → section `"Customers"` — visually grouped with a section label in the sidebar, same as admin's "Admin" section
+
+---
+
 ### Definition of Done
 
 - [x] Login page is fully usable on a 360px-wide mobile screen — form is visible, inputs are reachable, the black panel does not obscure the form
@@ -1300,12 +1401,17 @@ The portal was built primarily for desktop/laptop use. Responsive Tailwind class
 - [x] List views show only essential columns on narrow screens — secondary data hidden via `meta.className` responsive utility classes
 - [x] All multi-column form grids in modals and onboarding stack to single column below `sm:` breakpoint
 - [ ] All views render without excessive whitespace on a 2560px+ desktop (10.5 — max-width caps pending)
+- [x] Reseller profile activity feed is paginated — large audit log does not load all rows at once
+- [x] Customers, invoices, and statement tables on profile views are paginated — long lists do not overflow the page
+- [x] Reseller sidebar groups `My Customers`, `My Applications`, and `Onboarding Docs` under a "Customers" section label — consistent with admin nav section grouping
 
 ### Notes
 
 > **10.0 (2026-06-26):** Login left panel hidden on mobile with `hidden md:flex`. Main app sidebar was already fully responsive from prior work — `fixed -translate-x-full` on mobile, `lg:static lg:translate-x-0` on desktop, hamburger in `TopBar` already in place. No changes to the sidebar or AppLayout were necessary.
 
 > **10.1–10.4 (2026-06-26):** Comprehensive responsive pass across 9 files. `DataTable` and `Modal` in `UI.js` were already mobile-safe — confirmed and left unchanged. `DataTable` extended with `meta.className` support (applied to both `<th>` and `<td>`) enabling declarative column hiding from each view's column definition. Inline tables in `CustomerProfile.js` (addresses, recent orders, outstanding invoices, account statement) wrapped in `overflow-x-auto`. `SalesTickets.js` and `OrdersTickets.js` fixed two fixed-column grids in detail views and wrapped line-item tables. Quote builder (SalesTickets) collapsed 3-col header to responsive, made Notes/Totals stack on mobile, added overflow-x on the line items card. `CustomerOnboarding.js` all 5 form grids made responsive. `Users.js`, `AuditTrail.js`, and `CustomerProfile.js` modal grids all stacked to single-column below `sm:`. Column hiding applied to Customers, Orders, Products, Invoices, Resellers, Users list views — each hides secondary columns at `sm`/`md`/`lg` breakpoints so the most critical info always stays visible without horizontal scrolling. **Only 10.5 (max-width caps for 2560px+ displays) remains.**
+
+> **10.6 (2026-07-02):** Profile pagination and reseller nav grouping. New shared `PaginationBar` component in `UI.js` — used across four paginated tables. Activity/audit on `ResellerProfile.js` is server-side paginated (20/page): `GET /api/audit/` gained an `offset` parameter; the endpoint now returns a real `total` from `count_documents(query)` instead of `len(logs)` (which was page-size, not total-count). Customer table on reseller profile: client-side pagination (15/page). Outstanding invoices on customer profile: client-side pagination (10/page). Account statement rows on customer profile: client-side pagination (15/page), using an IIFE inside the JSX to compute the slice without additional top-level state variables. Reseller sidebar nav: `RESELLER_NAV` items gained a `section` property; the sidebar rendering branch that handled resellers separately from admins was removed — both roles now use the same `sections.map(...)` path since both navs carry section metadata. `My Customers`, `My Applications`, and `Onboarding Docs` appear under a "Customers" section header.
 
 ---
 
@@ -1613,7 +1719,9 @@ USB and Bluetooth scanners emulate a keyboard — they type the barcode value an
 
 ---
 
-### 12.2 — Barcode Label Printing
+### 12.2 — Barcode Label Printing (Commercial Products)
+
+> **Scope:** This is for commercial product shelf/pick labels — printed by admin from the Products admin page for labelling inventory, shelves, or pick locations. It is **not** for production batch labels. Production batch labels are a Phase 13 concern and are printed at the end of each manufacturing stage as part of the RP sign-off workflow. Both label types use Bassani's existing label printer and the same `JsBarcode` library, but they serve different purposes, are triggered by different people, and carry different information.
 
 **Goal:** An admin can generate and print a professional barcode label for any product directly from the Products page — no Dymo software, no label management system, just a browser print dialog.
 
@@ -1932,6 +2040,51 @@ Unlike the rest of this concept section, batch numbering is **not speculative**.
 **Implementation requirement:** Batch IDs must be **generated by the portal, not typed by staff**. The live logbook data already shows inconsistent manual ID formatting (e.g. `BHADNS-240426`, `BHADNS240426-M`, `BHADNS-210526-M` all appearing for the same strain). Free-text entry creates SAHPRA audit exposure. The portal must enforce the standard format at entry time.
 
 **Implementation implication:** batch ID generation should be a single deterministic function (strain code, sequence, date, optional stage/blend params in → formatted ID out), not free text entry — consistency of this format is what makes the traceability chain auditable.
+
+### Production Batch Label Printing (Phase 13 — Critical Path)
+
+**Why this belongs in Phase 13, not Phase 12:**
+Phase 12.2 prints commercial product labels from the Odoo product catalogue — these identify a SKU, not a specific batch of it. Production batch labels are fundamentally different: they are the physical identity document of a specific manufactured batch. They are generated by the portal at the moment RP sign-off occurs on a packing logbook entry, carry the system-generated batch ID (enforcing the V6 standard), and are the exact label the vault team leader will scan at the Vault IN step. Without this, the traceability chain has a gap: the portal knows the batch ID internally, but the physical label was printed manually (or not at all), creating the format inconsistency already observed in the live logbook data.
+
+**The workflow:**
+1. Production supervisor records the packing session in the portal (Packing Logbook module)
+2. QA approval recorded (with re-authentication, Annex 11 §30)
+3. RP approval recorded (with re-authentication, Annex 11 §31)
+4. **"Print Batch Label" button becomes active** — only after both approvals are on record
+5. Label generated by the portal using `JsBarcode` + `window.print()` — printed on Bassani's existing label printer
+6. Physical label applied to the batch
+7. Batch transported to vault
+8. Team leader scans the label at Vault IN — vault scanner reads the batch ID barcode, calls `GET /api/products/barcode/{value}` (Phase 12.3) to identify the product, then automatically resolves `linked_batch_id` from the production record instead of requiring manual entry (the key Phase 12→13 linkage)
+
+**Label contents (production batch label):**
+- Bassani Health logo/wordmark
+- Product name and strain
+- **Batch ID** (system-generated, V6 format — e.g. `BHAPIBBY-001-010126-MP3G`)
+- **Barcode** of the Batch ID (Code-128, since batch IDs are alphanumeric)
+- Stage / finished good description (e.g. "Manicured Flower — Mylar Bag 3g")
+- Quantity / net weight
+- Manufacturing / packing date
+- RP release name and date
+- "For Medicinal Use Only — Dispensing by Authorised Prescriber Only" (or Bassani's required compliance text)
+- Expiry date (where applicable — gummies, pre-rolls)
+
+**Label size:** Configured for Bassani's existing label printer (standard 57mm × 32mm thermal format). The `@media print` approach used in Phase 12.2 is reused here — browser triggers the print dialog, Bassani's label printer is set as the default printer, no Dymo SDK or third-party print software required.
+
+**Design decisions:**
+- **Print button gated on both approvals** — the system will not generate a printable label until QA and RP have both signed off. This is not a soft warning; the button does not exist in the UI until the approvals are on record. This makes label printing the physical consequence of system sign-off, not a separate step that can be done before approval.
+- **Batch ID is generated by the system, not typed** — eliminates the format inconsistency already present in the live Excel logbooks (see Batch Numbering Standard above). The label carries exactly what the system assigned.
+- **One label per production record** — the print action is tied to the `production_sessions` record, not a generic label designer. Reprinting a label reprints exactly the same content, audit-logged as a reprint with actor and timestamp.
+- **Vault scanner reads what the portal printed** — because the portal generated the batch ID and printed the label, the vault scanner can resolve the scanned barcode directly back to the `production_sessions` record. No manual batch ID entry at the vault. No transcription errors.
+
+**Definition of Done (production batch labels):**
+- [ ] "Print Batch Label" button visible on Packing Logbook entries only after QA + RP sign-off recorded
+- [ ] Label renders correctly in browser print preview for Bassani's label printer paper size
+- [ ] Printed label barcode (Code-128) scans correctly with Bassani's vault scanner hardware
+- [ ] Reprinting a label creates an audit entry: actor, timestamp, batch ID
+- [ ] Vault IN scan of the printed label resolves `linked_batch_id` automatically — team leader does not need to type the batch ID manually
+- [ ] Gummy labels include expiry date; flower/pre-roll labels display weight and RP release date
+
+---
 
 ### The 8 Logbooks = 8 Portal Modules (CONFIRMED from live operational data)
 
