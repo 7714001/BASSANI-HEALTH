@@ -18,7 +18,7 @@ import imaplib
 import logging
 import re
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -150,7 +150,12 @@ def _fetch_new_messages_sync(cfg: dict) -> list:
     try:
         conn.login(cfg["imap_username"], cfg["imap_password"])
         conn.select("INBOX")
-        _, data = conn.search(None, "UNSEEN")
+        # Search by date rather than SEEN flag. If a staff member opens an email
+        # in their mail client before the 60 s poll fires, that message becomes
+        # SEEN in the mailbox and an UNSEEN search would silently miss it.
+        # Deduplication is handled by the unique imap_message_id index in MongoDB.
+        since_date = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%d-%b-%Y")
+        _, data = conn.search(None, f"SINCE {since_date}")
         uid_list = data[0].split() if data[0] else []
         messages = []
         for uid_bytes in uid_list[-50:]:  # cap to 50 — avoids thundering-herd on first run

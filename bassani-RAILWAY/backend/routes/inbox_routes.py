@@ -20,7 +20,8 @@ Architecture notes:
 - Attachment bytes are never stored; they are fetched on-demand from Graph.
 """
 import logging
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import Binary as BsonBinary, ObjectId
@@ -52,6 +53,12 @@ from services.notification_service import notify_ticket_assigned
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
+
+# ── Customer resolution cache ─────────────────────────────────────────────────
+# Keyed by from_email; value is (customer_id, customer_name, expires_monotonic).
+# Avoids a synchronous Odoo XML-RPC call on every ingested message.
+_customer_cache: dict[str, tuple] = {}
+_CUSTOMER_CACHE_TTL = 600  # 10 minutes — stale enough to not matter, fresh enough to catch new partners
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -103,7 +110,18 @@ def _actor(user: dict) -> str:
 
 
 async def _resolve_customer(from_email: str) -> tuple[Optional[int], Optional[str]]:
-    """Look up sender email in Odoo res.partner. Returns (partner_id, name)."""
+    """Look up sender email in Odoo res.partner. Returns (partner_id, name).
+
+    Results are cached for _CUSTOMER_CACHE_TTL seconds to avoid an Odoo
+    roundtrip on every ingested message during burst polling.
+    """
+    cached = _customer_cache.get(from_email)
+    if cached:
+        cid, cname, expires = cached
+        if expires > time.monotonic():
+            return cid, cname
+
+    cid, cname = None, None
     try:
         odoo = get_odoo_client()
         results = odoo.search_read(
@@ -113,10 +131,12 @@ async def _resolve_customer(from_email: str) -> tuple[Optional[int], Optional[st
             limit=1,
         )
         if results:
-            return int(results[0]["id"]), results[0]["name"]
+            cid, cname = int(results[0]["id"]), results[0]["name"]
     except Exception as exc:
         logger.warning("inbox_customer_lookup_failed email=%s error=%s", from_email, exc)
-    return None, None
+
+    _customer_cache[from_email] = (cid, cname, time.monotonic() + _CUSTOMER_CACHE_TTL)
+    return cid, cname
 
 
 async def _ingest_message(graph_message_id: str) -> None:
@@ -324,33 +344,39 @@ async def _ingest_imap_message(msg: dict) -> None:
     result = await col("sales_inbox").insert_one(doc)
     item_id_str = str(result.inserted_id)
 
-    # Persist attachment bytes to sales_inbox_attachments (separate collection).
-    # Skips any attachment where _content is empty (over 15 MB — extremely rare).
-    for i, att in enumerate(attachments):
-        content = att.get("_content", b"")
-        if not content:
-            continue
-        att_result = await col("sales_inbox_attachments").insert_one({
-            "inbox_item_id": item_id_str,
-            "name":          att["name"],
-            "content_type":  att["content_type"],
-            "size_bytes":    att["size_bytes"],
-            "content":       BsonBinary(content),
-        })
-        # Patch the inbox doc with the attachment's storage ID so the
-        # download endpoint can resolve it without a collection scan.
-        await col("sales_inbox").update_one(
-            {"_id": result.inserted_id},
-            {"$set": {f"attachments.{i}.imap_attachment_id": str(att_result.inserted_id)}},
-        )
-
-    # Mark read via IMAP so the mailbox stays clean
+    # Mark read in IMAP immediately after the message is safely in MongoDB.
+    # This ordering guarantees we never mark an email read without having stored
+    # it. Attachment failures below are non-fatal and must not block this step.
     if imap_uid:
         try:
             from services.imap_client import mark_as_read as imap_mark_read
             await imap_mark_read(imap_uid)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("imap_mark_read_failed uid=%s error=%s", imap_uid, exc)
+
+    # Persist attachment bytes to sales_inbox_attachments (separate collection).
+    # Wrapped individually — a single bad attachment must not orphan the message.
+    for i, att in enumerate(attachments):
+        content = att.get("_content", b"")
+        if not content:
+            continue
+        try:
+            att_result = await col("sales_inbox_attachments").insert_one({
+                "inbox_item_id": item_id_str,
+                "name":          att["name"],
+                "content_type":  att["content_type"],
+                "size_bytes":    att["size_bytes"],
+                "content":       BsonBinary(content),
+            })
+            await col("sales_inbox").update_one(
+                {"_id": result.inserted_id},
+                {"$set": {f"attachments.{i}.imap_attachment_id": str(att_result.inserted_id)}},
+            )
+        except Exception as exc:
+            logger.warning(
+                "imap_attachment_store_failed inbox_id=%s name=%s error=%s",
+                item_id_str, att.get("name"), exc,
+            )
 
     logger.info(
         "inbox_imap_message_stored from=%s subject=%s reply=%s customer_found=%s",
@@ -910,6 +936,22 @@ async def reply_to_email(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
+    # Guard against two staff members sending simultaneous replies to the same thread.
+    thread_root_check = item.get("thread_root_id") or item_id
+    recent_reply = await col("sales_inbox").find_one({
+        "$or": [
+            {"_id": ObjectId(thread_root_check)},
+            {"thread_root_id": thread_root_check},
+        ],
+        "is_outgoing": True,
+        "created_at": {"$gt": datetime.now(timezone.utc) - timedelta(seconds=30)},
+    }, {"_id": 1})
+    if recent_reply:
+        raise HTTPException(
+            status_code=409,
+            detail="A reply was just sent to this thread. Wait a moment before sending another.",
+        )
+
     sent_message_id = None
     try:
         if graph_configured() and item.get("graph_message_id"):
@@ -1006,6 +1048,8 @@ async def archive_item(
                 "status":     "archived",
                 "handled_by": current_user.get("username"),
                 "handled_at": now,
+                # TTL index on this field auto-deletes archived threads after 180 days.
+                "expires_at": now + timedelta(days=180),
             }
         },
     )

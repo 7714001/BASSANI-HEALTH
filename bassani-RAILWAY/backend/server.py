@@ -252,7 +252,7 @@ async def initialise_inbox():
     from services.graph_client import graph_configured
     from services.graph_subscription import ensure_subscription
     from services.imap_client import load_config_from_db
-    from routes.inbox_routes import _ingest_imap_message
+    from routes.inbox_routes import _ingest_imap_message, _ingest_message
 
     await col("sales_inbox").create_index([("received_at", -1)])
     await col("sales_inbox").create_index([("status", 1)])
@@ -266,6 +266,23 @@ async def initialise_inbox():
     await col("sales_inbox").create_index([("thread_root_id", 1)])
     await col("sales_inbox").create_index([("from_email", 1)])
     await col("sales_inbox").create_index([("ticket_id", 1)])
+    # Compound indexes — support the aggregation match+sort and the update_many
+    # thread-stamp queries added in Phase 11.B hardening.
+    await col("sales_inbox").create_index(
+        [("status", 1), ("received_at", -1)], name="status_received_at"
+    )
+    await col("sales_inbox").create_index(
+        [("thread_root_id", 1), ("status", 1)], name="thread_root_status"
+    )
+    # Sparse TTL — MongoDB auto-deletes archived docs 180 days after archival.
+    # Only archived docs get expires_at set; ticket_created threads are never
+    # archived so they are never touched by this index.
+    await col("sales_inbox").create_index(
+        [("expires_at", 1)],
+        expireAfterSeconds=0,
+        sparse=True,
+        name="sales_inbox_ttl",
+    )
     await col("sales_inbox_attachments").create_index([("inbox_item_id", 1)])
 
     # Load IMAP credentials from MongoDB (falls back to env vars).
@@ -277,6 +294,19 @@ async def initialise_inbox():
     await ensure_subscription()
 
     if graph_configured():
+        # Catch-up poll on startup: ingest any unread messages that arrived
+        # while Railway was down and Graph could not reach the webhook.
+        try:
+            from services.graph_client import list_messages
+            catchup_msgs = await list_messages(filter_str="isRead eq false", top=50)
+            logger.info("graph_startup_catchup found=%d unread messages", len(catchup_msgs))
+            for cm in catchup_msgs:
+                mid = cm.get("id", "")
+                if mid:
+                    asyncio.create_task(_ingest_message(mid))
+        except Exception as exc:
+            logger.warning("graph_startup_catchup_failed error=%s", exc)
+
         async def _graph_renewal_loop():
             while True:
                 await asyncio.sleep(12 * 3600)  # every 12 h — renewal threshold is 47 h
@@ -290,12 +320,20 @@ async def initialise_inbox():
     # Always start the IMAP poll loop. It checks whether IMAP is configured on
     # each iteration so a mailbox connected at runtime (via Settings > Mailbox)
     # starts being polled within 60 seconds without requiring a restart.
+    # The _poll_running flag prevents concurrent poll iterations when the IMAP
+    # server is slow and a single poll takes longer than the 60 s interval.
+    _poll_running = [False]
+
     async def _imap_poll_loop():
         while True:
             await asyncio.sleep(60)  # IMAP has no push — poll every 60 s
             from services.imap_client import imap_configured as _imap_ok, fetch_new_messages
             if not _imap_ok():
                 continue
+            if _poll_running[0]:
+                logger.warning("imap_poll_skipped — previous poll still running")
+                continue
+            _poll_running[0] = True
             try:
                 msgs = await fetch_new_messages()
                 for m in msgs:
@@ -305,6 +343,8 @@ async def initialise_inbox():
                         logger.error("imap_ingest_error error=%s", exc)
             except Exception as exc:
                 logger.error("imap_poll_loop_error error=%s", exc)
+            finally:
+                _poll_running[0] = False
 
     asyncio.create_task(_imap_poll_loop())
     logger.info("imap_poll_loop_started interval_s=60")
