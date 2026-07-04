@@ -12,7 +12,7 @@ import toast from "react-hot-toast";
 import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
-  Mail, Paperclip, ExternalLink, ChevronUp,
+  Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -220,6 +220,11 @@ export default function SalesTickets() {
         status: ticket.status, order_id: ticket.order_id || "",
         invoice_id: ticket.invoice_id || "", note: "", incomplete_reason: "",
       });
+      // If the Odoo order state is out of sync with the portal stage, refresh
+      // the list so the warning badge appears there too
+      if (ticket.odoo_order_state === "cancel" && !ticket.exit_status) {
+        load();
+      }
       if (ticket.order_id) {
         setDetailOrderLoading(true);
         try {
@@ -636,6 +641,27 @@ export default function SalesTickets() {
         ) : (
           <main className="flex-1 overflow-y-auto p-6">
             <div className="max-w-7xl mx-auto">
+              {detail.odoo_order_state === "cancel" && !detail.exit_status && (
+                <div className="mb-5 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+                  <AlertTriangle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-red-800">Linked order was cancelled in the ERP</p>
+                    <p className="text-xs text-red-600 mt-0.5">
+                      This ticket is still showing as active, but the Odoo order has been cancelled.
+                      Close the ticket to keep records consistent, or investigate in the ERP before proceeding.
+                    </p>
+                  </div>
+                  {canDrive && (
+                    <button
+                      onClick={() => markExit("cancelled")}
+                      disabled={saving}
+                      className="flex-shrink-0 text-xs font-medium text-red-700 border border-red-300 rounded-lg px-3 py-1.5 hover:bg-red-100 transition-colors disabled:opacity-50"
+                    >
+                      Close Ticket
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
 
                 {/* ── Left: Order document (2/3 width) ── */}
@@ -1431,7 +1457,14 @@ export default function SalesTickets() {
               { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
                 t.exit_status
                   ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
-                  : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+                  : t.odoo_order_state === "cancel"
+                    ? (
+                      <div className="flex flex-col gap-0.5">
+                        <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+                        <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
+                      </div>
+                    )
+                    : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
               },
               { id: "assigned", header: "Assigned To", cell: ({ row: { original: t } }) =>
                 t.assigned_to_name

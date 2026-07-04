@@ -310,6 +310,25 @@ async def get_ticket(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Sync Odoo order state on every detail fetch so the portal reflects
+    # changes made directly in Odoo (cancellations, confirmations, etc.)
+    order_id = ticket.get("order_id")
+    if order_id and not ticket.get("exit_status"):
+        try:
+            odoo = get_odoo_client()
+            rows = odoo.read("sale.order", [order_id], fields=["state"])
+            if rows:
+                live_state = rows[0]["state"]
+                if live_state != ticket.get("odoo_order_state"):
+                    await col("tickets").update_one(
+                        {"_id": oid},
+                        {"$set": {"odoo_order_state": live_state, "updated_at": datetime.now(timezone.utc)}},
+                    )
+                    ticket["odoo_order_state"] = live_state
+        except Exception:
+            pass  # Non-fatal — stale display is better than a broken detail page
+
     return _serialize(ticket)
 
 
