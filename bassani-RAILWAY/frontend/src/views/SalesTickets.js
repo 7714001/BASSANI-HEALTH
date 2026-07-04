@@ -220,9 +220,8 @@ export default function SalesTickets() {
         status: ticket.status, order_id: ticket.order_id || "",
         invoice_id: ticket.invoice_id || "", note: "", incomplete_reason: "",
       });
-      // If the Odoo order state is out of sync with the portal stage, refresh
-      // the list so the warning badge appears there too
-      if (ticket.odoo_order_state === "cancel" && !ticket.exit_status) {
+      // Auto-close was applied server-side — refresh list so it shows Cancelled immediately
+      if (ticket.odoo_order_state === "cancel") {
         load();
       }
       if (ticket.order_id) {
@@ -641,25 +640,12 @@ export default function SalesTickets() {
         ) : (
           <main className="flex-1 overflow-y-auto p-6">
             <div className="max-w-7xl mx-auto">
-              {detail.odoo_order_state === "cancel" && !detail.exit_status && (
-                <div className="mb-5 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
-                  <AlertTriangle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-red-800">Linked order was cancelled in the ERP</p>
-                    <p className="text-xs text-red-600 mt-0.5">
-                      This ticket is still showing as active, but the Odoo order has been cancelled.
-                      Close the ticket to keep records consistent, or investigate in the ERP before proceeding.
-                    </p>
-                  </div>
-                  {canDrive && (
-                    <button
-                      onClick={() => markExit("cancelled")}
-                      disabled={saving}
-                      className="flex-shrink-0 text-xs font-medium text-red-700 border border-red-300 rounded-lg px-3 py-1.5 hover:bg-red-100 transition-colors disabled:opacity-50"
-                    >
-                      Close Ticket
-                    </button>
-                  )}
+              {detail.odoo_order_state === "cancel" && (
+                <div className="mb-5 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
+                  <AlertTriangle size={15} className="text-amber-500 flex-shrink-0" />
+                  <p className="text-xs text-amber-700">
+                    This ticket was automatically closed because the linked order was cancelled in the ERP.
+                  </p>
                 </div>
               )}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">

@@ -311,8 +311,8 @@ async def get_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    # Sync Odoo order state on every detail fetch so the portal reflects
-    # changes made directly in Odoo (cancellations, confirmations, etc.)
+    # Sync Odoo order state on every detail fetch. Odoo is the financial source
+    # of truth — if the order is cancelled there, close the portal ticket immediately.
     order_id = ticket.get("order_id")
     if order_id and not ticket.get("exit_status"):
         try:
@@ -320,10 +320,27 @@ async def get_ticket(
             rows = odoo.read("sale.order", [order_id], fields=["state"])
             if rows:
                 live_state = rows[0]["state"]
-                if live_state != ticket.get("odoo_order_state"):
+                now = datetime.now(timezone.utc)
+                if live_state == "cancel":
                     await col("tickets").update_one(
                         {"_id": oid},
-                        {"$set": {"odoo_order_state": live_state, "updated_at": datetime.now(timezone.utc)}},
+                        {
+                            "$set": {"odoo_order_state": live_state, "exit_status": "cancelled", "updated_at": now},
+                            "$push": {"stage_history": {
+                                "status": ticket["status"], "exit_status": "cancelled",
+                                "actor_id": "system", "actor_name": "System",
+                                "at": now, "note": "Auto-closed: Odoo order was cancelled",
+                            }},
+                        },
+                    )
+                    ticket["odoo_order_state"] = live_state
+                    ticket["exit_status"] = "cancelled"
+                    rid = ticket.get("reseller_id")
+                    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+                elif live_state != ticket.get("odoo_order_state"):
+                    await col("tickets").update_one(
+                        {"_id": oid},
+                        {"$set": {"odoo_order_state": live_state, "updated_at": now}},
                     )
                     ticket["odoo_order_state"] = live_state
         except Exception:
