@@ -117,8 +117,9 @@ def fetch_odoo_report_pdf(report_name: str, record_id: int) -> bytes:
     """Fetch an Odoo report PDF via HTTP session auth.
 
     render_qweb_pdf is private in Odoo v17 and not callable via XML-RPC.
-    This authenticates via the JSON-RPC web session endpoint and GETs the
-    report controller URL instead.
+    Authenticates via the JSON-RPC web session endpoint, extracts session_id
+    from the response body (more reliable than relying on httpx cookie carry),
+    and GETs the report controller URL with the session_id cookie set explicitly.
     """
     cfg = get_settings()
     base = cfg.odoo_url.rstrip("/")
@@ -132,8 +133,28 @@ def fetch_odoo_report_pdf(report_name: str, record_id: int) -> bytes:
             }},
         )
         auth_resp.raise_for_status()
-        pdf_resp = client.get(f"{base}/report/pdf/{report_name}/{record_id}")
+        auth_data = auth_resp.json()
+        result = auth_data.get("result") or {}
+        uid = result.get("uid")
+        if not uid:
+            raise RuntimeError(
+                f"Odoo web session authentication failed — check ODOO_USERNAME/ODOO_PASSWORD. "
+                f"Error: {auth_data.get('error', 'no uid returned')}"
+            )
+        # Extract session_id from body; fall back to Set-Cookie if absent
+        session_id = result.get("session_id") or auth_resp.cookies.get("session_id")
+        if not session_id:
+            raise RuntimeError("Odoo did not return a session_id after authentication")
+
+        pdf_resp = client.get(
+            f"{base}/report/pdf/{report_name}/{record_id}",
+            cookies={"session_id": session_id},
+        )
         pdf_resp.raise_for_status()
-        if pdf_resp.headers.get("content-type", "").startswith("text/"):
-            raise RuntimeError(f"Odoo returned HTML instead of PDF — check report name '{report_name}'")
+        content_type = pdf_resp.headers.get("content-type", "")
+        if not content_type.startswith("application/pdf"):
+            raise RuntimeError(
+                f"Odoo returned {content_type!r} for report '{report_name}' — "
+                f"check the report name is correct for this Odoo instance"
+            )
         return pdf_resp.content

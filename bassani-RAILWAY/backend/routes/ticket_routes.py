@@ -988,7 +988,7 @@ async def get_invoice_balance(
 # Odoo report reference names — used to render PDFs on demand
 _REPORT_NAMES = {
     "quote":   "sale.report_saleorder",
-    "invoice": "account.report_move_full",
+    "invoice": "account.report_invoice_with_payments",
 }
 
 

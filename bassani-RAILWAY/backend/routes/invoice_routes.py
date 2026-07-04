@@ -294,7 +294,7 @@ def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_us
 
     # ── Render on demand via Odoo HTTP report endpoint ─────────────────────────
     try:
-        pdf_bytes = fetch_odoo_report_pdf("account.report_move_full", invoice_id)
+        pdf_bytes = fetch_odoo_report_pdf("account.report_invoice_with_payments", invoice_id)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
