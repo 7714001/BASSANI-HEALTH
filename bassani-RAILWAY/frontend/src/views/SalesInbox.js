@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -94,7 +95,8 @@ function CustomerBanner({ item }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SalesInbox() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const navigate = useNavigate();
 
   // List state
   const [items,    setItems   ] = useState([]);
@@ -310,24 +312,31 @@ export default function SalesInbox() {
   if (!configured) {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar title="Sales Inbox" subtitle="Microsoft 365 shared mailbox" />
+        <TopBar title="Sales Inbox" subtitle="Shared mailbox" />
         <main className="flex-1 overflow-y-auto p-6 flex items-center justify-center">
           <div className="max-w-md text-center">
             <div className="w-16 h-16 bg-amber-50 border border-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <Mail size={28} className="text-amber-400" />
             </div>
             <h2 className="text-lg font-semibold text-gray-900 mb-2">Sales Inbox not yet active</h2>
-            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
-              Microsoft 365 credentials have not been configured yet. Once the Azure app registration
-              credentials are added to Railway, the inbox will activate automatically on next deploy.
-            </p>
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-left text-xs text-gray-600 space-y-1">
-              <p className="font-semibold text-gray-700 mb-2">Required Railway environment variables:</p>
-              <p><code className="bg-gray-200 px-1 rounded">MS_TENANT_ID</code></p>
-              <p><code className="bg-gray-200 px-1 rounded">MS_CLIENT_ID</code></p>
-              <p><code className="bg-gray-200 px-1 rounded">MS_CLIENT_SECRET</code></p>
-              <p><code className="bg-gray-200 px-1 rounded">MS_SHARED_MAILBOX</code> <span className="text-gray-400">(default: orders@bassanihealth.com)</span></p>
-            </div>
+            {user?.is_super_admin ? (
+              <>
+                <p className="text-sm text-gray-500 mb-5 leading-relaxed">
+                  No mailbox has been connected. Connect an IMAP mailbox in Settings to activate the inbox for all staff.
+                </p>
+                <button
+                  onClick={() => navigate("/settings/mailbox")}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-bassani-600 text-white text-sm font-semibold rounded-xl hover:bg-bassani-700 transition-colors"
+                >
+                  <Mail size={14} />
+                  Connect Mailbox
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 leading-relaxed">
+                The sales inbox has not been configured yet. Ask your system administrator to connect a mailbox in portal settings.
+              </p>
+            )}
           </div>
         </main>
       </div>

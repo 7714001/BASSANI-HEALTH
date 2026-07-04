@@ -246,11 +246,13 @@ async def initialise_users():
 
 @app.on_event("startup")
 async def initialise_inbox():
-    """Phase 11 — sales_inbox indexes and Graph subscription."""
+    """Phase 11 — sales_inbox indexes, Graph subscription, and IMAP polling."""
     import asyncio
     from database import col
     from services.graph_client import graph_configured
     from services.graph_subscription import ensure_subscription
+    from services.imap_client import load_config_from_db
+    from routes.inbox_routes import _ingest_imap_message
 
     await col("sales_inbox").create_index([("received_at", -1)])
     await col("sales_inbox").create_index([("status", 1)])
@@ -258,15 +260,23 @@ async def initialise_inbox():
         [("graph_message_id", 1)], unique=True, sparse=True
     )
     await col("sales_inbox").create_index([("graph_conversation_id", 1)])
+    await col("sales_inbox").create_index(
+        [("imap_message_id", 1)], unique=True, sparse=True
+    )
+    await col("sales_inbox").create_index([("thread_root_id", 1)])
     await col("sales_inbox").create_index([("from_email", 1)])
     await col("sales_inbox").create_index([("ticket_id", 1)])
+
+    # Load IMAP credentials from MongoDB (falls back to env vars).
+    # Must happen before graph/IMAP checks below.
+    await load_config_from_db()
 
     # Create or renew the Graph push-notification subscription.
     # Skipped silently when MS credentials are not configured.
     await ensure_subscription()
 
     if graph_configured():
-        async def _renewal_loop():
+        async def _graph_renewal_loop():
             while True:
                 await asyncio.sleep(12 * 3600)  # every 12 h — renewal threshold is 47 h
                 try:
@@ -274,7 +284,29 @@ async def initialise_inbox():
                 except Exception as exc:
                     logger.error("graph_renewal_loop_error error=%s", exc)
 
-        asyncio.create_task(_renewal_loop())
+        asyncio.create_task(_graph_renewal_loop())
+
+    # Always start the IMAP poll loop. It checks whether IMAP is configured on
+    # each iteration so a mailbox connected at runtime (via Settings > Mailbox)
+    # starts being polled within 60 seconds without requiring a restart.
+    async def _imap_poll_loop():
+        while True:
+            await asyncio.sleep(60)  # IMAP has no push — poll every 60 s
+            from services.imap_client import imap_configured as _imap_ok, fetch_new_messages
+            if not _imap_ok():
+                continue
+            try:
+                msgs = await fetch_new_messages()
+                for m in msgs:
+                    try:
+                        await _ingest_imap_message(m)
+                    except Exception as exc:
+                        logger.error("imap_ingest_error error=%s", exc)
+            except Exception as exc:
+                logger.error("imap_poll_loop_error error=%s", exc)
+
+    asyncio.create_task(_imap_poll_loop())
+    logger.info("imap_poll_loop_started interval_s=60")
 
 
 @app.get("/health")

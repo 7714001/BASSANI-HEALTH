@@ -41,6 +41,10 @@ from services.graph_client import (
     send_reply as graph_send_reply,
 )
 from services.graph_subscription import get_client_state
+from services.imap_client import (
+    imap_configured,
+    send_reply as imap_send_reply,
+)
 from services.notification_service import notify_ticket_assigned
 
 logger = logging.getLogger(__name__)
@@ -63,14 +67,18 @@ class StartOnboardingBody(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def inbox_configured() -> bool:
+    """True when either the Graph (M365) or IMAP backend is active."""
+    return graph_configured() or imap_configured()
+
+
 def _not_configured() -> None:
     raise HTTPException(
         status_code=503,
         detail=(
-            "Sales Inbox is not yet active — Microsoft 365 credentials have not "
-            "been configured. Ask your administrator to add MS_TENANT_ID, "
-            "MS_CLIENT_ID, MS_CLIENT_SECRET, and MS_SHARED_MAILBOX to the "
-            "Railway environment variables."
+            "Sales Inbox is not yet active. A super admin must connect a mailbox "
+            "in Settings > Mailbox, or configure Microsoft 365 credentials "
+            "(MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET) in Railway."
         ),
     )
 
@@ -223,6 +231,89 @@ async def _ingest_message(graph_message_id: str) -> None:
         pass
 
 
+async def _ingest_imap_message(msg: dict) -> None:
+    """
+    Persist one IMAP-sourced message to sales_inbox.
+    Idempotent: duplicate message_id is silently skipped.
+    Called from the polling loop — never raises; logs errors instead.
+    """
+    message_id = msg.get("message_id")
+    if message_id:
+        existing = await col("sales_inbox").find_one(
+            {"imap_message_id": message_id}, {"_id": 1}
+        )
+        if existing:
+            return
+
+    from_email   = msg.get("from_email", "").lower().strip()
+    from_name    = msg.get("from_name", from_email)
+    subject      = msg.get("subject", "(no subject)")
+    in_reply_to  = msg.get("in_reply_to", "")
+    references   = msg.get("references", "")
+    received_at  = msg.get("received_at") or datetime.now(timezone.utc)
+    body_html    = msg.get("body_html", "")
+    body_preview = msg.get("body_preview", "")[:500]
+    has_att      = msg.get("has_attachments", False)
+    attachments  = msg.get("attachments", [])
+    imap_uid     = msg.get("imap_uid", "")
+
+    customer_id, customer_name = await _resolve_customer(from_email)
+    is_unknown = customer_id is None
+
+    # Thread detection via In-Reply-To header
+    is_reply = False
+    thread_root_id: Optional[str] = None
+    linked_ticket_id: Optional[str] = None
+    if in_reply_to:
+        parent = await col("sales_inbox").find_one(
+            {"imap_message_id": in_reply_to},
+            {"_id": 1, "ticket_id": 1, "thread_root_id": 1},
+        )
+        if parent:
+            is_reply = True
+            thread_root_id = str(parent.get("thread_root_id") or parent["_id"])
+            linked_ticket_id = parent.get("ticket_id")
+
+    doc = {
+        "imap_message_id":   message_id,
+        "imap_uid":          imap_uid,
+        "imap_in_reply_to":  in_reply_to,
+        "imap_references":   references,
+        "from_email":        from_email,
+        "from_name":         from_name,
+        "subject":           subject,
+        "body_preview":      body_preview,
+        "body_html":         body_html,
+        "received_at":       received_at,
+        "has_attachments":   has_att,
+        "attachments":       attachments,
+        "customer_id":       customer_id,
+        "customer_name":     customer_name,
+        "is_unknown_sender": is_unknown,
+        "ticket_id":         linked_ticket_id if is_reply else None,
+        "is_reply":          is_reply,
+        "thread_root_id":    thread_root_id,
+        "status":            "reply" if is_reply else "unhandled",
+        "created_at":        datetime.now(timezone.utc),
+        "handled_by":        None,
+        "handled_at":        None,
+    }
+    await col("sales_inbox").insert_one(doc)
+
+    # Mark read via IMAP so the mailbox stays clean
+    if imap_uid:
+        try:
+            from services.imap_client import mark_as_read as imap_mark_read
+            await imap_mark_read(imap_uid)
+        except Exception:
+            pass
+
+    logger.info(
+        "inbox_imap_message_stored from=%s subject=%s reply=%s customer_found=%s",
+        from_email, subject, is_reply, not is_unknown,
+    )
+
+
 # ── Graph webhook ─────────────────────────────────────────────────────────────
 
 @router.post("/graph-webhook", include_in_schema=False)
@@ -280,28 +371,39 @@ async def poll_inbox(
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
     """
-    Manually poll Graph for unread messages.  Called by staff or a cron job
-    when the push subscription has lapsed between a cold restart and renewal.
+    Manually trigger a mailbox poll.
+    Graph backend: fetches unread messages via Graph API.
+    IMAP backend: fetches UNSEEN messages via IMAP.
     Responds immediately; ingestion happens in background.
     """
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
 
-    from services.graph_client import list_messages
+    if graph_configured():
+        from services.graph_client import list_messages
+        try:
+            msgs = await list_messages(filter_str="isRead eq false", top=25)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
+        count = 0
+        for m in msgs:
+            mid = m.get("id", "")
+            if mid:
+                background_tasks.add_task(_ingest_message, mid)
+                count += 1
+        return {"queued": count, "backend": "graph"}
 
+    # IMAP backend
+    from services.imap_client import fetch_new_messages
     try:
-        msgs = await list_messages(filter_str="isRead eq false", top=25)
+        msgs = await fetch_new_messages()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
-
+        raise HTTPException(status_code=502, detail=f"IMAP error: {exc}")
     count = 0
     for m in msgs:
-        mid = m.get("id", "")
-        if mid:
-            background_tasks.add_task(_ingest_message, mid)
-            count += 1
-
-    return {"queued": count}
+        background_tasks.add_task(_ingest_imap_message, m)
+        count += 1
+    return {"queued": count, "backend": "imap"}
 
 
 # ── Counts ────────────────────────────────────────────────────────────────────
@@ -310,7 +412,7 @@ async def poll_inbox(
 async def unhandled_count(
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    if not graph_configured():
+    if not inbox_configured():
         return {"count": 0}
     count = await col("sales_inbox").count_documents({"status": "unhandled"})
     return {"count": count}
@@ -329,7 +431,7 @@ async def list_inbox(
     limit: int = Query(50, le=100),
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    if not graph_configured():
+    if not inbox_configured():
         return {"items": [], "total": 0, "configured": False}
 
     filt: dict = {}
@@ -360,7 +462,7 @@ async def get_inbox_item(
     item_id: str,
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
     doc = await col("sales_inbox").find_one({"_id": _oid(item_id)})
     if not doc:
@@ -373,22 +475,30 @@ async def get_thread(
     item_id: str,
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    """All messages sharing the same Graph conversationId, oldest first."""
-    if not graph_configured():
+    """All messages in the same email thread, oldest first."""
+    if not inbox_configured():
         _not_configured()
-    item = await col("sales_inbox").find_one({"_id": _oid(item_id)}, {"graph_conversation_id": 1})
+    item = await col("sales_inbox").find_one(
+        {"_id": _oid(item_id)},
+        {"graph_conversation_id": 1, "thread_root_id": 1, "imap_message_id": 1},
+    )
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
-    conv_id = item.get("graph_conversation_id")
-    if not conv_id:
-        return {"thread": []}
+    conv_id      = item.get("graph_conversation_id")
+    root_id      = item.get("thread_root_id")
+    imap_mid     = item.get("imap_message_id")
 
-    cursor = (
-        col("sales_inbox")
-        .find({"graph_conversation_id": conv_id}, {"body_html": 0})
-        .sort("received_at", 1)
-    )
+    if conv_id:
+        filt = {"graph_conversation_id": conv_id}
+    elif root_id:
+        filt = {"thread_root_id": root_id}
+    elif imap_mid:
+        filt = {"$or": [{"imap_message_id": imap_mid}, {"thread_root_id": str(item["_id"])}]}
+    else:
+        return {"thread": [_fmt(item)]}
+
+    cursor = col("sales_inbox").find(filt, {"body_html": 0}).sort("received_at", 1)
     return {"thread": [_fmt(doc) async for doc in cursor]}
 
 
@@ -439,7 +549,7 @@ async def create_ticket_from_inbox(
     ),
 ):
     """Convert an inbox email into a Sales Ticket."""
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
 
     item = await col("sales_inbox").find_one({"_id": _oid(item_id)})
@@ -536,7 +646,7 @@ async def link_customer(
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
     """Associate an unknown-sender email with an existing Odoo customer."""
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
 
     item = await col("sales_inbox").find_one({"_id": _oid(item_id)})
@@ -589,7 +699,7 @@ async def start_onboarding(
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
     """Flag an unknown-sender email as pending customer onboarding."""
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
 
     item = await col("sales_inbox").find_one({"_id": _oid(item_id)})
@@ -623,8 +733,8 @@ async def reply_to_email(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    """Send a reply to the sender via Graph API (from the shared mailbox)."""
-    if not graph_configured():
+    """Send a reply from the shared mailbox — Graph backend or SMTP, whichever is active."""
+    if not inbox_configured():
         _not_configured()
 
     if not body.body_html.strip():
@@ -635,7 +745,19 @@ async def reply_to_email(
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
     try:
-        await graph_send_reply(item["graph_message_id"], body.body_html)
+        if graph_configured() and item.get("graph_message_id"):
+            await graph_send_reply(item["graph_message_id"], body.body_html)
+        else:
+            subj = item.get("subject", "")
+            if not subj.lower().startswith("re:"):
+                subj = f"Re: {subj}"
+            await imap_send_reply(
+                to_email=item["from_email"],
+                subject=subj,
+                body_html=body.body_html,
+                in_reply_to=item.get("imap_message_id") or item.get("imap_in_reply_to", ""),
+                references=item.get("imap_references", ""),
+            )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not send reply: {exc}")
 
@@ -657,7 +779,7 @@ async def archive_item(
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
     """Dismiss an inbox item without creating a ticket."""
-    if not graph_configured():
+    if not inbox_configured():
         _not_configured()
 
     item = await col("sales_inbox").find_one({"_id": _oid(item_id)})

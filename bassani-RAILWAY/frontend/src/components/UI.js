@@ -47,6 +47,7 @@ const NAV = [
   { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
   { label: "Email Routing", path: "/settings/email-routing", icon: Settings, section: "Admin", superAdminOnly: true              },
+  { label: "Mailbox",       path: "/settings/mailbox",       icon: Mail,     section: "Admin", superAdminOnly: true              },
 ];
 
 const RESELLER_NAV = [

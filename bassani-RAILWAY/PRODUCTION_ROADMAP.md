@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-02  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 built and deployed, blocked on Azure credentials; Phase 12 in progress (12.0 backend foundation complete)  
+**Last Updated:** 2026-07-04  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 IMAP/SMTP path built and deployed — inbox live for any IMAP mailbox; M365 Graph path still available when Azure credentials provided; Phase 12 in progress (12.0 backend foundation complete)  
 
 ---
 
@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Microsoft 365 Mailbox Integration | 🟡 In Progress | All code built — 2026-06-29 · Blocked on: Azure app registration credentials from M365 admin (Tristan) |
+| 11 | Mailbox Integration | 🟢 Live (IMAP path) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP alternative path built 2026-07-04 — works with Xneelo, M365 Basic Auth, or any IMAP provider · Super admin connects mailbox via Settings > Mailbox |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1417,23 +1417,53 @@ The portal was built primarily for desktop/laptop use. Responsive Tailwind class
 
 ---
 
-## Phase 11 — Microsoft 365 Mailbox Integration
+## Phase 11 — Mailbox Integration
 
 **Goal:** Surface the `orders@bassanihealth.com` shared mailbox inside the portal. Staff see incoming POs and RFQs in a Sales Inbox view, identify the customer, and convert emails directly into Sales Tickets — without leaving the portal or switching to Outlook. Replies from the portal go out as real emails from the shared mailbox, keeping the thread intact in the customer's inbox.
 
-**Estimate:** 2–3 weeks  
-**Status:** 🔴 Not Started  
-**Blocked on:** Azure AD app registration — need Tenant ID, Client ID, and Client Secret from the M365 admin before any backend work can begin. No code changes possible until credentials are in Railway env vars.
+**Status:** 🟢 Live — IMAP/SMTP path complete (2026-07-04)
+
+Two backends are supported. Only one needs to be configured:
+
+| Backend | Status | When to use |
+|---|---|---|
+| IMAP/SMTP | **Live** | Any mailbox: Xneelo, M365 with Basic Auth on, Gmail, custom | 
+| Microsoft Graph (M365) | Built — blocked on Azure creds | M365 with OAuth2 — preferred when available (webhook push, no polling) |
+
+### 11.A — IMAP/SMTP Path (Active)
+
+**How it works:** Super admin enters mailbox credentials in Settings > Mailbox. The portal connects via standard IMAP (SSL, port 993) and polls for new messages every 60 seconds. Replies are sent via SMTP (STARTTLS, port 587). No Azure app registration required — works with any email provider that supports IMAP.
+
+**Completed (2026-07-04):**
+- [x] `backend/services/imap_client.py` — provider-agnostic IMAP poll + SMTP send via `asyncio.to_thread` (no blocking)
+- [x] Mailbox credentials stored in MongoDB `portal_settings` (`_id: "mailbox_config"`) — not in Railway env vars
+- [x] `GET/PUT/DELETE /api/settings/mailbox` — super admin only; password fields never returned on GET
+- [x] `POST /api/settings/mailbox/test` — live IMAP login test without saving
+- [x] Credentials loaded at startup and hot-reloaded on settings save (no restart required)
+- [x] 60-second background polling loop started on startup when IMAP is configured
+- [x] `_ingest_imap_message()` — mirrors Graph ingest; handles thread detection via `In-Reply-To` header
+- [x] Reply via SMTP (`Re:` subject prefix, `In-Reply-To` and `References` headers for correct threading)
+- [x] `inbox_configured()` guard replaces `graph_configured()` across all inbox routes — either backend activates the inbox
+- [x] Deduplication index on `imap_message_id` (unique + sparse)
+- [x] Settings > Mailbox UI — provider presets (M365/Xneelo/Gmail/Custom), test connection, save, disconnect
+- [x] Sales Inbox "not configured" state links super admin to Settings > Mailbox
+- [x] Fallback to Railway env vars (`IMAP_HOST`, `IMAP_USERNAME`, `IMAP_PASSWORD`) if MongoDB has no entry
+
+**M365 IMAP notes:**
+- IMAP host: `outlook.office365.com:993`, SMTP host: `smtp.office365.com:587`
+- IMAP/Basic Auth must be enabled in Exchange Admin Center for the shared mailbox
+- Ask Tristan (M365 admin) to confirm. Command: `Get-CASMailbox orders@bassanihealth.com | Select ImapEnabled`
+- If Basic Auth is disabled tenant-wide, options: (a) re-enable for this mailbox only, (b) forward to an Xneelo account, (c) pursue Graph OAuth2 path when Azure creds are available
 
 ### Context
 
-Bassani Health's email is confirmed on Microsoft 365 (MX: `bassanihealth-com.mail.protection.outlook.com`). The `orders@bassanihealth.com` shared mailbox already exists and is in active use. Microsoft Graph API gives programmatic access to that mailbox — reading messages, downloading attachments, sending replies, and subscribing to real-time push notifications when new mail arrives.
+Bassani Health's email is confirmed on Microsoft 365 (MX: `bassanihealth-com.mail.protection.outlook.com`). The `orders@bassanihealth.com` shared mailbox already exists and is in active use.
 
 This integrates with the existing Sales Ticket system (Phase 8). The inbox is not a replacement for tickets — it is the **top of the funnel** that feeds the ticket pipeline. Every PO or RFQ that arrives by email becomes a ticket within seconds of landing, without staff having to manually copy details across from Outlook.
 
 ---
 
-### 11.0 — Azure App Registration (Client dependency)
+### 11.0 — Azure App Registration (Client dependency — M365 Graph path)
 
 The M365 admin must complete this once. No code required.
 

@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     ms_client_id:      str = ""
     ms_client_secret:  str = ""
     ms_shared_mailbox: str = "orders@bassanihealth.com"
+    # IMAP/SMTP — alternative mailbox backend (works with any provider)
+    imap_host:     str = ""
+    imap_port:     int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    smtp_host:     str = ""   # defaults to imap_host if blank
+    smtp_port:     int = 587
+    smtp_username: str = ""   # defaults to imap_username if blank
+    smtp_password: str = ""   # defaults to imap_password if blank
     r2_account_id:        str = ""
     r2_access_key_id:     str = ""
     r2_secret_access_key: str = ""
