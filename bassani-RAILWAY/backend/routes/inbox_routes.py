@@ -707,13 +707,22 @@ async def create_ticket_from_inbox(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
-    if item.get("ticket_id"):
+    # Resolve thread root — the representative doc from the aggregation may be
+    # a reply, so resolve to the root and check ticket_id there too.
+    thread_root_str = item.get("thread_root_id") or str(item["_id"])
+    root_doc = item if not item.get("thread_root_id") else (
+        await col("sales_inbox").find_one({"_id": ObjectId(thread_root_str)})
+        or item
+    )
+
+    existing_ticket_id = root_doc.get("ticket_id") or item.get("ticket_id")
+    if existing_ticket_id:
         raise HTTPException(
             status_code=409,
-            detail=f"A ticket has already been created for this email (id: {item['ticket_id']})",
+            detail=f"A ticket has already been created for this thread (id: {existing_ticket_id})",
         )
 
-    customer_id = item.get("customer_id")
+    customer_id = root_doc.get("customer_id") or item.get("customer_id")
     if not customer_id:
         raise HTTPException(
             status_code=422,
@@ -723,7 +732,7 @@ async def create_ticket_from_inbox(
             ),
         )
 
-    customer_name = item.get("customer_name", "Unknown")
+    customer_name = root_doc.get("customer_name") or item.get("customer_name", "Unknown")
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
 
@@ -751,15 +760,21 @@ async def create_ticket_from_inbox(
             "at":          now,
             "note":        f"Ticket created from email: {item.get('subject', '')}",
         }],
-        "inbox_item_id": item_id,
+        "inbox_item_id": thread_root_str,
         "created_at":    now,
         "updated_at":    now,
     }
     result = await col("tickets").insert_one(doc)
     ticket_id = str(result.inserted_id)
 
-    await col("sales_inbox").update_one(
-        {"_id": _oid(item_id)},
+    # Stamp ticket_id and status on ALL messages in the thread so the
+    # aggregation (which picks the newest doc) always sees ticket_id regardless
+    # of which message ends up as the thread representative.
+    await col("sales_inbox").update_many(
+        {"$or": [
+            {"_id": ObjectId(thread_root_str)},
+            {"thread_root_id": thread_root_str},
+        ]},
         {
             "$set": {
                 "ticket_id":  ticket_id,
@@ -979,9 +994,13 @@ async def archive_item(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
+    thread_root_str = item.get("thread_root_id") or str(item["_id"])
     now = datetime.now(timezone.utc)
-    await col("sales_inbox").update_one(
-        {"_id": _oid(item_id)},
+    await col("sales_inbox").update_many(
+        {"$or": [
+            {"_id": ObjectId(thread_root_str)},
+            {"thread_root_id": thread_root_str},
+        ]},
         {
             "$set": {
                 "status":     "archived",
