@@ -291,6 +291,50 @@ export default function SalesInbox() {
 
   useEffect(() => { loadList(); }, [loadList]);
 
+  // ── Background polling ───────────────────────────────────────────────────────
+
+  // Silent list refresh every 30 s — new emails appear without a page reload.
+  // Uses a separate callback that skips the loading spinner.
+  const silentLoadList = useCallback(async () => {
+    try {
+      const params = { status: statusFilter };
+      if (search) params.q = search;
+      const r = await api.get("/api/inbox", { params });
+      if (r.data.configured !== false) {
+        setThreads(r.data.items || []);
+        setTotal(r.data.total || 0);
+      }
+    } catch { /* silent — don't toast on background poll failures */ }
+  }, [statusFilter, search]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") silentLoadList();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [silentLoadList]);
+
+  // Poll the open thread for new messages every 15 s.
+  // When new messages arrive, append them and auto-scroll to the latest.
+  const selectedThreadId = selectedThread?.id;
+  useEffect(() => {
+    if (!selectedThreadId) return;
+    const id = setInterval(async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const r = await api.get(`/api/inbox/${selectedThreadId}/thread`);
+        const incoming = r.data.thread || [];
+        setMessages(prev => {
+          if (incoming.length !== prev.length) {
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+          }
+          return incoming;
+        });
+      } catch { /* silent */ }
+    }, 15_000);
+    return () => clearInterval(id);
+  }, [selectedThreadId]);
+
   // Debounce search input → committed search
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchDraft), 400);
