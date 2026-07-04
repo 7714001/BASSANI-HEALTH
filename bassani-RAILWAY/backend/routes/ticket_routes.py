@@ -10,13 +10,15 @@ The Orders side of this handoff is NOT a separate collection — it's the
 existing `packing_board` document, extended in Phase 8.3. See
 `packing_board_routes.py` and the `orders_ticket_ref` field below.
 """
+import base64
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import Response
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import require_permission, require_any_permission
+from auth import require_permission, require_any_permission, get_current_user
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col
@@ -981,6 +983,106 @@ async def get_invoice_balance(
         "amount_residual": full_invoice["amount_residual"],
         "payment_state":   full_invoice["payment_state"],
     }
+
+
+# Odoo report reference names — used to render PDFs on demand
+_REPORT_NAMES = {
+    "quote":   "sale.report_saleorder",
+    "invoice": "account.report_move_full",
+}
+
+
+@router.get("/{ticket_id}/documents/{doc_type}")
+async def get_ticket_document(
+    ticket_id: str,
+    doc_type: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Stream an Odoo-generated PDF (quote or invoice) for a Sales Ticket.
+
+    Tries ir.attachment first (Odoo stores PDFs there after posting/sending).
+    Falls back to rendering via ir.actions.report if no stored attachment exists.
+    Returns the raw PDF bytes so the frontend can open it in a new tab or iframe.
+    """
+    if doc_type not in _REPORT_NAMES:
+        raise HTTPException(status_code=400, detail=f"Unknown document type '{doc_type}' — use 'quote' or 'invoice'")
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    odoo = get_odoo_client()
+
+    if doc_type == "quote":
+        if not ticket.get("order_id"):
+            raise HTTPException(status_code=404, detail="No linked order on this ticket — build the quote first")
+        record_id = ticket["order_id"]
+        odoo_model = "sale.order"
+        filename = f"Quote-{ticket.get('customer_name', ticket_id)}.pdf"
+
+    else:  # invoice — target the full SO invoice (largest out_invoice)
+        if not ticket.get("order_id"):
+            raise HTTPException(status_code=404, detail="No linked order on this ticket")
+        try:
+            order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["invoice_ids"])
+            inv_ids = order_rows[0].get("invoice_ids", []) if order_rows else []
+            if not inv_ids:
+                raise HTTPException(status_code=404, detail="No invoices found on this order — confirm the order first")
+            invoices = odoo.read("account.move", inv_ids, fields=["id", "amount_total", "move_type"])
+            out_invoices = [i for i in invoices if i.get("move_type") == "out_invoice"]
+            if not out_invoices:
+                raise HTTPException(status_code=404, detail="No customer invoice found for this order")
+            record_id = max(out_invoices, key=lambda i: i.get("amount_total", 0))["id"]
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error resolving invoice: {str(e)}")
+        odoo_model = "account.move"
+        filename = f"Invoice-{ticket.get('customer_name', ticket_id)}.pdf"
+
+    # ── Try stored attachment first ────────────────────────────────────────────
+    try:
+        attachments = odoo.search_read(
+            "ir.attachment",
+            [("res_model", "=", odoo_model), ("res_id", "=", record_id), ("mimetype", "=", "application/pdf")],
+            ["datas", "name"],
+            limit=1,
+            order="create_date desc",
+        )
+        if attachments and attachments[0].get("datas"):
+            pdf_bytes = base64.b64decode(attachments[0]["datas"])
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            )
+    except Exception:
+        pass  # fall through to on-demand render
+
+    # ── Render on demand via ir.actions.report ─────────────────────────────────
+    report_name = _REPORT_NAMES[doc_type]
+    try:
+        result = odoo.execute("ir.actions.report", "render_qweb_pdf", report_name, [record_id])
+        raw = result[0]
+        if isinstance(raw, bytes):
+            pdf_bytes = raw
+        elif hasattr(raw, "data"):          # xmlrpc.client.Binary
+            pdf_bytes = raw.data
+        else:
+            pdf_bytes = base64.b64decode(raw)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not render {doc_type} PDF from Odoo: {str(e)}",
+        )
 
 
 @router.post("/{ticket_id}/register-payment")

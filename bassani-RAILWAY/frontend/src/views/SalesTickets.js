@@ -5,13 +5,14 @@
 // keeping the sales clerk in one place for the entire inquiry-to-payment cycle.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
-  Mail, Paperclip, ExternalLink, ChevronUp,
+  Mail, Paperclip, ExternalLink, ChevronUp, FileText, Receipt,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -61,6 +62,8 @@ export default function SalesTickets() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const location = useLocation();
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -70,6 +73,15 @@ export default function SalesTickets() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Auto-open a specific ticket when navigated from the Invoices page
+  useEffect(() => {
+    const targetId = location.state?.openTicketId;
+    if (!targetId || loading) return;
+    const match = tickets.find(t => t.id === targetId);
+    if (match) openDetail(match);
+    // openDetail is stable — intentionally omitted from deps to run once after load
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Create modal ──────────────────────────────────────────────────────────
   const [createModal, setCreateModal]       = useState(false);
@@ -449,6 +461,28 @@ export default function SalesTickets() {
     finally { setQuoteSaving(false); }
   };
 
+  // ── Odoo document viewer ─────────────────────────────────────────────────
+  const [docLoading, setDocLoading] = useState(null); // "quote" | "invoice" | null
+
+  const openDocument = async (docType) => {
+    setDocLoading(docType);
+    try {
+      const res = await api.get(`/api/tickets/${detail.id}/documents/${docType}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, "_blank", "noopener,noreferrer");
+      // Revoke after a short delay to allow the tab to load the blob
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (e) {
+      const msg = e.response?.data
+        ? await e.response.data.text?.()
+        : null;
+      try { toast.error(JSON.parse(msg)?.detail || "Could not load document from Odoo"); }
+      catch { toast.error("Could not load document from Odoo"); }
+    } finally {
+      setDocLoading(null);
+    }
+  };
+
   // ── Deposit Registration ──────────────────────────────────────────────────
   const [depositModal, setDepositModal]     = useState(false);
   const [depositJournals, setDepositJournals] = useState([]);
@@ -812,6 +846,37 @@ export default function SalesTickets() {
                       )}
                     </div>
                   </div>
+
+                  {/* Documents */}
+                  {detail.order_id && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-50">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Documents</p>
+                      </div>
+                      <div className="p-2">
+                        <button
+                          onClick={() => openDocument("quote")}
+                          disabled={docLoading === "quote"}
+                          className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                        >
+                          <FileText size={14} className="text-gray-400 shrink-0" />
+                          {docLoading === "quote" ? "Loading…" : "View Quote PDF"}
+                          <ExternalLink size={11} className="ml-auto text-gray-300" />
+                        </button>
+                        {detailOrder?.state === "sale" && (
+                          <button
+                            onClick={() => openDocument("invoice")}
+                            disabled={docLoading === "invoice"}
+                            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                          >
+                            <Receipt size={14} className="text-gray-400 shrink-0" />
+                            {docLoading === "invoice" ? "Loading…" : "View Invoice PDF"}
+                            <ExternalLink size={11} className="ml-auto text-gray-300" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Actions */}
                   {!detail.exit_status && (

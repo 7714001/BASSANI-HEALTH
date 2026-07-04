@@ -1,4 +1,6 @@
+import base64
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type
@@ -29,7 +31,7 @@ class InvoiceCreate(BaseModel):
 INVOICE_FIELDS = [
     "id", "name", "partner_id", "invoice_date", "invoice_date_due",
     "amount_total", "amount_tax", "amount_residual",
-    "state", "move_type", "payment_state",
+    "state", "move_type", "payment_state", "invoice_origin",
 ]
 
 INVOICE_DOMAIN = [("move_type", "in", ["out_invoice", "in_invoice", "out_refund", "in_refund"])]
@@ -85,9 +87,39 @@ async def list_invoices(
             order=f"{sort_by} {sort_dir}",
         )
         total = odoo.count("account.move", domain)
-        return {"invoices": invoices, "total": total}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    # Batch-resolve linked Sales Ticket IDs via invoice_origin (SO name → SO id → ticket)
+    so_names = list({inv["invoice_origin"] for inv in invoices if inv.get("invoice_origin")})
+    if so_names:
+        try:
+            so_rows = odoo.search_read(
+                "sale.order",
+                [("name", "in", so_names)],
+                ["id", "name"],
+                limit=len(so_names) * 2,
+            )
+            so_name_to_id = {r["name"]: r["id"] for r in so_rows}
+            so_ids = list(so_name_to_id.values())
+            tickets_cursor = col("tickets").find(
+                {"order_id": {"$in": so_ids}},
+                {"_id": 1, "order_id": 1},
+            )
+            ticket_rows = await tickets_cursor.to_list(length=len(so_ids))
+            so_id_to_ticket = {t["order_id"]: str(t["_id"]) for t in ticket_rows}
+            for inv in invoices:
+                origin = inv.get("invoice_origin")
+                so_id = so_name_to_id.get(origin) if origin else None
+                inv["linked_ticket_id"] = so_id_to_ticket.get(so_id) if so_id else None
+        except Exception:
+            for inv in invoices:
+                inv["linked_ticket_id"] = None
+    else:
+        for inv in invoices:
+            inv["linked_ticket_id"] = None
+
+    return {"invoices": invoices, "total": total}
 
 
 @router.get("/summary")
@@ -216,6 +248,67 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{invoice_id}/pdf")
+def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_user)):
+    """Stream the Odoo-generated invoice PDF.
+
+    Tries ir.attachment first (Odoo stores PDFs after posting/sending).
+    Falls back to rendering via ir.actions.report on demand.
+    """
+    odoo = get_odoo_client()
+
+    # Resolve invoice name for the filename
+    try:
+        records = odoo.read("account.move", [invoice_id], fields=["name"])
+        if not records:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        invoice_name = records[0].get("name", f"invoice-{invoice_id}").replace("/", "-")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    filename = f"{invoice_name}.pdf"
+
+    # ── Try stored attachment first ────────────────────────────────────────────
+    try:
+        attachments = odoo.search_read(
+            "ir.attachment",
+            [("res_model", "=", "account.move"), ("res_id", "=", invoice_id), ("mimetype", "=", "application/pdf")],
+            ["datas", "name"],
+            limit=1,
+            order="create_date desc",
+        )
+        if attachments and attachments[0].get("datas"):
+            raw = attachments[0]["datas"]
+            pdf_bytes = raw.data if hasattr(raw, "data") else base64.b64decode(raw)
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            )
+    except Exception:
+        pass  # fall through to on-demand render
+
+    # ── Render on demand via ir.actions.report ─────────────────────────────────
+    try:
+        result = odoo.execute("ir.actions.report", "render_qweb_pdf", "account.report_move_full", [invoice_id])
+        raw = result[0]
+        if isinstance(raw, bytes):
+            pdf_bytes = raw
+        elif hasattr(raw, "data"):
+            pdf_bytes = raw.data
+        else:
+            pdf_bytes = base64.b64decode(raw)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not render invoice PDF from Odoo: {str(e)}")
 
 
 @router.post("/")

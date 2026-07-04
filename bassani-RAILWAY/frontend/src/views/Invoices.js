@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X } from "lucide-react";
+import { Printer, X, ExternalLink, FileText } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow,
-  Modal, FormGroup, Input, Select, Textarea, BtnPrimary, BtnSecondary,
+  Modal, FormGroup, Textarea, BtnPrimary, BtnSecondary,
   fmtR, fmtDate,
 } from "../components/UI";
 
@@ -277,6 +277,7 @@ export default function Invoices() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const location = useLocation();
+  const navigate = useNavigate();
   const initialFilter = location.state?.filter || "unpaid";
 
   const [invoices,   setInvoices  ] = useState([]);
@@ -287,17 +288,11 @@ export default function Invoices() {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "invoice_date", desc: true }]);
 
-  // Invoice view
-  const [viewInvoice,   setViewInvoice  ] = useState(null);
-  const [viewLoading,   setViewLoading  ] = useState(false);
+  const [viewInvoice, setViewInvoice] = useState(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
-  // Payment registration
-  const [journals,  setJournals ] = useState([]);
-  const [payModal,  setPayModal ] = useState(null);
-  const [payForm,   setPayForm  ] = useState({ journal_id: "", payment_date: "", amount: "" });
-  const [paying,    setPaying   ] = useState(false);
+  const [pdfLoading,   setPdfLoading  ] = useState(new Set());
 
-  // Credit note request
   const [cnModal,      setCnModal     ] = useState(null);
   const [cnReason,     setCnReason    ] = useState("");
   const [cnSubmitting, setCnSubmitting] = useState(false);
@@ -326,13 +321,6 @@ export default function Invoices() {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (!isAdmin) return;
-    api.get("/api/invoices/payment-journals")
-      .then(r => setJournals(r.data.journals || []))
-      .catch(() => {});
-  }, [isAdmin]);
-
   const openViewInvoice = async (inv) => {
     setViewLoading(true);
     try {
@@ -345,32 +333,21 @@ export default function Invoices() {
     }
   };
 
-  const openPayModal = (inv) => {
-    setPayModal(inv);
-    setPayForm({
-      journal_id:   journals[0]?.id || "",
-      payment_date: new Date().toISOString().split("T")[0],
-      amount:       String(inv.amount_residual || inv.amount_total),
-    });
+  const openTicket = (ticketId) => {
+    navigate("/tickets/sales", { state: { openTicketId: ticketId } });
   };
 
-  const submitPayment = async () => {
-    if (!payForm.journal_id) return toast.error("Select a payment journal");
-    if (!payForm.amount || parseFloat(payForm.amount) <= 0) return toast.error("Enter a valid amount");
-    setPaying(true);
+  const openPdf = async (inv) => {
+    setPdfLoading(prev => new Set(prev).add(inv.id));
     try {
-      await api.put(`/api/invoices/${payModal.id}/pay`, {
-        journal_id:   parseInt(payForm.journal_id),
-        payment_date: payForm.payment_date || undefined,
-        amount:       parseFloat(payForm.amount),
-      });
-      toast.success(`Payment of ${fmtR(parseFloat(payForm.amount))} registered`);
-      setPayModal(null);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Payment failed");
+      const res = await api.get(`/api/invoices/${inv.id}/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch {
+      toast.error("Could not load invoice PDF from Odoo");
     } finally {
-      setPaying(false);
+      setPdfLoading(prev => { const s = new Set(prev); s.delete(inv.id); return s; });
     }
   };
 
@@ -399,7 +376,6 @@ export default function Invoices() {
   };
 
   const outstandingTotal = invoices.reduce((s, i) => s + (i.amount_residual || 0), 0);
-  const canPay = (inv) => isAdmin && (inv.payment_state === "not_paid" || inv.payment_state === "partial");
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -411,6 +387,9 @@ export default function Invoices() {
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-6">
+        <div className="mb-4 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 text-xs text-blue-700">
+          This is a read-only view of invoices from Odoo. To register a payment, open the linked Sales Ticket and use the Register Balance Payment action in the sidebar.
+        </div>
         <div className="mb-4 space-y-2">
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }} placeholder="Search invoice #, customer…" />
           <ChipRow>
@@ -456,19 +435,30 @@ export default function Invoices() {
             {
               id: "actions", header: "", enableSorting: false,
               cell: ({ row: { original: inv } }) => (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <button
                     onClick={e => { e.stopPropagation(); openViewInvoice(inv); }}
                     disabled={viewLoading}
                     className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline disabled:opacity-40">
                     View
                   </button>
-                  {canPay(inv) && (
-                    <BtnPrimary size="sm" onClick={e => { e.stopPropagation(); openPayModal(inv); }}>
-                      Register Payment
-                    </BtnPrimary>
+                  {inv.state === "posted" && (
+                    <button
+                      onClick={e => { e.stopPropagation(); openPdf(inv); }}
+                      disabled={pdfLoading.has(inv.id)}
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 font-medium hover:underline disabled:opacity-40">
+                      <FileText size={11} />
+                      {pdfLoading.has(inv.id) ? "Loading…" : "PDF"}
+                    </button>
                   )}
-                  {inv.move_type === "out_invoice" && inv.state === "posted" && (
+                  {inv.linked_ticket_id && (
+                    <button
+                      onClick={e => { e.stopPropagation(); openTicket(inv.linked_ticket_id); }}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+                      Sales Ticket <ExternalLink size={10} />
+                    </button>
+                  )}
+                  {inv.move_type === "out_invoice" && inv.state === "posted" && isAdmin && (
                     <button
                       onClick={e => { e.stopPropagation(); setCnModal(inv); setCnReason(""); }}
                       className="text-xs text-purple-600 hover:text-purple-700 font-medium hover:underline">
@@ -520,39 +510,6 @@ export default function Invoices() {
         </Modal>
       )}
 
-      {/* Payment modal */}
-      {payModal && (
-        <Modal title={`Register Payment — ${payModal.name}`} onClose={() => setPayModal(null)}>
-          <div className="space-y-3">
-            <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm">
-              <span className="text-gray-500">Customer</span>
-              <span className="font-medium">{payModal.partner_id?.[1]}</span>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm">
-              <span className="text-gray-500">Outstanding</span>
-              <span className="font-semibold text-red-600">{fmtR(payModal.amount_residual)}</span>
-            </div>
-            <FormGroup label="Payment Journal" required>
-              <Select value={payForm.journal_id} onChange={e => setPayForm({ ...payForm, journal_id: e.target.value })}>
-                <option value="">— Select journal —</option>
-                {journals.map(j => (
-                  <option key={j.id} value={j.id}>{j.display_label} ({j.type})</option>
-                ))}
-              </Select>
-            </FormGroup>
-            <FormGroup label="Payment Date">
-              <Input type="date" value={payForm.payment_date} onChange={e => setPayForm({ ...payForm, payment_date: e.target.value })} />
-            </FormGroup>
-            <FormGroup label="Amount (ZAR)" required>
-              <Input type="number" min="0.01" step="0.01" value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: e.target.value })} />
-            </FormGroup>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setPayModal(null)} disabled={paying}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={submitPayment} loading={paying}>Confirm Payment</BtnPrimary>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
