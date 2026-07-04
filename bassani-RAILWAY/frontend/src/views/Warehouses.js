@@ -1,14 +1,20 @@
 import { useState, useEffect } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Copy, Check, RefreshCw } from "lucide-react";
-import { TopBar, DataTable, BtnSecondary } from "../components/UI";
+import { Copy, Check, RefreshCw, Star } from "lucide-react";
+import { TopBar, DataTable, BtnSecondary, Badge } from "../components/UI";
+import { useAuth } from "../AuthContext";
 
 export default function Warehouses() {
-  const [warehouses, setWarehouses] = useState([]);
-  const [tokens,     setTokens    ] = useState({});
-  const [loading,    setLoading   ] = useState(true);
-  const [copied,     setCopied    ] = useState(null);
+  const { user } = useAuth();
+  const isSuperAdmin = user?.is_super_admin;
+
+  const [warehouses,        setWarehouses       ] = useState([]);
+  const [tokens,            setTokens           ] = useState({});
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(null);
+  const [loading,           setLoading          ] = useState(true);
+  const [copied,            setCopied           ] = useState(null);
+  const [settingDefault,    setSettingDefault   ] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -16,6 +22,7 @@ export default function Warehouses() {
       const r = await api.get("/api/warehouses/");
       const whs = r.data.warehouses || [];
       setWarehouses(whs);
+      setDefaultWarehouseId(r.data.default_warehouse_id || null);
       const entries = await Promise.all(
         whs.map(w => api.get(`/api/warehouses/${w.id}/display-token`).then(res => [w.id, res.data.token]))
       );
@@ -41,6 +48,25 @@ export default function Warehouses() {
     }
   };
 
+  const setDefault = async (warehouseId) => {
+    setSettingDefault(warehouseId);
+    try {
+      await api.put("/api/settings/default-warehouse", {
+        warehouse_id: warehouseId === defaultWarehouseId ? null : warehouseId,
+      });
+      setDefaultWarehouseId(warehouseId === defaultWarehouseId ? null : warehouseId);
+      toast.success(
+        warehouseId === defaultWarehouseId
+          ? "Default warehouse cleared"
+          : `Default warehouse set`
+      );
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update default");
+    } finally {
+      setSettingDefault(null);
+    }
+  };
+
   const screenUrl = (token) => `${window.location.origin}/packing-board.html?token=${token}`;
 
   const copy = (text, key) => {
@@ -53,7 +79,7 @@ export default function Warehouses() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Warehouses"
-        subtitle="Packing-floor display screen tokens — one per vault"
+        subtitle="Packing-floor display screen tokens and portal default warehouse"
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-6">
@@ -67,9 +93,14 @@ export default function Warehouses() {
               header: "Warehouse",
               enableSorting: false,
               cell: ({ row: { original: w } }) => (
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{w.name}</p>
-                  <p className="text-[11px] text-gray-400">{w.code}</p>
+                <div className="flex items-center gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{w.name}</p>
+                    <p className="text-[11px] text-gray-400">{w.code}</p>
+                  </div>
+                  {w.id === defaultWarehouseId && (
+                    <Badge color="green">Default</Badge>
+                  )}
                 </div>
               ),
             },
@@ -93,9 +124,21 @@ export default function Warehouses() {
               header: "",
               enableSorting: false,
               cell: ({ row: { original: w } }) => (
-                <BtnSecondary size="sm" onClick={() => rotate(w)}>
-                  <RefreshCw size={12} /> {tokens[w.id] ? "Rotate" : "Generate"}
-                </BtnSecondary>
+                <div className="flex items-center gap-2 justify-end">
+                  {isSuperAdmin && (
+                    <BtnSecondary
+                      size="sm"
+                      onClick={() => setDefault(w.id)}
+                      disabled={settingDefault === w.id}
+                    >
+                      <Star size={12} className={w.id === defaultWarehouseId ? "fill-amber-400 text-amber-400" : ""} />
+                      {w.id === defaultWarehouseId ? "Remove Default" : "Set Default"}
+                    </BtnSecondary>
+                  )}
+                  <BtnSecondary size="sm" onClick={() => rotate(w)}>
+                    <RefreshCw size={12} /> {tokens[w.id] ? "Rotate" : "Generate"}
+                  </BtnSecondary>
+                </div>
               ),
             },
           ]}

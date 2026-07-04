@@ -6,7 +6,7 @@ resolve recipients at send time. It reads from MongoDB first, falling
 back to the support_email env var default.
 """
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from auth import get_current_user
 from database import col
@@ -60,3 +60,33 @@ async def update_email_routing_config(
         upsert=True,
     )
     return {"success": True}
+
+
+# ── Default warehouse ────────────────────────────────────────────────────────
+
+class DefaultWarehouseConfig(BaseModel):
+    warehouse_id: Optional[int] = None
+
+
+async def get_default_warehouse_id() -> Optional[int]:
+    """Return the portal-wide default warehouse ID, or None if not set."""
+    doc = await col("portal_settings").find_one({"_id": "default_warehouse"})
+    return doc.get("warehouse_id") if doc else None
+
+
+@router.get("/default-warehouse")
+async def get_default_warehouse(_: dict = Depends(_require_super_admin)):
+    return {"warehouse_id": await get_default_warehouse_id()}
+
+
+@router.put("/default-warehouse")
+async def set_default_warehouse(
+    body: DefaultWarehouseConfig,
+    _: dict = Depends(_require_super_admin),
+):
+    await col("portal_settings").update_one(
+        {"_id": "default_warehouse"},
+        {"$set": {"warehouse_id": body.warehouse_id}},
+        upsert=True,
+    )
+    return {"success": True, "warehouse_id": body.warehouse_id}

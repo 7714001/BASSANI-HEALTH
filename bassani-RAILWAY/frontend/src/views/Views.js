@@ -1337,6 +1337,7 @@ export function Resellers() {
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
   const [warehouses,         setWarehouses        ] = useState([]);
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(null);
   const [modal,              setModal             ] = useState(false);
   const [form,               setForm              ] = useState(BLANK_FORM);
   const [customerSearch,     setCustomerSearch    ] = useState("");
@@ -1374,7 +1375,10 @@ export function Resellers() {
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    api.get("/api/warehouses/").then(r => setWarehouses(r.data.warehouses || [])).catch(() => {});
+    api.get("/api/warehouses/").then(r => {
+      setWarehouses(r.data.warehouses || []);
+      setDefaultWarehouseId(r.data.default_warehouse_id || null);
+    }).catch(() => {});
   }, []);
 
   // Load customers whenever dropdown is open — debounce only when typing
@@ -1429,7 +1433,7 @@ export function Resellers() {
   );
 
   const openModal = () => {
-    setForm({ ...BLANK_FORM });
+    setForm({ ...BLANK_FORM, warehouse_id: defaultWarehouseId ? String(defaultWarehouseId) : "" });
     setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false);
     setRSellerSessionId(rSellerGenSession()); setRSellerStagedDocs([]);
     setRSellerUploadingDoc(null); setRSellerRemovingDoc(null); setRSellerCustHasDocs(null);

@@ -408,8 +408,12 @@ export default function SalesTickets() {
       try {
         const r = await api.get("/api/warehouses/");
         const whs = r.data.warehouses || [];
+        const defId = r.data.default_warehouse_id;
         setQuoteWarehouses(whs);
-        if (whs.length > 0) setQuoteWarehouseId(String(whs[0].id));
+        if (whs.length > 0) {
+          const preferred = defId && whs.find(w => w.id === defId) ? String(defId) : String(whs[0].id);
+          setQuoteWarehouseId(preferred);
+        }
       } catch {
         console.warn("Quote builder — warehouses load failed (non-fatal)");
       }

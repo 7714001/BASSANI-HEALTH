@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 2 July 2026
+**Last Updated:** 4 July 2026
 
 ---
 
@@ -331,13 +331,15 @@ Each step is handled by a different team member, and the portal enforces that no
 1. Merveille creates a **Sales Ticket** (Direct Inquiry) and builds a quote in the portal — no Odoo needed
 2. The quote is emailed to the pharmacy directly from the ticket
 3. The pharmacy confirms — Merveille advances the ticket to Sale Order stage
-4. Finance (Kashi or Ragini) registers the 50% deposit — no Odoo needed
+4. Finance (Kashi or Ragini) registers the 50% deposit — no Odoo needed. The deposit invoice is created and reconciled in Odoo automatically
 5. Merveille confirms the order from the ticket — Odoo creates a confirmed sale order and the packing queue is updated automatically
-6. Tshidi sees the order in her Orders Tickets and marks it as Packing
-7. The warehouse packs the order — the packer ticks items on their handheld
-8. When packing is done, Tshidi marks it Ready
-9. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
-10. Tshidi marks it Complete — Merveille's Sales Ticket automatically updates to show Complete
+6. The full balance invoice is available in Odoo immediately after confirmation
+7. Once the customer pays the balance, Finance registers the balance payment against the full invoice directly from the ticket
+8. Tshidi sees the order in her Orders Tickets and marks it as Packing
+9. The warehouse packs the order — the packer ticks items on their handheld
+10. When packing is done, Tshidi marks it Ready
+11. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
+12. Tshidi marks it Complete — Merveille's Sales Ticket automatically updates to show Complete
 
 **Example: A reseller places an order online.**
 
@@ -358,6 +360,8 @@ Each step is handled by a different team member, and the portal enforces that no
 When you log in, you land on **Sales Tickets** (`/tickets/sales`). This shows:
 - **Your queue** — tickets assigned to you
 - **Unassigned** — tickets waiting to be claimed (reseller orders that came in while you were offline, or new direct inquiries)
+
+A small **Live** indicator appears in the top-right of the ticket list. When it is green, the page is receiving real-time updates — any change made by another staff member (stage advance, payment registration, order cancellation) appears immediately without a manual refresh. If it shows **Reconnecting**, the live connection dropped temporarily and will restore itself automatically within 30 seconds.
 
 ### Creating a Direct Inquiry Ticket
 
@@ -551,9 +555,26 @@ The system creates a down payment invoice in Odoo and registers the payment agai
 
 > **This is the only step Finance needs to do before the order is confirmed.** Merveille handles the confirmation itself.
 
+### Registering the Balance Payment
+
+Once an order is confirmed and the full invoice has been created in Odoo, the customer pays the outstanding balance. Register this directly from the portal:
+
+1. Open the Sales Ticket
+2. Click **Register Balance Payment** in the right sidebar
+3. The outstanding balance is pre-filled from the live Odoo invoice — verify the amount
+4. Select the payment journal (which bank account the funds arrived in)
+5. Select the payment date
+6. Click **Register Payment in Odoo**
+
+The payment is applied to the full sale invoice in Odoo immediately. The ticket records who registered it and when.
+
+> **This is separate from the deposit.** The deposit (if applicable) is registered before order confirmation against a down payment invoice. The balance payment is registered after confirmation against the full invoice.
+
+> If the customer is on credit terms with no deposit requirement, use this action to register the single full payment when it arrives.
+
 ### Confirming Payment Received
 
-For tickets that need payment confirmation at the `Invoice` stage (typically for invoice-on-delivery customers):
+For tickets where the payment was registered directly in Odoo (outside the portal) rather than through Register Balance Payment:
 
 1. Open the Sales Ticket
 2. Click **Confirm Payment Received**
@@ -1106,6 +1127,9 @@ Resellers can raise a dispute (see Commission section above). Admins should also
 **Q: I need to reset a staff member's password.**  
 Go to **Users**, find the account, and click **Reset Password**. A new temporary password is generated and shown once — copy it before closing. The staff member is forced to change it on their next login. Optionally enter your own password instead of using the auto-generated one.
 
+**Q: A ticket shows "Order Cancelled" or closed itself automatically — nobody cancelled it.**  
+If an order is cancelled directly in the ERP (Odoo), the portal detects this the next time anyone opens that ticket and closes it automatically. Odoo is the financial source of truth — if the order is gone there, the ticket reflects that immediately. An amber notice on the closed ticket explains that it was auto-closed due to an ERP cancellation. Check the ticket's timeline for the "Auto-closed: Odoo order was cancelled" entry, and investigate the cancellation in Odoo if it was unexpected.
+
 **Q: A new order came in from Odoo that isn't in the portal.**  
 All orders placed through the portal auto-create a Sales Ticket. Orders placed directly in Odoo will appear in the **Orders** screen but will not have a linked ticket. Use the **Create Sales Ticket** button on that order row to bring it into the pipeline. Once the ticket exists, Merveille can claim it and the normal flow applies.
 
@@ -1146,6 +1170,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Build or edit a quote | Merveille (sales) |
 | Send quote to customer | Merveille (sales) |
 | Register a 50% deposit | Kashi or Ragini (finance) |
+| Register balance (final) payment | Kashi or Ragini (finance) |
 | Confirm payment received | Kashi or Ragini (finance) |
 | Confirm an order | Merveille or anyone with `orders.confirm` |
 | Move order from queued to packing | Tshidi (orders_clerk) |
@@ -1177,6 +1202,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 2 July 2026
+**Last Updated:** 4 July 2026
 
-*This manual covers the system as built through Phase 12 and the Phase 7.8 additions (3-step Add Customer wizard, hard duplicate prevention on email and VAT, VAT registration and postal code capture, mandatory onboarding documents for all customer creation paths, admin document upload capability, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+*This manual covers the system as built through Phase 12 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

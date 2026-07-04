@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from database import col
+from routes.settings_routes import get_default_warehouse_id
 
 router = APIRouter(prefix="/api/warehouses", tags=["warehouses"])
 
@@ -13,8 +14,8 @@ WAREHOUSE_FIELDS = ["id", "name", "code", "lot_stock_id"]
 
 
 @router.get("/")
-def list_warehouses(current_user: dict = Depends(get_current_user)):
-    """All active Odoo stock.warehouse records."""
+async def list_warehouses(current_user: dict = Depends(get_current_user)):
+    """All active Odoo stock.warehouse records, plus the portal default warehouse ID."""
     odoo = get_odoo_client()
     try:
         warehouses = odoo.search_read(
@@ -24,9 +25,10 @@ def list_warehouses(current_user: dict = Depends(get_current_user)):
             limit=50,
             order="name asc",
         )
-        return {"warehouses": warehouses}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    default_warehouse_id = await get_default_warehouse_id()
+    return {"warehouses": warehouses, "default_warehouse_id": default_warehouse_id}
 
 
 # ── Display-screen tokens ────────────────────────────────────────────────────
