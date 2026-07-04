@@ -5,7 +5,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client, odoo as odoo_call
+from odoo_client import get_odoo_client, odoo as odoo_call, fetch_odoo_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
 
@@ -292,16 +292,9 @@ def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_us
     except Exception:
         pass  # fall through to on-demand render
 
-    # ── Render on demand via ir.actions.report ─────────────────────────────────
+    # ── Render on demand via Odoo HTTP report endpoint ─────────────────────────
     try:
-        result = odoo.execute("ir.actions.report", "render_qweb_pdf", "account.report_move_full", [invoice_id])
-        raw = result[0]
-        if isinstance(raw, bytes):
-            pdf_bytes = raw
-        elif hasattr(raw, "data"):
-            pdf_bytes = raw.data
-        else:
-            pdf_bytes = base64.b64decode(raw)
+        pdf_bytes = fetch_odoo_report_pdf("account.report_move_full", invoice_id)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",

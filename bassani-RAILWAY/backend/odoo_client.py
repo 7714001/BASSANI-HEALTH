@@ -2,6 +2,7 @@ import xmlrpc.client
 import threading
 import logging
 import time
+import httpx
 from config import get_settings
 
 settings = get_settings()
@@ -110,3 +111,29 @@ _client = OdooClient()
 
 def get_odoo_client() -> OdooClient:
     return _client
+
+
+def fetch_odoo_report_pdf(report_name: str, record_id: int) -> bytes:
+    """Fetch an Odoo report PDF via HTTP session auth.
+
+    render_qweb_pdf is private in Odoo v17 and not callable via XML-RPC.
+    This authenticates via the JSON-RPC web session endpoint and GETs the
+    report controller URL instead.
+    """
+    cfg = get_settings()
+    base = cfg.odoo_url.rstrip("/")
+    with httpx.Client(timeout=60, follow_redirects=True) as client:
+        auth_resp = client.post(
+            f"{base}/web/session/authenticate",
+            json={"jsonrpc": "2.0", "method": "call", "params": {
+                "db": cfg.odoo_db,
+                "login": cfg.odoo_username,
+                "password": cfg.odoo_password,
+            }},
+        )
+        auth_resp.raise_for_status()
+        pdf_resp = client.get(f"{base}/report/pdf/{report_name}/{record_id}")
+        pdf_resp.raise_for_status()
+        if pdf_resp.headers.get("content-type", "").startswith("text/"):
+            raise RuntimeError(f"Odoo returned HTML instead of PDF — check report name '{report_name}'")
+        return pdf_resp.content

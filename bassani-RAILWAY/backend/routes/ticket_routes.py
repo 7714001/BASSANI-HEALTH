@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
 from auth import require_permission, require_any_permission, get_current_user
-from odoo_client import get_odoo_client, odoo as odoo_call
+from odoo_client import get_odoo_client, odoo as odoo_call, fetch_odoo_report_pdf
 from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
@@ -1062,17 +1062,10 @@ async def get_ticket_document(
     except Exception:
         pass  # fall through to on-demand render
 
-    # ── Render on demand via ir.actions.report ─────────────────────────────────
+    # ── Render on demand via Odoo HTTP report endpoint ─────────────────────────
     report_name = _REPORT_NAMES[doc_type]
     try:
-        result = odoo.execute("ir.actions.report", "render_qweb_pdf", report_name, [record_id])
-        raw = result[0]
-        if isinstance(raw, bytes):
-            pdf_bytes = raw
-        elif hasattr(raw, "data"):          # xmlrpc.client.Binary
-            pdf_bytes = raw.data
-        else:
-            pdf_bytes = base64.b64decode(raw)
+        pdf_bytes = fetch_odoo_report_pdf(report_name, record_id)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
