@@ -209,6 +209,7 @@ async def _ingest_message(graph_message_id: str) -> None:
         "is_reply":            is_reply,
         "thread_root_id":      thread_root_id,
         "status":              "reply" if is_reply else "unhandled",
+        "is_read":             False,
         "created_at":          datetime.now(timezone.utc),
         "handled_by":          None,
         "handled_at":          None,
@@ -315,6 +316,7 @@ async def _ingest_imap_message(msg: dict) -> None:
         "is_reply":          is_reply,
         "thread_root_id":    thread_root_id,
         "status":            "reply" if is_reply else "unhandled",
+        "is_read":           False,
         "created_at":        datetime.now(timezone.utc),
         "handled_by":        None,
         "handled_at":        None,
@@ -466,34 +468,79 @@ async def unhandled_count(
 async def list_inbox(
     status: Optional[str] = Query(
         None,
-        description="unhandled | reply | pending_onboarding | ticket_created | archived | all",
+        description="open | unhandled | pending_onboarding | ticket_created | archived | all",
     ),
     unknown_only: bool = Query(False),
+    q: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, le=100),
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
+    """Thread-grouped inbox list. One row per conversation, ordered by most recent activity."""
     if not inbox_configured():
         return {"items": [], "total": 0, "configured": False}
 
-    filt: dict = {"is_outgoing": {"$ne": True}}  # outgoing copies live in thread view only
-    if status and status != "all":
-        filt["status"] = status
-    elif not status:
-        # Default: exclude archived so the list stays clean
-        filt["status"] = {"$ne": "archived"}
-    if unknown_only:
-        filt["is_unknown_sender"] = True
+    match: dict = {"is_outgoing": {"$ne": True}}
 
-    total = await col("sales_inbox").count_documents(filt)
-    cursor = (
-        col("sales_inbox")
-        .find(filt, {"body_html": 0})
-        .sort("received_at", -1)
-        .skip(skip)
-        .limit(limit)
-    )
-    items = [_fmt(doc) async for doc in cursor]
+    if status == "open" or not status:
+        match["status"] = {"$nin": ["archived", "ticket_created"]}
+    elif status and status != "all":
+        match["status"] = status
+
+    if unknown_only:
+        match["is_unknown_sender"] = True
+
+    if q:
+        pattern = {"$regex": _re.escape(q), "$options": "i"}
+        match["$or"] = [
+            {"from_name": pattern},
+            {"from_email": pattern},
+            {"subject": pattern},
+            {"body_preview": pattern},
+        ]
+
+    # Group by thread: replies share thread_root_id with their root message.
+    # Roots have no thread_root_id, so we fall back to their own _id as the key.
+    group_key = {"$ifNull": ["$thread_root_id", {"$toString": "$_id"}]}
+
+    count_result = await col("sales_inbox").aggregate([
+        {"$match": match},
+        {"$group": {"_id": group_key}},
+        {"$count": "total"},
+    ]).to_list(1)
+    total = count_result[0]["total"] if count_result else 0
+
+    pipeline = [
+        {"$match": match},
+        {"$sort": {"received_at": -1}},
+        {"$group": {
+            "_id": group_key,
+            "doc": {"$first": "$$ROOT"},      # latest message in the thread
+            "message_count": {"$sum": 1},
+            "unread_count": {"$sum": {
+                "$cond": [
+                    {"$eq": [{"$ifNull": ["$is_read", True]}, False]},
+                    1, 0,
+                ]
+            }},
+        }},
+        {"$sort": {"doc.received_at": -1}},   # threads ordered by latest activity
+        {"$skip": skip},
+        {"$limit": limit},
+        {"$replaceRoot": {
+            "newRoot": {
+                "$mergeObjects": ["$doc", {
+                    "message_count": "$message_count",
+                    "unread_count":  "$unread_count",
+                    "has_unread":    {"$gt": ["$unread_count", 0]},
+                }]
+            }
+        }},
+        {"$project": {"body_html": 0}},
+    ]
+
+    results = await col("sales_inbox").aggregate(pipeline).to_list(limit)
+    items = [_fmt(doc) for doc in results]
     return {"items": items, "total": total, "configured": True}
 
 
@@ -512,12 +559,43 @@ async def get_inbox_item(
     return _fmt(doc)
 
 
-@router.get("/{item_id}/thread")
-async def get_thread(
+async def _mark_thread_read(item_id: str) -> None:
+    """Mark every message in a thread as read. Safe to call as a BackgroundTask."""
+    try:
+        item = await col("sales_inbox").find_one(
+            {"_id": _oid(item_id)}, {"thread_root_id": 1}
+        )
+        if not item:
+            return
+        thread_root = item.get("thread_root_id") or str(item["_id"])
+        await col("sales_inbox").update_many(
+            {"$or": [
+                {"_id": ObjectId(thread_root)},
+                {"thread_root_id": thread_root},
+            ]},
+            {"$set": {"is_read": True}},
+        )
+    except Exception as exc:
+        logger.warning("mark_thread_read_failed item_id=%s error=%s", item_id, exc)
+
+
+@router.post("/{item_id}/mark-read")
+async def mark_read(
     item_id: str,
     current_user: dict = Depends(require_permission("inbox.view")),
 ):
-    """All messages in the same email thread, oldest first."""
+    """Explicitly mark a thread as read."""
+    await _mark_thread_read(item_id)
+    return {"success": True}
+
+
+@router.get("/{item_id}/thread")
+async def get_thread(
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("inbox.view")),
+):
+    """All messages in the same email thread, oldest first. Auto-marks thread as read."""
     if not inbox_configured():
         _not_configured()
     item = await col("sales_inbox").find_one(
@@ -527,21 +605,27 @@ async def get_thread(
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
-    conv_id      = item.get("graph_conversation_id")
-    root_id      = item.get("thread_root_id")
-    imap_mid     = item.get("imap_message_id")
+    conv_id  = item.get("graph_conversation_id")
+    root_id  = item.get("thread_root_id")
+    imap_mid = item.get("imap_message_id")
 
     if conv_id:
         filt = {"graph_conversation_id": conv_id}
     elif root_id:
-        filt = {"thread_root_id": root_id}
+        # Include root itself (no thread_root_id) + all replies
+        filt = {"$or": [{"_id": ObjectId(root_id)}, {"thread_root_id": root_id}]}
     elif imap_mid:
         filt = {"$or": [{"imap_message_id": imap_mid}, {"thread_root_id": str(item["_id"])}]}
     else:
         return {"thread": [_fmt(item)]}
 
-    cursor = col("sales_inbox").find(filt, {"body_html": 0}).sort("received_at", 1)
-    return {"thread": [_fmt(doc) async for doc in cursor]}
+    # Include body_html so the frontend can render full email content in bubbles
+    cursor = col("sales_inbox").find(filt).sort("received_at", 1)
+    thread = [_fmt(doc) async for doc in cursor]
+
+    background_tasks.add_task(_mark_thread_read, item_id)
+
+    return {"thread": thread}
 
 
 # ── Attachment download ───────────────────────────────────────────────────────
@@ -863,6 +947,7 @@ async def reply_to_email(
         "is_unknown_sender":   False,
         "ticket_id":           item.get("ticket_id"),
         "status":              "sent",
+        "is_read":             True,
         "created_at":          now,
         "handled_by":          current_user.get("username"),
         "handled_at":          now,

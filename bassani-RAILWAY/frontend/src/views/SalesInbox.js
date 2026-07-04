@@ -4,56 +4,91 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
-  Mail, AlertCircle, Paperclip, User, ArrowLeft, RefreshCw,
-  ExternalLink, Send, Archive, UserPlus, Ticket, Clock, CheckCircle2,
-  ChevronDown, ChevronUp,
+  Mail, AlertCircle, Paperclip, User, RefreshCw,
+  ExternalLink, Send, Archive, UserPlus, Ticket,
+  CheckCircle2, Search, Loader2,
 } from "lucide-react";
 import {
-  TopBar, Badge, BtnPrimary, BtnSecondary, SearchBar,
-  ChipRow, FilterPill, Modal, FormGroup, Input,
+  TopBar, Badge, BtnPrimary, BtnSecondary,
+  Modal, FormGroup, Input,
 } from "../components/UI";
 
-// ── Status helpers ────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATUS_LABELS = {
-  unhandled:          { label: "Unhandled",          color: "red"    },
-  reply:              { label: "Thread Reply",        color: "blue"   },
-  pending_onboarding: { label: "Pending Onboarding", color: "yellow" },
-  ticket_created:     { label: "Ticket Created",     color: "green"  },
-  archived:           { label: "Archived",           color: "gray"   },
-};
-
-function StatusBadge({ status }) {
-  const s = STATUS_LABELS[status] || { label: status, color: "gray" };
-  return <Badge color={s.color}>{s.label}</Badge>;
-}
-
-function fmtDate(d) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  const now = new Date();
-  const diffH = (now - dt) / 3600000;
-  if (diffH < 24) return dt.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
-  if (diffH < 168) return dt.toLocaleDateString("en-ZA", { weekday: "short", hour: "2-digit", minute: "2-digit" });
-  return dt.toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" });
-}
-
-const STATUS_FILTERS = [
-  { value: "",                   label: "Active"             },
-  { value: "unhandled",          label: "Unhandled"          },
-  { value: "reply",              label: "Thread Replies"     },
-  { value: "pending_onboarding", label: "Pending Onboarding" },
-  { value: "ticket_created",     label: "Ticket Created"     },
-  { value: "archived",           label: "Archived"           },
-  { value: "all",                label: "All"                },
+const TABS = [
+  { value: "open",               label: "Inbox"    },
+  { value: "unhandled",          label: "New"      },
+  { value: "pending_onboarding", label: "Pending"  },
+  { value: "ticket_created",     label: "Done"     },
+  { value: "archived",           label: "Archived" },
 ];
 
-// ── Subcomponents ─────────────────────────────────────────────────────────────
+const STATUS_META = {
+  unhandled:          { label: "New",                color: "red"    },
+  reply:              { label: "Reply",              color: "blue"   },
+  pending_onboarding: { label: "Pending Onboarding", color: "amber"  },
+  ticket_created:     { label: "Ticket Created",     color: "green"  },
+  archived:           { label: "Archived",           color: "gray"   },
+  sent:               { label: "Sent",               color: "teal"   },
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function initials(name) {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function fmtTime(d) {
+  if (!d) return "";
+  return new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtListDate(d) {
+  if (!d) return "";
+  const dt        = new Date(d);
+  const now       = new Date();
+  const today     = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const msgDay    = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  if (msgDay.getTime() === today.getTime())     return fmtTime(dt);
+  if (msgDay.getTime() === yesterday.getTime()) return "Yesterday";
+  if ((today - msgDay) / 86400000 < 7)          return dt.toLocaleDateString("en-ZA", { weekday: "short" });
+  return dt.toLocaleDateString("en-ZA", { day: "numeric", month: "short" });
+}
+
+function fmtMsgDate(d) {
+  if (!d) return "";
+  return new Date(d).toLocaleDateString("en-ZA", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
+}
+
+function sameDay(a, b) {
+  if (!a || !b) return false;
+  const da = new Date(a), db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth()    === db.getMonth()    &&
+    da.getDate()     === db.getDate()
+  );
+}
+
+// ── StatusBadge ───────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }) {
+  const m = STATUS_META[status] || { label: status, color: "gray" };
+  return <Badge color={m.color}>{m.label}</Badge>;
+}
+
+// ── AttachmentList ────────────────────────────────────────────────────────────
 
 function AttachmentList({ attachments, itemId }) {
   if (!attachments || attachments.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-2 mt-3">
+    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/5">
       {attachments.map((att, i) => {
         const url = att.id
           ? `/api/inbox/${itemId}/attachment/${att.id}`
@@ -63,22 +98,22 @@ function AttachmentList({ attachments, itemId }) {
         const key = att.id || att.imap_attachment_id || i;
         if (!url) return (
           <span key={key}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-400 cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-[11px] text-gray-400 cursor-not-allowed"
             title="Attachment too large to store (over 15 MB)"
           >
-            <Paperclip size={11} /> {att.name}
+            <Paperclip size={10} /> {att.name}
           </span>
         );
         return (
           <a key={key} href={url} target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-100 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-[11px] text-gray-700 hover:bg-gray-100 transition-colors"
           >
-            <Paperclip size={11} className="text-gray-400" />
+            <Paperclip size={10} className="text-gray-400" />
             {att.name}
             {att.size_bytes > 0 && (
-              <span className="text-gray-400">({Math.round(att.size_bytes / 1024)} KB)</span>
+              <span className="text-gray-400 ml-0.5">({Math.round(att.size_bytes / 1024)}KB)</span>
             )}
-            <ExternalLink size={10} className="text-gray-400" />
+            <ExternalLink size={9} className="text-gray-400" />
           </a>
         );
       })}
@@ -86,20 +121,84 @@ function AttachmentList({ attachments, itemId }) {
   );
 }
 
-function CustomerBanner({ item }) {
-  if (!item.is_unknown_sender && item.customer_name) {
-    return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-100 rounded-xl text-sm">
-        <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
-        <span className="text-green-800 font-medium">{item.customer_name}</span>
-        <span className="text-green-600 text-xs">· Odoo customer matched</span>
-      </div>
-    );
-  }
+// ── ThreadRow ─────────────────────────────────────────────────────────────────
+
+function ThreadRow({ thread, isSelected, onClick }) {
+  const name   = thread.from_name || thread.from_email || "Unknown";
+  const unread = thread.has_unread;
   return (
-    <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl text-sm">
-      <AlertCircle size={14} className="text-amber-500 flex-shrink-0" />
-      <span className="text-amber-800">Unknown sender — link to an existing customer or start onboarding</span>
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-gray-50 transition-colors ${
+        isSelected
+          ? "bg-bassani-50 border-l-2 border-l-bassani-400 pl-[14px]"
+          : "hover:bg-gray-50/80 border-l-2 border-l-transparent"
+      }`}
+    >
+      {/* Unread dot */}
+      <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-[9px] ${unread ? "bg-bassani-500" : "bg-transparent"}`} />
+      {/* Avatar */}
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${
+        unread ? "bg-bassani-100 text-bassani-700" : "bg-gray-100 text-gray-500"
+      }`}>
+        {initials(name)}
+      </div>
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-[13px] truncate ${unread ? "font-semibold text-gray-900" : "font-medium text-gray-600"}`}>
+            {name}
+          </span>
+          <span className="text-[11px] text-gray-400 flex-shrink-0">{fmtListDate(thread.received_at)}</span>
+        </div>
+        <div className={`text-[12px] truncate mt-0.5 ${unread ? "font-medium text-gray-800" : "text-gray-500"}`}>
+          {thread.subject}
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          <span className="text-[11px] text-gray-400 truncate">{thread.body_preview}</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {thread.is_unknown_sender && <AlertCircle size={10} className="text-amber-400" />}
+            {thread.has_attachments   && <Paperclip   size={10} className="text-gray-300" />}
+            {thread.message_count > 1 && (
+              <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">
+                {thread.message_count}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── MessageBubble ─────────────────────────────────────────────────────────────
+
+function MessageBubble({ msg, itemId }) {
+  const isOut   = msg.is_outgoing;
+  const name    = msg.from_name || msg.from_email || "Unknown";
+  const bgClass = isOut ? "bg-teal-50 border-teal-100" : "bg-white border-gray-100";
+  const avClass = isOut ? "bg-teal-100 text-teal-700" : "bg-gray-100 text-gray-600";
+  return (
+    <div className={`flex gap-3 ${isOut ? "flex-row-reverse" : ""}`}>
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-1 ${avClass}`}>
+        {initials(name)}
+      </div>
+      <div className={`max-w-[78%] flex flex-col ${isOut ? "items-end" : "items-start"}`}>
+        <div className={`flex items-center gap-2 mb-1 text-[11px] ${isOut ? "flex-row-reverse" : ""}`}>
+          <span className="font-medium text-gray-700">{name}</span>
+          <span className="text-gray-400">{fmtTime(msg.received_at)}</span>
+          {isOut && <span className="text-teal-500 font-medium">Sent</span>}
+        </div>
+        <div
+          className={`rounded-2xl border px-4 py-3 text-[13px] text-gray-700 leading-relaxed shadow-sm ${bgClass} ${
+            isOut ? "rounded-tr-sm" : "rounded-tl-sm"
+          }`}
+          style={{ wordBreak: "break-word", overflow: "hidden" }}
+        >
+          <div dangerouslySetInnerHTML={{ __html: msg.body_html || `<p style="margin:0">${msg.body_preview || ""}</p>` }} />
+          <AttachmentList attachments={msg.attachments} itemId={itemId} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -108,58 +207,57 @@ function CustomerBanner({ item }) {
 
 export default function SalesInbox() {
   const { can, user } = useAuth();
-  const navigate = useNavigate();
+  const navigate      = useNavigate();
+  const bottomRef     = useRef(null);
 
-  // List state
-  const [items,    setItems   ] = useState([]);
-  const [total,    setTotal   ] = useState(0);
-  const [loading,  setLoading ] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("");
+  // List
+  const [threads,      setThreads     ] = useState([]);
+  const [total,        setTotal       ] = useState(0);
+  const [loading,      setLoading     ] = useState(true);
   const [configured,   setConfigured  ] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("open");
+  const [search,       setSearch      ] = useState("");
+  const [searchDraft,  setSearchDraft ] = useState("");
 
-  // Detail state
-  const [selected, setSelected] = useState(null);  // full item with body_html
-  const [thread,   setThread  ] = useState([]);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [showThread,    setShowThread   ] = useState(false);
+  // Thread detail
+  const [selectedThread,  setSelectedThread ] = useState(null);
+  const [messages,        setMessages       ] = useState([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
 
   // Reply
-  const [replying,     setReplying    ] = useState(false);
   const [replyText,    setReplyText   ] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
 
   // Link-customer modal
-  const [linkOpen,        setLinkOpen       ] = useState(false);
-  const [custSearch,      setCustSearch     ] = useState("");
-  const [custResults,     setCustResults    ] = useState([]);
-  const [custSearching,   setCustSearching  ] = useState(false);
-  const [linking,         setLinking        ] = useState(false);
+  const [linkOpen,      setLinkOpen     ] = useState(false);
+  const [custSearch,    setCustSearch   ] = useState("");
+  const [custResults,   setCustResults  ] = useState([]);
+  const [custSearching, setCustSearching] = useState(false);
+  const [linking,       setLinking      ] = useState(false);
 
-  // Onboarding note modal
-  const [onboardOpen,  setOnboardOpen ] = useState(false);
-  const [onboardNote,  setOnboardNote ] = useState("");
-  const [onboarding,   setOnboarding  ] = useState(false);
+  // Onboarding modal
+  const [onboardOpen, setOnboardOpen] = useState(false);
+  const [onboardNote, setOnboardNote] = useState("");
+  const [onboarding,  setOnboarding ] = useState(false);
 
-  // Action loading states
+  // Action states
   const [creatingTicket, setCreatingTicket] = useState(false);
   const [archiving,      setArchiving     ] = useState(false);
 
-  const listRef = useRef(null);
-
-  // ── Load list ───────────────────────────────────────────────────────────────
+  // ── Load thread list ─────────────────────────────────────────────────────────
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (statusFilter) params.status = statusFilter;
+      const params = { status: statusFilter };
+      if (search) params.q = search;
       const r = await api.get("/api/inbox", { params });
       if (r.data.configured === false) {
         setConfigured(false);
-        setItems([]);
+        setThreads([]);
       } else {
         setConfigured(true);
-        setItems(r.data.items || []);
+        setThreads(r.data.items || []);
         setTotal(r.data.total || 0);
       }
     } catch {
@@ -167,35 +265,45 @@ export default function SalesInbox() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, search]);
 
   useEffect(() => { loadList(); }, [loadList]);
 
-  // ── Load detail ─────────────────────────────────────────────────────────────
+  // Debounce search input → committed search
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchDraft), 400);
+    return () => clearTimeout(t);
+  }, [searchDraft]);
 
-  const openDetail = async (item) => {
-    setDetailLoading(true);
-    setSelected(null);
-    setThread([]);
-    setShowThread(false);
-    setReplying(false);
+  // Scroll to latest message when thread loads
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+    }
+  }, [messages]);
+
+  // ── Open thread ──────────────────────────────────────────────────────────────
+
+  const openThread = async (thread) => {
+    setSelectedThread(thread);
+    setMessagesLoading(true);
+    setMessages([]);
     setReplyText("");
     try {
-      const [detailR, threadR] = await Promise.all([
-        api.get(`/api/inbox/${item.id}`),
-        api.get(`/api/inbox/${item.id}/thread`),
-      ]);
-      setSelected(detailR.data);
-      const t = threadR.data.thread || [];
-      setThread(t);
+      const r = await api.get(`/api/inbox/${thread.id}/thread`);
+      setMessages(r.data.thread || []);
+      // Optimistic: mark thread read in list immediately
+      setThreads(prev =>
+        prev.map(t => t.id === thread.id ? { ...t, has_unread: false, unread_count: 0 } : t)
+      );
     } catch {
-      toast.error("Failed to load email");
+      toast.error("Failed to load thread");
     } finally {
-      setDetailLoading(false);
+      setMessagesLoading(false);
     }
   };
 
-  // ── Customer search (for link modal) ────────────────────────────────────────
+  // ── Customer search (link modal) ─────────────────────────────────────────────
 
   useEffect(() => {
     if (!linkOpen) { setCustSearch(""); setCustResults([]); return; }
@@ -210,37 +318,19 @@ export default function SalesInbox() {
     return () => clearTimeout(t);
   }, [custSearch, linkOpen]);
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
-
-  const handleCreateTicket = async () => {
-    if (!selected) return;
-    setCreatingTicket(true);
-    try {
-      const r = await api.post(`/api/inbox/${selected.id}/create-ticket`);
-      toast.success("Sales ticket created");
-      setSelected(prev => ({ ...prev, ticket_id: r.data.ticket_id, status: "ticket_created" }));
-      loadList();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to create ticket");
-    } finally {
-      setCreatingTicket(false);
-    }
-  };
+  // ── Actions ──────────────────────────────────────────────────────────────────
 
   const handleSendReply = async () => {
-    if (!selected || !replyText.trim()) return;
+    if (!selectedThread || !replyText.trim()) return;
     setSendingReply(true);
     try {
-      await api.post(`/api/inbox/${selected.id}/reply`, {
-        body_html: `<p>${replyText.replace(/\n/g, "<br/>")}</p>`,
+      await api.post(`/api/inbox/${selectedThread.id}/reply`, {
+        body_html: `<p>${replyText.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br/>")}</p>`,
       });
       toast.success("Reply sent");
-      setReplying(false);
       setReplyText("");
-      // Reload thread so the sent reply appears immediately
-      const threadR = await api.get(`/api/inbox/${selected.id}/thread`);
-      setThread(threadR.data.thread || []);
-      setShowThread(true);
+      const r = await api.get(`/api/inbox/${selectedThread.id}/thread`);
+      setMessages(r.data.thread || []);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send reply");
     } finally {
@@ -248,21 +338,36 @@ export default function SalesInbox() {
     }
   };
 
+  const handleCreateTicket = async () => {
+    if (!selectedThread) return;
+    setCreatingTicket(true);
+    try {
+      const r = await api.post(`/api/inbox/${selectedThread.id}/create-ticket`);
+      toast.success("Sales ticket created");
+      const updated = { ...selectedThread, ticket_id: r.data.ticket_id, status: "ticket_created" };
+      setSelectedThread(updated);
+      setThreads(prev =>
+        ["open", "unhandled"].includes(statusFilter)
+          ? prev.filter(t => t.id !== selectedThread.id)
+          : prev.map(t => t.id === selectedThread.id ? updated : t)
+      );
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
   const handleLinkCustomer = async (customerId, customerName) => {
-    if (!selected) return;
+    if (!selectedThread) return;
     setLinking(true);
     try {
-      await api.post(`/api/inbox/${selected.id}/link-customer`, { customer_id: customerId });
+      await api.post(`/api/inbox/${selectedThread.id}/link-customer`, { customer_id: customerId });
       toast.success(`Linked to ${customerName}`);
-      setSelected(prev => ({
-        ...prev,
-        customer_id: customerId,
-        customer_name: customerName,
-        is_unknown_sender: false,
-        status: "unhandled",
-      }));
+      const updated = { ...selectedThread, customer_id: customerId, customer_name: customerName, is_unknown_sender: false };
+      setSelectedThread(updated);
+      setThreads(prev => prev.map(t => t.id === selectedThread.id ? updated : t));
       setLinkOpen(false);
-      loadList();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to link customer");
     } finally {
@@ -271,29 +376,32 @@ export default function SalesInbox() {
   };
 
   const handleStartOnboarding = async () => {
-    if (!selected) return;
+    if (!selectedThread) return;
     setOnboarding(true);
     try {
-      await api.post(`/api/inbox/${selected.id}/start-onboarding`, { note: onboardNote });
+      await api.post(`/api/inbox/${selectedThread.id}/start-onboarding`, { note: onboardNote });
       toast.success("Flagged for onboarding");
-      setSelected(prev => ({ ...prev, status: "pending_onboarding" }));
+      const updated = { ...selectedThread, status: "pending_onboarding" };
+      setSelectedThread(updated);
+      setThreads(prev => prev.map(t => t.id === selectedThread.id ? updated : t));
       setOnboardOpen(false);
-      loadList();
+      setOnboardNote("");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to start onboarding");
+      toast.error(e.response?.data?.detail || "Failed to flag for onboarding");
     } finally {
       setOnboarding(false);
     }
   };
 
   const handleArchive = async () => {
-    if (!selected) return;
+    if (!selectedThread) return;
     setArchiving(true);
     try {
-      await api.post(`/api/inbox/${selected.id}/archive`);
+      await api.post(`/api/inbox/${selectedThread.id}/archive`);
       toast.success("Archived");
-      setSelected(null);
-      loadList();
+      setThreads(prev => prev.filter(t => t.id !== selectedThread.id));
+      setSelectedThread(null);
+      setMessages([]);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to archive");
     } finally {
@@ -304,14 +412,14 @@ export default function SalesInbox() {
   const handlePoll = async () => {
     try {
       const r = await api.post("/api/inbox/poll");
-      toast.success(`Polling inbox — ${r.data.queued} message(s) queued for ingestion`);
+      toast.success(`Syncing — ${r.data.queued} message(s) queued`);
       setTimeout(loadList, 3000);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Poll failed");
+      toast.error(e.response?.data?.detail || "Sync failed");
     }
   };
 
-  // ── Guard ────────────────────────────────────────────────────────────────────
+  // ── Permission guard ─────────────────────────────────────────────────────────
 
   if (!can("inbox.view")) {
     return (
@@ -329,28 +437,27 @@ export default function SalesInbox() {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar title="Sales Inbox" subtitle="Shared mailbox" />
-        <main className="flex-1 overflow-y-auto p-6 flex items-center justify-center">
-          <div className="max-w-md text-center">
+        <main className="flex-1 overflow-y-auto flex items-center justify-center p-8">
+          <div className="max-w-sm text-center">
             <div className="w-16 h-16 bg-amber-50 border border-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <Mail size={28} className="text-amber-400" />
             </div>
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">Sales Inbox not yet active</h2>
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Sales Inbox not connected</h2>
             {user?.is_super_admin ? (
               <>
                 <p className="text-sm text-gray-500 mb-5 leading-relaxed">
-                  No mailbox has been connected. Connect an IMAP mailbox in Settings to activate the inbox for all staff.
+                  Connect an IMAP mailbox in Settings to activate the inbox for all staff.
                 </p>
                 <button
                   onClick={() => navigate("/settings/mailbox")}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-bassani-600 text-white text-sm font-semibold rounded-xl hover:bg-bassani-700 transition-colors"
                 >
-                  <Mail size={14} />
-                  Connect Mailbox
+                  <Mail size={14} /> Connect Mailbox
                 </button>
               </>
             ) : (
               <p className="text-sm text-gray-500 leading-relaxed">
-                The sales inbox has not been configured yet. Ask your system administrator to connect a mailbox in portal settings.
+                The sales inbox has not been configured. Ask your system administrator to connect a mailbox.
               </p>
             )}
           </div>
@@ -359,339 +466,317 @@ export default function SalesInbox() {
     );
   }
 
-  // ── Detail panel ─────────────────────────────────────────────────────────────
+  // ── Derived values for action bar ────────────────────────────────────────────
 
-  if (selected || detailLoading) {
-    return (
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar
-          title="Sales Inbox"
-          subtitle={selected ? selected.subject : "Loading…"}
-          leftAction={
-            <button
-              onClick={() => setSelected(null)}
-              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors mr-3"
-            >
-              <ArrowLeft size={14} /> Back
-            </button>
-          }
-        />
+  // The conversation root is the earliest non-outgoing, non-reply message
+  const isUnknown       = selectedThread?.is_unknown_sender;
+  const ticketId        = selectedThread?.ticket_id;
+  const canCreateTicket = selectedThread != null && !isUnknown && !ticketId;
+  const canArchive      = selectedThread != null && !["archived", "ticket_created"].includes(selectedThread.status);
 
-        {detailLoading && (
-          <div className="flex-1 flex items-center justify-center">
-            <RefreshCw size={20} className="animate-spin text-gray-300" />
-          </div>
-        )}
-
-        {selected && !detailLoading && (
-          <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-            <div className="max-w-4xl mx-auto space-y-4">
-
-              {/* Header card */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1 flex-1 min-w-0">
-                    <h1 className="text-base font-semibold text-gray-900 truncate">{selected.subject}</h1>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">{selected.from_name}</span>
-                      <span>&lt;{selected.from_email}&gt;</span>
-                      <span className="flex items-center gap-1"><Clock size={10} /> {fmtDate(selected.received_at)}</span>
-                    </div>
-                  </div>
-                  <StatusBadge status={selected.status} />
-                </div>
-
-                <CustomerBanner item={selected} />
-              </div>
-
-              {/* Email body */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                <div
-                  className="prose prose-sm max-w-none text-gray-700 text-sm leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: selected.body_html || selected.body_preview }}
-                />
-                <AttachmentList attachments={selected.attachments} itemId={selected.id} />
-              </div>
-
-              {/* Thread (collapsible) */}
-              {thread.length > 1 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-                  <button
-                    onClick={() => setShowThread(v => !v)}
-                    className="w-full flex items-center justify-between px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-2xl transition-colors"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Mail size={14} className="text-gray-400" />
-                      Thread — {thread.length} messages
-                    </span>
-                    {showThread ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
-                  </button>
-                  {showThread && (
-                    <div className="border-t border-gray-100 divide-y divide-gray-50">
-                      {thread.map((msg, i) => {
-                        const isOut = msg.is_outgoing;
-                        return (
-                          <div key={msg.id || i} className={`px-5 py-4 ${msg.id === selected.id ? "bg-bassani-50" : isOut ? "bg-teal-50" : ""}`}>
-                            <div className={`flex items-center gap-2 text-xs text-gray-500 mb-2 ${isOut ? "flex-row-reverse" : ""}`}>
-                              <span className={`font-medium ${isOut ? "text-teal-700" : "text-gray-700"}`}>{msg.from_name}</span>
-                              <span>{fmtDate(msg.received_at)}</span>
-                              {isOut && <Badge color="green">Sent</Badge>}
-                              {msg.id === selected.id && !isOut && <Badge color="blue">Current</Badge>}
-                            </div>
-                            <p className={`text-sm text-gray-700 line-clamp-3 ${isOut ? "text-right" : ""}`}>{msg.body_preview}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Actions card */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</p>
-
-                {/* Reply */}
-                {!replying ? (
-                  <button
-                    onClick={() => setReplying(true)}
-                    className="inline-flex items-center gap-2 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors"
-                  >
-                    <Send size={14} /> Reply to sender
-                  </button>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-gray-600">Reply to {selected.from_email}</p>
-                    <textarea
-                      value={replyText}
-                      onChange={e => setReplyText(e.target.value)}
-                      placeholder="Type your reply…"
-                      rows={5}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-bassani-500 focus:border-transparent resize-none"
-                    />
-                    <div className="flex gap-2">
-                      <BtnPrimary onClick={handleSendReply} disabled={sendingReply || !replyText.trim()}>
-                        {sendingReply ? "Sending…" : "Send Reply"}
-                      </BtnPrimary>
-                      <BtnSecondary onClick={() => { setReplying(false); setReplyText(""); }}>
-                        Cancel
-                      </BtnSecondary>
-                    </div>
-                  </div>
-                )}
-
-                <hr className="border-gray-100" />
-
-                {/* Customer actions */}
-                {selected.is_unknown_sender && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => setLinkOpen(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 font-medium transition-colors"
-                    >
-                      <User size={14} /> Link to existing customer
-                    </button>
-                    <button
-                      onClick={() => setOnboardOpen(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 font-medium transition-colors"
-                    >
-                      <UserPlus size={14} /> Start onboarding
-                    </button>
-                  </div>
-                )}
-
-                {/* Create ticket */}
-                {!selected.ticket_id && !selected.is_unknown_sender && (
-                  <button
-                    onClick={handleCreateTicket}
-                    disabled={creatingTicket}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-bassani-600 text-white rounded-xl text-sm font-medium hover:bg-bassani-700 transition-colors disabled:opacity-60"
-                  >
-                    <Ticket size={14} />
-                    {creatingTicket ? "Creating…" : "Create Sales Ticket"}
-                  </button>
-                )}
-
-                {selected.ticket_id && (
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-100 rounded-xl text-sm text-green-700">
-                    <CheckCircle2 size={14} className="text-green-500" />
-                    Ticket created — go to Sales Tickets to manage it
-                  </div>
-                )}
-
-                {/* Archive */}
-                {!["archived", "ticket_created"].includes(selected.status) && (
-                  <div>
-                    <button
-                      onClick={handleArchive}
-                      disabled={archiving}
-                      className="inline-flex items-center gap-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      <Archive size={12} />
-                      {archiving ? "Archiving…" : "Archive (dismiss without creating ticket)"}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-            </div>
-          </main>
-        )}
-
-        {/* Link customer modal */}
-        {linkOpen && (
-          <Modal title="Link to existing customer" onClose={() => setLinkOpen(false)} width="max-w-md">
-            <p className="text-sm text-gray-500 mb-4">
-              Search for the Odoo customer that matches this sender. Once linked, you can create a sales ticket.
-            </p>
-            <FormGroup label="Search customers">
-              <Input
-                value={custSearch}
-                onChange={e => setCustSearch(e.target.value)}
-                placeholder="Name or email…"
-                autoFocus
-              />
-            </FormGroup>
-            {custSearching && <p className="text-xs text-gray-400 mt-2">Searching…</p>}
-            {custResults.length > 0 && (
-              <div className="mt-2 border border-gray-200 rounded-xl overflow-hidden">
-                {custResults.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => handleLinkCustomer(c.id, c.name)}
-                    disabled={linking}
-                    className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 transition-colors"
-                  >
-                    <p className="font-medium text-gray-900">{c.name}</p>
-                    {c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}
-                  </button>
-                ))}
-              </div>
-            )}
-            {custSearch && !custSearching && custResults.length === 0 && (
-              <p className="text-xs text-gray-400 mt-2">No customers found — try a different search term.</p>
-            )}
-            <div className="flex justify-end mt-4">
-              <BtnSecondary onClick={() => setLinkOpen(false)}>Cancel</BtnSecondary>
-            </div>
-          </Modal>
-        )}
-
-        {/* Start onboarding modal */}
-        {onboardOpen && (
-          <Modal title="Start customer onboarding" onClose={() => setOnboardOpen(false)} width="max-w-md">
-            <p className="text-sm text-gray-500 mb-4">
-              Flag this email as requiring a new customer onboarding. Complete the onboarding in the Customers section,
-              then return here to link the customer and create a sales ticket.
-            </p>
-            <FormGroup label="Note (optional)">
-              <Input
-                value={onboardNote}
-                onChange={e => setOnboardNote(e.target.value)}
-                placeholder="e.g. New pharmacy chain — high value"
-              />
-            </FormGroup>
-            <div className="flex justify-end gap-2 mt-4">
-              <BtnSecondary onClick={() => setOnboardOpen(false)}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={handleStartOnboarding} disabled={onboarding}>
-                {onboarding ? "Flagging…" : "Flag for Onboarding"}
-              </BtnPrimary>
-            </div>
-          </Modal>
-        )}
-      </div>
-    );
-  }
-
-  // ── List panel ────────────────────────────────────────────────────────────────
+  // ── Two-panel layout ─────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Sales Inbox"
-        subtitle={configured ? `${total} item${total !== 1 ? "s" : ""} · orders@bassanihealth.com` : ""}
-        onRefresh={loadList}
+        subtitle={`${total} thread${total !== 1 ? "s" : ""}`}
         actions={
           <button
             onClick={handlePoll}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-            title="Poll inbox for new messages"
           >
-            <RefreshCw size={12} /> Sync now
+            <RefreshCw size={11} /> Sync
           </button>
         }
       />
 
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6" ref={listRef}>
-        <div className="mb-4">
-          <ChipRow>
-            {STATUS_FILTERS.map(f => (
-              <FilterPill
-                key={f.value}
-                label={f.label}
-                active={statusFilter === f.value}
-                onClick={() => setStatusFilter(f.value)}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* ── Left panel — thread list ─────────────────────────────────────── */}
+        <div className="w-80 xl:w-[340px] flex-shrink-0 border-r border-gray-100 flex flex-col overflow-hidden bg-white">
+
+          {/* Search */}
+          <div className="px-3 py-2.5 border-b border-gray-100">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                value={searchDraft}
+                onChange={e => setSearchDraft(e.target.value)}
+                placeholder="Search sender or subject…"
+                className="w-full pl-7 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-100 rounded-lg outline-none focus:border-bassani-300 focus:ring-1 focus:ring-bassani-100 placeholder-gray-400"
               />
-            ))}
-          </ChipRow>
-        </div>
-
-        {loading && (
-          <div className="flex items-center justify-center py-16">
-            <RefreshCw size={20} className="animate-spin text-gray-300" />
-          </div>
-        )}
-
-        {!loading && items.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-14 h-14 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center mb-3">
-              <Mail size={22} className="text-gray-300" />
             </div>
-            <p className="text-sm font-medium text-gray-500">No inbox items</p>
-            <p className="text-xs text-gray-400 mt-1">
-              {statusFilter ? "Try a different filter" : "New emails will appear here automatically"}
-            </p>
           </div>
-        )}
 
-        {!loading && items.length > 0 && (
-          <div className="space-y-2 max-w-3xl">
-            {items.map(item => (
+          {/* Status tabs */}
+          <div className="flex border-b border-gray-100 overflow-x-auto flex-shrink-0">
+            {TABS.map(tab => (
               <button
-                key={item.id}
-                onClick={() => openDetail(item)}
-                className={`w-full text-left bg-white border rounded-2xl px-5 py-4 transition-all hover:shadow-sm hover:border-gray-200 ${
-                  item.status === "unhandled" ? "border-bassani-200 shadow-sm" : "border-gray-100"
+                key={tab.value}
+                onClick={() => {
+                  setStatusFilter(tab.value);
+                  setSelectedThread(null);
+                  setMessages([]);
+                }}
+                className={`px-3 py-2 text-[11px] font-semibold border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${
+                  statusFilter === tab.value
+                    ? "border-bassani-500 text-bassani-600"
+                    : "border-transparent text-gray-400 hover:text-gray-700"
                 }`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className={`text-sm font-medium truncate ${item.status === "unhandled" ? "text-gray-900" : "text-gray-600"}`}>
-                        {item.from_name || item.from_email}
-                      </p>
-                      {item.is_unknown_sender && (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
-                          <AlertCircle size={9} /> Unknown
-                        </span>
-                      )}
-                      {item.has_attachments && <Paperclip size={11} className="text-gray-300 flex-shrink-0" />}
-                    </div>
-                    <p className={`text-sm truncate ${item.status === "unhandled" ? "text-gray-800" : "text-gray-500"}`}>
-                      {item.subject}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">{item.body_preview}</p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                    <span className="text-[11px] text-gray-400 whitespace-nowrap">{fmtDate(item.received_at)}</span>
-                    <StatusBadge status={item.status} />
-                  </div>
-                </div>
+                {tab.label}
               </button>
             ))}
           </div>
-        )}
-      </main>
+
+          {/* Thread rows */}
+          <div className="flex-1 overflow-y-auto">
+            {loading && (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 size={16} className="animate-spin text-gray-300" />
+              </div>
+            )}
+            {!loading && threads.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                <Mail size={20} className="text-gray-200 mb-2" />
+                <p className="text-xs text-gray-400">
+                  {search ? "No results" : "No threads"}
+                </p>
+              </div>
+            )}
+            {!loading && threads.map(thread => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                isSelected={selectedThread?.id === thread.id}
+                onClick={() => openThread(thread)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* ── Right panel — thread detail ──────────────────────────────────── */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
+
+          {!selectedThread && !messagesLoading && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-2">
+              <Mail size={28} className="text-gray-200" />
+              <p className="text-sm text-gray-400">Select a thread to read</p>
+            </div>
+          )}
+
+          {messagesLoading && !selectedThread && (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 size={18} className="animate-spin text-gray-300" />
+            </div>
+          )}
+
+          {selectedThread && (
+            <>
+              {/* Thread header */}
+              <div className="flex-shrink-0 bg-white border-b border-gray-100 px-6 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-sm font-semibold text-gray-900 truncate">
+                      {selectedThread.subject}
+                    </h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      <span className="font-medium text-gray-600">{selectedThread.from_name}</span>
+                      {selectedThread.from_email && (
+                        <span className="ml-1">&lt;{selectedThread.from_email}&gt;</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <StatusBadge status={selectedThread.status} />
+                    {ticketId && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-lg px-2 py-0.5 font-medium">
+                        <CheckCircle2 size={10} className="text-green-500" /> Ticket
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Customer status indicator */}
+                {!isUnknown && selectedThread.customer_name && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] text-green-600">
+                    <CheckCircle2 size={10} className="text-green-500" />
+                    {selectedThread.customer_name}
+                  </div>
+                )}
+                {isUnknown && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+                    <AlertCircle size={10} className="text-amber-400" />
+                    Unknown sender — link to a customer to create a ticket
+                  </div>
+                )}
+
+                {/* Action bar */}
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  {isUnknown && (
+                    <>
+                      <button
+                        onClick={() => setLinkOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <User size={11} /> Link customer
+                      </button>
+                      <button
+                        onClick={() => setOnboardOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <UserPlus size={11} /> Start onboarding
+                      </button>
+                    </>
+                  )}
+                  {canCreateTicket && (
+                    <button
+                      onClick={handleCreateTicket}
+                      disabled={creatingTicket}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 transition-colors disabled:opacity-60"
+                    >
+                      <Ticket size={11} />
+                      {creatingTicket ? "Creating…" : "Create ticket"}
+                    </button>
+                  )}
+                  {canArchive && (
+                    <button
+                      onClick={handleArchive}
+                      disabled={archiving}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-700 transition-colors"
+                    >
+                      <Archive size={11} />
+                      {archiving ? "Archiving…" : "Archive"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Message stream */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                {messagesLoading && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 size={16} className="animate-spin text-gray-300" />
+                  </div>
+                )}
+                {!messagesLoading && messages.map((msg, idx) => {
+                  const prev    = messages[idx - 1];
+                  const showSep = !prev || !sameDay(prev.received_at, msg.received_at);
+                  return (
+                    <div key={msg.id || idx}>
+                      {showSep && (
+                        <div className="flex items-center gap-3 my-1">
+                          <div className="flex-1 border-t border-gray-100" />
+                          <span className="text-[10px] text-gray-400 whitespace-nowrap">
+                            {fmtMsgDate(msg.received_at)}
+                          </span>
+                          <div className="flex-1 border-t border-gray-100" />
+                        </div>
+                      )}
+                      <MessageBubble msg={msg} itemId={selectedThread.id} />
+                    </div>
+                  );
+                })}
+                <div ref={bottomRef} />
+              </div>
+
+              {/* Reply compose */}
+              <div className="flex-shrink-0 bg-white border-t border-gray-100 px-4 py-3">
+                <p className="text-[11px] text-gray-400 mb-1.5">
+                  Replying to{" "}
+                  <span className="font-medium text-gray-600">{selectedThread.from_email}</span>
+                </p>
+                <textarea
+                  value={replyText}
+                  onChange={e => setReplyText(e.target.value)}
+                  placeholder="Type your reply…"
+                  rows={3}
+                  onKeyDown={e => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && replyText.trim()) {
+                      handleSendReply();
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl outline-none focus:border-bassani-400 focus:ring-2 focus:ring-bassani-100 resize-none placeholder-gray-400"
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-[10px] text-gray-400">Ctrl+Enter to send</span>
+                  <button
+                    onClick={handleSendReply}
+                    disabled={sendingReply || !replyText.trim()}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {sendingReply ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                    {sendingReply ? "Sending…" : "Send Reply"}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Link customer modal ──────────────────────────────────────────────── */}
+      {linkOpen && (
+        <Modal title="Link to existing customer" onClose={() => setLinkOpen(false)} width="max-w-md">
+          <p className="text-sm text-gray-500 mb-4">
+            Search for the customer record that matches this sender. Once linked you can create a sales ticket.
+          </p>
+          <FormGroup label="Search customers">
+            <Input
+              value={custSearch}
+              onChange={e => setCustSearch(e.target.value)}
+              placeholder="Name or email…"
+              autoFocus
+            />
+          </FormGroup>
+          {custSearching && <p className="text-xs text-gray-400 mt-2">Searching…</p>}
+          {custResults.length > 0 && (
+            <div className="mt-2 border border-gray-200 rounded-xl overflow-hidden">
+              {custResults.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => handleLinkCustomer(c.id, c.name)}
+                  disabled={linking}
+                  className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 transition-colors"
+                >
+                  <p className="font-medium text-gray-900">{c.name}</p>
+                  {c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}
+                </button>
+              ))}
+            </div>
+          )}
+          {custSearch && !custSearching && custResults.length === 0 && (
+            <p className="text-xs text-gray-400 mt-2">No customers found — try a different search term.</p>
+          )}
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setLinkOpen(false)}>Cancel</BtnSecondary>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Start onboarding modal ───────────────────────────────────────────── */}
+      {onboardOpen && (
+        <Modal title="Start customer onboarding" onClose={() => setOnboardOpen(false)} width="max-w-md">
+          <p className="text-sm text-gray-500 mb-4">
+            Flag this thread as requiring a new customer onboarding. Complete the onboarding in the Customers section,
+            then return here to link the customer and create a ticket.
+          </p>
+          <FormGroup label="Note (optional)">
+            <Input
+              value={onboardNote}
+              onChange={e => setOnboardNote(e.target.value)}
+              placeholder="e.g. New pharmacy chain — high value"
+            />
+          </FormGroup>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setOnboardOpen(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={handleStartOnboarding} disabled={onboarding}>
+              {onboarding ? "Flagging…" : "Flag for Onboarding"}
+            </BtnPrimary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
