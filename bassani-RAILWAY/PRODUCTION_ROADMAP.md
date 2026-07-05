@@ -1518,6 +1518,23 @@ Two backends are supported. Only one needs to be configured:
 - Graph mailbox: attachment bytes live in Microsoft 365 and are fetched on-demand. "Save to Profile" action calls `get_attachment_content()` → streams bytes directly to R2 → writes `customer_documents` record. No copy in MongoDB.
 - IMAP mailbox: attachment bytes are eagerly fetched at ingest time and stored in `onboarding_inbox_attachments` (BSON Binary, capped at 15 MB per attachment). "Save to Profile" reads from there → streams to R2. One copy in MongoDB (temporary, until the app adds a TTL index to expire them after the thread is archived).
 
+**11.C.1 — Thread document progress tracking (2026-07-05):** *Complete*
+
+Enterprise state machine for onboarding thread lifecycle. Each time `save-documents` runs, the backend stamps `received_doc_types[]` on the thread root and advances `status` automatically:
+
+| Status | Meaning |
+|---|---|
+| `unhandled` | New inbound thread, no action taken |
+| `reply` | Customer replied, set by ingest |
+| `in_progress` | Some required docs saved, more outstanding |
+| `docs_complete` | All 5 required doc types received and saved |
+| `archived` | Manually closed by staff |
+
+- `received_doc_types` is a persistent array on the thread root, merged (not overwritten) on each save — supports edge case of partial saves across multiple replies.
+- `docs_complete` is computed from whether all 5 keys (`store_onboarding_agreement`, `customer_information_form`, `nda`, `tqa`, `cipc_certificate`) are present. No join required on list query — status lives on the thread document.
+- Frontend: two new tabs (`In Progress`, `Docs Complete`); `ThreadStatusPill` shows an amber `N/5 docs` pill for partial, green `N/5 docs` with checkmark for complete; `STATUS_META` updated with new entries.
+- Customer profile (`DocumentsSection`): structured 5-row layout per doc type (green dot = uploaded, grey = missing); each row shows filename, upload date, Download, Replace, Delete; any inbox-saved or custom docs outside the 5 types appear under "Additional Documents". Backend `list_customer_documents` fixed to pass through stored `doc_type` and `source` fields instead of hardcoding `"admin_upload"`.
+
 ---
 
 ### Context

@@ -577,8 +577,12 @@ The Onboarding Inbox uses the same two-panel layout as the Sales Inbox:
 **Status tabs** across the top:
 - **Inbox** (default) — all active threads, excluding archived
 - **New** — unhandled threads only
-- **Linked** — threads that have been linked to an onboarding application
+- **In Progress** — threads where some (but not all) required documents have been saved
+- **Docs Complete** — threads where all five required documents have been received and saved
+- **Linked** — threads linked to an onboarding application
 - **Archived** — dismissed threads
+
+**Document progress pills** on each thread row show how many of the five required documents have been saved for that thread. An amber **N/5 docs** pill means more documents are still outstanding. A green **N/5 docs** pill with a checkmark means all five required documents have been received and saved to the customer's profile.
 
 ### Opening a Thread
 
@@ -593,17 +597,6 @@ Each row shows a **Linked** pill (green) when linked to an application, a **Cust
 3. Click **Send**
 
 The reply goes out from the onboarding mailbox address and is stored in the portal thread so the full conversation stays in one place.
-
-### Linking to an Existing Customer
-
-If the sender was not auto-detected (their email doesn't match the address on their Odoo record), link them manually:
-
-1. Open the thread
-2. Click **Link** in the thread header
-3. If auto-detection succeeded, the correct customer is already pre-selected — click **Link Customer** to confirm
-4. If not, type part of the customer's name or email in the search box, select the match, and click **Link Customer**
-
-Once linked, the blue **Customer** pill appears on the thread row. All future attachments from this sender can now be saved directly to their profile. The link is audit-logged.
 
 ### Creating a New Customer from the Inbox
 
@@ -624,19 +617,21 @@ The customer record is created directly in the system, all five documents are at
 
 If the system finds a customer with the same email address or VAT number, it will block creation and show the duplicate's name. Use **Link** instead to connect the thread to the existing record.
 
-### Saving an Attachment to a Customer's Profile
+### Saving Documents to a Customer's Profile
 
-When a customer sends a document that needs to be stored against their profile (for example, a signed Section 21 authorisation or a proof of banking):
+When a customer replies with their signed onboarding documents attached:
 
-1. Open the thread and scroll to the message with the attachment
-2. Click the **Save** icon (floppy disk) next to the attachment filename
-3. A modal opens with the filename pre-filled as the document label
-4. Edit the label to something descriptive (e.g. "Section 21 — Bassani CBG Oil 100mg")
-5. Click **Save to Profile**
+1. Open the thread — **Save Documents** appears in the header when attachments are present
+2. Click **Save Documents**
+3. A modal lists every attachment in the thread. For each one, use the dropdown to assign it to the correct document slot (Signed Store Onboarding Agreement, Signed NDA, etc.). Attachments highlighted amber have not yet been assigned — each must be mapped before saving.
+4. Set any attachment to **Don't save this attachment** if it should be skipped (e.g. a duplicate or a cover note).
+5. Click **Save N Documents**
 
-The document is uploaded directly from the email to secure cloud storage (R2) and linked to the customer's profile. It will appear under the customer's documents in the customer management section. No manual download or re-upload is needed.
+The documents are uploaded directly from the email to secure cloud storage and linked to the customer's profile. No manual download or re-upload is needed.
 
-This is a one-way action — saving a document to a profile does not remove it from the email thread. If the attachment cannot be retrieved (large IMAP attachment over 15 MB that was not stored, or an expired archived thread), the Save button will not appear.
+**Document progress tracking:** After saving, the thread's status updates automatically. An amber **N/5 docs** pill appears on the thread row showing how many of the five required documents have been received. When all five are saved, the pill turns green with a checkmark and the thread moves to the **Docs Complete** tab. If only some documents arrived in the first reply (a common edge case), reply to request the remaining ones — the progress count will increment each time you save from a subsequent reply.
+
+The customer's profile (in Customers) shows the same structured view: each of the five document types has its own row with a green dot when uploaded, and a grey dot when still outstanding.
 
 ### Archiving a Thread
 

@@ -1117,6 +1117,31 @@ async def save_documents(
         record.pop("_id", None)
         saved_docs.append(record)
 
+    # Stamp received_doc_types on the thread root and advance workflow status.
+    # in_progress = some required docs saved; docs_complete = all five present.
+    _REQUIRED_DOC_KEYS = {
+        "store_onboarding_agreement",
+        "customer_information_form",
+        "nda",
+        "tqa",
+        "cipc_certificate",
+    }
+    newly_saved_types = {
+        r["doc_type"] for r in saved_docs
+        if r.get("doc_type") and r["doc_type"] != "inbox_attachment"
+    }
+    if newly_saved_types:
+        existing = set((root_thread or root_doc).get("received_doc_types") or [])
+        all_received = sorted(existing | newly_saved_types)
+        new_status = (
+            "docs_complete" if _REQUIRED_DOC_KEYS.issubset(set(all_received))
+            else "in_progress"
+        )
+        await col(_COLLECTION).update_one(
+            {"_id": root_oid},
+            {"$set": {"received_doc_types": all_received, "status": new_status}},
+        )
+
     await audit_log(
         "onboarding_inbox.documents_saved", _COLLECTION, str(root_oid),
         entity_label=str(customer_id),

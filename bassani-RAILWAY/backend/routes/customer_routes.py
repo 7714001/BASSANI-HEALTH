@@ -743,14 +743,14 @@ async def list_customer_documents(
                 pass
         docs.append({
             "id":           d["id"],
-            "doc_type":     "admin_upload",
-            "label":        d.get("label", d.get("filename", "Document")),
+            "doc_type":     d.get("doc_type"),
+            "label":        d.get("label") or d.get("filename") or "Document",
             "filename":     d.get("filename"),
             "r2_key":       key,
             "size":         d.get("size"),
             "uploaded_at":  d.get("uploaded_at"),
             "uploaded_by":  d.get("uploaded_by"),
-            "source":       "admin",
+            "source":       d.get("source", "admin"),
             "download_url": url,
         })
 

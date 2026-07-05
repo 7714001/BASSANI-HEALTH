@@ -17,10 +17,12 @@ import {
 const API = "/api/onboarding-inbox";
 
 const TABS = [
-  { value: "open",               label: "Inbox"    },
-  { value: "unhandled",          label: "New"      },
-  { value: "application_linked", label: "Linked"   },
-  { value: "archived",           label: "Archived" },
+  { value: "open",               label: "Inbox"         },
+  { value: "unhandled",          label: "New"           },
+  { value: "in_progress",        label: "In Progress"   },
+  { value: "docs_complete",      label: "Docs Complete" },
+  { value: "application_linked", label: "Linked"        },
+  { value: "archived",           label: "Archived"      },
 ];
 
 const REQUIRED_DOC_TYPES = [
@@ -39,11 +41,13 @@ const BLANK_CREATE_FORM = {
 };
 
 const STATUS_META = {
-  unhandled:           { label: "New",     color: "red"   },
-  reply:               { label: "Reply",   color: "blue"  },
-  application_linked:  { label: "Linked",  color: "green" },
-  archived:            { label: "Archived",color: "gray"  },
-  sent:                { label: "Sent",    color: "teal"  },
+  unhandled:           { label: "New",           color: "red"   },
+  reply:               { label: "Reply",         color: "blue"  },
+  in_progress:         { label: "In Progress",   color: "amber" },
+  docs_complete:       { label: "Docs Complete", color: "green" },
+  application_linked:  { label: "Linked",        color: "green" },
+  archived:            { label: "Archived",      color: "gray"  },
+  sent:                { label: "Sent",          color: "teal"  },
 };
 
 function initials(name) {
@@ -148,6 +152,20 @@ function AttachmentList({ attachments, itemId, onSaveToProfile, onPreview }) {
 }
 
 function ThreadStatusPill({ thread }) {
+  const received = thread.received_doc_types || [];
+  const total    = REQUIRED_DOC_TYPES.length;
+  const count    = received.length;
+
+  if (thread.status === "docs_complete") return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-100 rounded px-1.5 py-0.5 flex-shrink-0">
+      <CheckCircle size={9} /> {count}/{total} docs
+    </span>
+  );
+  if (count > 0) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-100 rounded px-1.5 py-0.5 flex-shrink-0">
+      <FileText size={9} /> {count}/{total} docs
+    </span>
+  );
   if (thread.application_id) return (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-100 rounded px-1.5 py-0.5 flex-shrink-0">
       <Link2 size={9} /> Linked
@@ -595,7 +613,7 @@ export default function OnboardingInbox() {
 
   async function saveDocs() {
     const assignments = Object.entries(saveDocsAssignments)
-      .filter(([, v]) => v && v.doc_type !== "__skip__")
+      .filter(([, v]) => v && v.doc_type && v.doc_type !== "__skip__")
       .map(([att_key, v]) => ({
         attachment_id: att_key,
         label:  v.doc_type === "custom" ? (saveDocsCustomLabels[att_key] || "Document") : v.label,
@@ -1175,7 +1193,9 @@ export default function OnboardingInbox() {
                               [att.key]: { doc_type: val, label: opt?.label || val },
                             }));
                           }}
-                          className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                          className={`w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300 ${
+                            !docType ? "border-amber-300 bg-amber-50" : "border-gray-200"
+                          }`}
                         >
                           <option value="">— assign to document slot —</option>
                           <option value="__skip__">Don't save this attachment</option>
