@@ -1272,8 +1272,11 @@ Every stage in the pipeline can be overridden by someone with `tickets.manage` p
 **Q: A reseller's commission statement shows the wrong amount.**  
 Resellers can raise a dispute (see Commission section above). Admins should also check the Audit Trail for the generate statement event to see exactly which orders were included in the calculation. Cancelled orders are automatically excluded.
 
+**Q: I forgot my password and cannot sign in.**  
+On the sign-in page, click **Forgot your password?** below the sign-in button. Enter the email address registered to your account. If a matching account is found, a reset link is emailed to you — it expires in 15 minutes and can only be used once. Click the link, set a new password, and sign in. Any other active sessions are automatically signed out when the reset completes. If you do not receive the email, check your spam folder or contact your super admin to confirm the email address on your account.
+
 **Q: I need to reset a staff member's password.**  
-Go to **Users**, find the account, and click **Reset Password**. A new temporary password is generated and shown once — copy it before closing. The staff member is forced to change it on their next login. Optionally enter your own password instead of using the auto-generated one.
+Go to **Users**, find the account, and click **Reset Password**. A new temporary password is generated and shown once — copy it before closing. The staff member is forced to change it on their next login. Optionally enter your own password instead of using the auto-generated one. Alternatively, ask the staff member to use the **Forgot your password?** self-service link on the sign-in page — this is the preferred approach as it does not require the temporary password to be communicated verbally.
 
 **Q: A ticket shows "Order Cancelled" or closed itself automatically — nobody cancelled it.**  
 If an order is cancelled directly in the ERP (Odoo), the portal detects this the next time anyone opens that ticket and closes it automatically. Odoo is the financial source of truth — if the order is gone there, the ticket reflects that immediately. An amber notice on the closed ticket explains that it was auto-closed due to an ERP cancellation. Check the ticket's timeline for the "Auto-closed: Odoo order was cancelled" entry, and investigate the cancellation in Odoo if it was unexpected.
@@ -1298,11 +1301,13 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 - **Change your password on first login.** The system enforces this — you cannot proceed until it is done.
 - **Two-factor authentication (2FA)** is required for every account with an email address. After entering your password, a 6-digit code is emailed to you. Enter it to complete sign-in. Codes expire in 10 minutes and allow 3 attempts — if all attempts are used, you must start the sign-in process again.
 - **Do not share your OTP code** with anyone, including colleagues. Each code is single-use and specific to your sign-in session.
+- **If you forget your password**, use the **Forgot your password?** link on the sign-in page. Enter your registered email address and a reset link will be sent. The link expires in 15 minutes and can only be used once. Completing a reset automatically signs out all other active sessions for your account.
+- **If you receive a password reset email you did not request**, do not click the link. Your password has not changed. Contact the super admin immediately as someone may have obtained your email address.
 - **If you receive an OTP email you did not request**, your password may be compromised. Contact the super admin immediately.
-- **If you think someone else knows your password**, contact the super admin immediately to have it reset.
+- **Password reset links must not be shared.** Each link is tied to your account and single-use. Forwarding it to someone else gives them full access to set your password.
 - **Your session lasts 8 hours** from the point of successful 2FA verification. After 8 hours your session expires and you will be asked to sign in (and verify via OTP) again.
 - **Logging out** clears your session. Always log out when stepping away from a shared computer.
-- **Login is rate-limited**: after 5 failed password attempts within 15 minutes, your IP is temporarily blocked. OTP verification is rate-limited to 10 attempts per 15 minutes. If you are legitimately locked out, wait 15 minutes or contact the super admin.
+- **Login is rate-limited**: after 5 failed password attempts within 15 minutes, your IP is temporarily blocked. OTP verification is rate-limited to 10 attempts per 15 minutes. Password reset requests are limited to 3 per hour. If you are legitimately locked out, wait or contact the super admin.
 
 ---
 

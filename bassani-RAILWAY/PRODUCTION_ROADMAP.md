@@ -12,7 +12,7 @@
 | Phase | Name | Status | Completed |
 |-------|------|--------|-----------|
 | 0 | Roles, Permissions & Identity Foundation | 🟢 Complete | Sub-deploys 1–4 complete — 2026-06-19 |
-| 1 | Security Hardening | 🟢 Complete | All items complete — 2026-06-29 (1.2 CORS + 1.5 email OTP 2FA) |
+| 1 | Security Hardening | 🟢 Complete | All items complete — 2026-06-29 (1.2 CORS + 1.5 email OTP 2FA) · 1.8 Self-Serve Password Reset — 2026-07-05 |
 | 2 | Email Engine | 🟢 Complete | All templates + wiring complete — 2026-06-23 · Resend domain verified — 2026-06-29 · 2.8 Email Routing Configuration (super admin) — 2026-07-02 |
 | 3 | Core Odoo Integration | 🟡 In Progress | 3.1–3.3, 3.5–3.8 complete; 3.2 needs live VAT verification; 3.4 deferred (pricelists not in use); 3.5 cancellation email deferred to Phase 2 — 2026-06-19 |
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
@@ -279,7 +279,7 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 **Goal:** Safe to expose to real users. No known exploitable vulnerabilities.  
 **Estimate:** 1–3 days  
 **Status:** 🟢 Complete  
-**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23 · Sub-deploy 3 (1.2 CORS lockdown + 1.5 email OTP 2FA) — 2026-06-29  
+**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23 · Sub-deploy 3 (1.2 CORS lockdown + 1.5 email OTP 2FA) — 2026-06-29 · Sub-deploy 4 (1.8 Self-Serve Password Reset) — 2026-07-05  
 
 ### Tasks
 
@@ -333,6 +333,21 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Design decision — no email dependency:** This flow works without Phase 2 (Email Engine). The admin tells the person their temp credentials verbally or via a secure channel; the system enforces rotation on first use. When Phase 2 lands, welcome emails with username-only (no password) can be layered on top — the forced-reset gate stays in place regardless.
 
+#### 1.8 Self-Serve Password Reset
+
+**Goal:** Any portal user with a registered email address can recover their own account without contacting an admin, using a secure time-limited email link that follows NIST SP 800-63B guidance.
+
+- [x] `POST /api/auth/forgot-password` — rate-limited 3/hour per IP; looks up user by email; generates `secrets.token_urlsafe(32)` (256-bit entropy); stores SHA-256 hash in `password_reset_tokens` collection with 15-minute TTL; fires `send_password_reset_email()` via Resend as a background task; always returns `{"success": true}` regardless of whether email exists (prevents enumeration)
+- [x] `POST /api/auth/reset-password` — rate-limited 10/hour per IP; validates token by hash lookup and TTL; deletes token immediately on first valid use (single-use); updates password (bcrypt); bumps `token_version` on the user document; clears `must_change_password`; audit-logs `user.password_reset_completed`
+- [x] `token_version` field — integer on every user document, included as `tv` claim in all issued JWTs; `get_current_user` rejects any token whose `tv` does not match the current DB value; bumped on every password reset to instantly invalidate all active sessions (stateless JWT revocation without a blocklist)
+- [x] `send_password_reset_email()` in `email_service.py` — branded template using `_h1`, `_p`, `_button`, `_divider`; reset link button; security note warning not to share the link; sent via Resend (system notification path, not connected mailbox)
+- [x] `ForgotPassword.js` — public route `/forgot-password`; email input; same success screen regardless of result; "Back to sign in" link; errors swallowed client-side to prevent enumeration
+- [x] `ResetPassword.js` — public route `/reset-password?token=...`; guards against missing token; new password + confirm fields; on success shows confirmation screen noting all other sessions have been signed out; links back to sign-in
+- [x] `Login.js` — "Forgot your password?" link below the sign-in button linking to `/forgot-password`
+- [x] Both new routes redirect authenticated users to `/` (cannot access reset flow while logged in)
+
+**Security properties:** Token stored hashed at rest; 15-minute TTL; single-use deletion; enumeration-safe response; rate-limited; full session invalidation via `token_version`; both request and completion audit-logged with actor and timestamp.
+
 ### Definition of Done
 - [x] Cannot log in as admin with `admin123` on any deployed environment _(legacy account auto-deactivated on startup)_
 - [x] Browser console shows no CORS errors from the correct domain
@@ -341,8 +356,12 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Application startup fails immediately if JWT secret is default value
 - [x] A newly created user account is intercepted at first login and cannot access the portal until they set a new password
 - [x] Admin-initiated password reset re-triggers the same forced-change gate
+- [x] Self-serve password reset link expires after 15 minutes and cannot be reused
+- [x] Completing a password reset invalidates all other active sessions for that user
 
 ### Notes
+> **Sub-deploy 4 (2026-07-05):** 1.8 Self-Serve Password Reset. Two new public routes: `POST /api/auth/forgot-password` (enumeration-safe, rate-limited 3/hour, 15-min token TTL, SHA-256 hash at rest, Resend delivery) and `POST /api/auth/reset-password` (single-use token deletion, bcrypt update, `token_version` bump). `token_version` added to user documents and included as `tv` claim in all new JWTs; `get_current_user` rejects mismatched `tv`, providing stateless session invalidation after reset. Frontend: `ForgotPassword.js` and `ResetPassword.js` views on public routes; "Forgot your password?" link added to `Login.js`.
+
 > **Sub-deploy 2 (2026-06-23):** 1.7 Forced Password Reset. `must_change_password: True` is now set on `POST /api/users/` and `POST /api/users/{id}/reset-password`. `_user_payload()` exposes the flag in every login/me response. New `POST /api/auth/change-password` verifies the current password (bcrypt), validates min-8-char and differs-from-current rules, updates the hash, and clears the flag — audit-logged as `user.change_password`. Frontend: `ProtectedRoute` now redirects authenticated users with `must_change_password` to `/change-password` before any other page renders; a new `AuthRequired` wrapper used by that specific route lets you be authenticated without triggering the redirect loop; new `ChangePassword.js` view handles the form. Existing accounts are unaffected — the field's absence is treated as `False` everywhere.
 
 > **Sub-deploy 3 (2026-06-29):** 1.2 CORS lockdown + 1.5 email OTP 2FA. `allow_origins` in `server.py` now calls `settings.cors_origins_list()` — `CORS_ORIGINS=https://portal.bassanihealth.com` set in Railway. 2FA implemented as email OTP (not TOTP) — any account with a stored email gets challenged on login when `REQUIRE_2FA_ADMIN=true`. Flow: login validates password → if 2FA triggers, OTP generated, SHA-256 hashed, stored in `otp_sessions` with 10-minute TTL index, emailed via Resend → login returns `{otp_required: true, otp_session_id}` — no JWT yet → frontend shows OTP entry screen → `POST /api/auth/verify-otp` validates code and issues JWT. 3-attempt lockout; session auto-deleted on success or exhaustion; TTL index auto-purges expired sessions. `SUPER_ADMIN_EMAIL` Railway var stamps email onto super admin document at startup so the super admin account is covered. `config.py` `portal_url` default updated to `portal.bassanihealth.com`. `index.html` CSS-only spinner on `#root:empty` eliminates white-page flash before React loads.

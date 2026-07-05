@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Package, Mail } from "lucide-react";
 
@@ -173,6 +173,14 @@ export default function Login() {
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
+            <div className="text-center pt-1">
+              <Link
+                to="/forgot-password"
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                Forgot your password?
+              </Link>
+            </div>
           </form>
         </div>
       </div>

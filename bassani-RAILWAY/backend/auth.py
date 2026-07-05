@@ -236,6 +236,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     user = await get_user_by_username(username)
     if not user:
         raise credentials_exception
+
+    # Token version check — invalidates all sessions issued before a password reset
+    if payload.get("tv", 0) != (user.get("token_version") or 0):
+        raise credentials_exception
+
     return user
 
 

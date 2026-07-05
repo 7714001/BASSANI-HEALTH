@@ -535,7 +535,33 @@ def send_dispute_resolved(
           _wrap(body))
 
 
-# 2FA / OTP emails
+# 2FA / OTP emails and account security emails
+
+def send_password_reset_email(email: str, name: str, reset_url: str) -> None:
+    """Sent when a user requests a self-service password reset."""
+    body = (
+        _h1("Reset your password")
+        + _p(f"Hi {name},")
+        + _p(
+            "We received a request to reset the password for your Bassani Health account. "
+            "Click the button below to set a new password. This link expires in "
+            "<strong>15 minutes</strong> and can only be used once."
+        )
+        + _button("Reset password", reset_url)
+        + _divider()
+        + _p(
+            "If you did not request a password reset, you can ignore this email. "
+            "Your password will not change.",
+            muted=True,
+        )
+        + _p(
+            "For security, never share this link with anyone. "
+            "Bassani Health staff will never ask you to forward it.",
+            muted=True,
+        )
+    )
+    _send(email, "Reset your Bassani Health password", _wrap(body))
+
 
 def send_otp_email(email: str, name: str, otp: str) -> None:
     """Sent when a staff member's login triggers the email OTP 2FA step."""

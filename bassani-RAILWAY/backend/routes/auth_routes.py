@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import random
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -89,7 +90,7 @@ async def login(
         )
         return Token(otp_required=True, otp_session_id=session_token)
 
-    token = create_access_token(data={"sub": user["username"]})
+    token = create_access_token(data={"sub": user["username"], "tv": user.get("token_version") or 0})
     await col("users").update_one(
         {"username": user["username"]},
         {"$set": {"last_login_at": datetime.now(timezone.utc)}},
@@ -144,7 +145,7 @@ async def verify_otp(request: Request, body: VerifyOtpBody):
     if not user or not user.get("active", True):
         raise HTTPException(status_code=401, detail="Account is no longer active.")
 
-    token = create_access_token(data={"sub": user["username"]})
+    token = create_access_token(data={"sub": user["username"], "tv": user.get("token_version") or 0})
     await col("users").update_one(
         {"username": user["username"]},
         {"$set": {"last_login_at": now}},
@@ -157,6 +158,115 @@ async def verify_otp(request: Request, body: VerifyOtpBody):
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
     return _user_payload(current_user)
+
+
+class ForgotPasswordBody(BaseModel):
+    email: str
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/forgot-password")
+@limiter.limit("3/hour")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordBody,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Initiates a self-service password reset. Always returns success — never
+    reveals whether an account exists for the given email (prevents enumeration).
+    Generates a 256-bit token, stores it SHA-256 hashed with a 15-minute TTL,
+    and emails a reset link via Resend.
+    """
+    email_lower = body.email.strip().lower()
+    user = await col("users").find_one(
+        {"email": {"$regex": f"^{re.escape(email_lower)}$", "$options": "i"},
+         "active": {"$ne": False}},
+    )
+    if user:
+        user["id"] = str(user.pop("_id"))
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        await col("password_reset_tokens").insert_one({
+            "token_hash": token_hash,
+            "username":   user["username"],
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+        })
+        from config import get_settings as _gs
+        _s = _gs()
+        reset_url = f"{_s.portal_url}/reset-password?token={token}"
+        from services.email_service import send_password_reset_email
+        background_tasks.add_task(
+            send_password_reset_email,
+            email_lower,
+            user.get("name") or user["username"],
+            reset_url,
+        )
+        background_tasks.add_task(
+            audit_log,
+            "user.password_reset_requested", "user", user["id"],
+            entity_label=user["username"], user=user,
+        )
+    return {"success": True}
+
+
+@router.post("/reset-password")
+@limiter.limit("10/hour")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordBody,
+):
+    """
+    Completes a password reset. Validates the token (hashed lookup, TTL check),
+    deletes it immediately (single-use), updates the password, and bumps
+    token_version so all existing sessions for this user are invalidated.
+    """
+    token_hash = hashlib.sha256(body.token.strip().encode()).hexdigest()
+    record = await col("password_reset_tokens").find_one({"token_hash": token_hash})
+    if not record:
+        raise HTTPException(status_code=400,
+                            detail="This reset link is invalid or has already been used.")
+
+    now = datetime.now(timezone.utc)
+    exp = record["expires_at"]
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < now:
+        await col("password_reset_tokens").delete_one({"token_hash": token_hash})
+        raise HTTPException(status_code=400,
+                            detail="This reset link has expired. Please request a new one.")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400,
+                            detail="Password must be at least 8 characters.")
+
+    # Delete immediately — token is single-use regardless of what follows
+    await col("password_reset_tokens").delete_one({"token_hash": token_hash})
+
+    user = await get_user_by_username(record["username"])
+    if not user or not user.get("active", True):
+        raise HTTPException(status_code=400, detail="Account not found or inactive.")
+
+    new_version = (user.get("token_version") or 0) + 1
+    await col("users").update_one(
+        {"username": record["username"]},
+        {"$set": {
+            "password":             hash_password(body.new_password),
+            "must_change_password": False,
+            "token_version":        new_version,
+            "updated_at":           now,
+        }},
+    )
+    await audit_log(
+        "user.password_reset_completed", "user", user["id"],
+        entity_label=user["username"], user=user,
+    )
+    return {"success": True}
 
 
 @router.post("/change-password")
