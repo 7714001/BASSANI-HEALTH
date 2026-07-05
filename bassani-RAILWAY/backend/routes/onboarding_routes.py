@@ -272,6 +272,13 @@ async def email_templates(
             )
 
     background_tasks.add_task(_do_send)
+    background_tasks.add_task(
+        audit_log,
+        "onboarding.email_templates_sent", "onboarding_inbox", item_id_str,
+        entity_label=body.to_email.strip(),
+        user=current_user,
+        after={"to_email": body.to_email.strip()},
+    )
     return {"success": True}
 
 

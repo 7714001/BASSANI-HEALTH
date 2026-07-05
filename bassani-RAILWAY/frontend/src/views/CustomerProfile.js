@@ -208,7 +208,8 @@ export default function CustomerProfile() {
   const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
   const [addrSaving, setAddrSaving] = useState(false);
 
-  const [sendingDocs, setSendingDocs] = useState(false);
+  const [sendingDocs,  setSendingDocs ] = useState(false);
+  const [docsSentInfo, setDocsSentInfo] = useState(null); // { sent, sent_at, sent_by, to_email }
 
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
@@ -216,6 +217,13 @@ export default function CustomerProfile() {
       .catch(() => { toast.error("Failed to load customer profile"); navigate("/customers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  useEffect(() => {
+    if (!can("onboarding.inbox")) return;
+    api.get(`/api/customers/${id}/docs-sent-history`)
+      .then(r => setDocsSentInfo(r.data))
+      .catch(() => {});
+  }, [id]); // eslint-disable-line
 
   useEffect(() => {
     setAddrLoading(true);
@@ -274,6 +282,20 @@ export default function CustomerProfile() {
     const email = data?.customer?.email;
     const name  = data?.customer?.name;
     if (!email) return;
+
+    if (docsSentInfo?.sent) {
+      const sentAt  = new Date(docsSentInfo.sent_at);
+      const ageMs   = Date.now() - sentAt.getTime();
+      const ageDays = ageMs / (1000 * 60 * 60 * 24);
+      if (ageDays < 7) {
+        const when = fmtDate(docsSentInfo.sent_at);
+        const who  = docsSentInfo.sent_by;
+        if (!window.confirm(
+          `Onboarding documents were already sent to ${email} on ${when} by ${who}.\n\nSend again?`
+        )) return;
+      }
+    }
+
     setSendingDocs(true);
     try {
       await api.post("/api/onboarding-inbox/send-docs", {
@@ -282,6 +304,9 @@ export default function CustomerProfile() {
         odoo_partner_id: parseInt(id),
       });
       toast.success(`Onboarding documents sent to ${email}`);
+      api.get(`/api/customers/${id}/docs-sent-history`)
+        .then(r => setDocsSentInfo(r.data))
+        .catch(() => {});
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send documents");
     } finally {
@@ -329,13 +354,20 @@ export default function CustomerProfile() {
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
           <ChevronDown size={14} className="-rotate-90" />Back to Customers
         </button>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <BtnSecondary size="sm" onClick={() => navigate(`/invoices`)}>View Invoices</BtnSecondary>
           {c.email && can("onboarding.inbox") && (
-            <BtnSecondary size="sm" onClick={handleSendDocs} disabled={sendingDocs}>
-              {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-              Send Onboarding Docs
-            </BtnSecondary>
+            <div className="flex items-center gap-2">
+              {docsSentInfo?.sent && (
+                <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                  Docs sent {fmtDate(docsSentInfo.sent_at)} by {docsSentInfo.sent_by}
+                </span>
+              )}
+              <BtnSecondary size="sm" onClick={handleSendDocs} disabled={sendingDocs}>
+                {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                Send Onboarding Docs
+              </BtnSecondary>
+            </div>
           )}
           <BtnPrimary size="sm" onClick={() => navigate("/orders")}>Place Order</BtnPrimary>
         </div>

@@ -804,3 +804,49 @@ async def delete_customer_document(
             pass
     await col("customer_documents").delete_one({"id": doc_id})
     return {"success": True}
+
+
+@router.get("/{customer_id}/docs-sent-history")
+async def get_docs_sent_history(
+    customer_id: int,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """
+    Return the most recent onboarding docs send event for this customer.
+    Matches by odoo_partner_id first, falls back to the customer's email address.
+    """
+    # Try by odoo_partner_id stamp (set when sent from customer profile)
+    record = await col("onboarding_inbox").find_one(
+        {"odoo_partner_id": customer_id, "is_outgoing": True},
+        sort=[("created_at", -1)],
+        projection={"created_at": 1, "sent_by": 1, "to_email": 1},
+    )
+
+    if not record:
+        # Fallback: match by email for sends from the customers list modal
+        from odoo_client import get_odoo_client
+        odoo = get_odoo_client()
+        partners = odoo.execute_kw(
+            "res.partner", "read",
+            [[customer_id]], {"fields": ["email"]},
+        )
+        customer_email = (partners[0].get("email") or "").strip().lower() if partners else ""
+        if customer_email:
+            record = await col("onboarding_inbox").find_one(
+                {
+                    "to_email": {"$regex": f"^{customer_email}$", "$options": "i"},
+                    "is_outgoing": True,
+                },
+                sort=[("created_at", -1)],
+                projection={"created_at": 1, "sent_by": 1, "to_email": 1},
+            )
+
+    if not record:
+        return {"sent": False}
+
+    return {
+        "sent":     True,
+        "sent_at":  record["created_at"].isoformat(),
+        "sent_by":  record.get("sent_by") or "Unknown",
+        "to_email": record.get("to_email", ""),
+    }
