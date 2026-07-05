@@ -12,6 +12,7 @@ Call set_runtime_credentials() whenever the settings doc is saved or loaded so
 the in-memory token cache is kept in sync. All public function signatures are
 unchanged — existing callers need no modification.
 """
+import asyncio
 import base64
 import logging
 import time
@@ -126,6 +127,30 @@ async def _headers() -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+async def _with_retry(coro_fn, max_retries: int = 3):
+    """
+    Execute an httpx coroutine; retry up to max_retries times on 429,
+    honouring the Retry-After header. Re-raises on any other error.
+    coro_fn: zero-argument async callable that returns an httpx.Response.
+    """
+    for attempt in range(max_retries):
+        r = await coro_fn()
+        if r.status_code == 429:
+            retry_after = int(r.headers.get("Retry-After", 10))
+            logger.warning(
+                "graph_rate_limited attempt=%d/%d retry_after=%ds",
+                attempt + 1, max_retries, retry_after,
+            )
+            await asyncio.sleep(retry_after)
+            continue
+        r.raise_for_status()
+        return r
+    # Final attempt — let raise_for_status propagate
+    r = await coro_fn()
+    r.raise_for_status()
+    return r
+
+
 async def list_messages(
     folder: str = "inbox",
     top: int = 50,
@@ -145,8 +170,9 @@ async def list_messages(
         params["$filter"] = filter_str
 
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(url, headers=await _headers(), params=params)
-        r.raise_for_status()
+        async def _call():
+            return await client.get(url, headers=await _headers(), params=params)
+        r = await _with_retry(_call)
         return r.json().get("value", [])
 
 
@@ -160,8 +186,9 @@ async def get_message(message_id: str, mailbox_address: Optional[str] = None) ->
         )
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(url, headers=await _headers(), params=params)
-        r.raise_for_status()
+        async def _call():
+            return await client.get(url, headers=await _headers(), params=params)
+        r = await _with_retry(_call)
         return r.json()
 
 
@@ -170,8 +197,9 @@ async def list_attachments(message_id: str, mailbox_address: Optional[str] = Non
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}/attachments"
     params = {"$select": "id,name,contentType,size"}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(url, headers=await _headers(), params=params)
-        r.raise_for_status()
+        async def _call():
+            return await client.get(url, headers=await _headers(), params=params)
+        r = await _with_retry(_call)
         return r.json().get("value", [])
 
 
@@ -184,8 +212,9 @@ async def get_attachment_content(
     mailbox = _resolve_mailbox(mailbox_address)
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}"
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url, headers=await _headers())
-        r.raise_for_status()
+        async def _call():
+            return await client.get(url, headers=await _headers())
+        r = await _with_retry(_call)
         data = r.json()
 
     content = base64.b64decode(data.get("contentBytes", ""))
@@ -205,13 +234,56 @@ async def send_reply(
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}/reply"
     payload = {"message": {"body": {"contentType": "HTML", "content": body_html}}}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(url, headers=await _headers(), json=payload)
-        r.raise_for_status()
+        async def _call():
+            return await client.post(url, headers=await _headers(), json=payload)
+        await _with_retry(_call)
+
+
+async def send_mail(
+    to_email: str,
+    subject: str,
+    body_html: str,
+    file_attachments: Optional[list] = None,
+    mailbox_address: Optional[str] = None,
+) -> None:
+    """
+    Send a new outgoing email (not a reply) via Graph sendMail API.
+    file_attachments: list of { filename, content: bytes, content_type }
+    Saves to the mailbox Sent Items automatically.
+    """
+    mailbox = _resolve_mailbox(mailbox_address)
+    url = f"{GRAPH_BASE}/users/{mailbox}/sendMail"
+
+    att_payload = [
+        {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name":         att["filename"],
+            "contentType":  att.get("content_type", "application/octet-stream"),
+            "contentBytes": base64.b64encode(att["content"]).decode("utf-8"),
+        }
+        for att in (file_attachments or [])
+    ]
+
+    payload = {
+        "message": {
+            "subject": subject,
+            "body":    {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": to_email}}],
+            "attachments":  att_payload,
+        },
+        "saveToSentItems": True,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        async def _call():
+            return await client.post(url, headers=await _headers(), json=payload)
+        await _with_retry(_call)
 
 
 async def mark_as_read(message_id: str, mailbox_address: Optional[str] = None) -> None:
     mailbox = _resolve_mailbox(mailbox_address)
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}"
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.patch(url, headers=await _headers(), json={"isRead": True})
-        r.raise_for_status()
+        async def _call():
+            return await client.patch(url, headers=await _headers(), json={"isRead": True})
+        await _with_retry(_call)

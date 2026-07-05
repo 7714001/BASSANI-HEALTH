@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials received and wired 2026-07-05 (Graph credentials now configurable via Settings UI, no Railway env vars needed) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI — 2026-07-05 · Onboarding Inbox (second mailbox, separate permission, PDF preview, Send Docs, auto-detect customer, Link to Customer, Create Customer from inbox, Save Documents batch action) — 2026-07-05 |
+| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials received and wired 2026-07-05 · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI — 2026-07-05 · Onboarding Inbox (PDF preview, Send Docs, auto-detect customer, Link to Customer, Create Customer from inbox, Save Documents batch action) — 2026-07-05 · 11.4 infrastructure hardening (eager R2 ingest, Graph sendMail, robust conversationId threading, 72h poll window, mailbox address display) — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1672,6 +1672,30 @@ Row click → opens the detail panel (slide-in right panel, same pattern as Sale
   - `Create Sales Ticket` (primary, disabled until customer is resolved)
   - `Archive` (secondary)
 - If ticket already created → shows "View Ticket ST-043" link instead of create button
+
+---
+
+### 11.4 — Inbox Infrastructure Hardening (2026-07-05)
+
+Three architectural gaps identified after Graph API went live:
+
+**11.4.1 — Eager R2 attachment storage for Graph messages** — *Complete*
+- [x] `inbox_service.py::ingest_graph_message()`: after inserting the inbox doc, immediately downloads all attachment bytes via `get_attachment_content()` and stores them in R2 at `inbox/{collection}/{graph_message_id}/atts/{attachment_id}`
+- [x] Attachment metadata updated with `r2_key` so future reads never touch Graph API
+- [x] `save_attachment_to_profile()` and `save_documents` batch endpoint: check `att_meta.r2_key` first (R2 read), fall back to live Graph call for messages ingested before this change, then IMAP MongoDB store
+- [x] `r2_client.py`: added `r2_get(key) -> bytes` helper
+
+**11.4.2 — Graph `sendMail` for new outgoing emails** — *Complete*
+- [x] `graph_client.py`: added `send_mail(to_email, subject, body_html, file_attachments, mailbox_address)` using `POST /users/{mailbox}/sendMail` — saves to Sent Items, no SMTP dependency
+- [x] `onboarding_inbox_routes.py::send_docs()`: branches on `use_graph` flag — Graph path uses `send_mail()`, IMAP path uses existing `imap_send_new_email()`; removed hard 503 when IMAP not configured
+- [x] Sales inbox replies already used `graph_send_reply()` (Graph API) — no change needed
+
+**11.4.3 — Robust `conversationId` thread grouping** — *Complete*
+- [x] `inbox_service.py::ingest_graph_message()`: thread lookup now finds any existing message with the same `conversationId` (not just `is_reply: False`), then propagates `thread_root_id` the same way the IMAP path does — handles out-of-order delivery and avoids duplicate thread roots
+
+**Also fixed in this deploy:**
+- [x] Graph poll and startup catchup changed from `isRead eq false` to `receivedDateTime ge {72h_cutoff}` — matching IMAP's 72-hour window so full history syncs on first connect
+- [x] `mailbox_address` returned by both `list_inbox` endpoints and displayed in TopBar subtitle of SalesInbox and OnboardingInbox
 
 ---
 

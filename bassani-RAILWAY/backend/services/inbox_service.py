@@ -106,7 +106,7 @@ def build_list_pipeline(match: dict, skip: int, limit: int) -> list:
 
 async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: str) -> None:
     """Fetch one Graph message and persist it to the given collection. Idempotent."""
-    from services.graph_client import get_message, list_attachments, mark_as_read
+    from services.graph_client import get_message, list_attachments, get_attachment_content, mark_as_read
     from services.imap_client import get_graph_mailbox_address
 
     existing = await col(collection).find_one({"graph_message_id": graph_message_id}, {"_id": 1})
@@ -159,13 +159,14 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
 
     if conv_id:
         prior = await col(collection).find_one(
-            {"graph_conversation_id": conv_id, "is_reply": False},
-            {"_id": 1, "ticket_id": 1, "application_id": 1},
+            {"graph_conversation_id": conv_id},
+            {"_id": 1, "ticket_id": 1, "application_id": 1, "thread_root_id": 1},
             sort=[("received_at", 1)],
         )
         if prior:
             is_reply = True
-            thread_root_id = str(prior["_id"])
+            # Propagate thread_root_id the same way IMAP does — walk to the root
+            thread_root_id = str(prior.get("thread_root_id") or prior["_id"])
             linked_ticket_id = prior.get("ticket_id")
             linked_application_id = prior.get("application_id")
 
@@ -193,7 +194,28 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
         "handled_by":            None,
         "handled_at":            None,
     }
-    await col(collection).insert_one(doc)
+    result = await col(collection).insert_one(doc)
+
+    # Eagerly download attachment bytes to R2 so "Save to Profile" never
+    # depends on Graph API availability at an arbitrary future point in time.
+    if attachments:
+        from services.r2_client import r2_put as _r2_put
+        for i, att in enumerate(attachments):
+            if not att.get("id"):
+                continue
+            try:
+                raw, ct, _ = await get_attachment_content(
+                    graph_message_id, att["id"], mailbox_address=mailbox_address
+                )
+                r2_key = f"inbox/{collection}/{graph_message_id}/atts/{att['id']}"
+                await _r2_put(r2_key, raw, ct or att.get("content_type", "application/octet-stream"))
+                await col(collection).update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {f"attachments.{i}.r2_key": r2_key}},
+                )
+            except Exception as exc:
+                logger.warning("inbox_graph_att_r2_store_failed name=%s error=%s",
+                               att.get("name"), exc)
 
     try:
         await mark_as_read(graph_message_id, mailbox_address=mailbox_address)
@@ -335,9 +357,9 @@ async def save_attachment_to_profile(
     customer document. Returns the new customer_documents record.
     Raises ValueError for caller to convert to HTTPException.
     """
-    from services.r2_client import r2_put
+    from services.r2_client import r2_put, r2_get
     from services.graph_client import get_attachment_content, graph_configured
-    from services.imap_client import imap_configured, get_graph_mailbox_address
+    from services.imap_client import get_graph_mailbox_address
 
     item = await col(collection).find_one({"_id": ObjectId(item_id)})
     if not item:
@@ -358,9 +380,12 @@ async def save_attachment_to_profile(
     filename = att_meta.get("name", "attachment")
     content_type = att_meta.get("content_type", "application/octet-stream")
 
-    # Fetch bytes — Graph path or IMAP path
+    # Fetch bytes — R2 preferred (set at ingest for Graph messages), then IMAP store,
+    # then live Graph API fallback for messages ingested before eager-R2 was added.
     content: bytes = b""
-    if graph_configured() and item.get("graph_message_id") and att_meta.get("id"):
+    if att_meta.get("r2_key"):
+        content = await r2_get(att_meta["r2_key"])
+    elif graph_configured() and item.get("graph_message_id") and att_meta.get("id"):
         mailbox_address = get_graph_mailbox_address(mailbox)
         raw, ct, fn = await get_attachment_content(
             item["graph_message_id"], att_meta["id"], mailbox_address=mailbox_address

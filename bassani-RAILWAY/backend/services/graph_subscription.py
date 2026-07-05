@@ -11,6 +11,7 @@ in server.py to ensure continuous delivery of push notifications.
 If subscription creation or renewal fails, the inbox_routes webhook falls back
 to a 60-second polling loop (handled inside inbox_routes.py startup task).
 """
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,9 @@ async def _get_stored(mailbox: str = "sales") -> dict | None:
 
 
 async def create_subscription(mailbox: str = "sales", mailbox_address: str = "") -> dict:
+    # Brief pause so any in-flight Railway health-check routing settles before
+    # Microsoft sends the webhook validation POST back to our notificationUrl.
+    await asyncio.sleep(2)
     address = mailbox_address or settings.ms_shared_mailbox
     notification_url = _webhook_url(mailbox)
     client_state = secrets.token_hex(32)
@@ -67,6 +71,11 @@ async def create_subscription(mailbox: str = "sales", mailbox_address: str = "")
                 "clientState":       client_state,
             },
         )
+        if not r.is_success:
+            logger.error(
+                "graph_subscription_http_error mailbox=%s status=%d body=%s",
+                mailbox, r.status_code, r.text[:500],
+            )
         r.raise_for_status()
         data = r.json()
 

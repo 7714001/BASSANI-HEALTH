@@ -311,7 +311,16 @@ async def _run_inbox_startup(
     await load_config_from_db(mailbox)
 
     mailbox_address = get_graph_mailbox_address(mailbox)
-    await ensure_subscription(mailbox=mailbox, mailbox_address=mailbox_address or "")
+
+    # Delay subscription creation so the server is fully routing traffic before
+    # Microsoft sends the webhook validation callback (a 400 results if it arrives
+    # while the process is still in its startup event and Railway hasn't switched
+    # traffic to the new container yet).
+    async def _delayed_subscription():
+        await asyncio.sleep(10)
+        await ensure_subscription(mailbox=mailbox, mailbox_address=mailbox_address or "")
+
+    asyncio.create_task(_delayed_subscription())
 
     if graph_configured() and mailbox_address:
         try:
@@ -322,10 +331,18 @@ async def _run_inbox_startup(
                 filter_str=f"receivedDateTime ge {_cutoff}", top=50, mailbox_address=mailbox_address
             )
             logger.info("%s_graph_startup_catchup found=%d", label, len(msgs))
-            for m in msgs:
-                mid = m.get("id", "")
-                if mid:
+
+            # Stagger ingest tasks — each one makes 3+ Graph API calls, so firing
+            # all simultaneously causes 429 bursts. 200 ms between tasks keeps us
+            # well within Graph's per-mailbox rate limits.
+            async def _staggered_catchup(message_ids: list):
+                for i, mid in enumerate(message_ids):
+                    if i:
+                        await asyncio.sleep(0.2)
                     asyncio.create_task(ingest_graph_message(collection, mailbox, mid))
+
+            message_ids = [m.get("id", "") for m in msgs if m.get("id")]
+            asyncio.create_task(_staggered_catchup(message_ids))
         except Exception as exc:
             logger.warning("%s_graph_startup_catchup_failed error=%s", label, exc)
 

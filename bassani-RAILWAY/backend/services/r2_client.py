@@ -37,6 +37,19 @@ async def r2_delete(key: str) -> None:
     )
 
 
+async def r2_get(key: str) -> bytes:
+    """Download an object from R2 and return its raw bytes."""
+    s = get_settings()
+    c = _client()
+    loop = asyncio.get_event_loop()
+
+    def _get():
+        resp = c.get_object(Bucket=s.r2_bucket, Key=key)
+        return resp["Body"].read()
+
+    return await loop.run_in_executor(None, _get)
+
+
 async def r2_presign(key: str, expires: int = 3600) -> str:
     s = get_settings()
     c = _client()

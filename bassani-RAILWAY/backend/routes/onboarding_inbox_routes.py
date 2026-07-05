@@ -666,9 +666,13 @@ async def send_docs(
     if not _onboarding_configured():
         _not_configured()
 
+    from services.imap_client import get_graph_mailbox_address
     imap_cfg = get_imap_config(_MAILBOX)
-    if not imap_cfg:
-        raise HTTPException(status_code=503, detail="Onboarding SMTP not configured")
+    onboarding_graph_address = get_graph_mailbox_address(_MAILBOX)
+    use_graph = graph_configured() and bool(onboarding_graph_address)
+
+    if not use_graph and not imap_cfg:
+        raise HTTPException(status_code=503, detail="Onboarding mailbox not configured")
 
     _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
     _TEMPLATES = [
@@ -706,7 +710,10 @@ reviewed by our team promptly.</p>
 """
     subject = "Bassani Health Onboarding Documents"
     now = datetime.now(timezone.utc)
-    from_address = imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+    if use_graph:
+        from_address = onboarding_graph_address
+    else:
+        from_address = imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "") if imap_cfg else ""
 
     # Create thread root before sending so we have the item_id for the update
     preview = f"Onboarding documents sent to {body.to_email}"
@@ -740,19 +747,29 @@ reviewed by our team promptly.</p>
 
     async def _do_send():
         try:
-            message_id = await imap_send_new_email(
-                to_email=body.to_email,
-                subject=subject,
-                body_html=body_html,
-                file_attachments=file_attachments,
-                mailbox=_MAILBOX,
-            )
-            await col(_COLLECTION).update_one(
-                {"_id": result.inserted_id},
-                {"$set": {"imap_message_id": message_id}},
-            )
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=body.to_email,
+                    subject=subject,
+                    body_html=body_html,
+                    file_attachments=file_attachments,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                message_id = await imap_send_new_email(
+                    to_email=body.to_email,
+                    subject=subject,
+                    body_html=body_html,
+                    file_attachments=file_attachments,
+                    mailbox=_MAILBOX,
+                )
+                await col(_COLLECTION).update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
         except Exception as exc:
-            logger.error("onboarding_inbox.send_docs_smtp_error item=%s error=%s", item_id, exc)
+            logger.error("onboarding_inbox.send_docs_error item=%s error=%s", item_id, exc)
 
     background_tasks.add_task(_do_send)
 
@@ -1015,8 +1032,20 @@ async def save_documents(
         content_type = att_meta.get("content_type", "application/octet-stream")
         content: bytes = b""
 
-        # Fetch bytes — Graph path
-        if (
+        # Fetch bytes — R2 preferred (set at ingest for Graph), then IMAP store,
+        # then live Graph API fallback for messages ingested before eager-R2.
+        if att_meta.get("r2_key"):
+            from services.r2_client import r2_get
+            try:
+                content = await r2_get(att_meta["r2_key"])
+            except Exception as exc:
+                logger.error(
+                    "onboarding_inbox.save_documents_r2_error att=%s error=%s",
+                    assignment.attachment_id, exc,
+                )
+                continue
+
+        elif (
             graph_configured()
             and parent_item.get("graph_message_id")
             and att_meta.get("id")
