@@ -556,7 +556,7 @@ export default function OnboardingInbox() {
       </div>
 
       {/* Link Application modal */}
-      <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Link to Application">
+      {linkOpen && <Modal onClose={() => setLinkOpen(false)} title="Link to Application">
         <div className="space-y-4">
           {appsLoading ? (
             <div className="flex justify-center py-8">
@@ -586,10 +586,10 @@ export default function OnboardingInbox() {
             </BtnPrimary>
           </div>
         </div>
-      </Modal>
+      </Modal>}
 
       {/* Save Attachment modal */}
-      <Modal open={saveAttOpen} onClose={() => setSaveAttOpen(false)} title="Save to Customer Profile">
+      {saveAttOpen && <Modal onClose={() => setSaveAttOpen(false)} title="Save to Customer Profile">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             This will upload <span className="font-medium">{saveAttName}</span> to the customer's document profile in R2.
@@ -609,7 +609,7 @@ export default function OnboardingInbox() {
             </BtnPrimary>
           </div>
         </div>
-      </Modal>
+      </Modal>}
     </div>
   );
 }
