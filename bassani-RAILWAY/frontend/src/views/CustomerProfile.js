@@ -34,19 +34,32 @@ function Section({ title, children }) {
 
 // ── Customer Documents Section ─────────────────────────────────────────────────
 
+const ONBOARDING_DOC_TYPES = [
+  { key: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
+  { key: "customer_information_form",  label: "Signed Customer Information Form"  },
+  { key: "nda",                        label: "Signed NDA"                        },
+  { key: "tqa",                        label: "Signed TQA Document"               },
+  { key: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
+];
+
+const KNOWN_DOC_KEYS = new Set(ONBOARDING_DOC_TYPES.map(d => d.key));
+
 const SOURCE_BADGE = {
-  onboarding: { label: "Onboarding", cls: "bg-bassani-50 text-bassani-700" },
-  admin:      { label: "Admin Upload", cls: "bg-purple-50 text-purple-700" },
+  inbox:      { label: "Inbox",        cls: "bg-blue-50 text-blue-700"      },
+  admin:      { label: "Admin Upload", cls: "bg-purple-50 text-purple-700"  },
+  onboarding: { label: "Onboarding",   cls: "bg-bassani-50 text-bassani-700"},
 };
 
 function DocumentsSection({ customerId, canUpload }) {
-  const [docs,        setDocs       ] = useState([]);
-  const [docsLoading, setDocsLoading] = useState(true);
-  const [uploading,   setUploading  ] = useState(false);
-  const [deleting,    setDeleting   ] = useState(null);
-  const [showUpload,  setShowUpload ] = useState(false);
-  const [label,       setLabel      ] = useState("");
-  const fileRef = useRef(null);
+  const [docs,             setDocs            ] = useState([]);
+  const [docsLoading,      setDocsLoading     ] = useState(true);
+  const [uploading,        setUploading       ] = useState(null); // doc_type key or "custom"
+  const [deleting,         setDeleting        ] = useState(null);
+  const [showCustomUpload, setShowCustomUpload] = useState(false);
+  const [customLabel,      setCustomLabel     ] = useState("");
+  const fileInputRef  = useRef(null);   // hidden input for structured doc types
+  const customFileRef = useRef(null);   // visible input for custom/additional docs
+  const pendingType   = useRef(null);   // which doc_type is queued for upload
 
   const loadDocs = () => {
     setDocsLoading(true);
@@ -58,24 +71,55 @@ function DocumentsSection({ customerId, canUpload }) {
 
   useEffect(() => { loadDocs(); }, [customerId]); // eslint-disable-line
 
-  const handleUpload = async (file) => {
-    if (!label.trim()) return toast.error("Enter a document label first");
-    setUploading(true);
+  const triggerStructuredUpload = (docTypeKey) => {
+    pendingType.current = docTypeKey;
+    fileInputRef.current?.click();
+  };
+
+  const handleStructuredUpload = async (file) => {
+    const dtKey  = pendingType.current;
+    const dtMeta = ONBOARDING_DOC_TYPES.find(d => d.key === dtKey);
+    if (!dtKey || !dtMeta) return;
+    setUploading(dtKey);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      await api.post(`/api/customers/${customerId}/documents/upload?label=${encodeURIComponent(label.trim())}`, fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      toast.success("Document uploaded");
-      setLabel("");
-      setShowUpload(false);
+      await api.post(
+        `/api/customers/${customerId}/documents/upload?label=${encodeURIComponent(dtMeta.label)}&doc_type=${dtKey}`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      toast.success(`${dtMeta.label} uploaded`);
       loadDocs();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Upload failed");
     } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+      setUploading(null);
+      pendingType.current = null;
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleCustomUpload = async (file) => {
+    if (!customLabel.trim()) return toast.error("Enter a document label first");
+    setUploading("custom");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      await api.post(
+        `/api/customers/${customerId}/documents/upload?label=${encodeURIComponent(customLabel.trim())}`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      toast.success("Document uploaded");
+      setCustomLabel("");
+      setShowCustomUpload(false);
+      loadDocs();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Upload failed");
+    } finally {
+      setUploading(null);
+      if (customFileRef.current) customFileRef.current.value = "";
     }
   };
 
@@ -92,87 +136,157 @@ function DocumentsSection({ customerId, canUpload }) {
     }
   };
 
+  const docByType  = Object.fromEntries(ONBOARDING_DOC_TYPES.map(dt => [dt.key, docs.find(d => d.doc_type === dt.key) || null]));
+  const otherDocs  = docs.filter(d => !KNOWN_DOC_KEYS.has(d.doc_type));
+  const uploadedCount = ONBOARDING_DOC_TYPES.filter(dt => docByType[dt.key]).length;
+
   return (
-    <Section title={`Documents (${docs.length})`}>
+    <Section title={`Documents (${uploadedCount} / ${ONBOARDING_DOC_TYPES.length} onboarding${otherDocs.length ? ` + ${otherDocs.length} other` : ""})`}>
+      {/* Hidden file input — triggered programmatically for structured doc types */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+        className="hidden"
+        onChange={e => { if (e.target.files[0]) handleStructuredUpload(e.target.files[0]); }}
+      />
+
       {docsLoading ? (
         <p className="text-sm text-gray-400 px-5 py-4">Loading…</p>
-      ) : docs.length === 0 ? (
-        <div className="px-5 py-4">
-          <p className="text-sm text-gray-400">No documents on file for this customer.</p>
-        </div>
       ) : (
-        <div className="divide-y divide-gray-50">
-          {docs.map((d, i) => {
-            const badge = SOURCE_BADGE[d.source] || SOURCE_BADGE.admin;
-            return (
-              <div key={d.id || d.r2_key || i} className="flex items-center gap-4 px-5 py-3">
-                <div className="w-8 h-8 bg-bassani-50 rounded-lg flex items-center justify-center shrink-0">
-                  <FileText size={14} className="text-bassani-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+        <>
+          {/* Structured onboarding doc type rows */}
+          <div className="divide-y divide-gray-50">
+            {ONBOARDING_DOC_TYPES.map(dt => {
+              const doc        = docByType[dt.key];
+              const isUploading = uploading === dt.key;
+              return (
+                <div key={dt.key} className="flex items-center gap-3 px-5 py-3">
+                  <div className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${doc ? "bg-green-400" : "bg-gray-200"}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-800">{dt.label}</p>
+                    {doc && (
+                      <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                        {doc.filename} · {fmtDate(doc.uploaded_at)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {isUploading ? (
+                      <Loader2 size={13} className="animate-spin text-bassani-600" />
+                    ) : doc ? (
+                      <>
+                        {doc.download_url && (
+                          <a href={doc.download_url} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                            <Download size={12} /> Download
+                          </a>
+                        )}
+                        {canUpload && (
+                          <>
+                            <button onClick={() => triggerStructuredUpload(dt.key)}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-bassani-600 transition-colors">
+                              <Upload size={12} /> Replace
+                            </button>
+                            <button onClick={() => handleDelete(doc)} disabled={deleting === doc.id}
+                              className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
+                              {deleting === doc.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            </button>
+                          </>
+                        )}
+                      </>
+                    ) : canUpload ? (
+                      <button onClick={() => triggerStructuredUpload(dt.key)}
+                        className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                        <Upload size={12} /> Upload
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-gray-400">Not uploaded</span>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  {d.download_url ? (
-                    <a href={d.download_url} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
-                      <Download size={12} /> Download
-                    </a>
-                  ) : (
-                    <span className="text-[10px] text-gray-400">Unavailable</span>
-                  )}
-                  {canUpload && d.source === "admin" && (
-                    <button onClick={() => handleDelete(d)} disabled={deleting === d.id}
-                      className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
-                      {deleting === d.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
 
-      {canUpload && (
-        <div className="px-5 py-3 border-t border-gray-50 space-y-3">
-          {!showUpload ? (
-            <button onClick={() => setShowUpload(true)}
-              className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors">
-              <Upload size={14} /> Upload document
-            </button>
-          ) : (
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-40">
-                <p className="text-xs text-gray-400 mb-1">Document label</p>
-                <Input
-                  value={label}
-                  onChange={e => setLabel(e.target.value)}
-                  placeholder="e.g. Signed NDA"
-                  autoFocus
-                />
+          {/* Other docs: inbox-saved or custom uploads that don't map to a known type */}
+          {otherDocs.length > 0 && (
+            <div className="border-t border-gray-50">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-5 pt-3 pb-1">Additional Documents</p>
+              <div className="divide-y divide-gray-50">
+                {otherDocs.map((d, i) => {
+                  const badge = SOURCE_BADGE[d.source] || SOURCE_BADGE.admin;
+                  return (
+                    <div key={d.id || i} className="flex items-center gap-3 px-5 py-3">
+                      <FileText size={14} className="text-gray-300 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type || "Document"}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {d.download_url ? (
+                          <a href={d.download_url} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                            <Download size={12} /> Download
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-gray-400">Unavailable</span>
+                        )}
+                        {canUpload && d.source !== "inbox" && (
+                          <button onClick={() => handleDelete(d)} disabled={deleting === d.id}
+                            className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
+                            {deleting === d.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div>
-                <p className="text-xs text-gray-400 mb-1">File</p>
-                <input ref={fileRef} type="file"
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                  disabled={uploading}
-                  onChange={e => { if (e.target.files[0]) handleUpload(e.target.files[0]); }}
-                  className="block text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-bassani-50 file:text-bassani-700 hover:file:bg-bassani-100 cursor-pointer disabled:opacity-50"
-                />
-              </div>
-              {uploading && <Loader2 size={16} className="animate-spin text-bassani-600 mb-1.5" />}
-              <button onClick={() => { setShowUpload(false); setLabel(""); }}
-                className="text-xs text-gray-400 hover:text-gray-600 mb-1.5 transition-colors">
-                Cancel
-              </button>
             </div>
           )}
-        </div>
+
+          {/* Upload additional / custom document */}
+          {canUpload && (
+            <div className="px-5 py-3 border-t border-gray-50 space-y-3">
+              {!showCustomUpload ? (
+                <button onClick={() => setShowCustomUpload(true)}
+                  className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium transition-colors">
+                  <Upload size={14} /> Upload additional document
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex-1 min-w-40">
+                    <p className="text-xs text-gray-400 mb-1">Document label</p>
+                    <Input
+                      value={customLabel}
+                      onChange={e => setCustomLabel(e.target.value)}
+                      placeholder="e.g. Letter of Good Standing"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 mb-1">File</p>
+                    <input ref={customFileRef} type="file"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                      disabled={uploading === "custom"}
+                      onChange={e => { if (e.target.files[0]) handleCustomUpload(e.target.files[0]); }}
+                      className="block text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-bassani-50 file:text-bassani-700 hover:file:bg-bassani-100 cursor-pointer disabled:opacity-50"
+                    />
+                  </div>
+                  {uploading === "custom" && <Loader2 size={16} className="animate-spin text-bassani-600 mb-1.5" />}
+                  <button onClick={() => { setShowCustomUpload(false); setCustomLabel(""); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 mb-1.5 transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </Section>
   );

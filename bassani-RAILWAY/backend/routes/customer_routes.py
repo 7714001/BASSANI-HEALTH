@@ -761,10 +761,27 @@ async def list_customer_documents(
 async def upload_customer_document(
     customer_id: int,
     label: str = Query(..., description="Document label"),
+    doc_type: Optional[str] = Query(None, description="Structured doc type key — if provided, any existing doc of this type is replaced"),
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission("customers.manage")),
 ):
-    """Admin uploads a document directly to a customer profile, stored in R2."""
+    """Admin uploads a document directly to a customer profile, stored in R2.
+    When doc_type is provided, any existing document of that type is deleted first (overwrite)."""
+    from services.r2_client import r2_delete as _r2_delete
+
+    # Overwrite: delete existing doc of this type before inserting the new one
+    if doc_type:
+        existing = await col("customer_documents").find_one(
+            {"odoo_partner_id": customer_id, "doc_type": doc_type}
+        )
+        if existing:
+            if existing.get("r2_key"):
+                try:
+                    await _r2_delete(existing["r2_key"])
+                except Exception:
+                    pass
+            await col("customer_documents").delete_one({"id": existing["id"]})
+
     contents = await file.read()
     ext      = os.path.splitext(file.filename or "")[1] or ".pdf"
     doc_id   = str(uuid.uuid4())
@@ -778,7 +795,9 @@ async def upload_customer_document(
         "label":           label.strip(),
         "filename":        file.filename,
         "r2_key":          key,
+        "doc_type":        doc_type,
         "size":            len(contents),
+        "source":          "admin",
         "uploaded_at":     datetime.now(timezone.utc),
         "uploaded_by":     current_user.get("username", ""),
     }
