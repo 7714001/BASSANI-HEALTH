@@ -316,8 +316,10 @@ async def _run_inbox_startup(
     if graph_configured() and mailbox_address:
         try:
             from services.graph_client import list_messages
+            from datetime import datetime, timedelta, timezone as _tz
+            _cutoff = (datetime.now(_tz.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
             msgs = await list_messages(
-                filter_str="isRead eq false", top=50, mailbox_address=mailbox_address
+                filter_str=f"receivedDateTime ge {_cutoff}", top=50, mailbox_address=mailbox_address
             )
             logger.info("%s_graph_startup_catchup found=%d", label, len(msgs))
             for m in msgs:

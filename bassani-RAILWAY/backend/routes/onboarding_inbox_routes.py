@@ -100,6 +100,17 @@ def _onboarding_configured() -> bool:
     return _ic(_MAILBOX) or bool(get_graph_mailbox_address(_MAILBOX))
 
 
+def _active_onboarding_mailbox_address() -> str:
+    from services.imap_client import get_graph_mailbox_address, get_config
+    addr = get_graph_mailbox_address(_MAILBOX)
+    if addr:
+        return addr
+    cfg = get_config(_MAILBOX)
+    if cfg:
+        return cfg.get("mailbox_address") or cfg.get("imap_username", "")
+    return ""
+
+
 def _not_configured() -> None:
     raise HTTPException(
         status_code=503,
@@ -181,7 +192,8 @@ async def poll_inbox(
     if graph_configured() and mailbox_address:
         from services.graph_client import list_messages
         try:
-            msgs = await list_messages(filter_str="isRead eq false", top=25, mailbox_address=mailbox_address)
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            msgs = await list_messages(filter_str=f"receivedDateTime ge {cutoff}", top=50, mailbox_address=mailbox_address)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
         count = 0
@@ -291,7 +303,7 @@ async def list_inbox(
 
     results = await col(_COLLECTION).aggregate(pipeline).to_list(limit)
     items = [_fmt(doc) for doc in results]
-    return {"items": items, "total": total, "configured": True}
+    return {"items": items, "total": total, "configured": True, "mailbox_address": _active_onboarding_mailbox_address()}
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────

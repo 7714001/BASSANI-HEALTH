@@ -261,7 +261,8 @@ export default function OnboardingInbox() {
   const [threads,        setThreads       ] = useState([]);
   const [total,          setTotal         ] = useState(0);
   const [loading,        setLoading       ] = useState(false);
-  const [configured,     setConfigured    ] = useState(true);
+  const [configured,      setConfigured    ] = useState(true);
+  const [mailboxAddress,  setMailboxAddress] = useState("");
 
   const [selectedThread, setSelectedThread] = useState(null);
   const [threadMsgs,     setThreadMsgs    ] = useState([]);
@@ -344,6 +345,7 @@ export default function OnboardingInbox() {
       setConfigured(res.data.configured !== false);
       setThreads(res.data.items || []);
       setTotal(res.data.total || 0);
+      if (res.data.mailbox_address) setMailboxAddress(res.data.mailbox_address);
     } catch {
       if (!silent) toast.error("Failed to load inbox");
     } finally {
@@ -716,7 +718,7 @@ export default function OnboardingInbox() {
 
   return (
     <div className="flex flex-col h-full">
-      <TopBar title="Onboarding Inbox">
+      <TopBar title="Onboarding Inbox" subtitle={mailboxAddress || undefined}>
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input

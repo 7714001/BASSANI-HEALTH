@@ -76,6 +76,24 @@ def inbox_configured() -> bool:
     return graph_configured() or imap_configured()
 
 
+def _active_mailbox_address() -> str:
+    """Return the email address of the currently configured sales mailbox."""
+    from services.imap_client import get_graph_mailbox_address, get_config
+    addr = get_graph_mailbox_address("sales")
+    if addr:
+        return addr
+    cfg = get_config("sales")
+    if cfg:
+        return cfg.get("mailbox_address") or cfg.get("imap_username", "")
+    return ""
+
+
+def _graph_catchup_filter() -> str:
+    """OData filter equivalent to IMAP's 72-hour SINCE window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+    return f"receivedDateTime ge {cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+
 def _not_configured() -> None:
     raise HTTPException(
         status_code=503,
@@ -417,7 +435,7 @@ async def poll_inbox(
     if graph_configured():
         from services.graph_client import list_messages
         try:
-            msgs = await list_messages(filter_str="isRead eq false", top=25)
+            msgs = await list_messages(filter_str=_graph_catchup_filter(), top=50)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
         count = 0
@@ -538,7 +556,7 @@ async def list_inbox(
 
     results = await col("sales_inbox").aggregate(pipeline).to_list(limit)
     items = [_fmt(doc) for doc in results]
-    return {"items": items, "total": total, "configured": True}
+    return {"items": items, "total": total, "configured": True, "mailbox_address": _active_mailbox_address()}
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────

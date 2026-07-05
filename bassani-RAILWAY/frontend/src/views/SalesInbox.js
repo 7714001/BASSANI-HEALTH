@@ -233,10 +233,11 @@ export default function SalesInbox() {
   const bottomRef     = useRef(null);
 
   // List
-  const [threads,      setThreads     ] = useState([]);
-  const [total,        setTotal       ] = useState(0);
-  const [loading,      setLoading     ] = useState(true);
-  const [configured,   setConfigured  ] = useState(true);
+  const [threads,         setThreads        ] = useState([]);
+  const [total,           setTotal          ] = useState(0);
+  const [loading,         setLoading        ] = useState(true);
+  const [configured,      setConfigured     ] = useState(true);
+  const [mailboxAddress,  setMailboxAddress ] = useState("");
   const [statusFilter, setStatusFilter] = useState("open");
   const [search,       setSearch      ] = useState("");
   const [searchDraft,  setSearchDraft ] = useState("");
@@ -281,6 +282,7 @@ export default function SalesInbox() {
         setConfigured(true);
         setThreads(r.data.items || []);
         setTotal(r.data.total || 0);
+        if (r.data.mailbox_address) setMailboxAddress(r.data.mailbox_address);
       }
     } catch {
       toast.error("Failed to load inbox");
@@ -550,7 +552,7 @@ export default function SalesInbox() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Sales Inbox"
-        subtitle={`${total} thread${total !== 1 ? "s" : ""}`}
+        subtitle={mailboxAddress ? `${mailboxAddress} · ${total} thread${total !== 1 ? "s" : ""}` : `${total} thread${total !== 1 ? "s" : ""}`}
         actions={
           <button
             onClick={handlePoll}
