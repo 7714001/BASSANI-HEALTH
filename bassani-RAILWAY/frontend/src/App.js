@@ -32,6 +32,7 @@ import ResellerApplicationDetail     from "./views/ResellerApplicationDetail";
 import EmailSettings                 from "./views/EmailSettings";
 import MailboxSettings               from "./views/MailboxSettings";
 import OnboardingMailboxSettings     from "./views/OnboardingMailboxSettings";
+import ConnectedMailboxes            from "./views/ConnectedMailboxes";
 import ResellerProfile       from "./views/ResellerProfile";
 import Suppliers             from "./views/Suppliers";
 import SupplierProfile       from "./views/SupplierProfile";
@@ -238,6 +239,9 @@ export default function App() {
 
         <Route path="/settings/email-routing" element={
           <ProtectedRoute><AppLayout><EmailSettings /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/settings/mailboxes" element={
+          <ProtectedRoute><AppLayout><ConnectedMailboxes /></AppLayout></ProtectedRoute>
         } />
         <Route path="/settings/mailbox" element={
           <ProtectedRoute><AppLayout><MailboxSettings /></AppLayout></ProtectedRoute>
