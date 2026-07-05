@@ -296,8 +296,7 @@ export default function OnboardingInbox() {
   const [replyHtml,      setReplyHtml     ] = useState("");
   const [replySending,   setReplySending  ] = useState(false);
 
-  // Link to customer modal
-  const [linkOpen,         setLinkOpen      ] = useState(false);
+  // Customer search shared by Save Docs confirm step
   const [linking,          setLinking       ] = useState(false);
   const [custSearch,       setCustSearch    ] = useState("");
   const [custResults,      setCustResults   ] = useState([]);
@@ -442,20 +441,6 @@ export default function OnboardingInbox() {
     }
   }
 
-  function openLinkModal() {
-    const detectedId   = selectedThread?.customer_id   || null;
-    const detectedName = selectedThread?.customer_name || "";
-    setSelectedCustId(detectedId);
-    setSelectedCustName(detectedName);
-    // Pre-populate search + results so the detected customer shows immediately
-    setCustSearch(detectedName);
-    setCustResults(
-      detectedId
-        ? [{ id: detectedId, name: detectedName, email: selectedThread?.from_email }]
-        : []
-    );
-    setLinkOpen(true);
-  }
 
   async function searchCustomers(q) {
     if (!q.trim()) { setCustResults([]); return; }
@@ -471,28 +456,12 @@ export default function OnboardingInbox() {
   }
 
   useEffect(() => {
-    const searching = linkOpen || (saveDocsOpen && saveDocsStep === "confirm");
+    const searching = saveDocsOpen && saveDocsStep === "confirm";
     if (!searching) return;
     const t = setTimeout(() => searchCustomers(custSearch), 350);
     return () => clearTimeout(t);
-  }, [custSearch, linkOpen, saveDocsOpen, saveDocsStep]); // eslint-disable-line
+  }, [custSearch, saveDocsOpen, saveDocsStep]); // eslint-disable-line
 
-  async function linkCustomer() {
-    if (!selectedCustId) return;
-    setLinking(true);
-    try {
-      await api.post(`${API}/${selectedThread.id}/link-customer`, { odoo_partner_id: selectedCustId });
-      toast.success(`Thread linked to ${selectedCustName}`);
-      setLinkOpen(false);
-      const res = await api.get(`${API}/${selectedThread.id}`);
-      setSelectedThread(res.data);
-      loadList(true);
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to link customer");
-    } finally {
-      setLinking(false);
-    }
-  }
 
   function openCreateModal() {
     setCreateStep("map");
@@ -843,9 +812,6 @@ export default function OnboardingInbox() {
                     <Save size={14} /> Save Documents
                   </BtnPrimary>
                 )}
-                <BtnSecondary onClick={openLinkModal} title="Link to a customer without saving documents">
-                  <Link2 size={14} /> Link
-                </BtnSecondary>
                 <BtnSecondary onClick={() => setReplyOpen(r => !r)}>
                   <Send size={14} /> Reply
                 </BtnSecondary>
@@ -897,59 +863,6 @@ export default function OnboardingInbox() {
           </div>
         )}
       </div>
-
-      {/* Link to customer modal */}
-      {linkOpen && <Modal onClose={() => setLinkOpen(false)} title="Link to Customer" width="max-w-lg">
-        <div className="space-y-4">
-          <p className="text-xs text-gray-500">
-            Link this thread to an onboarded customer. Once linked, attachments can be saved to their profile.
-            Auto-detection already runs on ingest — use this when the sender's email doesn't match their Odoo record.
-          </p>
-          <FormGroup label="Search customer">
-            <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                value={custSearch}
-                onChange={e => { setCustSearch(e.target.value); setSelectedCustId(null); }}
-                placeholder="Name or email…"
-                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300"
-                autoFocus
-              />
-              {custSearching && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />}
-            </div>
-          </FormGroup>
-          {custResults.length > 0 && (
-            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 max-h-48 overflow-y-auto">
-              {custResults.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => { setSelectedCustId(c.id); setSelectedCustName(c.name); }}
-                  className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                    selectedCustId === c.id
-                      ? "bg-bassani-50 text-bassani-700 font-medium"
-                      : "hover:bg-gray-50 text-gray-700"
-                  }`}
-                >
-                  <span className="font-medium">{c.name}</span>
-                  {c.email && <span className="text-xs text-gray-400 ml-2">{c.email}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-          {selectedCustId && (
-            <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
-              <User size={12} /> Selected: <strong>{selectedCustName}</strong>
-            </div>
-          )}
-          <div className="flex justify-end gap-2">
-            <BtnSecondary onClick={() => setLinkOpen(false)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={linkCustomer} disabled={!selectedCustId || linking}>
-              {linking ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-              Link Customer
-            </BtnPrimary>
-          </div>
-        </div>
-      </Modal>}
 
       {/* Save Attachment modal */}
       {saveAttOpen && <Modal onClose={() => setSaveAttOpen(false)} title="Save to Customer Profile">
