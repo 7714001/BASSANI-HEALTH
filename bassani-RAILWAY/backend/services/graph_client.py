@@ -4,9 +4,13 @@ Microsoft Graph API client for shared mailboxes.
 Uses OAuth2 client_credentials flow (application permissions, not delegated).
 Required Azure app permissions: Mail.Read, Mail.Send, Mail.ReadWrite.
 
-All public functions accept an optional mailbox_address parameter. When omitted
-they fall back to settings.ms_shared_mailbox (the sales mailbox), preserving
-backward compatibility with all existing callers.
+Credentials are resolved in priority order:
+  1. Runtime credentials set from MongoDB settings (via set_runtime_credentials)
+  2. Railway environment variables (backward-compat fallback for existing deployments)
+
+Call set_runtime_credentials() whenever the settings doc is saved or loaded so
+the in-memory token cache is kept in sync. All public function signatures are
+unchanged — existing callers need no modification.
 """
 import base64
 import logging
@@ -15,27 +19,82 @@ from typing import Optional
 
 import httpx
 
-from config import get_settings
-
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
+# Runtime credentials loaded from MongoDB; override env vars when set.
+_runtime_creds: Optional[dict] = None
+
+# Token cache — reset when credentials change.
 _token_cache: dict = {"access_token": None, "expires_at": 0.0}
 
 
-def graph_configured() -> bool:
-    return bool(
-        settings.ms_tenant_id
-        and settings.ms_client_id
-        and settings.ms_client_secret
-        and settings.ms_shared_mailbox
+def set_runtime_credentials(creds: Optional[dict]) -> None:
+    """
+    Called by imap_client.load_config_from_db when provider=='graph'.
+    creds: { tenant_id, client_id, client_secret, mailbox_address } or None to clear.
+    Invalidates the in-memory token cache so the next call fetches a fresh token.
+    """
+    global _runtime_creds, _token_cache
+    _runtime_creds = creds
+    _token_cache = {"access_token": None, "expires_at": 0.0}
+    logger.info(
+        "graph_client.credentials_updated source=%s",
+        "db" if creds else "cleared",
     )
 
 
+# ── Credential helpers (prefer runtime over env vars) ─────────────────────────
+
+def _tenant_id() -> str:
+    if _runtime_creds and _runtime_creds.get("tenant_id"):
+        return _runtime_creds["tenant_id"]
+    try:
+        from config import get_settings
+        return get_settings().ms_tenant_id or ""
+    except Exception:
+        return ""
+
+
+def _client_id() -> str:
+    if _runtime_creds and _runtime_creds.get("client_id"):
+        return _runtime_creds["client_id"]
+    try:
+        from config import get_settings
+        return get_settings().ms_client_id or ""
+    except Exception:
+        return ""
+
+
+def _client_secret() -> str:
+    if _runtime_creds and _runtime_creds.get("client_secret"):
+        return _runtime_creds["client_secret"]
+    try:
+        from config import get_settings
+        return get_settings().ms_client_secret or ""
+    except Exception:
+        return ""
+
+
+def _default_mailbox() -> str:
+    if _runtime_creds and _runtime_creds.get("mailbox_address"):
+        return _runtime_creds["mailbox_address"]
+    try:
+        from config import get_settings
+        return get_settings().ms_shared_mailbox or ""
+    except Exception:
+        return ""
+
+
+# ── Public helpers ─────────────────────────────────────────────────────────────
+
+def graph_configured() -> bool:
+    return bool(_tenant_id() and _client_id() and _client_secret() and _default_mailbox())
+
+
 def _resolve_mailbox(mailbox_address: Optional[str]) -> str:
-    return mailbox_address or settings.ms_shared_mailbox
+    return mailbox_address or _default_mailbox()
 
 
 async def get_access_token() -> str:
@@ -43,16 +102,14 @@ async def get_access_token() -> str:
     if _token_cache["access_token"] and _token_cache["expires_at"] > now + 60:
         return _token_cache["access_token"]
 
-    token_url = (
-        f"https://login.microsoftonline.com/{settings.ms_tenant_id}/oauth2/v2.0/token"
-    )
+    token_url = f"https://login.microsoftonline.com/{_tenant_id()}/oauth2/v2.0/token"
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
             token_url,
             data={
                 "grant_type":    "client_credentials",
-                "client_id":     settings.ms_client_id,
-                "client_secret": settings.ms_client_secret,
+                "client_id":     _client_id(),
+                "client_secret": _client_secret(),
                 "scope":         "https://graph.microsoft.com/.default",
             },
         )
@@ -60,7 +117,7 @@ async def get_access_token() -> str:
         data = r.json()
 
     _token_cache["access_token"] = data["access_token"]
-    _token_cache["expires_at"] = now + data.get("expires_in", 3600)
+    _token_cache["expires_at"]   = now + data.get("expires_in", 3600)
     return _token_cache["access_token"]
 
 

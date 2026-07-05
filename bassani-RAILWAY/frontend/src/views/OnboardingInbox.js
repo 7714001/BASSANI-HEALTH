@@ -309,6 +309,13 @@ export default function OnboardingInbox() {
   const [createSaving,        setCreateSaving       ] = useState(false);
   const [createDocUploading,  setCreateDocUploading ] = useState(null); // doc_type being uploaded
 
+  // Save Documents modal
+  const [saveDocsOpen,        setSaveDocsOpen       ] = useState(false);
+  const [saveDocsStep,        setSaveDocsStep       ] = useState("assign"); // "confirm" | "assign"
+  const [saveDocsAssignments, setSaveDocsAssignments] = useState({}); // { att_key: { label, doc_type } }
+  const [saveDocsCustomLabels,setSaveDocsCustomLabels] = useState({}); // { att_key: custom label text }
+  const [saveDocsSaving,      setSaveDocsSaving     ] = useState(false);
+
   const threadEndRef     = useRef(null);
   const createFileRefs   = useRef({});
   const selectedThreadId = selectedThread?.id;
@@ -438,10 +445,11 @@ export default function OnboardingInbox() {
   }
 
   useEffect(() => {
-    if (!linkOpen) return;
+    const searching = linkOpen || (saveDocsOpen && saveDocsStep === "confirm");
+    if (!searching) return;
     const t = setTimeout(() => searchCustomers(custSearch), 350);
     return () => clearTimeout(t);
-  }, [custSearch, linkOpen]);
+  }, [custSearch, linkOpen, saveDocsOpen, saveDocsStep]); // eslint-disable-line
 
   async function linkCustomer() {
     if (!selectedCustId) return;
@@ -553,6 +561,67 @@ export default function OnboardingInbox() {
       }
     } finally {
       setCreateSaving(false);
+    }
+  }
+
+  function openSaveDocsModal() {
+    setSaveDocsAssignments({});
+    setSaveDocsCustomLabels({});
+    if (selectedThread?.customer_id) {
+      setSaveDocsStep("assign");
+    } else {
+      // Reuse the link-modal customer state for the confirm step
+      const detectedId   = selectedThread?.customer_id   || null;
+      const detectedName = selectedThread?.customer_name || "";
+      setSelectedCustId(detectedId);
+      setSelectedCustName(detectedName);
+      setCustSearch(detectedName);
+      setCustResults(detectedId ? [{ id: detectedId, name: detectedName, email: selectedThread?.from_email }] : []);
+      setSaveDocsStep("confirm");
+    }
+    setSaveDocsOpen(true);
+  }
+
+  async function confirmCustomerForSave() {
+    if (!selectedCustId) return;
+    setLinking(true);
+    try {
+      await api.post(`${API}/${selectedThread.id}/link-customer`, { odoo_partner_id: selectedCustId });
+      const res = await api.get(`${API}/${selectedThread.id}`);
+      setSelectedThread(res.data);
+      loadList(true);
+      setSaveDocsStep("assign");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link customer");
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  async function saveDocs() {
+    const assignments = Object.entries(saveDocsAssignments)
+      .filter(([, v]) => v && v.doc_type !== "__skip__")
+      .map(([att_key, v]) => ({
+        attachment_id: att_key,
+        label:  v.doc_type === "custom" ? (saveDocsCustomLabels[att_key] || "Document") : v.label,
+        doc_type: v.doc_type !== "custom" ? v.doc_type : null,
+      }));
+
+    if (!assignments.length) {
+      toast.error("Assign at least one attachment to a document slot");
+      return;
+    }
+    setSaveDocsSaving(true);
+    try {
+      const res = await api.post(`${API}/${selectedThread.id}/save-documents`, { assignments });
+      const n = res.data.saved;
+      toast.success(`${n} document${n !== 1 ? "s" : ""} saved to customer profile`);
+      setSaveDocsOpen(false);
+      loadList(true);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save documents");
+    } finally {
+      setSaveDocsSaving(false);
     }
   }
 
@@ -743,7 +812,12 @@ export default function OnboardingInbox() {
                     <UserPlus size={14} /> Create Customer
                   </BtnPrimary>
                 )}
-                <BtnSecondary onClick={openLinkModal}>
+                {threadAttachments.length > 0 && (
+                  <BtnPrimary onClick={openSaveDocsModal}>
+                    <Save size={14} /> Save Documents
+                  </BtnPrimary>
+                )}
+                <BtnSecondary onClick={openLinkModal} title="Link to a customer without saving documents">
                   <Link2 size={14} /> Link
                 </BtnSecondary>
                 <BtnSecondary onClick={() => setReplyOpen(r => !r)}>
@@ -1071,6 +1145,137 @@ export default function OnboardingInbox() {
           )}
         </Modal>
       )}
+
+      {/* Save Documents modal */}
+      {saveDocsOpen && <Modal onClose={() => setSaveDocsOpen(false)} title="Save Documents to Profile" width="max-w-xl">
+        {saveDocsStep === "confirm" ? (
+          <div className="space-y-4">
+            <p className="text-xs text-gray-500">
+              This thread is not yet linked to a customer. Confirm the customer below to continue.
+            </p>
+            <FormGroup label="Search customer">
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={custSearch}
+                  onChange={e => { setCustSearch(e.target.value); setSelectedCustId(null); }}
+                  placeholder="Name or email…"
+                  className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                  autoFocus
+                />
+                {custSearching && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />}
+              </div>
+            </FormGroup>
+            {custResults.length > 0 && (
+              <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 max-h-44 overflow-y-auto">
+                {custResults.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => { setSelectedCustId(c.id); setSelectedCustName(c.name); }}
+                    className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
+                      selectedCustId === c.id
+                        ? "bg-bassani-50 text-bassani-700 font-medium"
+                        : "hover:bg-gray-50 text-gray-700"
+                    }`}
+                  >
+                    <span className="font-medium">{c.name}</span>
+                    {c.email && <span className="text-xs text-gray-400 ml-2">{c.email}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedCustId && (
+              <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+                <User size={12} /> Selected: <strong>{selectedCustName}</strong>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => setSaveDocsOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={confirmCustomerForSave} disabled={!selectedCustId || linking}>
+                {linking ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                Confirm and Continue
+              </BtnPrimary>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {(selectedThread?.customer_name || selectedThread?.customer_id) && (
+              <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+                <User size={12} />
+                Saving to: <strong>{selectedThread.customer_name || `Customer #${selectedThread.customer_id}`}</strong>
+              </div>
+            )}
+            {threadAttachments.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No attachments found in this thread.</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">
+                  Assign each attachment to a document slot. Attachments set to "Don't save" are skipped.
+                </p>
+                <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg overflow-hidden">
+                  {threadAttachments.map(att => {
+                    const assignment = saveDocsAssignments[att.key] || {};
+                    const docType    = assignment.doc_type || "";
+                    return (
+                      <div key={att.key} className="px-3 py-3 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <FileText size={12} className="text-gray-400 shrink-0" />
+                          <span className="text-xs font-medium text-gray-700 truncate flex-1">{att.name}</span>
+                          {att.size > 0 && (
+                            <span className="text-[10px] text-gray-400 shrink-0">{Math.round(att.size / 1024)}KB</span>
+                          )}
+                        </div>
+                        <select
+                          value={docType}
+                          onChange={e => {
+                            const val  = e.target.value;
+                            const opt  = val === "__skip__" ? null
+                              : REQUIRED_DOC_TYPES.find(d => d.key === val);
+                            setSaveDocsAssignments(prev => ({
+                              ...prev,
+                              [att.key]: { doc_type: val, label: opt?.label || val },
+                            }));
+                          }}
+                          className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                        >
+                          <option value="">— assign to document slot —</option>
+                          <option value="__skip__">Don't save this attachment</option>
+                          <optgroup label="Standard document types">
+                            {REQUIRED_DOC_TYPES.map(dt => (
+                              <option key={dt.key} value={dt.key}>{dt.label}</option>
+                            ))}
+                          </optgroup>
+                          <option value="custom">Custom label…</option>
+                        </select>
+                        {docType === "custom" && (
+                          <input
+                            type="text"
+                            value={saveDocsCustomLabels[att.key] || ""}
+                            onChange={e => setSaveDocsCustomLabels(prev => ({ ...prev, [att.key]: e.target.value }))}
+                            placeholder="Enter a label for this document"
+                            className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                            autoFocus
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => setSaveDocsOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary
+                onClick={saveDocs}
+                disabled={saveDocsSaving || !Object.values(saveDocsAssignments).some(v => v?.doc_type && v.doc_type !== "__skip__")}
+              >
+                {saveDocsSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save {Object.values(saveDocsAssignments).filter(v => v?.doc_type && v.doc_type !== "__skip__").length || ""} Documents
+              </BtnPrimary>
+            </div>
+          </div>
+        )}
+      </Modal>}
 
       {/* Send Docs modal */}
       {sendDocsOpen && <Modal onClose={() => setSendDocsOpen(false)} title="Send Onboarding Documents">

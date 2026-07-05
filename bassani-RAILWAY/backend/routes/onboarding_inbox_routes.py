@@ -67,6 +67,17 @@ class SaveAttachmentBody(BaseModel):
 class SendDocsBody(BaseModel):
     to_email: str
     customer_name: Optional[str] = ""
+    odoo_partner_id: Optional[int] = None  # when set, pre-stamps customer on the thread
+
+
+class DocAssignment(BaseModel):
+    attachment_id: str
+    label: str               # human-readable label for the document
+    doc_type: Optional[str] = None  # structured type if one of the five standard slots
+
+
+class SaveDocumentsBody(BaseModel):
+    assignments: List[DocAssignment]
 
 
 class LinkCustomerBody(BaseModel):
@@ -707,9 +718,12 @@ reviewed by our team promptly.</p>
     }
     result = await col(_COLLECTION).insert_one(thread_doc)
     item_id = str(result.inserted_id)
+    stamp = {"thread_root_id": item_id}
+    if body.odoo_partner_id:
+        stamp["customer_id"] = body.odoo_partner_id
     await col(_COLLECTION).update_one(
         {"_id": result.inserted_id},
-        {"$set": {"thread_root_id": item_id}},
+        {"$set": stamp},
     )
 
     async def _do_send():
@@ -916,3 +930,146 @@ async def create_customer_session(
         })
 
     return {"session_id": session_id, "documents": documents}
+
+
+# ── Save thread attachments to customer profile (batch) ───────────────────────
+
+@router.post("/{item_id}/save-documents")
+async def save_documents(
+    item_id: str,
+    body: SaveDocumentsBody,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """
+    Save one or more thread attachments directly to a linked customer's document
+    profile. The thread must already have a customer_id stamped on it.
+
+    Each assignment names the attachment by its Graph att-id or IMAP attachment-id,
+    provides a human-readable label, and optionally a structured doc_type.
+
+    Skips any assignment whose attachment bytes cannot be retrieved rather than
+    failing the whole batch — returns { saved: N } so the caller can tell the user.
+    """
+    from services.graph_client import get_attachment_content, graph_configured
+    from services.imap_client import get_graph_mailbox_address
+    from services.r2_client import r2_put
+
+    # Resolve thread root (item_id may be a reply)
+    root_doc = await col(_COLLECTION).find_one({"_id": _oid(item_id)})
+    if not root_doc:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+
+    thread_root_id = root_doc.get("thread_root_id") or str(root_doc["_id"])
+    root_oid       = ObjectId(thread_root_id)
+
+    # Customer must already be linked on the thread root
+    root_thread = await col(_COLLECTION).find_one({"_id": root_oid})
+    customer_id = (root_thread or root_doc).get("customer_id")
+    if not customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No customer linked to this thread — link a customer first, then save documents",
+        )
+
+    # Collect all thread items
+    thread_items: list[dict] = []
+    async for doc in col(_COLLECTION).find(
+        {"$or": [{"_id": root_oid}, {"thread_root_id": thread_root_id}]}
+    ):
+        thread_items.append(doc)
+
+    # Build flat att_map: short_key → (att_meta, parent_item)
+    att_map: dict[str, tuple] = {}
+    for ti in thread_items:
+        for att in ti.get("attachments", []):
+            key = att.get("id") or att.get("imap_attachment_id")
+            if key and key not in att_map:
+                att_map[key] = (att, ti)
+
+    mailbox_address = get_graph_mailbox_address(_MAILBOX)
+    saved_docs: list[dict] = []
+
+    for assignment in body.assignments:
+        pair = att_map.get(assignment.attachment_id)
+        if not pair:
+            logger.warning(
+                "onboarding_inbox.save_documents_att_missing att=%s thread=%s",
+                assignment.attachment_id, thread_root_id,
+            )
+            continue
+
+        att_meta, parent_item = pair
+        filename     = att_meta.get("name", "attachment")
+        content_type = att_meta.get("content_type", "application/octet-stream")
+        content: bytes = b""
+
+        # Fetch bytes — Graph path
+        if (
+            graph_configured()
+            and parent_item.get("graph_message_id")
+            and att_meta.get("id")
+        ):
+            try:
+                raw, ct, fn = await get_attachment_content(
+                    parent_item["graph_message_id"],
+                    att_meta["id"],
+                    mailbox_address=mailbox_address,
+                )
+                content      = raw
+                content_type = ct or content_type
+                filename     = fn or filename
+            except Exception as exc:
+                logger.error(
+                    "onboarding_inbox.save_documents_graph_error att=%s error=%s",
+                    assignment.attachment_id, exc,
+                )
+                continue
+
+        # Fetch bytes — IMAP path
+        elif att_meta.get("imap_attachment_id"):
+            stored = await col(f"{_COLLECTION}_attachments").find_one(
+                {"_id": ObjectId(att_meta["imap_attachment_id"])}
+            )
+            if not stored:
+                logger.warning(
+                    "onboarding_inbox.save_documents_att_expired att=%s",
+                    assignment.attachment_id,
+                )
+                continue
+            content = bytes(stored["content"])
+
+        else:
+            continue
+
+        if not content:
+            continue
+
+        doc_id = str(uuid.uuid4())
+        r2_key = f"customers/{customer_id}/inbox-documents/{doc_id}/{filename}"
+        await r2_put(r2_key, content, content_type)
+
+        record = {
+            "id":               doc_id,
+            "odoo_partner_id":  customer_id,
+            "label":            assignment.label or filename,
+            "filename":         filename,
+            "r2_key":           r2_key,
+            "size":             len(content),
+            "doc_type":         assignment.doc_type or "inbox_attachment",
+            "uploaded_at":      datetime.now(timezone.utc),
+            "source":           "inbox",
+            "inbox_collection": _COLLECTION,
+            "inbox_item_id":    str(root_oid),
+        }
+        await col("customer_documents").insert_one(record)
+        record.pop("_id", None)
+        saved_docs.append(record)
+
+    await audit_log(
+        "onboarding_inbox.documents_saved", _COLLECTION, str(root_oid),
+        entity_label=str(customer_id),
+        user=current_user,
+        after={"saved": len(saved_docs), "customer_id": customer_id},
+    )
+
+    return {"saved": len(saved_docs), "docs": saved_docs}

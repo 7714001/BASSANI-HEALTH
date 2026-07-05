@@ -1,47 +1,37 @@
 import { useState, useEffect } from "react";
-import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
+import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, Building2, Server } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, BtnSecondary, LoadingState } from "../components/UI";
 
-const PROVIDERS = [
-  { label: "Select provider…", value: "" },
-  { label: "Xneelo – custom domain (mail.yourdomain.com)", value: "xneelo_domain",
-    imap_host: "mail.yourdomain.com", imap_port: 993,
-    smtp_host: "smtp.yourdomain.com", smtp_port: 465 },
-  { label: "Xneelo – shared hosting (mail.xneelo.co.za)", value: "xneelo",
-    imap_host: "mail.xneelo.co.za",   imap_port: 993,
-    smtp_host: "smtp.xneelo.co.za",   smtp_port: 465 },
-  { label: "Microsoft 365 (outlook.office365.com)", value: "m365",
+// Quick-fill presets for IMAP (avoids making users look up server addresses)
+const IMAP_PRESETS = [
+  { label: "Custom / other",               value: "custom" },
+  { label: "Xneelo — custom domain",       value: "xneelo_domain",
+    imap_host: "mail.yourdomain.com",  imap_port: 993,
+    smtp_host: "smtp.yourdomain.com",  smtp_port: 465 },
+  { label: "Xneelo — shared hosting",      value: "xneelo",
+    imap_host: "mail.xneelo.co.za",    imap_port: 993,
+    smtp_host: "smtp.xneelo.co.za",    smtp_port: 465 },
+  { label: "Microsoft 365 (IMAP/Basic Auth)", value: "m365",
     imap_host: "outlook.office365.com", imap_port: 993,
-    smtp_host: "smtp.office365.com",   smtp_port: 587 },
-  { label: "Gmail (imap.gmail.com)", value: "gmail",
+    smtp_host: "smtp.office365.com",    smtp_port: 587 },
+  { label: "Gmail",                        value: "gmail",
     imap_host: "imap.gmail.com", imap_port: 993,
-    smtp_host: "smtp.gmail.com",  smtp_port: 587 },
-  { label: "Custom", value: "custom" },
+    smtp_host: "smtp.gmail.com", smtp_port: 587 },
 ];
 
 const BLANK = {
+  provider: "imap",
   imap_host: "", imap_port: 993, imap_username: "", imap_password: "",
   smtp_host: "", smtp_port: 587, smtp_username: "", smtp_password: "",
   mailbox_address: "",
+  ms_tenant_id: "", ms_client_id: "", ms_client_secret: "", graph_mailbox_address: "",
 };
 
 const TABS = [
-  {
-    key: "sales",
-    label: "Sales Mailbox",
-    apiBase: "/api/settings/mailbox",
-    inboxName: "Sales Inbox",
-    placeholder: "orders@bassanihealth.com",
-  },
-  {
-    key: "onboarding",
-    label: "Onboarding Mailbox",
-    apiBase: "/api/settings/onboarding-mailbox",
-    inboxName: "Onboarding Inbox",
-    placeholder: "onboarding@bassanihealth.com",
-  },
+  { key: "sales",      label: "Sales Mailbox",      apiBase: "/api/settings/mailbox",            inboxName: "Sales Inbox",      placeholder: "orders@bassanihealth.com" },
+  { key: "onboarding", label: "Onboarding Mailbox", apiBase: "/api/settings/onboarding-mailbox", inboxName: "Onboarding Inbox", placeholder: "onboarding@bassanihealth.com" },
 ];
 
 function Field({ label, hint, children }) {
@@ -84,7 +74,7 @@ function SectionCard({ title, description, children }) {
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
       <div className="px-6 py-4 border-b border-gray-50">
         <p className="text-sm font-bold text-gray-900">{title}</p>
-        <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+        {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
       </div>
       <div className="px-6 py-5 space-y-4">{children}</div>
     </div>
@@ -99,7 +89,7 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
   const [testResult, setTestResult] = useState(null);
   const [configured, setConfigured] = useState(false);
   const [form,       setForm      ] = useState(BLANK);
-  const [provider,   setProvider  ] = useState("");
+  const [imapPreset, setImapPreset] = useState("custom");
 
   useEffect(() => {
     setLoading(true);
@@ -108,13 +98,19 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
         setConfigured(r.data.configured || false);
         setForm(f => ({
           ...f,
-          imap_host:       r.data.imap_host       || "",
-          imap_port:       r.data.imap_port        || 993,
-          imap_username:   r.data.imap_username    || "",
-          smtp_host:       r.data.smtp_host        || "",
-          smtp_port:       r.data.smtp_port        || 587,
-          smtp_username:   r.data.smtp_username    || "",
-          mailbox_address: r.data.mailbox_address  || "",
+          provider:             r.data.provider             || "imap",
+          imap_host:            r.data.imap_host            || "",
+          imap_port:            r.data.imap_port            || 993,
+          imap_username:        r.data.imap_username         || "",
+          smtp_host:            r.data.smtp_host            || "",
+          smtp_port:            r.data.smtp_port            || 587,
+          smtp_username:        r.data.smtp_username         || "",
+          mailbox_address:      r.data.mailbox_address       || "",
+          ms_tenant_id:         r.data.ms_tenant_id          || "",
+          ms_client_id:         r.data.ms_client_id          || "",
+          ms_client_secret:     r.data.ms_client_secret      || "",
+          graph_mailbox_address: r.data.graph_mailbox_address || "",
+          // passwords never returned — keep blank
           imap_password: "",
           smtp_password: "",
         }));
@@ -123,29 +119,20 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
       .finally(() => setLoading(false));
   }, [apiBase, inboxName]);
 
-  const upd = key => val => {
-    setForm(f => ({ ...f, [key]: val }));
-    setTestResult(null);
-  };
+  const upd = key => val => { setForm(f => ({ ...f, [key]: val })); setTestResult(null); };
 
-  const applyProvider = value => {
-    setProvider(value);
-    const p = PROVIDERS.find(x => x.value === value);
-    if (p && value !== "custom" && value !== "") {
-      setForm(f => ({
-        ...f,
-        imap_host: p.imap_host, imap_port: p.imap_port,
-        smtp_host: p.smtp_host, smtp_port: p.smtp_port,
-      }));
+  const setProvider = p => { setForm(f => ({ ...f, provider: p })); setTestResult(null); };
+
+  const applyImapPreset = value => {
+    setImapPreset(value);
+    const p = IMAP_PRESETS.find(x => x.value === value);
+    if (p && value !== "custom") {
+      setForm(f => ({ ...f, imap_host: p.imap_host, imap_port: p.imap_port, smtp_host: p.smtp_host, smtp_port: p.smtp_port }));
     }
     setTestResult(null);
   };
 
   const test = async () => {
-    if (!form.imap_host || !form.imap_username || !form.imap_password) {
-      toast.error("Enter IMAP host, username, and password before testing");
-      return;
-    }
     setTesting(true);
     setTestResult(null);
     try {
@@ -159,13 +146,24 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
   };
 
   const save = async () => {
-    if (!form.imap_host || !form.imap_username) {
-      toast.error("IMAP host and username are required");
-      return;
-    }
-    if (!configured && !form.imap_password) {
-      toast.error("Password is required for the initial setup");
-      return;
+    if (form.provider === "graph") {
+      if (!form.ms_tenant_id || !form.ms_client_id || !form.graph_mailbox_address) {
+        toast.error("Tenant ID, Client ID, and Shared Mailbox Address are required");
+        return;
+      }
+      if (!configured && !form.ms_client_secret) {
+        toast.error("Client Secret is required for initial setup");
+        return;
+      }
+    } else {
+      if (!form.imap_host || !form.imap_username) {
+        toast.error("IMAP host and username are required");
+        return;
+      }
+      if (!configured && !form.imap_password) {
+        toast.error("Password is required for initial setup");
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -180,13 +178,13 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
   };
 
   const clear = async () => {
-    if (!window.confirm(`Disconnect this mailbox? The ${inboxName} will stop receiving emails until a mailbox is reconnected.`)) return;
+    if (!window.confirm(`Disconnect this mailbox? The ${inboxName} will stop receiving emails until reconnected.`)) return;
     setClearing(true);
     try {
       await api.delete(apiBase);
       setConfigured(false);
       setForm(BLANK);
-      setProvider("");
+      setImapPreset("custom");
       setTestResult(null);
       toast.success("Mailbox disconnected");
     } catch {
@@ -198,18 +196,18 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
 
   if (loading) return <LoadingState />;
 
+  const isGraph = form.provider === "graph";
+
   return (
     <div className="p-6 bg-gray-50 min-h-full">
       <div className="max-w-2xl mx-auto space-y-5">
 
-        {/* Actions row */}
-        <div className="flex items-center justify-between">
+        {/* Action row */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold ${
             configured ? "bg-green-50 border-green-200 text-green-700" : "bg-amber-50 border-amber-200 text-amber-700"
           }`}>
-            {configured
-              ? <CheckCircle2 size={13} className="shrink-0" />
-              : <AlertCircle  size={13} className="shrink-0" />}
+            {configured ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
             {configured ? "Connected" : "Not configured"}
           </div>
           <div className="flex items-center gap-2">
@@ -243,7 +241,9 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
             </p>
             <p className={`text-xs mt-0.5 leading-relaxed ${configured ? "text-green-600" : "text-amber-600"}`}>
               {configured
-                ? `Emails from ${form.imap_username || "the mailbox"} are being pulled into the ${inboxName} every 60 seconds.`
+                ? isGraph
+                  ? `Emails from ${form.graph_mailbox_address} are pulled via Microsoft Graph API every 60 seconds.`
+                  : `Emails from ${form.imap_username || "the mailbox"} are pulled via IMAP every 60 seconds.`
                 : `Connect a mailbox below to enable the ${inboxName}.`}
             </p>
           </div>
@@ -256,99 +256,132 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
           }`}>
             {testResult.ok
               ? <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
-              : <WifiOff      size={15} className="text-red-500 mt-0.5 shrink-0" />}
+              : <WifiOff      size={15} className="text-red-500  mt-0.5 shrink-0" />}
             <p className={`text-xs leading-relaxed ${testResult.ok ? "text-green-700" : "text-red-700"}`}>
               {testResult.message}
             </p>
           </div>
         )}
 
-        <SectionCard title="Provider" description="Choose a provider to pre-fill common server settings.">
-          <Field label="Email provider">
-            <div className="relative">
-              <select
-                value={provider}
-                onChange={e => applyProvider(e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 pr-9 outline-none focus:border-bassani-400 focus:ring-2 focus:ring-bassani-100 bg-white appearance-none"
+        {/* Provider toggle */}
+        <SectionCard title="Connection type" description="Choose how this mailbox connects to the portal.">
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { value: "graph", label: "Office 365", sub: "Microsoft Graph API (recommended)", Icon: Building2 },
+              { value: "imap",  label: "IMAP",        sub: "Standard IMAP / SMTP",              Icon: Server   },
+            ].map(({ value, label, sub, Icon }) => (
+              <button
+                key={value}
+                onClick={() => setProvider(value)}
+                className={`flex items-start gap-3 px-4 py-3.5 rounded-xl border-2 text-left transition-all ${
+                  form.provider === value
+                    ? "border-bassani-500 bg-bassani-50"
+                    : "border-gray-200 bg-white hover:border-gray-300"
+                }`}
               >
-                {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            </div>
-          </Field>
+                <Icon size={18} className={form.provider === value ? "text-bassani-600 mt-0.5 shrink-0" : "text-gray-400 mt-0.5 shrink-0"} />
+                <div>
+                  <p className={`text-sm font-semibold ${form.provider === value ? "text-bassani-700" : "text-gray-700"}`}>{label}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{sub}</p>
+                </div>
+              </button>
+            ))}
+          </div>
         </SectionCard>
 
-        <SectionCard
-          title="Incoming Mail (IMAP)"
-          description="The portal polls this mailbox every 60 seconds for new messages."
-        >
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <Field label="IMAP host">
-                <TextInput value={form.imap_host} onChange={upd("imap_host")} placeholder="outlook.office365.com" />
-              </Field>
-            </div>
-            <Field label="Port">
-              <NumInput value={form.imap_port} onChange={upd("imap_port")} min={1} max={65535} />
-            </Field>
-          </div>
-          <Field label="Username (mailbox address)" hint="Usually the full email address of the shared mailbox.">
-            <TextInput value={form.imap_username} onChange={upd("imap_username")} placeholder={placeholder} />
-          </Field>
-          <Field
-            label="Password"
-            hint={configured ? "Leave blank to keep the existing password." : ""}
+        {/* Office 365 / Graph form */}
+        {isGraph && (
+          <SectionCard
+            title="Microsoft 365 Credentials"
+            description="Azure app registration with Mail.Read, Mail.ReadWrite, and Mail.Send application permissions."
           >
-            <TextInput
-              type="password"
-              value={form.imap_password}
-              onChange={upd("imap_password")}
-              placeholder={configured ? "••••••••  (unchanged)" : "Enter password"}
-              autoComplete="new-password"
-            />
-          </Field>
-        </SectionCard>
-
-        <SectionCard
-          title="Outgoing Mail (SMTP)"
-          description="Used to send replies. Defaults to IMAP host settings if left blank."
-        >
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <Field label="SMTP host" hint="Leave blank to use the same host as IMAP.">
-                <TextInput value={form.smtp_host} onChange={upd("smtp_host")} placeholder="smtp.office365.com (optional)" />
-              </Field>
-            </div>
-            <Field label="Port">
-              <NumInput value={form.smtp_port} onChange={upd("smtp_port")} min={1} max={65535} />
+            <Field label="Tenant ID" hint="Found in Azure Portal → Azure Active Directory → Overview.">
+              <TextInput value={form.ms_tenant_id} onChange={upd("ms_tenant_id")} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
             </Field>
-          </div>
-          <Field label="Username" hint="Leave blank to use the IMAP username.">
-            <TextInput value={form.smtp_username} onChange={upd("smtp_username")} placeholder="Same as IMAP username (optional)" />
-          </Field>
-          <Field label="Password" hint="Leave blank to use the IMAP password.">
-            <TextInput type="password" value={form.smtp_password} onChange={upd("smtp_password")} placeholder="Same as IMAP password (optional)" autoComplete="new-password" />
-          </Field>
-        </SectionCard>
+            <Field label="Application (Client) ID" hint="Found in Azure Portal → App registrations → your app → Overview.">
+              <TextInput value={form.ms_client_id} onChange={upd("ms_client_id")} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+            </Field>
+            <Field
+              label="Client Secret"
+              hint={configured ? "Leave blank to keep the existing secret." : "Found in Azure Portal → App registrations → your app → Certificates & secrets."}
+            >
+              <TextInput
+                type="password"
+                value={form.ms_client_secret}
+                onChange={upd("ms_client_secret")}
+                placeholder={configured ? "••••••••  (unchanged)" : "Paste client secret value"}
+                autoComplete="new-password"
+              />
+            </Field>
+            <Field label="Shared Mailbox Address" hint="The email address of the shared mailbox this inbox monitors (e.g. orders@bassanihealth.com).">
+              <TextInput value={form.graph_mailbox_address} onChange={upd("graph_mailbox_address")} placeholder={placeholder} />
+            </Field>
+          </SectionCard>
+        )}
 
-        <SectionCard
-          title="Display Address"
-          description="The From address shown to recipients when staff reply."
-        >
-          <Field label="Mailbox display address" hint="Leave blank to use the IMAP username.">
-            <TextInput value={form.mailbox_address} onChange={upd("mailbox_address")} placeholder={`${placeholder} (optional)`} />
-          </Field>
-        </SectionCard>
+        {/* IMAP form */}
+        {!isGraph && (
+          <>
+            <SectionCard title="Incoming Mail (IMAP)" description="The portal polls this mailbox every 60 seconds for new messages.">
+              <Field label="Quick setup">
+                <select
+                  value={imapPreset}
+                  onChange={e => applyImapPreset(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-bassani-400 focus:ring-2 focus:ring-bassani-100 bg-white"
+                >
+                  {IMAP_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Field label="IMAP host">
+                    <TextInput value={form.imap_host} onChange={upd("imap_host")} placeholder="mail.example.com" />
+                  </Field>
+                </div>
+                <Field label="Port">
+                  <NumInput value={form.imap_port} onChange={upd("imap_port")} min={1} max={65535} />
+                </Field>
+              </div>
+              <Field label="Username" hint="Usually the full email address of the mailbox.">
+                <TextInput value={form.imap_username} onChange={upd("imap_username")} placeholder={placeholder} />
+              </Field>
+              <Field label="Password" hint={configured ? "Leave blank to keep the existing password." : ""}>
+                <TextInput
+                  type="password"
+                  value={form.imap_password}
+                  onChange={upd("imap_password")}
+                  placeholder={configured ? "••••••••  (unchanged)" : "Enter password"}
+                  autoComplete="new-password"
+                />
+              </Field>
+            </SectionCard>
 
-        <div className="bg-white rounded-2xl border border-gray-100 px-6 py-5">
-          <p className="text-xs font-bold text-gray-700 mb-2">Notes</p>
-          <ul className="text-xs text-gray-500 space-y-1.5 leading-relaxed list-disc list-inside">
-            <li><strong className="text-gray-600">Xneelo custom domain</strong> — IMAP: <code className="bg-gray-100 px-1 rounded">mail.yourdomain.com:993</code>, SMTP: <code className="bg-gray-100 px-1 rounded">smtp.yourdomain.com:465</code> (SSL).</li>
-            <li><strong className="text-gray-600">Microsoft 365</strong> — IMAP must be enabled in Exchange Admin and Basic Auth allowed for this mailbox. IMAP: <code className="bg-gray-100 px-1 rounded">outlook.office365.com:993</code>, SMTP: <code className="bg-gray-100 px-1 rounded">smtp.office365.com:587</code> (STARTTLS).</li>
-            <li><strong className="text-gray-600">Gmail</strong> — requires an App Password if 2-Step Verification is on.</li>
-            <li>Credentials are stored in the portal database and are never visible to non-super-admin users.</li>
-          </ul>
-        </div>
+            <SectionCard title="Outgoing Mail (SMTP)" description="Used to send replies and outgoing threads.">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Field label="SMTP host" hint="Leave blank to use the IMAP host.">
+                    <TextInput value={form.smtp_host} onChange={upd("smtp_host")} placeholder="smtp.example.com (optional)" />
+                  </Field>
+                </div>
+                <Field label="Port">
+                  <NumInput value={form.smtp_port} onChange={upd("smtp_port")} min={1} max={65535} />
+                </Field>
+              </div>
+              <Field label="Username" hint="Leave blank to use the IMAP username.">
+                <TextInput value={form.smtp_username} onChange={upd("smtp_username")} placeholder="Same as IMAP username (optional)" />
+              </Field>
+              <Field label="Password" hint="Leave blank to use the IMAP password.">
+                <TextInput type="password" value={form.smtp_password} onChange={upd("smtp_password")} placeholder="Same as IMAP password (optional)" autoComplete="new-password" />
+              </Field>
+            </SectionCard>
+
+            <SectionCard title="Display Address" description="The From address shown to recipients.">
+              <Field label="Mailbox display address" hint="Leave blank to use the IMAP username.">
+                <TextInput value={form.mailbox_address} onChange={upd("mailbox_address")} placeholder={`${placeholder} (optional)`} />
+              </Field>
+            </SectionCard>
+          </>
+        )}
 
       </div>
     </div>
@@ -366,7 +399,6 @@ export default function ConnectedMailboxes() {
         subtitle="Configure the mailboxes the portal monitors for incoming email"
       />
 
-      {/* Tab bar */}
       <div className="border-b border-gray-200 bg-white px-6 shrink-0">
         <div className="flex gap-1">
           {TABS.map(t => (
@@ -385,7 +417,6 @@ export default function ConnectedMailboxes() {
         </div>
       </div>
 
-      {/* Panel — key forces remount on tab switch so state is fully independent */}
       <div className="flex-1 overflow-y-auto">
         <MailboxConfigPanel
           key={active}

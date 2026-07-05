@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI — 2026-07-05 · Onboarding Inbox (second mailbox, separate permission, PDF preview, Send Docs, auto-detect customer, Link to Customer, Create Customer from inbox with attachment→doc-slot mapping) — 2026-07-05 |
+| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials received and wired 2026-07-05 (Graph credentials now configurable via Settings UI, no Railway env vars needed) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI — 2026-07-05 · Onboarding Inbox (second mailbox, separate permission, PDF preview, Send Docs, auto-detect customer, Link to Customer, Create Customer from inbox, Save Documents batch action) — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1427,8 +1427,10 @@ Two backends are supported. Only one needs to be configured:
 
 | Backend | Status | When to use |
 |---|---|---|
-| IMAP/SMTP | **Live** | Any mailbox: Xneelo, M365 with Basic Auth on, Gmail, custom | 
-| Microsoft Graph (M365) | Built — blocked on Azure creds | M365 with OAuth2 — preferred when available (webhook push, no polling) |
+| IMAP/SMTP | **Live** | Any mailbox: Xneelo, Gmail, custom IMAP server |
+| Microsoft Graph (M365) | **Live** — Azure credentials wired 2026-07-05 | M365 shared mailbox with OAuth2 — preferred (webhook push, no polling, no Basic Auth dependency) |
+
+**ConnectedMailboxes UI** (updated 2026-07-05): super admin selects **Office 365** or **IMAP** per mailbox tab. Office 365 form stores Tenant ID, Client ID, Client Secret, and Shared Mailbox Address in MongoDB (`portal_settings`). No Railway env vars required for Graph — credentials are hot-reloaded from MongoDB on save without a deployment restart.
 
 ### 11.A — IMAP/SMTP Path (Active)
 
@@ -1481,7 +1483,7 @@ Two backends are supported. Only one needs to be configured:
 
 - [x] `backend/services/inbox_service.py` — canonical shared service parameterised by `collection` and `mailbox` slug. Implements: `resolve_customer()` (Odoo lookup, 10-min cache), `mark_thread_read()`, `build_list_pipeline()` (thread aggregation with `$max` ticket_id/application_id), `ingest_graph_message()`, `ingest_imap_message()`, `save_attachment_to_profile()` (streams bytes from Graph or IMAP store directly to R2, no intermediate copy; creates `customer_documents` record)
 - [x] `imap_client.py` — multi-mailbox: `_configs` and `_graph_addresses` dicts keyed by slug; `load_config_from_db(mailbox)`, `fetch_new_messages(mailbox)`, `mark_as_read(uid, mailbox)`, `send_reply(..., mailbox)` all parameterised; `_SETTINGS_KEYS` maps slug to MongoDB settings key (`mailbox_config` for sales, `mailbox_config_onboarding` for onboarding)
-- [x] `graph_client.py` — all functions accept `mailbox_address: Optional[str] = None`; default falls back to `settings.ms_shared_mailbox` for backward compatibility
+- [x] `graph_client.py` — all functions accept `mailbox_address: Optional[str] = None`; credentials now resolve from MongoDB runtime config first (via `set_runtime_credentials()`), then Railway env vars as fallback; token cache invalidated on credential change; no breaking changes to callers
 - [x] `graph_subscription.py` — `_settings_key(mailbox)`, `_webhook_url(mailbox)`, `ensure_subscription(mailbox, mailbox_address)`, `get_client_state(mailbox)` — each mailbox has its own subscription key and webhook URL (`/api/inbox/graph-webhook` for sales, `/api/onboarding-inbox/graph-webhook` for onboarding)
 - [x] `onboarding_inbox_routes.py` — full inbox at `/api/onboarding-inbox`; requires `onboarding.inbox` permission; collection: `onboarding_inbox`; thread grouping, mark-read, reply, archive all implemented; **no ticket creation**; adds: `POST /{id}/send-docs` (sends template PDFs from onboarding SMTP, creates outgoing thread root), `POST /{id}/link-customer` (stamps customer_id/name across full thread, audit-logged), `POST /{id}/save-attachment/{attachment_id}` (delegates to `inbox_service.save_attachment_to_profile`), `POST /{id}/create-customer-session` (fetches mapped inbox attachments from MongoDB/Graph, writes to R2 under `onboarding/sessions/{sid}/{doc_type}`, returns session_id + documents array for `POST /api/customers/`)
 - [x] `GET/PUT/DELETE/POST /api/settings/onboarding-mailbox` — mirrors sales mailbox settings endpoints; writes to `mailbox_config_onboarding`; hot-reloads onboarding config on save

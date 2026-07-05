@@ -91,9 +91,22 @@ async def load_config_from_db(mailbox: str = "sales") -> None:
             provider = doc.get("provider", "imap")
             if provider == "graph":
                 _configs[mailbox] = None
-                _graph_addresses[mailbox] = doc.get("graph_mailbox_address") or None
+                addr = doc.get("graph_mailbox_address") or None
+                _graph_addresses[mailbox] = addr
+                # Feed DB credentials to graph_client so it uses them instead of env vars
+                from services.graph_client import set_runtime_credentials
+                if (doc.get("ms_tenant_id") and doc.get("ms_client_id")
+                        and doc.get("ms_client_secret")):
+                    set_runtime_credentials({
+                        "tenant_id":       doc["ms_tenant_id"],
+                        "client_id":       doc["ms_client_id"],
+                        "client_secret":   doc["ms_client_secret"],
+                        "mailbox_address": addr or "",
+                    })
+                else:
+                    set_runtime_credentials(None)
                 logger.info("graph_mailbox_loaded mailbox=%s address=%s",
-                            mailbox, _graph_addresses.get(mailbox))
+                            mailbox, addr)
                 return
             cfg = _parse_imap_doc(doc)
             if cfg:

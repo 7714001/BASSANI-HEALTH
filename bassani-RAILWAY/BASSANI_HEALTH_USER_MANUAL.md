@@ -44,10 +44,10 @@ Before the first user logs in, the following must be set in Railway's environmen
 | `RESEND_API_KEY` | Sends all system emails (notifications, OTP codes) | From your Resend.com account dashboard — must match the account where `bassanihealth.com` is verified |
 | `REQUIRE_2FA_ADMIN` | Enables email OTP two-factor authentication for all accounts | Set to `true` to enforce 2FA for every user with an email address |
 | `CORS_ORIGINS` | Which browser origins can call the API | Set to your portal URL e.g. `https://portal.bassanihealth.com` |
-| `MS_TENANT_ID` | Azure Active Directory Tenant ID for M365 mailbox integration | From Azure Portal → App registrations → your app |
-| `MS_CLIENT_ID` | Azure app client ID for M365 mailbox integration | From Azure Portal → App registrations → your app |
-| `MS_CLIENT_SECRET` | Azure app secret for M365 mailbox integration | Generated in Azure Portal → Certificates & secrets |
-| `MS_SHARED_MAILBOX` | The shared mailbox to monitor for inbound sales emails | e.g. `orders@bassanihealth.com` |
+| `MS_TENANT_ID` | Azure Tenant ID — **optional fallback only** | Preferred path: configure via Settings > Connected Mailboxes (stored in DB, no restart needed) |
+| `MS_CLIENT_ID` | Azure Client ID — **optional fallback only** | Preferred path: configure via Settings > Connected Mailboxes |
+| `MS_CLIENT_SECRET` | Azure Client Secret — **optional fallback only** | Preferred path: configure via Settings > Connected Mailboxes |
+| `MS_SHARED_MAILBOX` | Shared mailbox address — **optional fallback only** | Preferred path: configure via Settings > Connected Mailboxes |
 | `R2_ACCOUNT_ID` | Cloudflare R2 account identifier — used to build the endpoint URL | Found on your Cloudflare R2 dashboard → Account Details |
 | `R2_ACCESS_KEY_ID` | R2 API access key ID (S3-compatible) | Generated in the Cloudflare R2 dashboard → API Tokens tab |
 | `R2_SECRET_ACCESS_KEY` | R2 API secret access key | Generated alongside `R2_ACCESS_KEY_ID` — shown once, copy immediately |
@@ -310,7 +310,7 @@ MongoDB is your portal's primary database — it stores reseller profiles, commi
 - [ ] Sentry DSN added to Railway
 - [ ] MongoDB daily backups enabled
 - [ ] At least one full order flow tested from quote to completion
-- [ ] Sales Inbox connected (Azure credentials set, shared mailbox emails appearing in Inbox view)
+- [ ] Sales Inbox connected (configure via Settings > Connected Mailboxes — Office 365 with Azure credentials, or IMAP)
 
 ---
 
@@ -434,7 +434,7 @@ Once an order is confirmed, it moves to the Orders team (Tshidi). You will see t
 
 **Access:** Sales role (`inbox.view` permission), Admins with `inbox.view`, Super Admin
 
-The Sales Inbox connects the shared sales mailbox directly into the portal. Every email that arrives appears here — no need to open a separate email client. You can read, reply, create tickets, and clear the queue without leaving the portal. The mailbox is configured by a super admin in **Settings > Mailbox**.
+The Sales Inbox connects the shared sales mailbox directly into the portal. Every email that arrives appears here — no need to open a separate email client. You can read, reply, create tickets, and clear the queue without leaving the portal. The mailbox is configured by a super admin in **Settings > Connected Mailboxes**.
 
 ### Layout
 
@@ -553,19 +553,16 @@ The Sales Inbox and Onboarding Inbox are independent: different mailbox, differe
 
 Before anyone can use the Onboarding Inbox, a super admin must connect a mailbox.
 
-1. Navigate to **Settings > Onboarding Mailbox** in the sidebar (Admin section)
-2. Choose your email provider from the preset list to pre-fill the server settings, or select Custom
-3. Enter the IMAP credentials for the onboarding mailbox:
-   - **IMAP host** and **port** (993 for SSL is standard)
-   - **Username** — the full email address of the mailbox (e.g. `onboarding@bassanihealth.com`)
-   - **Password** — the mailbox password
-4. If using a different SMTP server for outgoing replies, fill in the SMTP section. Otherwise leave it blank and the IMAP host and credentials are reused.
-5. Click **Test Connection** to verify the credentials before saving
-6. Click **Save**
+1. Navigate to **Settings > Connected Mailboxes** in the sidebar and select the **Onboarding Mailbox** tab
+2. Choose the connection type:
+   - **Office 365** — for Microsoft 365 shared mailboxes using the Graph API (OAuth2, no Basic Auth required). Enter the Tenant ID, Client ID, Client Secret, and Shared Mailbox Address from your Azure app registration.
+   - **IMAP** — for any other provider (Xneelo, Gmail, custom). Select a quick-setup preset or fill in server details manually.
+3. Click **Test Connection** to verify before saving
+4. Click **Save**
 
-The portal connects immediately — no restart required. Emails from the last 72 hours are pulled in on the first poll, and new emails arrive within 60 seconds thereafter.
+The portal connects immediately — no restart required. New emails arrive within 60 seconds.
 
-To disconnect the mailbox later, click **Disconnect**. The inbox will stop receiving emails until a mailbox is reconnected.
+To disconnect, click **Disconnect**. The inbox stops receiving emails until a mailbox is reconnected.
 
 **Granting the permission:**  
 Go to **Users** and open the user's permission settings. Toggle on `Onboarding Inbox` under the Onboarding section. The nav item and the view appear immediately on their next login.

@@ -95,64 +95,147 @@ async def set_default_warehouse(
 # ── Mailbox config ────────────────────────────────────────────────────────────
 
 class MailboxConfig(BaseModel):
-    imap_host:       str = ""
-    imap_port:       int = 993
-    imap_username:   str = ""
-    imap_password:   str = ""
-    smtp_host:       str = ""
-    smtp_port:       int = 587
-    smtp_username:   str = ""
-    smtp_password:   str = ""
-    mailbox_address: str = ""  # display from-address (defaults to imap_username if blank)
+    provider:              str = "imap"  # "imap" | "graph"
+    # IMAP / SMTP fields
+    imap_host:             str = ""
+    imap_port:             int = 993
+    imap_username:         str = ""
+    imap_password:         str = ""
+    smtp_host:             str = ""
+    smtp_port:             int = 587
+    smtp_username:         str = ""
+    smtp_password:         str = ""
+    mailbox_address:       str = ""
+    # Microsoft 365 Graph API fields
+    ms_tenant_id:          str = ""
+    ms_client_id:          str = ""
+    ms_client_secret:      str = ""   # empty string → keep existing on save
+    graph_mailbox_address: str = ""
+
+
+def _mailbox_response(doc: dict) -> dict:
+    """Serialise a portal_settings mailbox doc for the API response."""
+    provider = doc.get("provider", "imap")
+    if provider == "graph":
+        configured = bool(
+            doc.get("ms_tenant_id") and doc.get("ms_client_id")
+            and doc.get("ms_client_secret") and doc.get("graph_mailbox_address")
+        )
+    else:
+        configured = bool(doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password"))
+    return {
+        "configured":           configured,
+        "provider":             provider,
+        # IMAP fields
+        "imap_host":            doc.get("imap_host", ""),
+        "imap_port":            doc.get("imap_port", 993),
+        "imap_username":        doc.get("imap_username", ""),
+        "smtp_host":            doc.get("smtp_host", ""),
+        "smtp_port":            doc.get("smtp_port", 587),
+        "smtp_username":        doc.get("smtp_username", ""),
+        "mailbox_address":      doc.get("mailbox_address", ""),
+        # Graph fields — secret is never returned in plain text
+        "ms_tenant_id":         doc.get("ms_tenant_id", ""),
+        "ms_client_id":         doc.get("ms_client_id", ""),
+        "ms_client_secret":     "••••••••" if doc.get("ms_client_secret") else "",
+        "graph_mailbox_address": doc.get("graph_mailbox_address", ""),
+    }
+
+
+def _blank_mailbox_response() -> dict:
+    return {
+        "configured": False, "provider": "imap",
+        "imap_host": "", "imap_port": 993, "imap_username": "",
+        "smtp_host": "", "smtp_port": 587, "smtp_username": "",
+        "mailbox_address": "",
+        "ms_tenant_id": "", "ms_client_id": "", "ms_client_secret": "",
+        "graph_mailbox_address": "",
+    }
+
+
+async def _save_mailbox_doc(settings_id: str, body: MailboxConfig, mailbox: str) -> None:
+    """Persist mailbox config and reload the in-memory client."""
+    data = body.model_dump()
+    existing = await col("portal_settings").find_one({"_id": settings_id}) or {}
+
+    if body.provider == "graph":
+        # Keep existing secret when the UI sends the redacted placeholder or blank
+        if not data["ms_client_secret"] or data["ms_client_secret"] == "••••••••":
+            data["ms_client_secret"] = existing.get("ms_client_secret", "")
+    else:
+        # Keep existing IMAP passwords when omitted
+        if not data["imap_password"]:
+            data["imap_password"] = existing.get("imap_password", "")
+        if not data["smtp_password"]:
+            data["smtp_password"] = existing.get("smtp_password", "")
+        if not data["mailbox_address"]:
+            data["mailbox_address"] = data["imap_username"]
+
+    await col("portal_settings").update_one(
+        {"_id": settings_id}, {"$set": data}, upsert=True,
+    )
+    from services.imap_client import load_config_from_db
+    await load_config_from_db(mailbox)
+
+
+async def _test_mailbox(body: MailboxConfig) -> dict:
+    """Test Graph token fetch or IMAP connection. Returns success dict or raises."""
+    if body.provider == "graph":
+        if not body.ms_tenant_id or not body.ms_client_id or not body.ms_client_secret:
+            raise HTTPException(
+                status_code=422,
+                detail="Tenant ID, Client ID, and Client Secret are required for the connection test.",
+            )
+        token_url = (
+            f"https://login.microsoftonline.com/{body.ms_tenant_id.strip()}/oauth2/v2.0/token"
+        )
+        import httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(token_url, data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     body.ms_client_id.strip(),
+                    "client_secret": body.ms_client_secret,
+                    "scope":         "https://graph.microsoft.com/.default",
+                })
+                r.raise_for_status()
+            return {"success": True, "message": "Microsoft 365 connection successful. OAuth token acquired."}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Microsoft 365 connection failed: {exc}")
+    else:
+        if not body.imap_host or not body.imap_username or not body.imap_password:
+            raise HTTPException(
+                status_code=422,
+                detail="IMAP host, username, and password are required for the connection test.",
+            )
+        from services.imap_client import test_connection
+        cfg = {
+            "imap_host":       body.imap_host.strip(),
+            "imap_port":       body.imap_port or 993,
+            "imap_username":   body.imap_username.strip(),
+            "imap_password":   body.imap_password,
+            "smtp_host":       body.smtp_host or body.imap_host,
+            "smtp_port":       body.smtp_port or 587,
+            "smtp_username":   body.smtp_username or body.imap_username,
+            "smtp_password":   body.smtp_password or body.imap_password,
+            "mailbox_address": body.mailbox_address or body.imap_username,
+        }
+        try:
+            await test_connection(cfg)
+            return {"success": True, "message": "Connection successful. Mailbox is reachable."}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
 
 
 @router.get("/mailbox")
 async def get_mailbox_config(_: dict = Depends(_require_super_admin)):
     doc = await col("portal_settings").find_one({"_id": "mailbox_config"})
-    if not doc:
-        return {
-            "configured": False,
-            "imap_host": "", "imap_port": 993, "imap_username": "",
-            "smtp_host": "", "smtp_port": 587, "smtp_username": "",
-            "mailbox_address": "",
-            # passwords are never returned
-        }
-    return {
-        "configured": bool(doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password")),
-        "imap_host":       doc.get("imap_host", ""),
-        "imap_port":       doc.get("imap_port", 993),
-        "imap_username":   doc.get("imap_username", ""),
-        "smtp_host":       doc.get("smtp_host", ""),
-        "smtp_port":       doc.get("smtp_port", 587),
-        "smtp_username":   doc.get("smtp_username", ""),
-        "mailbox_address": doc.get("mailbox_address", ""),
-        # password fields intentionally omitted — update only
-    }
+    return _mailbox_response(doc) if doc else _blank_mailbox_response()
 
 
 @router.put("/mailbox")
-async def save_mailbox_config(
-    body: MailboxConfig,
-    _: dict = Depends(_require_super_admin),
-):
-    data = body.model_dump()
-    # Allow password omission (empty string) to mean "keep existing"
-    existing = await col("portal_settings").find_one({"_id": "mailbox_config"}) or {}
-    if not data["imap_password"]:
-        data["imap_password"] = existing.get("imap_password", "")
-    if not data["smtp_password"]:
-        data["smtp_password"] = existing.get("smtp_password", "")
-    if not data["mailbox_address"]:
-        data["mailbox_address"] = data["imap_username"]
-
-    await col("portal_settings").update_one(
-        {"_id": "mailbox_config"},
-        {"$set": data},
-        upsert=True,
-    )
-    # Reload the in-memory config immediately so the inbox is live without restart
-    from services.imap_client import load_config_from_db
-    await load_config_from_db()
+async def save_mailbox_config(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+    await _save_mailbox_doc("mailbox_config", body, "sales")
     return {"success": True}
 
 
@@ -165,30 +248,8 @@ async def clear_mailbox_config(_: dict = Depends(_require_super_admin)):
 
 
 @router.post("/mailbox/test")
-async def test_mailbox_connection(
-    body: MailboxConfig,
-    _: dict = Depends(_require_super_admin),
-):
-    """Test IMAP credentials without saving. Returns success or error detail."""
-    if not body.imap_host or not body.imap_username or not body.imap_password:
-        raise HTTPException(status_code=422, detail="IMAP host, username, and password are required for the connection test.")
-    from services.imap_client import test_connection
-    cfg = {
-        "imap_host":      body.imap_host.strip(),
-        "imap_port":      body.imap_port or 993,
-        "imap_username":  body.imap_username.strip(),
-        "imap_password":  body.imap_password,
-        "smtp_host":      body.smtp_host or body.imap_host,
-        "smtp_port":      body.smtp_port or 587,
-        "smtp_username":  body.smtp_username or body.imap_username,
-        "smtp_password":  body.smtp_password or body.imap_password,
-        "mailbox_address": body.mailbox_address or body.imap_username,
-    }
-    try:
-        await test_connection(cfg)
-        return {"success": True, "message": "Connection successful. Mailbox is reachable."}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
+async def test_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+    return await _test_mailbox(body)
 
 
 # ── Onboarding mailbox config ─────────────────────────────────────────────────
@@ -201,46 +262,12 @@ _ONBOARDING_KEY = "mailbox_config_onboarding"
 @router.get("/onboarding-mailbox")
 async def get_onboarding_mailbox_config(_: dict = Depends(_require_super_admin)):
     doc = await col("portal_settings").find_one({"_id": _ONBOARDING_KEY})
-    if not doc:
-        return {
-            "configured": False,
-            "imap_host": "", "imap_port": 993, "imap_username": "",
-            "smtp_host": "", "smtp_port": 587, "smtp_username": "",
-            "mailbox_address": "",
-        }
-    return {
-        "configured": bool(doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password")),
-        "imap_host":       doc.get("imap_host", ""),
-        "imap_port":       doc.get("imap_port", 993),
-        "imap_username":   doc.get("imap_username", ""),
-        "smtp_host":       doc.get("smtp_host", ""),
-        "smtp_port":       doc.get("smtp_port", 587),
-        "smtp_username":   doc.get("smtp_username", ""),
-        "mailbox_address": doc.get("mailbox_address", ""),
-    }
+    return _mailbox_response(doc) if doc else _blank_mailbox_response()
 
 
 @router.put("/onboarding-mailbox")
-async def save_onboarding_mailbox_config(
-    body: MailboxConfig,
-    _: dict = Depends(_require_super_admin),
-):
-    data = body.model_dump()
-    existing = await col("portal_settings").find_one({"_id": _ONBOARDING_KEY}) or {}
-    if not data["imap_password"]:
-        data["imap_password"] = existing.get("imap_password", "")
-    if not data["smtp_password"]:
-        data["smtp_password"] = existing.get("smtp_password", "")
-    if not data["mailbox_address"]:
-        data["mailbox_address"] = data["imap_username"]
-
-    await col("portal_settings").update_one(
-        {"_id": _ONBOARDING_KEY},
-        {"$set": data},
-        upsert=True,
-    )
-    from services.imap_client import load_config_from_db
-    await load_config_from_db("onboarding")
+async def save_onboarding_mailbox_config(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+    await _save_mailbox_doc(_ONBOARDING_KEY, body, "onboarding")
     return {"success": True}
 
 
@@ -253,26 +280,5 @@ async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin
 
 
 @router.post("/onboarding-mailbox/test")
-async def test_onboarding_mailbox_connection(
-    body: MailboxConfig,
-    _: dict = Depends(_require_super_admin),
-):
-    if not body.imap_host or not body.imap_username or not body.imap_password:
-        raise HTTPException(status_code=422, detail="IMAP host, username, and password are required for the connection test.")
-    from services.imap_client import test_connection
-    cfg = {
-        "imap_host":      body.imap_host.strip(),
-        "imap_port":      body.imap_port or 993,
-        "imap_username":  body.imap_username.strip(),
-        "imap_password":  body.imap_password,
-        "smtp_host":      body.smtp_host or body.imap_host,
-        "smtp_port":      body.smtp_port or 587,
-        "smtp_username":  body.smtp_username or body.imap_username,
-        "smtp_password":  body.smtp_password or body.imap_password,
-        "mailbox_address": body.mailbox_address or body.imap_username,
-    }
-    try:
-        await test_connection(cfg)
-        return {"success": True, "message": "Connection successful. Mailbox is reachable."}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
+async def test_onboarding_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+    return await _test_mailbox(body)

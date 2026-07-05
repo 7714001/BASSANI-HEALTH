@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2 } from "lucide-react";
+import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2, Mail } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -185,7 +185,7 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function CustomerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const canManageAddresses = user?.permissions?.customers?.manage;
 
   const INV_PAGE_SIZE  = 10;
@@ -207,6 +207,8 @@ export default function CustomerProfile() {
   const [addrTarget, setAddrTarget] = useState(null);
   const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
   const [addrSaving, setAddrSaving] = useState(false);
+
+  const [sendingDocs, setSendingDocs] = useState(false);
 
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
@@ -268,6 +270,25 @@ export default function CustomerProfile() {
     }
   };
 
+  const handleSendDocs = async () => {
+    const email = data?.customer?.email;
+    const name  = data?.customer?.name;
+    if (!email) return;
+    setSendingDocs(true);
+    try {
+      await api.post("/api/onboarding-inbox/send-docs", {
+        to_email:        email,
+        customer_name:   name,
+        odoo_partner_id: parseInt(id),
+      });
+      toast.success(`Onboarding documents sent to ${email}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send documents");
+    } finally {
+      setSendingDocs(false);
+    }
+  };
+
   const loadStatement = async () => {
     setStmtLoading(true);
     try {
@@ -310,6 +331,12 @@ export default function CustomerProfile() {
         </button>
         <div className="flex gap-2">
           <BtnSecondary size="sm" onClick={() => navigate(`/invoices`)}>View Invoices</BtnSecondary>
+          {c.email && can("onboarding.inbox") && (
+            <BtnSecondary size="sm" onClick={handleSendDocs} disabled={sendingDocs}>
+              {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+              Send Onboarding Docs
+            </BtnSecondary>
+          )}
           <BtnPrimary size="sm" onClick={() => navigate("/orders")}>Place Order</BtnPrimary>
         </div>
       </div>

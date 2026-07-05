@@ -335,7 +335,7 @@ async def save_attachment_to_profile(
     customer document. Returns the new customer_documents record.
     Raises ValueError for caller to convert to HTTPException.
     """
-    from services.r2_client import upload_object
+    from services.r2_client import r2_put
     from services.graph_client import get_attachment_content, graph_configured
     from services.imap_client import imap_configured, get_graph_mailbox_address
 
@@ -384,7 +384,7 @@ async def save_attachment_to_profile(
 
     doc_id = str(uuid.uuid4())
     r2_key = f"customers/{customer_id}/inbox-documents/{doc_id}/{filename}"
-    await upload_object(r2_key, content, content_type)
+    await r2_put(r2_key, content, content_type)
 
     record = {
         "id":              doc_id,
