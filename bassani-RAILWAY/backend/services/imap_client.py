@@ -19,6 +19,8 @@ import logging
 import re
 import smtplib
 from datetime import datetime, timedelta, timezone
+from email import encoders as email_encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -285,12 +287,31 @@ def _send_smtp_sync(
     body_html: str,
     in_reply_to: str = "",
     references: str = "",
+    file_attachments: Optional[list] = None,
 ) -> str:
-    """Send via SMTP and return the generated Message-ID."""
+    """Send via SMTP and return the generated Message-ID.
+
+    file_attachments: list of {"filename": str, "content": bytes, "content_type": str}
+    """
     domain = cfg["mailbox_address"].split("@")[-1] if "@" in cfg["mailbox_address"] else "bassanihealth.com"
     message_id = email.utils.make_msgid(domain=domain)
 
-    msg = MIMEMultipart("alternative")
+    if file_attachments:
+        msg = MIMEMultipart("mixed")
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body_html, "html"))
+        msg.attach(alt)
+        for att in file_attachments:
+            main_type, sub_type = att["content_type"].split("/", 1)
+            part = MIMEBase(main_type, sub_type)
+            part.set_payload(att["content"])
+            email_encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=att["filename"])
+            msg.attach(part)
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body_html, "html"))
+
     msg["Message-ID"] = message_id
     msg["From"]       = cfg["mailbox_address"]
     msg["To"]         = to_email
@@ -302,7 +323,6 @@ def _send_smtp_sync(
         refs = f"{in_reply_to} {references}".strip()
     if refs:
         msg["References"] = refs
-    msg.attach(MIMEText(body_html, "html"))
 
     smtp_host = cfg["smtp_host"]
     smtp_port = cfg["smtp_port"]
@@ -368,6 +388,22 @@ async def send_reply(
     if not cfg:
         raise RuntimeError(f"IMAP/SMTP not configured for mailbox '{mailbox}'")
     return await asyncio.to_thread(_send_smtp_sync, cfg, to_email, subject, body_html, in_reply_to, references)
+
+
+async def send_new_email(
+    to_email: str,
+    subject: str,
+    body_html: str,
+    file_attachments: Optional[list] = None,
+    mailbox: str = "sales",
+) -> str:
+    """Send a fresh outgoing email (not a reply) and return the Message-ID."""
+    cfg = get_config(mailbox)
+    if not cfg:
+        raise RuntimeError(f"IMAP/SMTP not configured for mailbox '{mailbox}'")
+    return await asyncio.to_thread(
+        _send_smtp_sync, cfg, to_email, subject, body_html, "", "", file_attachments
+    )
 
 
 async def test_connection(cfg: dict) -> None:

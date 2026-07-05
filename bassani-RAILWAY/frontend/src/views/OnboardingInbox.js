@@ -5,7 +5,7 @@ import { useAuth } from "../AuthContext";
 import {
   Mail, AlertCircle, Paperclip, RefreshCw,
   ExternalLink, Send, Archive, Save,
-  Search, Loader2, Link2,
+  Search, Loader2, Link2, Eye, User, FileText,
 } from "lucide-react";
 import {
   TopBar, Badge, BtnPrimary, BtnSecondary,
@@ -72,7 +72,7 @@ function StatusBadge({ status }) {
   return <Badge color={m.color}>{m.label}</Badge>;
 }
 
-function AttachmentList({ attachments, itemId, onSaveToProfile }) {
+function AttachmentList({ attachments, itemId, onSaveToProfile, onPreview }) {
   if (!attachments || attachments.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/5">
@@ -82,8 +82,9 @@ function AttachmentList({ attachments, itemId, onSaveToProfile }) {
           : att.imap_attachment_id
           ? `${API}/${itemId}/imap-attachment/${att.imap_attachment_id}`
           : null;
-        const key = att.id || att.imap_attachment_id || i;
+        const key    = att.id || att.imap_attachment_id || i;
         const attKey = att.id || att.imap_attachment_id;
+        const isPdf  = att.name?.toLowerCase().endsWith(".pdf");
         return (
           <div key={key} className="flex items-center gap-1">
             {url ? (
@@ -103,6 +104,15 @@ function AttachmentList({ attachments, itemId, onSaveToProfile }) {
               >
                 <Paperclip size={10} /> {att.name}
               </span>
+            )}
+            {url && isPdf && onPreview && (
+              <button
+                onClick={() => onPreview(url, att.name)}
+                title="Preview PDF"
+                className="p-1 rounded text-gray-400 hover:text-bassani-600 hover:bg-bassani-50 transition-colors"
+              >
+                <Eye size={11} />
+              </button>
             )}
             {attKey && onSaveToProfile && (
               <button
@@ -124,6 +134,11 @@ function ThreadStatusPill({ thread }) {
   if (thread.application_id) return (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-100 rounded px-1.5 py-0.5 flex-shrink-0">
       <Link2 size={9} /> Linked
+    </span>
+  );
+  if (thread.customer_id) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100 rounded px-1.5 py-0.5 flex-shrink-0">
+      <User size={9} /> Customer
     </span>
   );
   if (thread.is_unknown_sender) return (
@@ -171,7 +186,7 @@ function ThreadRow({ thread, isSelected, onClick }) {
   );
 }
 
-function MessageBubble({ msg, showDateDivider, onSaveToProfile }) {
+function MessageBubble({ msg, showDateDivider, onSaveToProfile, onPreview }) {
   const isOutgoing = msg.is_outgoing;
   const name       = msg.from_name || msg.from_email || "Unknown";
   return (
@@ -212,6 +227,7 @@ function MessageBubble({ msg, showDateDivider, onSaveToProfile }) {
                 attachments={msg.attachments}
                 itemId={msg.id}
                 onSaveToProfile={onSaveToProfile}
+                onPreview={onPreview}
               />
             )}
           </div>
@@ -239,19 +255,34 @@ export default function OnboardingInbox() {
   const [replyHtml,      setReplyHtml     ] = useState("");
   const [replySending,   setReplySending  ] = useState(false);
 
-  const [linkOpen,       setLinkOpen      ] = useState(false);
-  const [applications,   setApplications  ] = useState([]);
-  const [appsLoading,    setAppsLoading   ] = useState(false);
-  const [selectedAppId,  setSelectedAppId ] = useState("");
-  const [linking,        setLinking       ] = useState(false);
+  // Link to customer modal
+  const [linkOpen,         setLinkOpen      ] = useState(false);
+  const [linking,          setLinking       ] = useState(false);
+  const [custSearch,       setCustSearch    ] = useState("");
+  const [custResults,      setCustResults   ] = useState([]);
+  const [custSearching,    setCustSearching ] = useState(false);
+  const [selectedCustId,   setSelectedCustId] = useState(null);
+  const [selectedCustName, setSelectedCustName] = useState("");
 
+  // Save attachment modal
   const [saveAttOpen,    setSaveAttOpen   ] = useState(false);
   const [saveAttKey,     setSaveAttKey    ] = useState(null);
   const [saveAttName,    setSaveAttName   ] = useState("");
   const [saveAttLabel,   setSaveAttLabel  ] = useState("");
   const [saveAttSaving,  setSaveAttSaving ] = useState(false);
 
-  const threadEndRef = useRef(null);
+  // PDF preview modal
+  const [previewUrl,     setPreviewUrl    ] = useState(null);
+  const [previewName,    setPreviewName   ] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  // Send docs modal
+  const [sendDocsOpen,   setSendDocsOpen  ] = useState(false);
+  const [sendDocsEmail,  setSendDocsEmail ] = useState("");
+  const [sendDocsCustName, setSendDocsCustName] = useState("");
+  const [sendDocsSending,  setSendDocsSending ] = useState(false);
+
+  const threadEndRef     = useRef(null);
   const selectedThreadId = selectedThread?.id;
 
   const loadList = useCallback(async (silent = false) => {
@@ -270,7 +301,6 @@ export default function OnboardingInbox() {
 
   useEffect(() => { loadList(); }, [loadList]);
 
-  // Silent refresh every 30 s when tab is visible
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState === "visible") loadList(true);
@@ -278,7 +308,6 @@ export default function OnboardingInbox() {
     return () => clearInterval(id);
   }, [loadList]);
 
-  // Silent thread refresh every 15 s when a thread is open
   useEffect(() => {
     if (!selectedThreadId) return;
     const id = setInterval(() => {
@@ -335,32 +364,45 @@ export default function OnboardingInbox() {
     }
   }
 
-  async function openLinkModal() {
+  function openLinkModal() {
     setLinkOpen(true);
-    setSelectedAppId("");
-    setAppsLoading(true);
+    setSelectedCustId(null);
+    setSelectedCustName("");
+    setCustSearch("");
+    setCustResults([]);
+  }
+
+  async function searchCustomers(q) {
+    if (!q.trim()) { setCustResults([]); return; }
+    setCustSearching(true);
     try {
-      const res = await api.get("/api/onboarding/", { params: { limit: 100, offset: 0 } });
-      setApplications(res.data.applications || res.data.items || []);
+      const res = await api.get("/api/customers/search", { params: { q, limit: 10 } });
+      setCustResults(res.data.customers || []);
     } catch {
-      toast.error("Failed to load applications");
+      toast.error("Customer search failed");
     } finally {
-      setAppsLoading(false);
+      setCustSearching(false);
     }
   }
 
-  async function linkApplication() {
-    if (!selectedAppId) return;
+  useEffect(() => {
+    if (!linkOpen) return;
+    const t = setTimeout(() => searchCustomers(custSearch), 350);
+    return () => clearTimeout(t);
+  }, [custSearch, linkOpen]);
+
+  async function linkCustomer() {
+    if (!selectedCustId) return;
     setLinking(true);
     try {
-      await api.post(`${API}/${selectedThread.id}/link-application`, { application_id: selectedAppId });
-      toast.success("Thread linked to application");
+      await api.post(`${API}/${selectedThread.id}/link-customer`, { odoo_partner_id: selectedCustId });
+      toast.success(`Thread linked to ${selectedCustName}`);
       setLinkOpen(false);
       const res = await api.get(`${API}/${selectedThread.id}`);
       setSelectedThread(res.data);
       loadList(true);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to link application");
+      toast.error(e.response?.data?.detail || "Failed to link customer");
     } finally {
       setLinking(false);
     }
@@ -385,6 +427,49 @@ export default function OnboardingInbox() {
       toast.error(e.response?.data?.detail || "Failed to save attachment");
     } finally {
       setSaveAttSaving(false);
+    }
+  }
+
+  async function openPreview(url, name) {
+    setPreviewLoading(true);
+    setPreviewName(name);
+    try {
+      const res = await api.get(url, { responseType: "blob" });
+      const blobUrl = URL.createObjectURL(res.data);
+      setPreviewUrl(blobUrl);
+    } catch {
+      toast.error("Could not load preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function closePreview() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewName("");
+  }
+
+  async function sendDocs() {
+    if (!sendDocsEmail.trim()) return;
+    setSendDocsSending(true);
+    try {
+      const res = await api.post(`${API}/send-docs`, {
+        to_email: sendDocsEmail.trim(),
+        customer_name: sendDocsCustName.trim(),
+      });
+      toast.success(`Documents sent to ${sendDocsEmail.trim()}`);
+      setSendDocsOpen(false);
+      setSendDocsEmail("");
+      setSendDocsCustName("");
+      // Navigate to the new thread
+      if (res.data.item_id) {
+        loadList(true);
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send documents");
+    } finally {
+      setSendDocsSending(false);
     }
   }
 
@@ -424,6 +509,9 @@ export default function OnboardingInbox() {
             className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-52 focus:outline-none focus:ring-2 focus:ring-bassani-300"
           />
         </div>
+        <BtnPrimary onClick={() => setSendDocsOpen(true)}>
+          <FileText size={13} /> Send Docs
+        </BtnPrimary>
         <BtnSecondary onClick={() => loadList()} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
         </BtnSecondary>
@@ -488,22 +576,23 @@ export default function OnboardingInbox() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0 bg-white">
               <div className="min-w-0">
                 <h2 className="text-[15px] font-semibold text-gray-900 truncate">{detail.subject}</h2>
-                <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   <span className="text-[12px] text-gray-500">{detail.from_name || detail.from_email}</span>
-                  {detail.application_id && (
-                    <span className="text-[11px] text-green-600 font-medium">
-                      Linked to application
+                  {detail.customer_name && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-blue-600 font-medium bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5">
+                      <User size={9} /> {detail.customer_name}
                     </span>
+                  )}
+                  {detail.application_id && (
+                    <span className="text-[11px] text-green-600 font-medium">Linked to application</span>
                   )}
                   <StatusBadge status={detail.status} />
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                {!detail.application_id && (
-                  <BtnSecondary onClick={openLinkModal}>
-                    <Link2 size={14} /> Link Application
-                  </BtnSecondary>
-                )}
+                <BtnSecondary onClick={openLinkModal}>
+                  <Link2 size={14} /> Link
+                </BtnSecondary>
                 <BtnSecondary onClick={() => setReplyOpen(r => !r)}>
                   <Send size={14} /> Reply
                 </BtnSecondary>
@@ -526,6 +615,7 @@ export default function OnboardingInbox() {
                     msg={msg}
                     showDateDivider={i === 0 || !sameDay(threadMsgs[i - 1]?.received_at, msg.received_at)}
                     onSaveToProfile={openSaveAttModal}
+                    onPreview={previewLoading ? null : openPreview}
                   />
                 ))
               )}
@@ -555,34 +645,54 @@ export default function OnboardingInbox() {
         )}
       </div>
 
-      {/* Link Application modal */}
-      {linkOpen && <Modal onClose={() => setLinkOpen(false)} title="Link to Application">
+      {/* Link to customer modal */}
+      {linkOpen && <Modal onClose={() => setLinkOpen(false)} title="Link to Customer" width="max-w-lg">
         <div className="space-y-4">
-          {appsLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 size={20} className="animate-spin text-gray-300" />
+          <p className="text-xs text-gray-500">
+            Link this thread to an onboarded customer. Once linked, attachments can be saved to their profile.
+            Auto-detection already runs on ingest — use this when the sender's email doesn't match their Odoo record.
+          </p>
+          <FormGroup label="Search customer">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={custSearch}
+                onChange={e => { setCustSearch(e.target.value); setSelectedCustId(null); }}
+                placeholder="Name or email…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                autoFocus
+              />
+              {custSearching && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />}
             </div>
-          ) : (
-            <FormGroup label="Select application">
-              <select
-                value={selectedAppId}
-                onChange={e => setSelectedAppId(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-bassani-300"
-              >
-                <option value="">Choose an application…</option>
-                {applications.map(a => (
-                  <option key={a.id || a._id} value={a.id || a._id}>
-                    {a.company_name || a.customer_name || a.id}
-                  </option>
-                ))}
-              </select>
-            </FormGroup>
+          </FormGroup>
+          {custResults.length > 0 && (
+            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 max-h-48 overflow-y-auto">
+              {custResults.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => { setSelectedCustId(c.id); setSelectedCustName(c.name); }}
+                  className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
+                    selectedCustId === c.id
+                      ? "bg-bassani-50 text-bassani-700 font-medium"
+                      : "hover:bg-gray-50 text-gray-700"
+                  }`}
+                >
+                  <span className="font-medium">{c.name}</span>
+                  {c.email && <span className="text-xs text-gray-400 ml-2">{c.email}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {selectedCustId && (
+            <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+              <User size={12} /> Selected: <strong>{selectedCustName}</strong>
+            </div>
           )}
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setLinkOpen(false)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={linkApplication} disabled={!selectedAppId || linking}>
+            <BtnPrimary onClick={linkCustomer} disabled={!selectedCustId || linking}>
               {linking ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-              Link
+              Link Customer
             </BtnPrimary>
           </div>
         </div>
@@ -592,7 +702,7 @@ export default function OnboardingInbox() {
       {saveAttOpen && <Modal onClose={() => setSaveAttOpen(false)} title="Save to Customer Profile">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            This will upload <span className="font-medium">{saveAttName}</span> to the customer's document profile in R2.
+            This will upload <span className="font-medium">{saveAttName}</span> to the customer's document profile.
           </p>
           <FormGroup label="Document label">
             <Input
@@ -606,6 +716,55 @@ export default function OnboardingInbox() {
             <BtnPrimary onClick={saveAttachment} disabled={saveAttSaving}>
               {saveAttSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
               Save to Profile
+            </BtnPrimary>
+          </div>
+        </div>
+      </Modal>}
+
+      {/* PDF preview modal */}
+      {(previewUrl || previewLoading) && <Modal onClose={closePreview} title={previewName || "Document Preview"} width="max-w-4xl">
+        {previewLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={24} className="animate-spin text-gray-300" />
+          </div>
+        ) : (
+          <div style={{ height: "70vh" }}>
+            <iframe
+              src={previewUrl}
+              title={previewName}
+              className="w-full h-full rounded-lg border border-gray-100"
+              style={{ border: "none" }}
+            />
+          </div>
+        )}
+      </Modal>}
+
+      {/* Send Docs modal */}
+      {sendDocsOpen && <Modal onClose={() => setSendDocsOpen(false)} title="Send Onboarding Documents">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Send all four onboarding template PDFs from the onboarding mailbox. The customer's reply will auto-thread back into this inbox.
+          </p>
+          <FormGroup label="Customer email address">
+            <Input
+              type="email"
+              value={sendDocsEmail}
+              onChange={e => setSendDocsEmail(e.target.value)}
+              placeholder="customer@example.co.za"
+            />
+          </FormGroup>
+          <FormGroup label="Customer name (optional)">
+            <Input
+              value={sendDocsCustName}
+              onChange={e => setSendDocsCustName(e.target.value)}
+              placeholder="Used in the email greeting"
+            />
+          </FormGroup>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setSendDocsOpen(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={sendDocs} disabled={sendDocsSending || !sendDocsEmail.trim()}>
+              {sendDocsSending ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              Send Documents
             </BtnPrimary>
           </div>
         </div>

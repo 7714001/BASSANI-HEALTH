@@ -30,6 +30,7 @@ from services.graph_subscription import get_client_state
 from services.imap_client import (
     get_config as get_imap_config,
     imap_configured,
+    send_new_email as imap_send_new_email,
     send_reply as imap_send_reply,
 )
 from services.inbox_service import (
@@ -59,6 +60,15 @@ class LinkApplicationBody(BaseModel):
 
 class SaveAttachmentBody(BaseModel):
     label: Optional[str] = None
+
+
+class SendDocsBody(BaseModel):
+    to_email: str
+    customer_name: Optional[str] = ""
+
+
+class LinkCustomerBody(BaseModel):
+    odoo_partner_id: int
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -603,3 +613,166 @@ async def archive_item(
     )
 
     return {"success": True}
+
+
+# ── Send onboarding docs from mailbox ─────────────────────────────────────────
+
+@router.post("/send-docs")
+async def send_docs(
+    body: SendDocsBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """
+    Send onboarding template PDFs from the configured onboarding SMTP mailbox.
+    Creates a thread root doc in onboarding_inbox so the customer's reply
+    auto-threads via In-Reply-To matching.
+    """
+    import os
+    if not _onboarding_configured():
+        _not_configured()
+
+    imap_cfg = get_imap_config(_MAILBOX)
+    if not imap_cfg:
+        raise HTTPException(status_code=503, detail="Onboarding SMTP not configured")
+
+    _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
+    _TEMPLATES = [
+        ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
+        ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
+        ("nda.pdf",                        "Bassani Health NDA"),
+        ("tqa.pdf",                        "Bassani Health TQA Document"),
+    ]
+    file_attachments = []
+    for filename, display_name in _TEMPLATES:
+        fpath = os.path.join(_TEMPLATE_DIR, filename)
+        if os.path.exists(fpath):
+            with open(fpath, "rb") as f:
+                file_attachments.append({
+                    "filename":     f"{display_name}.pdf",
+                    "content":      f.read(),
+                    "content_type": "application/pdf",
+                })
+
+    greeting = f"Dear {body.customer_name}," if body.customer_name else "Dear Customer,"
+    body_html = f"""
+<p>{greeting}</p>
+<p>Please find your Bassani Health onboarding documents attached to this email.</p>
+<p>Once you have completed and signed all documents, please <strong>reply directly to this email</strong>
+with the signed copies attached. Your reply will be received in our secure onboarding inbox and
+reviewed by our team promptly.</p>
+<p>The following documents are attached:</p>
+<ul>
+  <li>Store Onboarding Agreement</li>
+  <li>Customer Information Form</li>
+  <li>NDA</li>
+  <li>TQA Document</li>
+</ul>
+<p>If you have any questions, please reply to this email and a member of the team will assist you.</p>
+"""
+    subject = "Bassani Health Onboarding Documents"
+    now = datetime.now(timezone.utc)
+    from_address = imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+
+    # Create thread root before sending so we have the item_id for the update
+    preview = f"Onboarding documents sent to {body.to_email}"
+    thread_doc = {
+        "from_email":       from_address,
+        "from_name":        "Bassani Health",
+        "to_email":         body.to_email,
+        "subject":          subject,
+        "body_html":        body_html,
+        "body_preview":     preview,
+        "is_outgoing":      True,
+        "status":           "sent",
+        "received_at":      now,
+        "has_attachments":  bool(file_attachments),
+        "attachments":      [{"name": a["filename"]} for a in file_attachments],
+        "thread_root_id":   None,
+        "customer_name":    body.customer_name or "",
+        "is_read":          True,
+        "created_at":       now,
+        "sent_by":          current_user.get("username"),
+    }
+    result = await col(_COLLECTION).insert_one(thread_doc)
+    item_id = str(result.inserted_id)
+    await col(_COLLECTION).update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"thread_root_id": item_id}},
+    )
+
+    async def _do_send():
+        try:
+            message_id = await imap_send_new_email(
+                to_email=body.to_email,
+                subject=subject,
+                body_html=body_html,
+                file_attachments=file_attachments,
+                mailbox=_MAILBOX,
+            )
+            await col(_COLLECTION).update_one(
+                {"_id": result.inserted_id},
+                {"$set": {"imap_message_id": message_id}},
+            )
+        except Exception as exc:
+            logger.error("onboarding_inbox.send_docs_smtp_error item=%s error=%s", item_id, exc)
+
+    background_tasks.add_task(_do_send)
+
+    background_tasks.add_task(
+        audit_log,
+        "onboarding_inbox.docs_sent", _COLLECTION, item_id,
+        entity_label=body.to_email,
+        user=current_user,
+        after={"to_email": body.to_email, "customer_name": body.customer_name},
+    )
+
+    return {"success": True, "item_id": item_id}
+
+
+# ── Link thread to an existing Odoo customer ──────────────────────────────────
+
+@router.post("/{item_id}/link-customer")
+async def link_customer(
+    item_id: str,
+    body: LinkCustomerBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """Manually link a thread to an existing Odoo customer profile."""
+    item = await col(_COLLECTION).find_one({"_id": _oid(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+
+    from odoo_client import get_odoo_client
+    odoo = get_odoo_client()
+    try:
+        partners = odoo.read("res.partner", [body.odoo_partner_id], fields=["name", "email"])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {exc}")
+    if not partners:
+        raise HTTPException(status_code=404, detail="Customer not found in Odoo")
+
+    customer_name = partners[0]["name"]
+    thread_root_str = item.get("thread_root_id") or str(item["_id"])
+
+    await col(_COLLECTION).update_many(
+        {"$or": [
+            {"_id": ObjectId(thread_root_str)},
+            {"thread_root_id": thread_root_str},
+        ]},
+        {"$set": {
+            "customer_id":   body.odoo_partner_id,
+            "customer_name": customer_name,
+        }},
+    )
+
+    background_tasks.add_task(
+        audit_log,
+        "onboarding_inbox.customer_linked", _COLLECTION, item_id,
+        entity_label=customer_name,
+        user=current_user,
+        after={"customer_id": body.odoo_partner_id, "customer_name": customer_name},
+    )
+
+    return {"success": True, "customer_name": customer_name}
