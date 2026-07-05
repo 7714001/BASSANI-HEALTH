@@ -326,7 +326,6 @@ def _send_smtp_sync(
         msg.attach(MIMEText(body_html, "html"))
 
     msg["Message-ID"] = message_id
-    import email.utils
     msg["From"]       = email.utils.formataddr(("Bassani Health", cfg["mailbox_address"]))
     msg["To"]         = to_email
     msg["Subject"]    = subject

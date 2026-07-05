@@ -826,10 +826,7 @@ async def get_docs_sent_history(
         # Fallback: match by email for sends from the customers list modal
         from odoo_client import get_odoo_client
         odoo = get_odoo_client()
-        partners = odoo.execute_kw(
-            "res.partner", "read",
-            [[customer_id]], {"fields": ["email"]},
-        )
+        partners = odoo.read("res.partner", [customer_id], fields=["email"])
         customer_email = (partners[0].get("email") or "").strip().lower() if partners else ""
         if customer_email:
             record = await col("onboarding_inbox").find_one(
