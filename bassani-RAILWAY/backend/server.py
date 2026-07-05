@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import logging
+from pymongo.errors import OperationFailure as _MongoOpFail
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -294,8 +295,18 @@ async def _run_inbox_startup(
     from services.inbox_service import ingest_graph_message, ingest_imap_message
 
     for coro in _make_inbox_indexes(collection):
-        await coro
-    await col(f"{collection}_attachments").create_index([("inbox_item_id", 1)])
+        try:
+            await coro
+        except _MongoOpFail as exc:
+            if exc.code == 85:
+                logger.warning("%s_index_name_conflict skipped=%s", collection, exc.details.get("errmsg", ""))
+            else:
+                raise
+    try:
+        await col(f"{collection}_attachments").create_index([("inbox_item_id", 1)])
+    except _MongoOpFail as exc:
+        if exc.code != 85:
+            raise
 
     await load_config_from_db(mailbox)
 
