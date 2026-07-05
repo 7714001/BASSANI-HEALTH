@@ -25,25 +25,33 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Module-level config cache — populated at startup and on settings save.
-_mailbox_config: Optional[dict] = None
+# Per-mailbox IMAP configs and Graph mailbox addresses.
+# Keyed by mailbox slug ("sales", "onboarding").
+_configs: dict[str, Optional[dict]] = {}
+_graph_addresses: dict[str, Optional[str]] = {}
+
+# MongoDB settings key per mailbox slug (sales keeps the original key for backward compat).
+_SETTINGS_KEYS: dict[str, str] = {
+    "sales":      "mailbox_config",
+    "onboarding": "mailbox_config_onboarding",
+}
 
 
 def _env_config() -> Optional[dict]:
-    """Build config dict from Railway env vars (fallback when MongoDB has no entry)."""
+    """Build IMAP config from Railway env vars — sales mailbox fallback only."""
     try:
         from config import get_settings
         s = get_settings()
         if s.imap_host and s.imap_username and s.imap_password:
             return {
-                "imap_host":     s.imap_host,
-                "imap_port":     s.imap_port or 993,
-                "imap_username": s.imap_username,
-                "imap_password": s.imap_password,
-                "smtp_host":     s.smtp_host or s.imap_host,
-                "smtp_port":     s.smtp_port or 587,
-                "smtp_username": s.smtp_username or s.imap_username,
-                "smtp_password": s.smtp_password or s.imap_password,
+                "imap_host":      s.imap_host,
+                "imap_port":      s.imap_port or 993,
+                "imap_username":  s.imap_username,
+                "imap_password":  s.imap_password,
+                "smtp_host":      s.smtp_host or s.imap_host,
+                "smtp_port":      s.smtp_port or 587,
+                "smtp_username":  s.smtp_username or s.imap_username,
+                "smtp_password":  s.smtp_password or s.imap_password,
                 "mailbox_address": s.imap_username,
             }
     except Exception:
@@ -51,43 +59,83 @@ def _env_config() -> Optional[dict]:
     return None
 
 
-async def load_config_from_db() -> None:
+def _parse_imap_doc(doc: dict) -> Optional[dict]:
+    """Extract IMAP credentials from a portal_settings document."""
+    if doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password"):
+        return {
+            "imap_host":      doc["imap_host"].strip(),
+            "imap_port":      int(doc.get("imap_port") or 993),
+            "imap_username":  doc["imap_username"].strip(),
+            "imap_password":  doc["imap_password"],
+            "smtp_host":      (doc.get("smtp_host") or doc["imap_host"]).strip(),
+            "smtp_port":      int(doc.get("smtp_port") or 587),
+            "smtp_username":  (doc.get("smtp_username") or doc["imap_username"]).strip(),
+            "smtp_password":  doc.get("smtp_password") or doc["imap_password"],
+            "mailbox_address": (doc.get("mailbox_address") or doc["imap_username"]).strip(),
+        }
+    return None
+
+
+async def load_config_from_db(mailbox: str = "sales") -> None:
     """
-    Load mailbox credentials from MongoDB, falling back to env vars.
-    Must be called at startup and after any settings save.
+    Load config for one mailbox from MongoDB, falling back to env vars for sales.
+    Call at startup and after any settings save for the relevant mailbox.
     """
-    global _mailbox_config
+    settings_key = _SETTINGS_KEYS.get(mailbox, f"mailbox_config_{mailbox}")
     try:
         from database import col
-        doc = await col("portal_settings").find_one({"_id": "mailbox_config"})
-        if doc and doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password"):
-            _mailbox_config = {
-                "imap_host":      doc["imap_host"].strip(),
-                "imap_port":      int(doc.get("imap_port") or 993),
-                "imap_username":  doc["imap_username"].strip(),
-                "imap_password":  doc["imap_password"],
-                "smtp_host":      (doc.get("smtp_host") or doc["imap_host"]).strip(),
-                "smtp_port":      int(doc.get("smtp_port") or 587),
-                "smtp_username":  (doc.get("smtp_username") or doc["imap_username"]).strip(),
-                "smtp_password":  doc.get("smtp_password") or doc["imap_password"],
-                "mailbox_address": (doc.get("mailbox_address") or doc["imap_username"]).strip(),
-            }
-            logger.info("imap_config_loaded_from_db host=%s user=%s",
-                        _mailbox_config["imap_host"], _mailbox_config["imap_username"])
-            return
+        doc = await col("portal_settings").find_one({"_id": settings_key})
+        if doc:
+            provider = doc.get("provider", "imap")
+            if provider == "graph":
+                _configs[mailbox] = None
+                _graph_addresses[mailbox] = doc.get("graph_mailbox_address") or None
+                logger.info("graph_mailbox_loaded mailbox=%s address=%s",
+                            mailbox, _graph_addresses.get(mailbox))
+                return
+            cfg = _parse_imap_doc(doc)
+            if cfg:
+                _configs[mailbox] = cfg
+                _graph_addresses[mailbox] = None
+                logger.info("imap_config_loaded_from_db mailbox=%s host=%s user=%s",
+                            mailbox, cfg["imap_host"], cfg["imap_username"])
+                return
     except Exception as exc:
-        logger.warning("imap_config_db_load_failed error=%s", exc)
-    _mailbox_config = _env_config()
-    if _mailbox_config:
-        logger.info("imap_config_loaded_from_env host=%s", _mailbox_config["imap_host"])
+        logger.warning("imap_config_db_load_failed mailbox=%s error=%s", mailbox, exc)
+
+    # Env-var fallback for sales only
+    if mailbox == "sales":
+        cfg = _env_config()
+        _configs[mailbox] = cfg
+        _graph_addresses[mailbox] = None
+        if cfg:
+            logger.info("imap_config_loaded_from_env host=%s", cfg["imap_host"])
+    else:
+        _configs[mailbox] = None
+        _graph_addresses[mailbox] = None
 
 
-def get_config() -> Optional[dict]:
-    return _mailbox_config
+def get_config(mailbox: str = "sales") -> Optional[dict]:
+    return _configs.get(mailbox)
 
 
-def imap_configured() -> bool:
-    return _mailbox_config is not None
+def imap_configured(mailbox: str = "sales") -> bool:
+    return _configs.get(mailbox) is not None
+
+
+def get_graph_mailbox_address(mailbox: str = "sales") -> Optional[str]:
+    """Return the Graph UPN for this mailbox, or None if not a Graph-configured mailbox."""
+    addr = _graph_addresses.get(mailbox)
+    if addr:
+        return addr
+    # Sales falls back to the env var shared mailbox address
+    if mailbox == "sales":
+        try:
+            from config import get_settings
+            return get_settings().ms_shared_mailbox or None
+        except Exception:
+            pass
+    return None
 
 
 # ── Header decode ─────────────────────────────────────────────────────────────
@@ -293,15 +341,15 @@ def _test_connection_sync(cfg: dict) -> None:
 
 # ── Public async API ──────────────────────────────────────────────────────────
 
-async def fetch_new_messages() -> list:
-    cfg = get_config()
+async def fetch_new_messages(mailbox: str = "sales") -> list:
+    cfg = get_config(mailbox)
     if not cfg:
         return []
     return await asyncio.to_thread(_fetch_new_messages_sync, cfg)
 
 
-async def mark_as_read(uid: str) -> None:
-    cfg = get_config()
+async def mark_as_read(uid: str, mailbox: str = "sales") -> None:
+    cfg = get_config(mailbox)
     if not cfg:
         return
     await asyncio.to_thread(_mark_read_sync, cfg, uid)
@@ -313,11 +361,12 @@ async def send_reply(
     body_html: str,
     in_reply_to: str = "",
     references: str = "",
+    mailbox: str = "sales",
 ) -> str:
     """Send reply and return the generated Message-ID for thread tracking."""
-    cfg = get_config()
+    cfg = get_config(mailbox)
     if not cfg:
-        raise RuntimeError("IMAP/SMTP not configured")
+        raise RuntimeError(f"IMAP/SMTP not configured for mailbox '{mailbox}'")
     return await asyncio.to_thread(_send_smtp_sync, cfg, to_email, subject, body_html, in_reply_to, references)
 
 

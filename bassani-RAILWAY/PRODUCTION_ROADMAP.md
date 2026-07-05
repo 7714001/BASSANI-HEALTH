@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-05  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 IMAP/SMTP path built and deployed — inbox live for any IMAP mailbox; M365 Graph path still available when Azure credentials provided; Phase 12 in progress (12.0 backend foundation complete)  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — Sales Inbox (IMAP/SMTP active, Graph ready) and Onboarding Inbox (multi-mailbox architecture, link-application, save-attachment-to-profile) both deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete)  
 
 ---
 
@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–12 (8.1–8.14 code complete) — 2026-07-04 · 8.13 Reseller Application Management — 2026-07-02 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Mailbox Integration | 🟢 Live (IMAP path) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI with thread grouping, read/unread state, status pills, and ticket navigation — 2026-07-05 |
+| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 (blocked on Azure creds) · IMAP/SMTP path live 2026-07-04 · Professional two-panel inbox UI — 2026-07-05 · Onboarding Inbox (second mailbox, separate permission, link-application + save-attachment-to-profile) — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1472,6 +1472,30 @@ Two backends are supported. Only one needs to be configured:
   - Reply compose pinned to bottom, Ctrl+Enter shortcut
   - **View Ticket** button in thread header navigates to `/tickets/sales` with `openTicketId` state (reuses existing SalesTickets hook)
 - [x] Archive/Dismiss — available on all non-archived threads including `ticket_created`; button label is **Dismiss** when a ticket exists (communicates that the inbox entry is dismissed, not the ticket), **Archive** otherwise
+
+### 11.C — Onboarding Inbox + Multi-Mailbox Architecture (2026-07-05)
+
+**Goal:** A second dedicated inbox for customer onboarding correspondence, fully independent from the Sales Inbox. Staff with the `onboarding.inbox` permission can read threads, reply, link a thread to an existing onboarding application, and save email attachments directly to a customer's R2 document profile — without any intermediate copy.
+
+**Completed 2026-07-05:**
+
+- [x] `backend/services/inbox_service.py` — canonical shared service parameterised by `collection` and `mailbox` slug. Implements: `resolve_customer()` (Odoo lookup, 10-min cache), `mark_thread_read()`, `build_list_pipeline()` (thread aggregation with `$max` ticket_id/application_id), `ingest_graph_message()`, `ingest_imap_message()`, `save_attachment_to_profile()` (streams bytes from Graph or IMAP store directly to R2, no intermediate copy; creates `customer_documents` record)
+- [x] `imap_client.py` — multi-mailbox: `_configs` and `_graph_addresses` dicts keyed by slug; `load_config_from_db(mailbox)`, `fetch_new_messages(mailbox)`, `mark_as_read(uid, mailbox)`, `send_reply(..., mailbox)` all parameterised; `_SETTINGS_KEYS` maps slug to MongoDB settings key (`mailbox_config` for sales, `mailbox_config_onboarding` for onboarding)
+- [x] `graph_client.py` — all functions accept `mailbox_address: Optional[str] = None`; default falls back to `settings.ms_shared_mailbox` for backward compatibility
+- [x] `graph_subscription.py` — `_settings_key(mailbox)`, `_webhook_url(mailbox)`, `ensure_subscription(mailbox, mailbox_address)`, `get_client_state(mailbox)` — each mailbox has its own subscription key and webhook URL (`/api/inbox/graph-webhook` for sales, `/api/onboarding-inbox/graph-webhook` for onboarding)
+- [x] `onboarding_inbox_routes.py` — full inbox at `/api/onboarding-inbox`; requires `onboarding.inbox` permission; collection: `onboarding_inbox`; thread grouping, mark-read, reply, archive all implemented; **no ticket creation**; adds: `POST /{id}/link-application` (links thread to onboarding application, stamps all thread docs, audit-logged), `POST /{id}/save-attachment/{attachment_id}` (delegates to `inbox_service.save_attachment_to_profile`)
+- [x] `GET/PUT/DELETE/POST /api/settings/onboarding-mailbox` — mirrors sales mailbox settings endpoints; writes to `mailbox_config_onboarding`; hot-reloads onboarding config on save
+- [x] `auth.py` — `"onboarding": {"inbox": False}` added to `DEFAULT_ADMIN_PERMISSIONS`, `FULL_PERMISSIONS`, and all five `ROLE_DEFAULT_PERMISSIONS` entries
+- [x] `server.py` — `_run_inbox_startup(mailbox, collection, label)` shared helper replaces duplicated startup code; called for both sales and onboarding; removes private function imports from `inbox_routes`
+- [x] `inbox_routes.py` — fixed: removed local `_customer_cache`/`_CUSTOMER_CACHE_TTL`/`_resolve_customer` (was broken: `import time` removed but `time.monotonic()` still referenced); imports `resolve_customer` from `inbox_service`; list aggregation fixed to `$max` `ticket_id`/`application_id` (thread badge now survives when newest doc is a reply without these fields)
+- [x] `OnboardingInbox.js` — two-panel inbox view; Link Application modal (loads applications from `/api/onboarding/`); Save to Profile button per attachment (label modal); 30s list / 15s thread silent polling with `visibilityState` guard
+- [x] `OnboardingMailboxSettings.js` — super admin settings page; provider presets, IMAP/SMTP fields, test-connection, save, disconnect; mirrors Sales Mailbox Settings page
+- [x] `UI.js` — `Onboarding Inbox` nav item (Tickets section, `permission: "onboarding.inbox"`, unhandled badge); `Onboarding Mailbox` nav item (Admin section, super admin only); 60s badge count poll against `/api/onboarding-inbox/unhandled-count`
+- [x] `App.js` — `/onboarding-inbox` and `/settings/onboarding-mailbox` routes
+
+**Attachment architecture:**
+- Graph mailbox: attachment bytes live in Microsoft 365 and are fetched on-demand. "Save to Profile" action calls `get_attachment_content()` → streams bytes directly to R2 → writes `customer_documents` record. No copy in MongoDB.
+- IMAP mailbox: attachment bytes are eagerly fetched at ingest time and stored in `onboarding_inbox_attachments` (BSON Binary, capped at 15 MB per attachment). "Save to Profile" reads from there → streams to R2. One copy in MongoDB (temporary, until the app adds a TTL index to expire them after the thread is archived).
 
 ---
 

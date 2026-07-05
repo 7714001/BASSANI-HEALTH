@@ -541,6 +541,110 @@ The inbox is the entry point. All order lifecycle actions happen in the ticket.
 
 ---
 
+## Onboarding Inbox
+
+**Access:** Users with the `onboarding.inbox` permission. Granted individually by a super admin — not enabled by default for any role.
+
+The Onboarding Inbox is a second dedicated mailbox view, completely separate from the Sales Inbox. It surfaces emails sent to a designated onboarding address (e.g. `onboarding@bassanihealth.com`). The intended workflow is that customers and resellers send their onboarding documents — company registration certificates, banking confirmations, authorisation letters, and Section 21 documents — to this address, and the relevant staff member processes them directly in the portal without downloading files or switching to a mail client.
+
+The Sales Inbox and Onboarding Inbox are independent: different mailbox, different permission, different list.
+
+### Admin Setup (Super Admin Only)
+
+Before anyone can use the Onboarding Inbox, a super admin must connect a mailbox.
+
+1. Navigate to **Settings > Onboarding Mailbox** in the sidebar (Admin section)
+2. Choose your email provider from the preset list to pre-fill the server settings, or select Custom
+3. Enter the IMAP credentials for the onboarding mailbox:
+   - **IMAP host** and **port** (993 for SSL is standard)
+   - **Username** — the full email address of the mailbox (e.g. `onboarding@bassanihealth.com`)
+   - **Password** — the mailbox password
+4. If using a different SMTP server for outgoing replies, fill in the SMTP section. Otherwise leave it blank and the IMAP host and credentials are reused.
+5. Click **Test Connection** to verify the credentials before saving
+6. Click **Save**
+
+The portal connects immediately — no restart required. Emails from the last 72 hours are pulled in on the first poll, and new emails arrive within 60 seconds thereafter.
+
+To disconnect the mailbox later, click **Disconnect**. The inbox will stop receiving emails until a mailbox is reconnected.
+
+**Granting the permission:**  
+Go to **Users** and open the user's permission settings. Toggle on `Onboarding Inbox` under the Onboarding section. The nav item and the view appear immediately on their next login.
+
+### Layout
+
+The Onboarding Inbox uses the same two-panel layout as the Sales Inbox:
+
+- **Left panel** — thread list, one row per conversation, ordered by most recent activity
+- **Right panel** — the full conversation with all messages in chronological order
+
+**Status tabs** across the top:
+- **Inbox** (default) — all active threads, excluding archived
+- **New** — unhandled threads only
+- **Linked** — threads that have been linked to an onboarding application
+- **Archived** — dismissed threads
+
+### Opening a Thread
+
+Click any row to open the conversation. The thread auto-marks as read. Incoming messages appear left (white), outgoing replies appear right (teal).
+
+Each row shows a **Linked** pill (green, with a link icon) when the thread has been linked to an application, or a **Unknown** pill (red) when the sender hasn't been matched to a customer.
+
+### Replying
+
+1. Click **Reply** in the thread header
+2. Type your reply in the compose box that slides open below the messages
+3. Click **Send**
+
+The reply goes out from the onboarding mailbox address and is stored in the portal thread so the full conversation stays in one place.
+
+### Linking to an Application
+
+If the email relates to a customer onboarding application already in the system:
+
+1. Open the thread
+2. Click **Link Application** in the thread header
+3. A modal opens showing all current onboarding applications
+4. Select the correct application
+5. Click **Link**
+
+Once linked, the thread moves to the **Linked** tab and the green **Linked** pill appears on the thread row. The link is audit-logged.
+
+You cannot link a thread until there is at least one application in the system for that customer. If the customer has not started an application yet, reply to request the required information and link the thread once the application is created.
+
+### Saving an Attachment to a Customer's Profile
+
+When a customer sends a document that needs to be stored against their profile (for example, a signed Section 21 authorisation or a proof of banking):
+
+1. Open the thread and scroll to the message with the attachment
+2. Click the **Save** icon (floppy disk) next to the attachment filename
+3. A modal opens with the filename pre-filled as the document label
+4. Edit the label to something descriptive (e.g. "Section 21 — Bassani CBG Oil 100mg")
+5. Click **Save to Profile**
+
+The document is uploaded directly from the email to secure cloud storage (R2) and linked to the customer's profile. It will appear under the customer's documents in the customer management section. No manual download or re-upload is needed.
+
+This is a one-way action — saving a document to a profile does not remove it from the email thread. If the attachment cannot be retrieved (large IMAP attachment over 15 MB that was not stored, or an expired archived thread), the Save button will not appear.
+
+### Archiving a Thread
+
+When a thread requires no further action:
+
+1. Open the thread
+2. Click **Archive** in the thread header
+
+The thread moves to the Archived tab. Archived threads are automatically deleted after 180 days.
+
+### Typical Workflow
+
+- A new customer reseller sends their company registration and banking details to `onboarding@bassanihealth.com`
+- The thread appears in the Onboarding Inbox under **New**
+- The staff member opens the thread, reads the email, and uses **Save to Profile** to store each document against the customer
+- They click **Link Application** to associate the thread with the active onboarding application
+- They reply from the portal to acknowledge receipt or request missing documents
+- Once all documents are in place and the application is approved, they **Archive** the thread
+
+---
+
 ## Finance Team — Kashi & Ragini
 
 **Role in system:** `finance` (permission: `tickets.finance_confirm`)  
@@ -1169,9 +1273,15 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Task | Who |
 |---|---|
 | Read inbound sales emails | Merveille (sales) or admin with `inbox.view` |
-| Reply to an email from the portal | Merveille (sales) or admin with `inbox.view` |
+| Reply to an email from the portal (sales) | Merveille (sales) or admin with `inbox.view` |
 | Create a ticket from an email thread | Merveille (sales) or admin with `inbox.view` |
-| Archive an email thread | Merveille (sales) or admin with `inbox.view` |
+| Archive a sales email thread | Merveille (sales) or admin with `inbox.view` |
+| Read inbound onboarding emails | Admin with `onboarding.inbox` (granted by super admin) |
+| Reply to an onboarding email from the portal | Admin with `onboarding.inbox` |
+| Link an email thread to an onboarding application | Admin with `onboarding.inbox` |
+| Save an email attachment to a customer profile | Admin with `onboarding.inbox` |
+| Archive an onboarding email thread | Admin with `onboarding.inbox` |
+| Configure the onboarding mailbox | Super Admin only (Settings > Onboarding Mailbox) |
 | Create a direct inquiry ticket | Merveille (sales) |
 | Build or edit a quote | Merveille (sales) |
 | Send quote to customer | Merveille (sales) |

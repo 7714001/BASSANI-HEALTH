@@ -40,14 +40,16 @@ const NAV = [
   { label: "Reports",      path: "/reports",     icon: BarChart3,       section: "Insights", permission: "reports.view"        },
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
-  { label: "Sales Inbox",    path: "/inbox",           icon: Mail,   section: "Tickets", permission: "inbox.view", showInboxBadge: true },
+  { label: "Sales Inbox",       path: "/inbox",            icon: Mail,   section: "Tickets", permission: "inbox.view",        showInboxBadge: true },
+  { label: "Onboarding Inbox",  path: "/onboarding-inbox", icon: Mail,   section: "Tickets", permission: "onboarding.inbox",  showOnboardingInboxBadge: true },
   { label: "Sales Tickets", path: "/tickets/sales",  icon: Ticket, section: "Tickets", permissions: ["tickets.sales", "tickets.finance_confirm"] },
   { label: "Orders Tickets",path: "/tickets/orders", icon: Ticket, section: "Tickets", permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
   { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
   { label: "Email Routing", path: "/settings/email-routing", icon: Settings, section: "Admin", superAdminOnly: true              },
-  { label: "Mailbox",       path: "/settings/mailbox",       icon: Mail,     section: "Admin", superAdminOnly: true              },
+  { label: "Mailbox",            path: "/settings/mailbox",            icon: Mail, section: "Admin", superAdminOnly: true },
+  { label: "Onboarding Mailbox", path: "/settings/onboarding-mailbox", icon: Mail, section: "Admin", superAdminOnly: true },
 ];
 
 const RESELLER_NAV = [
@@ -65,14 +67,26 @@ export function Sidebar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { open, close } = useContext(SidebarContext);
-  const [inboxCount,        setInboxCount       ] = useState(0);
-  const [pendingAppsCount,  setPendingAppsCount ] = useState(0);
+  const [inboxCount,            setInboxCount           ] = useState(0);
+  const [onboardingInboxCount,  setOnboardingInboxCount ] = useState(0);
+  const [pendingAppsCount,      setPendingAppsCount     ] = useState(0);
 
   useEffect(() => {
     if (!can("inbox.view")) return;
     const fetchCount = () =>
       api.get("/api/inbox/unhandled-count")
         .then(r => setInboxCount(r.data.count || 0))
+        .catch(() => {});
+    fetchCount();
+    const id = setInterval(fetchCount, 60000);
+    return () => clearInterval(id);
+  }, [can]);
+
+  useEffect(() => {
+    if (!can("onboarding.inbox")) return;
+    const fetchCount = () =>
+      api.get("/api/onboarding-inbox/unhandled-count")
+        .then(r => setOnboardingInboxCount(r.data.count || 0))
         .catch(() => {});
     fetchCount();
     const id = setInterval(fetchCount, 60000);
@@ -135,7 +149,7 @@ export function Sidebar() {
               item.children
                 ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
                 : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
-                    badge={item.showInboxBadge ? inboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
+                    badge={item.showInboxBadge ? inboxCount : item.showOnboardingInboxBadge ? onboardingInboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
             )}
           </div>
         ))}

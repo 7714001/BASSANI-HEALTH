@@ -41,6 +41,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "audit":       {"view": False},
     "tickets":     {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
     "inbox":       {"view": False},
+    "onboarding":  {"inbox": False},
     "suppliers":   {"view": True,  "manage": False},
 }
 
@@ -59,6 +60,7 @@ FULL_PERMISSIONS: dict = {
     "audit":       {"view": True},
     "tickets":     {"sales": True, "orders": True, "finance_confirm": True, "qa_approve": True, "rp_approve": True, "manage": True},
     "inbox":       {"view": True},
+    "onboarding":  {"inbox": True},
     "suppliers":   {"view": True,  "manage": True},
 }
 
@@ -82,6 +84,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "audit":      {"view": False},
         "tickets":    {"sales": True, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
         "inbox":      {"view": True},
+        "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
     },
     "orders_clerk": {
@@ -98,6 +101,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": True, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
         "inbox":      {"view": False},
+        "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
     },
     "finance": {
@@ -114,6 +118,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": True, "qa_approve": False, "rp_approve": False, "manage": False},
         "inbox":      {"view": False},
+        "onboarding": {"inbox": False},
         "suppliers":  {"view": True,  "manage": False},
     },
     "qa_manager": {
@@ -130,6 +135,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": True, "rp_approve": False, "manage": False},
         "inbox":      {"view": False},
+        "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
     },
     "responsible_pharmacist": {
@@ -146,6 +152,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "audit":      {"view": False},
         "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": True, "manage": False},
         "inbox":      {"view": False},
+        "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
     },
 }

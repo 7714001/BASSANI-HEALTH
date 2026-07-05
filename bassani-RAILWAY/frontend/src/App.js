@@ -31,12 +31,14 @@ import ResellerApplications          from "./views/ResellerApplications";
 import ResellerApplicationDetail     from "./views/ResellerApplicationDetail";
 import EmailSettings                 from "./views/EmailSettings";
 import MailboxSettings               from "./views/MailboxSettings";
+import OnboardingMailboxSettings     from "./views/OnboardingMailboxSettings";
 import ResellerProfile       from "./views/ResellerProfile";
 import Suppliers             from "./views/Suppliers";
 import SupplierProfile       from "./views/SupplierProfile";
 import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
 import SalesInbox            from "./views/SalesInbox";
+import OnboardingInbox       from "./views/OnboardingInbox";
 import ProductCategories     from "./views/ProductCategories";
 import ProductUOM            from "./views/ProductUOM";
 import ChangePassword        from "./views/ChangePassword";
@@ -218,6 +220,9 @@ export default function App() {
         <Route path="/inbox" element={
           <ProtectedRoute><AppLayout><SalesInbox /></AppLayout></ProtectedRoute>
         } />
+        <Route path="/onboarding-inbox" element={
+          <ProtectedRoute><AppLayout><OnboardingInbox /></AppLayout></ProtectedRoute>
+        } />
         <Route path="/tickets/sales" element={
           <ProtectedRoute><AppLayout><SalesTickets /></AppLayout></ProtectedRoute>
         } />
@@ -236,6 +241,9 @@ export default function App() {
         } />
         <Route path="/settings/mailbox" element={
           <ProtectedRoute><AppLayout><MailboxSettings /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/settings/onboarding-mailbox" element={
+          <ProtectedRoute><AppLayout><OnboardingMailboxSettings /></AppLayout></ProtectedRoute>
         } />
         <Route path="/my-applications" element={
           <ProtectedRoute><AppLayout><ResellerApplications /></AppLayout></ProtectedRoute>

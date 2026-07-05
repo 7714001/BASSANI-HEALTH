@@ -20,7 +20,6 @@ Architecture notes:
 - Attachment bytes are never stored; they are fetched on-demand from Graph.
 """
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -49,16 +48,11 @@ from services.imap_client import (
     imap_configured,
     send_reply as imap_send_reply,
 )
+from services.inbox_service import resolve_customer as _resolve_customer
 from services.notification_service import notify_ticket_assigned
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
-
-# ── Customer resolution cache ─────────────────────────────────────────────────
-# Keyed by from_email; value is (customer_id, customer_name, expires_monotonic).
-# Avoids a synchronous Odoo XML-RPC call on every ingested message.
-_customer_cache: dict[str, tuple] = {}
-_CUSTOMER_CACHE_TTL = 600  # 10 minutes — stale enough to not matter, fresh enough to catch new partners
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -108,35 +102,6 @@ def _fmt(doc: dict) -> dict:
 def _actor(user: dict) -> str:
     return user.get("name") or user.get("username") or "unknown"
 
-
-async def _resolve_customer(from_email: str) -> tuple[Optional[int], Optional[str]]:
-    """Look up sender email in Odoo res.partner. Returns (partner_id, name).
-
-    Results are cached for _CUSTOMER_CACHE_TTL seconds to avoid an Odoo
-    roundtrip on every ingested message during burst polling.
-    """
-    cached = _customer_cache.get(from_email)
-    if cached:
-        cid, cname, expires = cached
-        if expires > time.monotonic():
-            return cid, cname
-
-    cid, cname = None, None
-    try:
-        odoo = get_odoo_client()
-        results = odoo.search_read(
-            "res.partner",
-            domain=[["email", "=", from_email], ["active", "=", True]],
-            fields=["id", "name"],
-            limit=1,
-        )
-        if results:
-            cid, cname = int(results[0]["id"]), results[0]["name"]
-    except Exception as exc:
-        logger.warning("inbox_customer_lookup_failed email=%s error=%s", from_email, exc)
-
-    _customer_cache[from_email] = (cid, cname, time.monotonic() + _CUSTOMER_CACHE_TTL)
-    return cid, cname
 
 
 async def _ingest_message(graph_message_id: str) -> None:
@@ -541,7 +506,7 @@ async def list_inbox(
         {"$sort": {"received_at": -1}},
         {"$group": {
             "_id": group_key,
-            "doc": {"$first": "$$ROOT"},      # latest message in the thread
+            "doc": {"$first": "$$ROOT"},
             "message_count": {"$sum": 1},
             "unread_count": {"$sum": {
                 "$cond": [
@@ -549,16 +514,22 @@ async def list_inbox(
                     1, 0,
                 ]
             }},
+            # $max picks the first non-null value across all messages in the thread,
+            # so ticket_id is visible even when the newest doc is a reply without it.
+            "ticket_id":      {"$max": "$ticket_id"},
+            "application_id": {"$max": "$application_id"},
         }},
-        {"$sort": {"doc.received_at": -1}},   # threads ordered by latest activity
+        {"$sort": {"doc.received_at": -1}},
         {"$skip": skip},
         {"$limit": limit},
         {"$replaceRoot": {
             "newRoot": {
                 "$mergeObjects": ["$doc", {
-                    "message_count": "$message_count",
-                    "unread_count":  "$unread_count",
-                    "has_unread":    {"$gt": ["$unread_count", 0]},
+                    "message_count":  "$message_count",
+                    "unread_count":   "$unread_count",
+                    "has_unread":     {"$gt": ["$unread_count", 0]},
+                    "ticket_id":      "$ticket_id",
+                    "application_id": "$application_id",
                 }]
             }
         }},

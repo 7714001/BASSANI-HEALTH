@@ -244,110 +244,128 @@ async def initialise_users():
         logger.info("startup_migrated_inbox_other", extra={"count": r.modified_count})
 
 
-@app.on_event("startup")
-async def initialise_inbox():
-    """Phase 11 — sales_inbox indexes, Graph subscription, and IMAP polling."""
+def _make_inbox_indexes(collection: str):
+    """Return the standard index list for any inbox collection."""
+    from database import col
+    return [
+        col(collection).create_index([("received_at", -1)]),
+        col(collection).create_index([("status", 1)]),
+        col(collection).create_index([("graph_message_id", 1)], unique=True, sparse=True),
+        col(collection).create_index([("graph_conversation_id", 1)]),
+        col(collection).create_index([("imap_message_id", 1)], unique=True, sparse=True),
+        col(collection).create_index([("thread_root_id", 1)]),
+        col(collection).create_index([("from_email", 1)]),
+        col(collection).create_index([("ticket_id", 1)]),
+        col(collection).create_index(
+            [("status", 1), ("received_at", -1)], name=f"{collection}_status_received_at"
+        ),
+        col(collection).create_index(
+            [("thread_root_id", 1), ("status", 1)], name=f"{collection}_thread_root_status"
+        ),
+        col(collection).create_index(
+            [("expires_at", 1)], expireAfterSeconds=0, sparse=True, name=f"{collection}_ttl"
+        ),
+    ]
+
+
+async def _run_inbox_startup(
+    mailbox: str,
+    collection: str,
+    label: str,
+) -> None:
+    """
+    Shared startup logic for any inbox mailbox.
+    - Ensures indexes on the given collection
+    - Loads IMAP/Graph config for the mailbox
+    - Creates/renews the Graph subscription (skipped if not configured)
+    - Runs a Graph catch-up poll
+    - Starts an IMAP poll loop
+    """
     import asyncio
     from database import col
     from services.graph_client import graph_configured
     from services.graph_subscription import ensure_subscription
-    from services.imap_client import load_config_from_db
-    from routes.inbox_routes import _ingest_imap_message, _ingest_message
+    from services.imap_client import (
+        load_config_from_db,
+        get_graph_mailbox_address,
+        imap_configured as imap_ok,
+        fetch_new_messages,
+    )
+    from services.inbox_service import ingest_graph_message, ingest_imap_message
 
-    await col("sales_inbox").create_index([("received_at", -1)])
-    await col("sales_inbox").create_index([("status", 1)])
-    await col("sales_inbox").create_index(
-        [("graph_message_id", 1)], unique=True, sparse=True
-    )
-    await col("sales_inbox").create_index([("graph_conversation_id", 1)])
-    await col("sales_inbox").create_index(
-        [("imap_message_id", 1)], unique=True, sparse=True
-    )
-    await col("sales_inbox").create_index([("thread_root_id", 1)])
-    await col("sales_inbox").create_index([("from_email", 1)])
-    await col("sales_inbox").create_index([("ticket_id", 1)])
-    # Compound indexes — support the aggregation match+sort and the update_many
-    # thread-stamp queries added in Phase 11.B hardening.
-    await col("sales_inbox").create_index(
-        [("status", 1), ("received_at", -1)], name="status_received_at"
-    )
-    await col("sales_inbox").create_index(
-        [("thread_root_id", 1), ("status", 1)], name="thread_root_status"
-    )
-    # Sparse TTL — MongoDB auto-deletes archived docs 180 days after archival.
-    # Only archived docs get expires_at set; ticket_created threads are never
-    # archived so they are never touched by this index.
-    await col("sales_inbox").create_index(
-        [("expires_at", 1)],
-        expireAfterSeconds=0,
-        sparse=True,
-        name="sales_inbox_ttl",
-    )
-    await col("sales_inbox_attachments").create_index([("inbox_item_id", 1)])
+    for coro in _make_inbox_indexes(collection):
+        await coro
+    await col(f"{collection}_attachments").create_index([("inbox_item_id", 1)])
 
-    # Load IMAP credentials from MongoDB (falls back to env vars).
-    # Must happen before graph/IMAP checks below.
-    await load_config_from_db()
+    await load_config_from_db(mailbox)
 
-    # Create or renew the Graph push-notification subscription.
-    # Skipped silently when MS credentials are not configured.
-    await ensure_subscription()
+    mailbox_address = get_graph_mailbox_address(mailbox)
+    await ensure_subscription(mailbox=mailbox, mailbox_address=mailbox_address or "")
 
-    if graph_configured():
-        # Catch-up poll on startup: ingest any unread messages that arrived
-        # while Railway was down and Graph could not reach the webhook.
+    if graph_configured() and mailbox_address:
         try:
             from services.graph_client import list_messages
-            catchup_msgs = await list_messages(filter_str="isRead eq false", top=50)
-            logger.info("graph_startup_catchup found=%d unread messages", len(catchup_msgs))
-            for cm in catchup_msgs:
-                mid = cm.get("id", "")
+            msgs = await list_messages(
+                filter_str="isRead eq false", top=50, mailbox_address=mailbox_address
+            )
+            logger.info("%s_graph_startup_catchup found=%d", label, len(msgs))
+            for m in msgs:
+                mid = m.get("id", "")
                 if mid:
-                    asyncio.create_task(_ingest_message(mid))
+                    asyncio.create_task(ingest_graph_message(collection, mailbox, mid))
         except Exception as exc:
-            logger.warning("graph_startup_catchup_failed error=%s", exc)
+            logger.warning("%s_graph_startup_catchup_failed error=%s", label, exc)
 
         async def _graph_renewal_loop():
             while True:
-                await asyncio.sleep(12 * 3600)  # every 12 h — renewal threshold is 47 h
+                await asyncio.sleep(12 * 3600)
                 try:
-                    await ensure_subscription()
+                    await ensure_subscription(
+                        mailbox=mailbox,
+                        mailbox_address=get_graph_mailbox_address(mailbox) or "",
+                    )
                 except Exception as exc:
-                    logger.error("graph_renewal_loop_error error=%s", exc)
+                    logger.error("%s_graph_renewal_loop_error error=%s", label, exc)
 
         asyncio.create_task(_graph_renewal_loop())
 
-    # Always start the IMAP poll loop. It checks whether IMAP is configured on
-    # each iteration so a mailbox connected at runtime (via Settings > Mailbox)
-    # starts being polled within 60 seconds without requiring a restart.
-    # The _poll_running flag prevents concurrent poll iterations when the IMAP
-    # server is slow and a single poll takes longer than the 60 s interval.
     _poll_running = [False]
 
     async def _imap_poll_loop():
         while True:
-            await asyncio.sleep(60)  # IMAP has no push — poll every 60 s
-            from services.imap_client import imap_configured as _imap_ok, fetch_new_messages
-            if not _imap_ok():
+            await asyncio.sleep(60)
+            if not imap_ok(mailbox):
                 continue
             if _poll_running[0]:
-                logger.warning("imap_poll_skipped — previous poll still running")
+                logger.warning("%s_imap_poll_skipped — previous still running", label)
                 continue
             _poll_running[0] = True
             try:
-                msgs = await fetch_new_messages()
+                msgs = await fetch_new_messages(mailbox)
                 for m in msgs:
                     try:
-                        await _ingest_imap_message(m)
+                        await ingest_imap_message(collection, mailbox, m)
                     except Exception as exc:
-                        logger.error("imap_ingest_error error=%s", exc)
+                        logger.error("%s_imap_ingest_error error=%s", label, exc)
             except Exception as exc:
-                logger.error("imap_poll_loop_error error=%s", exc)
+                logger.error("%s_imap_poll_loop_error error=%s", label, exc)
             finally:
                 _poll_running[0] = False
 
     asyncio.create_task(_imap_poll_loop())
-    logger.info("imap_poll_loop_started interval_s=60")
+    logger.info("%s_imap_poll_loop_started interval_s=60", label)
+
+
+@app.on_event("startup")
+async def initialise_inbox():
+    """Phase 11 — sales_inbox indexes, Graph subscription, and IMAP polling."""
+    await _run_inbox_startup("sales", "sales_inbox", "sales_inbox")
+
+
+@app.on_event("startup")
+async def initialise_onboarding_inbox():
+    """Phase 11 — onboarding_inbox indexes, Graph subscription, and IMAP polling."""
+    await _run_inbox_startup("onboarding", "onboarding_inbox", "onboarding_inbox")
 
 
 @app.get("/health")
@@ -410,6 +428,7 @@ from routes.packing_board_routes import router as packing_board_router
 from routes.warehouse_routes          import router as warehouse_router
 from routes.ticket_routes             import router as ticket_router
 from routes.inbox_routes              import router as inbox_router
+from routes.onboarding_inbox_routes   import router as onboarding_inbox_router
 from routes.reseller_catalog_routes   import router as reseller_catalog_router
 from routes.supplier_routes           import router as supplier_router
 from routes.settings_routes           import router as settings_router
@@ -421,7 +440,7 @@ for router in [
     aged_debtors_router, payment_router, audit_router, batch_router,
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
-    warehouse_router, ticket_router, inbox_router,
+    warehouse_router, ticket_router, inbox_router, onboarding_inbox_router,
     reseller_catalog_router, supplier_router, settings_router,
 ]:
     app.include_router(router)

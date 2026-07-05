@@ -189,3 +189,90 @@ async def test_mailbox_connection(
         return {"success": True, "message": "Connection successful. Mailbox is reachable."}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
+
+
+# ── Onboarding mailbox config ─────────────────────────────────────────────────
+# Mirrors the sales mailbox endpoints. Uses a separate MongoDB doc so the two
+# mailboxes can have different providers, hosts, and credentials.
+
+_ONBOARDING_KEY = "mailbox_config_onboarding"
+
+
+@router.get("/onboarding-mailbox")
+async def get_onboarding_mailbox_config(_: dict = Depends(_require_super_admin)):
+    doc = await col("portal_settings").find_one({"_id": _ONBOARDING_KEY})
+    if not doc:
+        return {
+            "configured": False,
+            "imap_host": "", "imap_port": 993, "imap_username": "",
+            "smtp_host": "", "smtp_port": 587, "smtp_username": "",
+            "mailbox_address": "",
+        }
+    return {
+        "configured": bool(doc.get("imap_host") and doc.get("imap_username") and doc.get("imap_password")),
+        "imap_host":       doc.get("imap_host", ""),
+        "imap_port":       doc.get("imap_port", 993),
+        "imap_username":   doc.get("imap_username", ""),
+        "smtp_host":       doc.get("smtp_host", ""),
+        "smtp_port":       doc.get("smtp_port", 587),
+        "smtp_username":   doc.get("smtp_username", ""),
+        "mailbox_address": doc.get("mailbox_address", ""),
+    }
+
+
+@router.put("/onboarding-mailbox")
+async def save_onboarding_mailbox_config(
+    body: MailboxConfig,
+    _: dict = Depends(_require_super_admin),
+):
+    data = body.model_dump()
+    existing = await col("portal_settings").find_one({"_id": _ONBOARDING_KEY}) or {}
+    if not data["imap_password"]:
+        data["imap_password"] = existing.get("imap_password", "")
+    if not data["smtp_password"]:
+        data["smtp_password"] = existing.get("smtp_password", "")
+    if not data["mailbox_address"]:
+        data["mailbox_address"] = data["imap_username"]
+
+    await col("portal_settings").update_one(
+        {"_id": _ONBOARDING_KEY},
+        {"$set": data},
+        upsert=True,
+    )
+    from services.imap_client import load_config_from_db
+    await load_config_from_db("onboarding")
+    return {"success": True}
+
+
+@router.delete("/onboarding-mailbox")
+async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin)):
+    await col("portal_settings").delete_one({"_id": _ONBOARDING_KEY})
+    from services.imap_client import load_config_from_db
+    await load_config_from_db("onboarding")
+    return {"success": True}
+
+
+@router.post("/onboarding-mailbox/test")
+async def test_onboarding_mailbox_connection(
+    body: MailboxConfig,
+    _: dict = Depends(_require_super_admin),
+):
+    if not body.imap_host or not body.imap_username or not body.imap_password:
+        raise HTTPException(status_code=422, detail="IMAP host, username, and password are required for the connection test.")
+    from services.imap_client import test_connection
+    cfg = {
+        "imap_host":      body.imap_host.strip(),
+        "imap_port":      body.imap_port or 993,
+        "imap_username":  body.imap_username.strip(),
+        "imap_password":  body.imap_password,
+        "smtp_host":      body.smtp_host or body.imap_host,
+        "smtp_port":      body.smtp_port or 587,
+        "smtp_username":  body.smtp_username or body.imap_username,
+        "smtp_password":  body.smtp_password or body.imap_password,
+        "mailbox_address": body.mailbox_address or body.imap_username,
+    }
+    try:
+        await test_connection(cfg)
+        return {"success": True, "message": "Connection successful. Mailbox is reachable."}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
