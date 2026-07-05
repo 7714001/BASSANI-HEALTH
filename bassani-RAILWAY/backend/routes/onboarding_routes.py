@@ -535,8 +535,8 @@ async def update_application(
         raise HTTPException(status_code=404, detail="Application not found")
     if app.get("reseller_id") != reseller["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
-    if app.get("status") != "pending":
-        raise HTTPException(status_code=400, detail="Only pending applications can be updated")
+    if app.get("status") not in {"pending", "awaiting_docs"}:
+        raise HTTPException(status_code=400, detail="Only pending or draft applications can be updated")
 
     updates = body.model_dump(exclude_unset=True)
     if not updates:
@@ -548,6 +548,69 @@ async def update_application(
                     entity_label=app.get("company_name", ""), user=current_user,
                     reseller_id=reseller["id"], after=updates)
     return {"success": True}
+
+
+@router.post("/{app_id}/submit")
+async def submit_draft_application(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reseller submits an awaiting_docs draft application for admin review."""
+    if current_user.get("role") != "reseller":
+        raise HTTPException(status_code=403, detail="Only resellers can submit applications")
+    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+    if not reseller:
+        raise HTTPException(status_code=403, detail="Reseller profile not found")
+
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.get("reseller_id") != reseller["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if app.get("status") != "awaiting_docs":
+        raise HTTPException(status_code=400, detail="Only draft applications can be submitted this way")
+
+    required_fields = [
+        ("company_name",  "Company name"),
+        ("contact_name",  "Contact name"),
+        ("contact_email", "Contact email"),
+        ("contact_phone", "Contact phone"),
+        ("street",        "Street address"),
+        ("city",          "City"),
+    ]
+    for field, label in required_fields:
+        if not (app.get(field) or "").strip():
+            raise HTTPException(status_code=400, detail=f"{label} is required before submitting")
+
+    submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
+    missing = [lbl for dtype, lbl in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required documents: {', '.join(missing)}",
+        )
+
+    now = datetime.now(timezone.utc)
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"status": "pending", "submitted_at": now}},
+    )
+    await audit_log(
+        "onboarding.submit", "customer_onboarding", app_id,
+        entity_label=app.get("company_name", ""), user=current_user,
+        before={"status": "awaiting_docs"}, after={"status": "pending"},
+        reseller_id=reseller["id"],
+    )
+    routing = await get_email_routing()
+    background_tasks.add_task(
+        send_onboarding_submitted,
+        company_name=app.get("company_name", ""),
+        reseller_name=reseller.get("name", current_user.get("username", "")),
+        app_ref=app_id,
+        to=routing["application_submitted_to"],
+    )
+    return {"success": True, "reference": app_id}
 
 
 @router.post("/{app_id}/documents/{doc_type}")

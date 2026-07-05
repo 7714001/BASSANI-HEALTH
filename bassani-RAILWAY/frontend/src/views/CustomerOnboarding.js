@@ -1,8 +1,8 @@
-import { useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle, Building2, User, MapPin, ClipboardList,
-  FileText, Download, Mail, Upload, X, Loader2, AlertCircle,
+  FileText, Download, Mail, Upload, X, Loader2, AlertCircle, Clock,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -107,22 +107,72 @@ function Textarea({ value, onChange, placeholder, rows = 3 }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function CustomerOnboarding() {
-  const navigate  = useNavigate();
+  const navigate        = useNavigate();
+  const [searchParams]  = useSearchParams();
+  const resumeId        = searchParams.get("resume");
+
   const [sessionId]            = useState(() => crypto.randomUUID());
   const [step,        setStep ]        = useState(0);
   const [form,        setForm ]        = useState(BLANK);
   const [submitting,  setSubmitting ]  = useState(false);
   const [reference,   setReference ]   = useState(null);
+  const [loadingResume, setLoadingResume] = useState(!!resumeId);
 
-  // Step 0 — document state
-  const [uploads,       setUploads      ] = useState({});   // { doc_type: { label, filename, r2_key, size } }
-  const [uploadingDoc,  setUploadingDoc ] = useState(null); // doc_type currently uploading
-  const [removingDoc,   setRemovingDoc  ] = useState(null); // doc_type currently removing
-  const [emailTarget,   setEmailTarget  ] = useState("");
-  const [emailSending,  setEmailSending ] = useState(false);
+  // Draft/email-path state
+  const [draftAppId,  setDraftAppId]   = useState(resumeId || null);
+  const [emailSent,   setEmailSent]    = useState(false);
+  const [serverDocs,  setServerDocs]   = useState([]); // docs already saved to the draft application
+
+  // Step 0 — document state (for upload path)
+  const [uploads,           setUploads      ] = useState({});
+  const [uploadingDoc,      setUploadingDoc ] = useState(null);
+  const [removingDoc,       setRemovingDoc  ] = useState(null);
+  const [emailTarget,       setEmailTarget  ] = useState("");
+  const [emailBusinessName, setEmailBusinessName] = useState("");
+  const [emailSending,      setEmailSending ] = useState(false);
   const fileInputRefs = useRef({});
 
   const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+
+  // ── Resume: load existing draft application ─────────────────────────────────
+
+  useEffect(() => {
+    if (!resumeId) return;
+    (async () => {
+      try {
+        const { data } = await api.get(`/api/onboarding/${resumeId}`);
+        // Populate form with whatever was saved
+        setForm({
+          company_name:        data.company_name        || "",
+          trading_name:        data.trading_name        || "",
+          registration_number: data.registration_number || "",
+          vat_number:          data.vat_number          || "",
+          business_type:       data.business_type       || "Pharmacy",
+          contact_name:        data.contact_name        || "",
+          contact_position:    data.contact_position    || "",
+          contact_email:       data.contact_email       || "",
+          contact_phone:       data.contact_phone       || "",
+          contact_alt_phone:   data.contact_alt_phone   || "",
+          street:              data.street              || "",
+          suburb:              data.suburb              || "",
+          city:                data.city                || "",
+          province:            data.province            || "",
+          postal_code:         data.postal_code         || "",
+          country:             data.country             || "South Africa",
+          ordering_volume:     data.ordering_volume     || "",
+          referral_source:     data.referral_source     || "",
+          notes:               data.notes               || "",
+        });
+        setServerDocs(data.documents || []);
+        setEmailSent(true); // docs were emailed by definition (source: inbox)
+        setStep(1); // start at business details, docs managed by admin
+      } catch {
+        toast.error("Could not load application. It may have already been submitted.");
+      } finally {
+        setLoadingResume(false);
+      }
+    })();
+  }, [resumeId]);
 
   // ── Document helpers ────────────────────────────────────────────────────────
 
@@ -139,12 +189,23 @@ export default function CustomerOnboarding() {
   };
 
   const emailTemplates = async () => {
+    if (!emailBusinessName.trim()) return toast.error("Enter the customer's business name");
     if (!emailTarget.trim()) return toast.error("Enter the customer's email address");
     setEmailSending(true);
     try {
-      await api.post("/api/onboarding/templates/email", { to_email: emailTarget.trim() });
+      const { data } = await api.post("/api/onboarding/templates/email", {
+        to_email:      emailTarget.trim(),
+        customer_name: emailBusinessName.trim(),
+      });
       toast.success("Documents sent to " + emailTarget.trim());
+      // Pre-fill company name into the form so Step 1 is already populated
+      setForm(f => ({ ...f, company_name: emailBusinessName.trim() }));
       setEmailTarget("");
+      setEmailBusinessName("");
+      setEmailSent(true);
+      if (data.application_id) {
+        setDraftAppId(data.application_id);
+      }
     } catch {
       toast.error("Failed to send email");
     } finally {
@@ -183,10 +244,24 @@ export default function CustomerOnboarding() {
     }
   };
 
+  // ── Progress save (draft path) ──────────────────────────────────────────────
+
+  const saveProgress = async (formSnapshot) => {
+    if (!draftAppId) return;
+    try {
+      await api.put(`/api/onboarding/${draftAppId}`, formSnapshot);
+    } catch {
+      toast.error("Could not save progress — please check your connection");
+    }
+  };
+
   // ── Validation ──────────────────────────────────────────────────────────────
 
   const validateStep = () => {
     if (step === 0) {
+      // Email path: allow continue — docs will arrive via inbox
+      if (emailSent) return true;
+      // Upload path: require all 5 docs
       const missing = REQUIRED_DOCS.filter(d => !uploads[d.type]);
       if (missing.length) {
         toast.error(`Upload all required documents (${missing.length} remaining)`);
@@ -208,8 +283,15 @@ export default function CustomerOnboarding() {
     return true;
   };
 
-  const next   = () => { if (validateStep()) setStep(s => s + 1); };
-  const back   = () => setStep(s => s - 1);
+  const next = async () => {
+    if (!validateStep()) return;
+    if (draftAppId && step >= 1) {
+      await saveProgress(form);
+    }
+    setStep(s => s + 1);
+  };
+
+  const back = () => setStep(s => s - 1);
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
@@ -217,19 +299,38 @@ export default function CustomerOnboarding() {
     if (!validateStep()) return;
     setSubmitting(true);
     try {
-      const payload = {
-        ...form,
-        document_session_id: sessionId,
-        documents: Object.values(uploads),
-      };
-      const { data } = await api.post("/api/onboarding/", payload);
-      setReference(data.reference);
+      if (draftAppId) {
+        // Save final step fields first, then submit the draft
+        await api.put(`/api/onboarding/${draftAppId}`, form);
+        const { data } = await api.post(`/api/onboarding/${draftAppId}/submit`);
+        setReference(data.reference);
+      } else {
+        // Full upload path — submit everything in one shot
+        const payload = {
+          ...form,
+          document_session_id: sessionId,
+          documents: Object.values(uploads),
+        };
+        const { data } = await api.post("/api/onboarding/", payload);
+        setReference(data.reference);
+      }
     } catch (e) {
       toast.error(e.response?.data?.detail || "Submission failed. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  // ── Loading state ───────────────────────────────────────────────────────────
+
+  if (loadingResume) {
+    return (
+      <div className="flex flex-col flex-1 items-center justify-center bg-gray-50">
+        <Loader2 size={24} className="animate-spin text-bassani-500 mb-3" />
+        <p className="text-sm text-gray-500">Loading application…</p>
+      </div>
+    );
+  }
 
   // ── Success screen ──────────────────────────────────────────────────────────
 
@@ -244,18 +345,18 @@ export default function CustomerOnboarding() {
             <h2 className="text-xl font-bold text-gray-900 mb-2">Application Submitted</h2>
             <p className="text-gray-500 text-sm mb-5">
               Your onboarding application for <strong>{form.company_name}</strong> has been submitted
-              with all supporting documents and is pending admin review.
+              and is pending admin review.
             </p>
             <div className="bg-gray-50 rounded-xl p-4 mb-6">
               <p className="text-xs text-gray-400 font-medium mb-1">Reference Number</p>
               <p className="text-lg font-bold font-mono text-bassani-700">{reference}</p>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => navigate("/customers")}
+              <button onClick={() => navigate("/my-applications")}
                 className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                Back to Customers
+                View Applications
               </button>
-              <button onClick={() => { setForm(BLANK); setStep(0); setReference(null); setUploads({}); }}
+              <button onClick={() => { setForm(BLANK); setStep(0); setReference(null); setUploads({}); setEmailSent(false); setDraftAppId(null); setServerDocs([]); }}
                 className="flex-1 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 rounded-lg text-sm font-semibold text-white transition-colors">
                 Onboard Another
               </button>
@@ -270,9 +371,24 @@ export default function CustomerOnboarding() {
 
   const uploadedCount = Object.keys(uploads).length;
   const allUploaded   = uploadedCount === REQUIRED_DOCS.length;
+  const serverDocTypes = new Set(serverDocs.map(d => d.doc_type));
 
   const step0Content = (
     <div className="space-y-6">
+
+      {/* Email sent banner */}
+      {emailSent && (
+        <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+          <Clock size={14} className="text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-blue-800 mb-0.5">Documents sent — waiting for customer</p>
+            <p className="text-xs text-blue-600">
+              Continue filling in the details below while you wait. The admin team will save the
+              signed documents once the customer replies.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Section A — share templates */}
       <div>
@@ -300,119 +416,167 @@ export default function CustomerOnboarding() {
         </div>
 
         {/* Email to customer */}
-        <div className="border border-gray-100 rounded-xl p-4 bg-white">
-          <p className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
-            <Mail size={12} className="text-gray-400" />
-            Email all documents to customer
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="email"
-              value={emailTarget}
-              onChange={e => setEmailTarget(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && emailTemplates()}
-              placeholder="customer@example.co.za"
-              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
-            />
-            <button
-              onClick={emailTemplates}
-              disabled={emailSending || !emailTarget.trim()}
-              className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-              {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
-              Send Docs
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="border-t border-gray-100" />
-
-      {/* Section B — upload signed docs */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Step B — Upload signed documents &amp; CIPC
-          </p>
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allUploaded ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-            {uploadedCount} / {REQUIRED_DOCS.length}
-          </span>
-        </div>
-
-        {!allUploaded && (
-          <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-3">
-            <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700">All 5 documents must be uploaded before you can continue.</p>
+        {!emailSent && (
+          <div className="border border-gray-100 rounded-xl p-4 bg-white">
+            <p className="text-xs font-semibold text-gray-600 mb-3 flex items-center gap-1.5">
+              <Mail size={12} className="text-gray-400" />
+              Email all documents to customer
+            </p>
+            <div className="space-y-2 mb-2">
+              <input
+                type="text"
+                value={emailBusinessName}
+                onChange={e => setEmailBusinessName(e.target.value)}
+                placeholder="Customer business name (required)"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={emailTarget}
+                  onChange={e => setEmailTarget(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && emailTemplates()}
+                  placeholder="customer@example.co.za"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                />
+                <button
+                  onClick={emailTemplates}
+                  disabled={emailSending || !emailTarget.trim() || !emailBusinessName.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                  {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                  Send Docs
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400">
+              Sending via email lets you continue filling in details immediately — signed docs will be saved once the customer replies.
+            </p>
           </div>
         )}
+      </div>
 
-        <div className="space-y-2">
-          {REQUIRED_DOCS.map(doc => {
-            const uploaded  = uploads[doc.type];
-            const loading   = uploadingDoc === doc.type;
-            const removing  = removingDoc  === doc.type;
+      {/* Section B — upload signed docs (shown when not on email path) */}
+      {!emailSent && (
+        <>
+          <div className="border-t border-gray-100" />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Step B — Upload signed documents &amp; CIPC
+              </p>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allUploaded ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                {uploadedCount} / {REQUIRED_DOCS.length}
+              </span>
+            </div>
 
-            return (
-              <div key={doc.type}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
-                  uploaded ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
-                }`}>
+            {!allUploaded && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-3">
+                <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">Upload all 5 documents, or send them to the customer via email above to continue.</p>
+              </div>
+            )}
 
-                {/* Status icon */}
-                <div className="shrink-0">
-                  {loading ? (
-                    <Loader2 size={14} className="text-bassani-500 animate-spin" />
-                  ) : uploaded ? (
-                    <CheckCircle size={14} className="text-green-600" />
-                  ) : (
-                    <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300" />
-                  )}
-                </div>
+            <div className="space-y-2">
+              {REQUIRED_DOCS.map(doc => {
+                const uploaded  = uploads[doc.type];
+                const loading   = uploadingDoc === doc.type;
+                const removing  = removingDoc  === doc.type;
 
-                {/* Label + filename */}
-                <div className="flex-1 min-w-0">
-                  <p className={`text-xs font-semibold truncate ${uploaded ? "text-green-800" : "text-gray-700"}`}>
+                return (
+                  <div key={doc.type}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
+                      uploaded ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+                    }`}>
+                    <div className="shrink-0">
+                      {loading ? (
+                        <Loader2 size={14} className="text-bassani-500 animate-spin" />
+                      ) : uploaded ? (
+                        <CheckCircle size={14} className="text-green-600" />
+                      ) : (
+                        <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-semibold truncate ${uploaded ? "text-green-800" : "text-gray-700"}`}>
+                        {doc.label}
+                      </p>
+                      {uploaded && (
+                        <p className="text-[10px] text-green-600 truncate mt-0.5">{uploaded.filename}</p>
+                      )}
+                    </div>
+                    {uploaded ? (
+                      <button
+                        onClick={() => removeDoc(doc.type)}
+                        disabled={!!removingDoc}
+                        title="Remove and re-upload"
+                        className="shrink-0 p-1 rounded hover:bg-green-100 text-green-600 hover:text-red-500 transition-colors disabled:opacity-50">
+                        {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                      </button>
+                    ) : (
+                      <>
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          className="hidden"
+                          ref={el => { fileInputRefs.current[doc.type] = el; }}
+                          onChange={e => {
+                            if (e.target.files[0]) uploadDoc(doc.type, e.target.files[0]);
+                            e.target.value = "";
+                          }}
+                        />
+                        <button
+                          onClick={() => fileInputRefs.current[doc.type]?.click()}
+                          disabled={loading || !!uploadingDoc}
+                          className="shrink-0 flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors">
+                          <Upload size={11} />
+                          Upload
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Server docs status (resume mode — docs saved by admin) */}
+      {emailSent && serverDocs.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Documents on file
+          </p>
+          <div className="space-y-1.5">
+            {REQUIRED_DOCS.map(doc => {
+              const onFile = serverDocTypes.has(doc.type);
+              return (
+                <div key={doc.type}
+                  className={`flex items-center gap-2.5 rounded-lg px-3 py-2 border ${
+                    onFile ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+                  }`}>
+                  {onFile
+                    ? <CheckCircle size={13} className="text-green-600 shrink-0" />
+                    : <div className="w-3 h-3 rounded-full border-2 border-gray-300 shrink-0" />
+                  }
+                  <p className={`text-xs font-medium truncate ${onFile ? "text-green-800" : "text-gray-400"}`}>
                     {doc.label}
                   </p>
-                  {uploaded && (
-                    <p className="text-[10px] text-green-600 truncate mt-0.5">{uploaded.filename}</p>
+                  {!onFile && (
+                    <span className="ml-auto text-[10px] text-amber-600 font-medium shrink-0">Pending</span>
                   )}
                 </div>
-
-                {/* Action */}
-                {uploaded ? (
-                  <button
-                    onClick={() => removeDoc(doc.type)}
-                    disabled={!!removingDoc}
-                    title="Remove and re-upload"
-                    className="shrink-0 p-1 rounded hover:bg-green-100 text-green-600 hover:text-red-500 transition-colors disabled:opacity-50">
-                    {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-                  </button>
-                ) : (
-                  <>
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                      className="hidden"
-                      ref={el => { fileInputRefs.current[doc.type] = el; }}
-                      onChange={e => {
-                        if (e.target.files[0]) uploadDoc(doc.type, e.target.files[0]);
-                        e.target.value = "";
-                      }}
-                    />
-                    <button
-                      onClick={() => fileInputRefs.current[doc.type]?.click()}
-                      disabled={loading || !!uploadingDoc}
-                      className="shrink-0 flex items-center gap-1 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors">
-                      <Upload size={11} />
-                      Upload
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+          {serverDocs.length < REQUIRED_DOCS.length && (
+            <p className="text-[10px] text-amber-600 mt-2">
+              {REQUIRED_DOCS.length - serverDocs.length} document(s) still awaiting the customer's reply.
+              You can complete the application now and submit — the admin team can approve once all docs are received.
+            </p>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -521,22 +685,41 @@ export default function CustomerOnboarding() {
 
   // ── Layout ──────────────────────────────────────────────────────────────────
 
+  const isDraftMode = !!draftAppId;
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Top bar */}
       <div className="shrink-0 bg-white border-b border-gray-100 px-6 py-3 flex items-center justify-between">
         <div>
-          <p className="text-sm font-semibold text-gray-900">Onboard New Customer</p>
-          <p className="text-xs text-gray-400">Complete all steps to submit for admin approval</p>
+          <p className="text-sm font-semibold text-gray-900">
+            {isDraftMode ? "Complete Application" : "Onboard New Customer"}
+          </p>
+          <p className="text-xs text-gray-400">
+            {isDraftMode
+              ? "Complete and submit your application for admin review"
+              : "Complete all steps to submit for admin approval"}
+          </p>
         </div>
-        <button onClick={() => navigate("/customers")}
+        <button onClick={() => navigate("/my-applications")}
           className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors">
-          ← Back to Customers
+          ← My Applications
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
         <div className="max-w-2xl mx-auto space-y-6">
+
+          {/* Draft mode indicator */}
+          {isDraftMode && (
+            <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5">
+              <Clock size={13} className="text-blue-600 shrink-0" />
+              <p className="text-xs text-blue-700 font-medium">
+                Resuming draft — progress is saved automatically as you move between steps.
+              </p>
+              <span className="ml-auto text-[10px] font-mono text-blue-400">{draftAppId}</span>
+            </div>
+          )}
 
           {/* Step indicators */}
           <div className="flex items-center gap-0">
@@ -544,21 +727,23 @@ export default function CustomerOnboarding() {
               const Icon    = s.icon;
               const done    = i < step;
               const current = i === step;
+              // In draft/resume mode, Step 0 is shown as complete
+              const forceComplete = isDraftMode && i === 0;
               return (
                 <div key={i} className="flex items-center flex-1 last:flex-none">
-                  <div className={`flex items-center gap-2 shrink-0 ${current ? "text-bassani-700" : done ? "text-bassani-500" : "text-gray-300"}`}>
+                  <div className={`flex items-center gap-2 shrink-0 ${current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"}`}>
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors
                       ${current ? "border-bassani-600 bg-bassani-600 text-white"
-                               : done    ? "border-bassani-500 bg-bassani-50 text-bassani-600"
+                               : (done || forceComplete) ? "border-bassani-500 bg-bassani-50 text-bassani-600"
                                : "border-gray-200 bg-white text-gray-300"}`}>
-                      {done ? <CheckCircle size={14} /> : <Icon size={14} />}
+                      {(done || forceComplete) ? <CheckCircle size={14} /> : <Icon size={14} />}
                     </div>
-                    <span className={`text-xs font-semibold hidden sm:block ${current ? "text-bassani-700" : done ? "text-bassani-500" : "text-gray-300"}`}>
+                    <span className={`text-xs font-semibold hidden sm:block ${current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"}`}>
                       {s.label}
                     </span>
                   </div>
                   {i < STEPS.length - 1 && (
-                    <div className={`flex-1 h-px mx-3 ${i < step ? "bg-bassani-300" : "bg-gray-200"}`} />
+                    <div className={`flex-1 h-px mx-3 ${(i < step || forceComplete) ? "bg-bassani-300" : "bg-gray-200"}`} />
                   )}
                 </div>
               );
@@ -584,7 +769,7 @@ export default function CustomerOnboarding() {
                   ← Back
                 </button>
               ) : (
-                <button onClick={() => navigate("/customers")}
+                <button onClick={() => navigate("/my-applications")}
                   className="px-4 py-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors">
                   Cancel
                 </button>
@@ -592,15 +777,15 @@ export default function CustomerOnboarding() {
               {step < STEPS.length - 1 ? (
                 <button
                   onClick={next}
-                  disabled={step === 0 && !allUploaded}
-                  title={step === 0 && !allUploaded ? `${REQUIRED_DOCS.length - uploadedCount} document(s) still required` : undefined}
+                  disabled={step === 0 && !emailSent && !allUploaded}
+                  title={step === 0 && !emailSent && !allUploaded ? `Upload all documents or email them to your customer to continue` : undefined}
                   className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors">
-                  Continue →
+                  {step === 0 && emailSent ? "Continue — fill in details →" : "Continue →"}
                 </button>
               ) : (
                 <button onClick={submit} disabled={submitting}
                   className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50">
-                  {submitting ? "Submitting…" : "Submit Application"}
+                  {submitting ? "Submitting…" : "Submit for Review"}
                 </button>
               )}
             </div>
@@ -613,7 +798,10 @@ export default function CustomerOnboarding() {
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Documents</span>
-                  <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded ✓</span>
+                  {emailSent
+                    ? <span className="font-medium text-blue-600">{serverDocs.length} / {REQUIRED_DOCS.length} on file</span>
+                    : <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded ✓</span>
+                  }
                 </div>
                 {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
                 {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}

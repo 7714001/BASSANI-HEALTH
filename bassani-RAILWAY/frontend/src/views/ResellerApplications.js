@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ChevronRight, Plus } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ChevronRight, Plus, ArrowRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, DataTable, FilterPill, ChipRow, fmtDate, BtnPrimary } from "../components/UI";
 
 const STATUS_CFG = {
-  pending:  { label: "Pending",  cls: "bg-amber-50 text-amber-700",  icon: Clock        },
-  approved: { label: "Approved", cls: "bg-green-50 text-green-700",  icon: CheckCircle  },
-  rejected: { label: "Rejected", cls: "bg-red-50   text-red-700",    icon: XCircle      },
+  awaiting_docs: { label: "Draft",    cls: "bg-blue-50  text-blue-700",  icon: Clock        },
+  pending:       { label: "Pending",  cls: "bg-amber-50 text-amber-700", icon: Clock        },
+  approved:      { label: "Approved", cls: "bg-green-50 text-green-700", icon: CheckCircle  },
+  rejected:      { label: "Rejected", cls: "bg-red-50   text-red-700",   icon: XCircle      },
 };
 
 function StatusBadge({ status }) {
@@ -22,10 +23,11 @@ function StatusBadge({ status }) {
 }
 
 const FILTERS = [
-  { key: "pending",  label: "Pending"  },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-  { key: "all",      label: "All"      },
+  { key: "awaiting_docs", label: "Drafts"   },
+  { key: "pending",       label: "Pending"  },
+  { key: "approved",      label: "Approved" },
+  { key: "rejected",      label: "Rejected" },
+  { key: "all",           label: "All"      },
 ];
 
 const COLUMNS = [
@@ -67,7 +69,9 @@ const COLUMNS = [
     id: "arrow",
     header: "",
     enableSorting: false,
-    cell: () => <ChevronRight size={16} className="text-gray-300" />,
+    cell: ({ row: { original: a } }) => a.status === "awaiting_docs"
+      ? <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-600"><ArrowRight size={12} />Continue</span>
+      : <ChevronRight size={16} className="text-gray-300" />,
   },
 ];
 
@@ -124,7 +128,9 @@ export default function ResellerApplications() {
           total={total}
           pagination={pagination}
           onPaginationChange={setPagination}
-          onRowClick={a => navigate(`/my-applications/${a.id}`)}
+          onRowClick={a => a.status === "awaiting_docs"
+            ? navigate(`/onboard?resume=${a.id}`)
+            : navigate(`/my-applications/${a.id}`)}
           manualPagination
         />
       </main>

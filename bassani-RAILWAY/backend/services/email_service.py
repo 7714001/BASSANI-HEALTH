@@ -440,6 +440,33 @@ def send_onboarding_rejected(
           _wrap(body))
 
 
+def send_onboarding_docs_received_reseller(
+    company_name: str,
+    reseller_name: str,
+    reseller_email: str,
+    app_id: str,
+) -> None:
+    """Sent to the reseller when admin saves signed docs to their awaiting_docs application."""
+    if not reseller_email:
+        return
+    name_str = company_name or "your customer"
+    body = (
+        _h1("Onboarding documents received")
+        + _p(f"Hi {reseller_name},")
+        + _p(f"The signed onboarding documents for {name_str} have been received and saved to the application. "
+             "You can now complete the remaining details and submit it for review.")
+        + _info_box([
+            ("Customer", f"<strong>{name_str}</strong>"),
+            ("Documents", _badge("On file", "#059669")),
+        ], tint="#f0fdf4", border="#86efac")
+        + _button("Complete application", f"{settings.portal_url}/onboard?resume={app_id}")
+        + _divider()
+        + _p("Log in to complete the remaining details and submit the application.", muted=True)
+    )
+    _send(reseller_email, f"Docs Received: {name_str}",
+          _wrap(body))
+
+
 # Commission emails
 
 def send_statement_generated(

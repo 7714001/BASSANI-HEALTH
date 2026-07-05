@@ -25,7 +25,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from auth import require_permission
-from database import col
+from database import col, NO_ID
 from middleware.audit import audit_log
 from services.graph_client import graph_configured, send_reply as graph_send_reply
 from services.graph_subscription import get_client_state
@@ -973,6 +973,21 @@ async def save_documents_to_application(
             {"id": body.app_id},
             {"$set": {"documents": existing_docs, "updated_at": datetime.now(timezone.utc)}},
         )
+        # Notify the reseller that their customer's docs are on file and the application can be completed
+        if app.get("reseller_id"):
+            reseller_doc = await col("resellers").find_one({"id": app["reseller_id"]}, NO_ID)
+            if reseller_doc:
+                user_doc = await col("users").find_one({"id": reseller_doc.get("user_id")}, NO_ID)
+                reseller_email = (user_doc or {}).get("email")
+                if reseller_email:
+                    from services.email_service import send_onboarding_docs_received_reseller
+                    background_tasks.add_task(
+                        send_onboarding_docs_received_reseller,
+                        company_name=app.get("company_name") or "",
+                        reseller_name=reseller_doc.get("name", ""),
+                        reseller_email=reseller_email,
+                        app_id=body.app_id,
+                    )
 
     background_tasks.add_task(
         audit_log,
