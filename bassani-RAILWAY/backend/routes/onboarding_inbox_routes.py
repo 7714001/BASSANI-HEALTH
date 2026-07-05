@@ -1144,9 +1144,21 @@ async def save_documents(
 
     await audit_log(
         "onboarding_inbox.documents_saved", _COLLECTION, str(root_oid),
-        entity_label=str(customer_id),
+        entity_label=f"customer:{customer_id} thread:{thread_root_id}",
         user=current_user,
-        after={"saved": len(saved_docs), "customer_id": customer_id},
+        after={
+            "saved":       len(saved_docs),
+            "customer_id": customer_id,
+            "thread_id":   thread_root_id,
+            "documents": [
+                {
+                    "doc_type": r.get("doc_type"),
+                    "filename": r.get("filename"),
+                    "label":    r.get("label"),
+                }
+                for r in saved_docs
+            ],
+        },
     )
 
     return {"saved": len(saved_docs), "docs": saved_docs}

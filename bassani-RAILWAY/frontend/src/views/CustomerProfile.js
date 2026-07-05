@@ -44,6 +44,16 @@ const ONBOARDING_DOC_TYPES = [
 
 const KNOWN_DOC_KEYS = new Set(ONBOARDING_DOC_TYPES.map(d => d.key));
 
+function docProvenance(doc) {
+  if (!doc) return "";
+  const when = doc.uploaded_at ? fmtDate(doc.uploaded_at) : "";
+  const by   = doc.uploaded_by ? ` · ${doc.uploaded_by}` : "";
+  const src  = doc.source === "inbox"       ? "Via inbox"
+             : doc.source === "onboarding"  ? "Onboarding application"
+             : "Admin upload";
+  return `${src}${by} · ${when}`;
+}
+
 const SOURCE_BADGE = {
   inbox:      { label: "Inbox",        cls: "bg-blue-50 text-blue-700"      },
   admin:      { label: "Admin Upload", cls: "bg-purple-50 text-purple-700"  },
@@ -166,9 +176,10 @@ function DocumentsSection({ customerId, canUpload }) {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-gray-800">{dt.label}</p>
                     {doc && (
-                      <p className="text-[10px] text-gray-400 truncate mt-0.5">
-                        {doc.filename} · {fmtDate(doc.uploaded_at)}
-                      </p>
+                      <>
+                        <p className="text-[10px] text-gray-500 truncate mt-0.5">{doc.filename}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{docProvenance(doc)}</p>
+                      </>
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -221,10 +232,8 @@ function DocumentsSection({ customerId, canUpload }) {
                       <FileText size={14} className="text-gray-300 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-gray-800 truncate">{d.label || d.doc_type || "Document"}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          {d.filename && <p className="text-[10px] text-gray-400 truncate">{d.filename}</p>}
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                        </div>
+                        {d.filename && <p className="text-[10px] text-gray-500 truncate mt-0.5">{d.filename}</p>}
+                        <p className="text-[10px] text-gray-400 truncate">{docProvenance(d)}</p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
                         {d.download_url ? (

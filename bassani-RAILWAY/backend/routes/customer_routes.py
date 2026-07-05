@@ -9,6 +9,7 @@ from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
 from services.r2_client import r2_put, r2_delete, r2_presign
+from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -781,6 +782,19 @@ async def upload_customer_document(
                 except Exception:
                     pass
             await col("customer_documents").delete_one({"id": existing["id"]})
+            await audit_log(
+                "customers.document_replaced", "customer_documents", existing["id"],
+                entity_label=f"customer:{customer_id} doc_type:{doc_type}",
+                user=current_user,
+                before={
+                    "doc_type":    existing.get("doc_type"),
+                    "filename":    existing.get("filename"),
+                    "label":       existing.get("label"),
+                    "source":      existing.get("source"),
+                    "uploaded_by": existing.get("uploaded_by"),
+                    "uploaded_at": str(existing.get("uploaded_at", "")),
+                },
+            )
 
     contents = await file.read()
     ext      = os.path.splitext(file.filename or "")[1] or ".pdf"
@@ -802,6 +816,17 @@ async def upload_customer_document(
         "uploaded_by":     current_user.get("username", ""),
     }
     await col("customer_documents").insert_one({**doc})
+    await audit_log(
+        "customers.document_uploaded", "customer_documents", doc_id,
+        entity_label=f"customer:{customer_id} doc_type:{doc_type or 'custom'}",
+        user=current_user,
+        after={
+            "doc_type":  doc_type,
+            "filename":  file.filename,
+            "label":     label.strip(),
+            "source":    "admin",
+        },
+    )
     return {"success": True, "doc": doc}
 
 
@@ -822,6 +847,20 @@ async def delete_customer_document(
         except Exception:
             pass
     await col("customer_documents").delete_one({"id": doc_id})
+    await audit_log(
+        "customers.document_deleted", "customer_documents", doc_id,
+        entity_label=f"customer:{customer_id} doc_type:{doc.get('doc_type') or 'custom'}",
+        user=current_user,
+        before={
+            "doc_type":    doc.get("doc_type"),
+            "filename":    doc.get("filename"),
+            "label":       doc.get("label"),
+            "source":      doc.get("source"),
+            "uploaded_by": doc.get("uploaded_by"),
+            "uploaded_at": str(doc.get("uploaded_at", "")),
+            "inbox_item_id": doc.get("inbox_item_id"),
+        },
+    )
     return {"success": True}
 
 
