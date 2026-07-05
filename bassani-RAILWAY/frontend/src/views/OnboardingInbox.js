@@ -17,12 +17,11 @@ import {
 const API = "/api/onboarding-inbox";
 
 const TABS = [
-  { value: "open",               label: "Inbox"         },
-  { value: "unhandled",          label: "New"           },
-  { value: "in_progress",        label: "In Progress"   },
-  { value: "docs_complete",      label: "Docs Complete" },
-  { value: "application_linked", label: "Linked"        },
-  { value: "archived",           label: "Archived"      },
+  { value: "open",         label: "Inbox"         },
+  { value: "unhandled",    label: "New"           },
+  { value: "in_progress",  label: "In Progress"   },
+  { value: "docs_complete",label: "Docs Complete" },
+  { value: "archived",     label: "Archived"      },
 ];
 
 const REQUIRED_DOC_TYPES = [
@@ -335,10 +334,13 @@ export default function OnboardingInbox() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // Send docs modal
-  const [sendDocsOpen,   setSendDocsOpen  ] = useState(false);
-  const [sendDocsEmail,  setSendDocsEmail ] = useState("");
-  const [sendDocsCustName, setSendDocsCustName] = useState("");
-  const [sendDocsSending,  setSendDocsSending ] = useState(false);
+  const [sendDocsOpen,      setSendDocsOpen     ] = useState(false);
+  const [sendDocsEmail,     setSendDocsEmail    ] = useState("");
+  const [sendDocsCustName,  setSendDocsCustName ] = useState("");
+  const [sendDocsSending,   setSendDocsSending  ] = useState(false);
+  const [sendDocsCustQ,     setSendDocsCustQ    ] = useState("");
+  const [sendDocsCustRes,   setSendDocsCustRes  ] = useState([]);
+  const [sendDocsCustSearch,setSendDocsCustSearch] = useState(false);
 
   // Create customer from inbox flow
   const [createOpen,     setCreateOpen    ] = useState(false);
@@ -475,6 +477,20 @@ export default function OnboardingInbox() {
     const t = setTimeout(() => searchCustomers(custSearch), 350);
     return () => clearTimeout(t);
   }, [custSearch, saveDocsOpen, saveDocsStep]); // eslint-disable-line
+
+  // Customer search for Send Docs modal
+  useEffect(() => {
+    if (!sendDocsOpen || !sendDocsCustQ.trim()) { setSendDocsCustRes([]); return; }
+    const t = setTimeout(async () => {
+      setSendDocsCustSearch(true);
+      try {
+        const r = await api.get("/api/customers/search", { params: { q: sendDocsCustQ, limit: 8 } });
+        setSendDocsCustRes(r.data.customers || []);
+      } catch { setSendDocsCustRes([]); }
+      finally { setSendDocsCustSearch(false); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [sendDocsCustQ, sendDocsOpen]); // eslint-disable-line
 
 
   function openCreateModal() {
@@ -705,23 +721,29 @@ export default function OnboardingInbox() {
 
   return (
     <div className="flex flex-col h-full">
-      <TopBar title="Onboarding Inbox" subtitle={mailboxAddress || undefined}>
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Search…"
-            className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-52 focus:outline-none focus:ring-2 focus:ring-bassani-300"
-          />
-        </div>
-        <BtnPrimary onClick={() => setSendDocsOpen(true)}>
-          <FileText size={13} /> Send Docs
-        </BtnPrimary>
-        <BtnSecondary onClick={() => loadList()} disabled={loading}>
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-        </BtnSecondary>
-      </TopBar>
+      <TopBar
+        title="Onboarding Inbox"
+        subtitle={mailboxAddress || undefined}
+        actions={
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder="Search…"
+                className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-52 focus:outline-none focus:ring-2 focus:ring-bassani-300"
+              />
+            </div>
+            <BtnPrimary onClick={() => { setSendDocsOpen(true); setSendDocsEmail(""); setSendDocsCustName(""); setSendDocsCustQ(""); setSendDocsCustRes([]); }}>
+              <FileText size={13} /> Send Docs
+            </BtnPrimary>
+            <BtnSecondary onClick={() => loadList()} disabled={loading}>
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+            </BtnSecondary>
+          </div>
+        }
+      />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-100 px-4 gap-1 flex-shrink-0 bg-white">
@@ -1255,12 +1277,47 @@ export default function OnboardingInbox() {
       </Modal>}
 
       {/* Send Docs modal */}
-      {sendDocsOpen && <Modal onClose={() => setSendDocsOpen(false)} title="Send Onboarding Documents">
+      {sendDocsOpen && <Modal onClose={() => { setSendDocsOpen(false); setSendDocsCustQ(""); setSendDocsCustRes([]); }} title="Send Onboarding Documents">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Send all four onboarding template PDFs from the onboarding mailbox. The customer's reply will auto-thread back into this inbox.
+            Sends the full onboarding document pack from the onboarding mailbox. The customer's reply will auto-thread back into this inbox.
           </p>
-          <FormGroup label="Customer email address">
+
+          {/* Customer search — pick existing or leave blank to type manually */}
+          <FormGroup label="Search existing customer (optional)">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={sendDocsCustQ}
+                onChange={e => { setSendDocsCustQ(e.target.value); }}
+                placeholder="Name or email — picks up their address automatically"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                autoFocus
+              />
+              {sendDocsCustSearch && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />}
+            </div>
+            {sendDocsCustRes.length > 0 && (
+              <div className="mt-1 border border-gray-100 rounded-lg divide-y divide-gray-50 max-h-36 overflow-y-auto">
+                {sendDocsCustRes.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setSendDocsEmail(c.email || "");
+                      setSendDocsCustName(c.name || "");
+                      setSendDocsCustQ(c.name || "");
+                      setSendDocsCustRes([]);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-bassani-50 transition-colors"
+                  >
+                    <span className="font-medium text-gray-800">{c.name}</span>
+                    {c.email && <span className="text-xs text-gray-400 ml-2">{c.email}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </FormGroup>
+
+          <FormGroup label="Recipient email address *">
             <Input
               type="email"
               value={sendDocsEmail}
@@ -1275,8 +1332,9 @@ export default function OnboardingInbox() {
               placeholder="Used in the email greeting"
             />
           </FormGroup>
+
           <div className="flex justify-end gap-2">
-            <BtnSecondary onClick={() => setSendDocsOpen(false)}>Cancel</BtnSecondary>
+            <BtnSecondary onClick={() => { setSendDocsOpen(false); setSendDocsCustQ(""); setSendDocsCustRes([]); }}>Cancel</BtnSecondary>
             <BtnPrimary onClick={sendDocs} disabled={sendDocsSending || !sendDocsEmail.trim()}>
               {sendDocsSending ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
               Send Documents
