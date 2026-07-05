@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -6,6 +6,7 @@ import {
   Mail, AlertCircle, Paperclip, RefreshCw,
   ExternalLink, Send, Archive, Save,
   Search, Loader2, Link2, Eye, User, FileText,
+  UserPlus, CheckCircle, Upload, X,
 } from "lucide-react";
 import {
   TopBar, Badge, BtnPrimary, BtnSecondary,
@@ -20,6 +21,21 @@ const TABS = [
   { value: "application_linked", label: "Linked"   },
   { value: "archived",           label: "Archived" },
 ];
+
+const REQUIRED_DOC_TYPES = [
+  { key: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
+  { key: "customer_information_form",  label: "Signed Customer Information Form"  },
+  { key: "nda",                        label: "Signed NDA"                        },
+  { key: "tqa",                        label: "Signed TQA Document"               },
+  { key: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
+];
+
+const CUSTOMER_TYPES = ["Pharmacy", "Dispensary", "Clinic", "Hospital", "Retail"];
+
+const BLANK_CREATE_FORM = {
+  name: "", email: "", phone: "", street: "", city: "", zip: "",
+  vat: "", customer_type: "Pharmacy", section21_registered: false, credit_limit: "",
+};
 
 const STATUS_META = {
   unhandled:           { label: "New",     color: "red"   },
@@ -282,8 +298,37 @@ export default function OnboardingInbox() {
   const [sendDocsCustName, setSendDocsCustName] = useState("");
   const [sendDocsSending,  setSendDocsSending ] = useState(false);
 
+  // Create customer from inbox flow
+  const [createOpen,          setCreateOpen         ] = useState(false);
+  const [createStep,          setCreateStep         ] = useState("map"); // "map" | "details"
+  const [createMappings,      setCreateMappings     ] = useState({}); // { doc_type: att_key }
+  const [createStaging,       setCreateStaging      ] = useState(false);
+  const [createSessionId,     setCreateSessionId    ] = useState("");
+  const [createDocs,          setCreateDocs         ] = useState([]);  // staged docs from session
+  const [createForm,          setCreateForm         ] = useState(BLANK_CREATE_FORM);
+  const [createSaving,        setCreateSaving       ] = useState(false);
+  const [createDocUploading,  setCreateDocUploading ] = useState(null); // doc_type being uploaded
+
   const threadEndRef     = useRef(null);
+  const createFileRefs   = useRef({});
   const selectedThreadId = selectedThread?.id;
+
+  // All attachments across non-outgoing thread messages — used by the create-customer doc mapper
+  const threadAttachments = useMemo(() => {
+    const seen = new Set();
+    const all  = [];
+    for (const msg of threadMsgs) {
+      if (msg.is_outgoing) continue;
+      for (const att of (msg.attachments || [])) {
+        const key = att.id || att.imap_attachment_id;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          all.push({ key, name: att.name || "attachment", size: att.size_bytes || 0 });
+        }
+      }
+    }
+    return all;
+  }, [threadMsgs]);
 
   const loadList = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -365,11 +410,18 @@ export default function OnboardingInbox() {
   }
 
   function openLinkModal() {
+    const detectedId   = selectedThread?.customer_id   || null;
+    const detectedName = selectedThread?.customer_name || "";
+    setSelectedCustId(detectedId);
+    setSelectedCustName(detectedName);
+    // Pre-populate search + results so the detected customer shows immediately
+    setCustSearch(detectedName);
+    setCustResults(
+      detectedId
+        ? [{ id: detectedId, name: detectedName, email: selectedThread?.from_email }]
+        : []
+    );
     setLinkOpen(true);
-    setSelectedCustId(null);
-    setSelectedCustName("");
-    setCustSearch("");
-    setCustResults([]);
   }
 
   async function searchCustomers(q) {
@@ -405,6 +457,102 @@ export default function OnboardingInbox() {
       toast.error(e.response?.data?.detail || "Failed to link customer");
     } finally {
       setLinking(false);
+    }
+  }
+
+  function openCreateModal() {
+    setCreateStep("map");
+    setCreateMappings({});
+    setCreateSessionId("");
+    setCreateDocs([]);
+    setCreateForm({
+      ...BLANK_CREATE_FORM,
+      name:  selectedThread?.from_name  || "",
+      email: selectedThread?.from_email || "",
+    });
+    setCreateOpen(true);
+  }
+
+  async function stageDocuments() {
+    const mappings = Object.entries(createMappings)
+      .filter(([, attKey]) => attKey)
+      .map(([doc_type, attachment_id]) => ({ attachment_id, doc_type }));
+
+    if (!mappings.length) { toast.error("Map at least one attachment to a document slot"); return; }
+    setCreateStaging(true);
+    try {
+      const res = await api.post(`${API}/${selectedThread.id}/create-customer-session`, { mappings });
+      setCreateSessionId(res.data.session_id);
+      setCreateDocs(res.data.documents || []);
+      setCreateStep("details");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to stage documents");
+    } finally {
+      setCreateStaging(false);
+    }
+  }
+
+  async function uploadCreateDoc(docKey, docLabel, file) {
+    setCreateDocUploading(docKey);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await api.post(
+        `/api/onboarding/documents/upload?session_id=${createSessionId}&doc_type=${docKey}`,
+        fd, { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setCreateDocs(prev => {
+        const without = prev.filter(d => d.doc_type !== docKey);
+        return [...without, { ...res.data, label: docLabel }];
+      });
+    } catch { toast.error(`Failed to upload ${docLabel}`); }
+    finally { setCreateDocUploading(null); }
+  }
+
+  async function removeCreateDoc(docKey) {
+    try {
+      await api.delete(`/api/onboarding/documents/${createSessionId}/${docKey}`);
+      setCreateDocs(prev => prev.filter(d => d.doc_type !== docKey));
+    } catch { toast.error("Failed to remove document"); }
+  }
+
+  async function createCustomer() {
+    if (!createForm.name.trim()) { toast.error("Customer name is required"); return; }
+    const missing = REQUIRED_DOC_TYPES.filter(dt => !createDocs.find(d => d.doc_type === dt.key));
+    if (missing.length) {
+      toast.error(`Upload remaining docs: ${missing.map(d => d.label).join(", ")}`);
+      return;
+    }
+    setCreateSaving(true);
+    try {
+      const payload = {
+        ...createForm,
+        credit_limit:        parseFloat(createForm.credit_limit) || 0,
+        document_session_id: createSessionId,
+        documents:           createDocs,
+      };
+      const res = await api.post("/api/customers/", payload);
+      // Auto-link this thread to the new customer
+      try {
+        await api.post(`${API}/${selectedThread.id}/link-customer`, {
+          odoo_partner_id: res.data.customer_id,
+        });
+      } catch { /* non-fatal */ }
+      toast.success(`Customer ${createForm.name} created`);
+      setCreateOpen(false);
+      // Refresh thread to show linked customer
+      const updated = await api.get(`${API}/${selectedThread.id}`);
+      setSelectedThread(updated.data);
+      loadList(true);
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.existing) {
+        toast.error(`Duplicate: ${detail.existing.name} already exists with this email or VAT.`);
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Failed to create customer");
+      }
+    } finally {
+      setCreateSaving(false);
     }
   }
 
@@ -590,6 +738,11 @@ export default function OnboardingInbox() {
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                {!detail.customer_id && (
+                  <BtnPrimary onClick={openCreateModal}>
+                    <UserPlus size={14} /> Create Customer
+                  </BtnPrimary>
+                )}
                 <BtnSecondary onClick={openLinkModal}>
                   <Link2 size={14} /> Link
                 </BtnSecondary>
@@ -738,6 +891,186 @@ export default function OnboardingInbox() {
           </div>
         )}
       </Modal>}
+
+      {/* Create Customer modal */}
+      {createOpen && (
+        <Modal
+          onClose={() => setCreateOpen(false)}
+          title="Create Customer from Inbox"
+          width="max-w-2xl"
+        >
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 mb-5">
+            {[{ key: "map", label: "Map Documents" }, { key: "details", label: "Customer Details" }].map((s, i) => {
+              const done    = createStep === "details" && i === 0;
+              const current = createStep === s.key;
+              return (
+                <div key={s.key} className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
+                    done ? "bg-green-500 text-white" : current ? "bg-bassani-600 text-white" : "bg-gray-100 text-gray-400"
+                  }`}>{done ? "✓" : i + 1}</div>
+                  <span className={`text-xs font-medium ${current ? "text-bassani-700" : done ? "text-green-700" : "text-gray-400"}`}>{s.label}</span>
+                  {i === 0 && <div className="w-8 h-px bg-gray-200 mx-1" />}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Step 1: Map documents ── */}
+          {createStep === "map" && (
+            <div className="space-y-4">
+              <p className="text-xs text-gray-500">
+                Match each required onboarding document to an attachment from this email thread.
+                Leave slots blank if the attachment wasn't included — you can upload them manually in the next step.
+              </p>
+
+              {threadAttachments.length === 0 && (
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 text-xs text-amber-700">
+                  <AlertCircle size={13} className="shrink-0" />
+                  No attachments found in this thread. You can still create the customer and upload documents manually in the next step.
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {REQUIRED_DOC_TYPES.map(dt => (
+                  <div key={dt.key} className="flex items-center gap-3 rounded-lg px-3 py-2.5 bg-gray-50 border border-gray-100">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-700 truncate">{dt.label}</p>
+                    </div>
+                    <select
+                      value={createMappings[dt.key] || ""}
+                      onChange={e => setCreateMappings(prev => ({ ...prev, [dt.key]: e.target.value || undefined }))}
+                      className="w-56 shrink-0 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-bassani-300 text-gray-700"
+                    >
+                      <option value="">— not in this email —</option>
+                      {threadAttachments.map(att => (
+                        <option key={att.key} value={att.key}>{att.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                <span className="text-xs text-gray-400">
+                  {Object.values(createMappings).filter(Boolean).length} of {REQUIRED_DOC_TYPES.length} matched from email
+                </span>
+                <BtnPrimary onClick={stageDocuments} disabled={createStaging}>
+                  {createStaging ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {createStaging ? "Staging…" : "Continue"}
+                </BtnPrimary>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 2: Customer details ── */}
+          {createStep === "details" && (
+            <div className="space-y-4">
+              {/* Doc status row */}
+              <div className="rounded-lg border border-gray-100 overflow-hidden">
+                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-600">Onboarding Documents</p>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                    createDocs.length === REQUIRED_DOC_TYPES.length ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+                  }`}>{createDocs.length} / {REQUIRED_DOC_TYPES.length}</span>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {REQUIRED_DOC_TYPES.map(dt => {
+                    const staged    = createDocs.find(d => d.doc_type === dt.key);
+                    const uploading = createDocUploading === dt.key;
+                    return (
+                      <div key={dt.key} className={`flex items-center gap-3 px-3 py-2 ${staged ? "bg-green-50/50" : ""}`}>
+                        <div className="shrink-0">
+                          {staged
+                            ? <CheckCircle size={13} className="text-green-600" />
+                            : <div className="w-3 h-3 rounded-full border-2 border-gray-300" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[11px] font-semibold truncate ${staged ? "text-green-800" : "text-gray-600"}`}>{dt.label}</p>
+                          {staged && <p className="text-[10px] text-green-600 truncate">{staged.filename}</p>}
+                        </div>
+                        {staged ? (
+                          <button onClick={() => removeCreateDoc(dt.key)}
+                            className="text-[11px] text-red-400 hover:text-red-600 font-medium shrink-0">
+                            <X size={12} />
+                          </button>
+                        ) : (
+                          <>
+                            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                              className="hidden"
+                              ref={el => { createFileRefs.current[dt.key] = el; }}
+                              onChange={e => { if (e.target.files[0]) uploadCreateDoc(dt.key, dt.label, e.target.files[0]); e.target.value = ""; }}
+                            />
+                            <button
+                              onClick={() => createFileRefs.current[dt.key]?.click()}
+                              disabled={uploading || !!createDocUploading}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 shrink-0">
+                              {uploading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                              Upload
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Customer form */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <FormGroup label="Customer Name *">
+                    <Input value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="Registered company name" autoFocus />
+                  </FormGroup>
+                </div>
+                <FormGroup label="Email">
+                  <Input type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} placeholder="orders@example.co.za" />
+                </FormGroup>
+                <FormGroup label="Phone">
+                  <Input value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} placeholder="+27 11 555 1234" />
+                </FormGroup>
+                <FormGroup label="VAT Number">
+                  <Input value={createForm.vat} onChange={e => setCreateForm(f => ({ ...f, vat: e.target.value }))} placeholder="4xxxxxxxxx" />
+                </FormGroup>
+                <FormGroup label="Customer Type">
+                  <select
+                    value={createForm.customer_type}
+                    onChange={e => setCreateForm(f => ({ ...f, customer_type: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-bassani-300"
+                  >
+                    {CUSTOMER_TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </FormGroup>
+                <FormGroup label="Street">
+                  <Input value={createForm.street} onChange={e => setCreateForm(f => ({ ...f, street: e.target.value }))} placeholder="123 Health Street" />
+                </FormGroup>
+                <FormGroup label="City">
+                  <Input value={createForm.city} onChange={e => setCreateForm(f => ({ ...f, city: e.target.value }))} placeholder="Johannesburg" />
+                </FormGroup>
+                <FormGroup label="Credit Limit (R)">
+                  <Input type="number" value={createForm.credit_limit} onChange={e => setCreateForm(f => ({ ...f, credit_limit: e.target.value }))} placeholder="0" />
+                </FormGroup>
+                <div className="col-span-2 flex items-center gap-2 pt-1">
+                  <input type="checkbox" id="s21_create"
+                    checked={createForm.section21_registered}
+                    onChange={e => setCreateForm(f => ({ ...f, section21_registered: e.target.checked }))}
+                    className="rounded border-gray-300 text-bassani-600 focus:ring-bassani-300"
+                  />
+                  <label htmlFor="s21_create" className="text-xs text-gray-700">Section 21 registered patient</label>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                <BtnSecondary onClick={() => setCreateStep("map")}>← Back</BtnSecondary>
+                <BtnPrimary onClick={createCustomer} disabled={createSaving || !createForm.name.trim()}>
+                  {createSaving ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                  {createSaving ? "Creating…" : "Create Customer"}
+                </BtnPrimary>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* Send Docs modal */}
       {sendDocsOpen && <Modal onClose={() => setSendDocsOpen(false)} title="Send Onboarding Documents">

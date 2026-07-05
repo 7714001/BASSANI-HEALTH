@@ -587,7 +587,7 @@ The Onboarding Inbox uses the same two-panel layout as the Sales Inbox:
 
 Click any row to open the conversation. The thread auto-marks as read. Incoming messages appear left (white), outgoing replies appear right (teal).
 
-Each row shows a **Linked** pill (green, with a link icon) when the thread has been linked to an application, or a **Unknown** pill (red) when the sender hasn't been matched to a customer.
+Each row shows a **Linked** pill (green) when linked to an application, a **Customer** pill (blue) when linked to a known customer, or an **Unknown** pill (red) when the sender has not been matched to any customer. Auto-detection runs on every inbound message — if the sender's email matches an Odoo customer record the customer is identified automatically without any manual step.
 
 ### Replying
 
@@ -597,19 +597,35 @@ Each row shows a **Linked** pill (green, with a link icon) when the thread has b
 
 The reply goes out from the onboarding mailbox address and is stored in the portal thread so the full conversation stays in one place.
 
-### Linking to an Application
+### Linking to an Existing Customer
 
-If the email relates to a customer onboarding application already in the system:
+If the sender was not auto-detected (their email doesn't match the address on their Odoo record), link them manually:
 
 1. Open the thread
-2. Click **Link Application** in the thread header
-3. A modal opens showing all current onboarding applications
-4. Select the correct application
-5. Click **Link**
+2. Click **Link** in the thread header
+3. If auto-detection succeeded, the correct customer is already pre-selected — click **Link Customer** to confirm
+4. If not, type part of the customer's name or email in the search box, select the match, and click **Link Customer**
 
-Once linked, the thread moves to the **Linked** tab and the green **Linked** pill appears on the thread row. The link is audit-logged.
+Once linked, the blue **Customer** pill appears on the thread row. All future attachments from this sender can now be saved directly to their profile. The link is audit-logged.
 
-You cannot link a thread until there is at least one application in the system for that customer. If the customer has not started an application yet, reply to request the required information and link the thread once the application is created.
+### Creating a New Customer from the Inbox
+
+When a thread comes from a sender who is not yet in the system, use **Create Customer** to onboard them without leaving the inbox:
+
+1. Open the thread — a **Create Customer** button appears in the header when the sender has no linked customer
+2. Click **Create Customer**
+
+**Step 1 — Map Documents:** The five required onboarding document slots are displayed. For each slot, choose the matching attachment from the email using the dropdown. The customer may have renamed the files — match by content, not filename. Leave a slot blank if that document was not included in this email.
+
+3. Click **Continue** — the portal copies the matched attachments from the email into a secure staging area (R2) in the background
+
+**Step 2 — Customer Details:** The form opens pre-filled with the sender's name and email address. Complete the remaining fields (phone, address, VAT number, customer type, credit limit). Any document slots not matched in step 1 show an **Upload** button — click it to upload those files from your computer.
+
+4. When all five documents show a green tick, click **Create Customer**
+
+The customer record is created directly in the system, all five documents are attached to their profile, and the inbox thread is automatically linked to the new customer. The **Customer** pill appears on the thread row immediately.
+
+If the system finds a customer with the same email address or VAT number, it will block creation and show the duplicate's name. Use **Link** instead to connect the thread to the existing record.
 
 ### Saving an Attachment to a Customer's Profile
 
@@ -634,14 +650,39 @@ When a thread requires no further action:
 
 The thread moves to the Archived tab. Archived threads are automatically deleted after 180 days.
 
-### Typical Workflow
+### Sending Onboarding Documents
 
-- A new customer reseller sends their company registration and banking details to `onboarding@bassanihealth.com`
-- The thread appears in the Onboarding Inbox under **New**
-- The staff member opens the thread, reads the email, and uses **Save to Profile** to store each document against the customer
-- They click **Link Application** to associate the thread with the active onboarding application
-- They reply from the portal to acknowledge receipt or request missing documents
-- Once all documents are in place and the application is approved, they **Archive** the thread
+To send the four template PDFs to a prospective customer directly from the onboarding mailbox:
+
+1. Click **Send Docs** in the top bar
+2. Enter the customer's email address and optionally their name (used in the greeting)
+3. Click **Send Documents**
+
+The email goes out from the onboarding mailbox address. When the customer replies with their signed copies, their reply threads back into the inbox automatically — no manual matching needed.
+
+### Previewing PDF Attachments
+
+Click the **eye icon** next to any `.pdf` attachment to preview it inline without downloading. The PDF opens in a secure viewer within the portal. Close the viewer when done.
+
+### Typical Workflow — New Customer via Email
+
+- Staff sends onboarding template PDFs via **Send Docs** in the Onboarding Inbox
+- Customer signs and replies to the email with the completed documents attached
+- The reply threads into the Onboarding Inbox automatically
+- Auto-detection identifies the customer if their email matches an Odoo record; if not, an **Unknown** pill appears
+- Staff opens the thread and clicks **Create Customer**
+- Step 1: maps each signed document attachment to the correct doc slot
+- Step 2: completes the customer details form (pre-filled from the sender's name and email)
+- Customer is created, documents are stored, thread is linked — all in one action
+- Staff replies from the portal to confirm receipt, then **Archives** the thread
+
+### Typical Workflow — Documents for an Existing Customer
+
+- A known customer emails a new document (e.g. a renewed Section 21 authorisation) to the onboarding address
+- Auto-detection resolves the customer — a blue **Customer** pill appears on the thread row
+- Staff opens the thread and clicks **Save** next to the attachment, adds a descriptive label, and clicks **Save to Profile**
+- The document appears in the customer's profile immediately
+- Staff archives the thread
 
 ---
 
@@ -1278,7 +1319,10 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Archive a sales email thread | Merveille (sales) or admin with `inbox.view` |
 | Read inbound onboarding emails | Admin with `onboarding.inbox` (granted by super admin) |
 | Reply to an onboarding email from the portal | Admin with `onboarding.inbox` |
-| Link an email thread to an onboarding application | Admin with `onboarding.inbox` |
+| Send onboarding template PDFs from the onboarding mailbox | Admin with `onboarding.inbox` |
+| Preview PDF attachments inline | Admin with `onboarding.inbox` |
+| Link an email thread to an existing customer | Admin with `onboarding.inbox` |
+| Create a new customer from an inbox thread (with doc mapping) | Admin with `onboarding.inbox` |
 | Save an email attachment to a customer profile | Admin with `onboarding.inbox` |
 | Archive an onboarding email thread | Admin with `onboarding.inbox` |
 | Configure the onboarding mailbox | Super Admin only (Settings > Onboarding Mailbox) |

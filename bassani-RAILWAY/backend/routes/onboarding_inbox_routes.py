@@ -13,9 +13,11 @@ Key differences from the sales inbox:
 - Adds a link-application action and a save-attachment-to-profile action
 """
 import logging
+import os
 import re as _re
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -69,6 +71,15 @@ class SendDocsBody(BaseModel):
 
 class LinkCustomerBody(BaseModel):
     odoo_partner_id: int
+
+
+class DocMapping(BaseModel):
+    attachment_id: str   # att.id (Graph) or att.imap_attachment_id (IMAP)
+    doc_type: str        # one of the five REQUIRED_DOC_TYPES keys
+
+
+class CreateCustomerSessionBody(BaseModel):
+    mappings: List[DocMapping]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -776,3 +787,132 @@ async def link_customer(
     )
 
     return {"success": True, "customer_name": customer_name}
+
+
+# ── Stage inbox attachments into an onboarding R2 session ────────────────────
+
+_REQUIRED_DOC_TYPES: dict[str, str] = {
+    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
+    "customer_information_form":  "Signed Customer Information Form",
+    "nda":                        "Signed NDA",
+    "tqa":                        "Signed TQA Document",
+    "cipc_certificate":           "CIPC Company Registration Certificate",
+}
+
+
+@router.post("/{item_id}/create-customer-session")
+async def create_customer_session(
+    item_id: str,
+    body: CreateCustomerSessionBody,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """
+    Fetch inbox attachments (Graph or IMAP) and write them into an R2 onboarding
+    session so they can be passed straight to POST /api/customers/ as staged docs.
+
+    Searches the full thread (root + all replies) for each requested attachment_id,
+    so it works whether the customer sent docs in the original email or a reply.
+
+    Returns { session_id, documents } in the same shape as the admin Add Customer
+    modal expects — pass it directly to POST /api/customers/ with document_session_id.
+    """
+    from services.graph_client import get_attachment_content, graph_configured
+    from services.imap_client import get_graph_mailbox_address
+    from services.r2_client import r2_put
+
+    # Resolve thread root — item_id may be a reply
+    root_doc = await col(_COLLECTION).find_one({"_id": _oid(item_id)})
+    if not root_doc:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+
+    thread_root_id = root_doc.get("thread_root_id") or str(root_doc["_id"])
+    root_oid       = ObjectId(thread_root_id)
+
+    # Collect all items in the thread
+    thread_items: list[dict] = []
+    async for doc in col(_COLLECTION).find(
+        {"$or": [{"_id": root_oid}, {"thread_root_id": thread_root_id}]}
+    ):
+        thread_items.append(doc)
+
+    # Build flat map: att_key → (att_meta, parent_item)
+    att_map: dict[str, tuple] = {}
+    for ti in thread_items:
+        for att in ti.get("attachments", []):
+            key = att.get("id") or att.get("imap_attachment_id")
+            if key and key not in att_map:
+                att_map[key] = (att, ti)
+
+    session_id = str(uuid.uuid4())
+    documents: list[dict] = []
+
+    for mapping in body.mappings:
+        if mapping.doc_type not in _REQUIRED_DOC_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown doc type: {mapping.doc_type}")
+
+        pair = att_map.get(mapping.attachment_id)
+        if not pair:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Attachment not found in thread: {mapping.attachment_id}",
+            )
+
+        att_meta, parent_item = pair
+        filename     = att_meta.get("name", "attachment")
+        content_type = att_meta.get("content_type", "application/octet-stream")
+        content: bytes = b""
+
+        # Fetch bytes — Graph path
+        if (
+            graph_configured()
+            and parent_item.get("graph_message_id")
+            and att_meta.get("id")
+        ):
+            mailbox_address = get_graph_mailbox_address(_MAILBOX)
+            try:
+                raw, ct, fn = await get_attachment_content(
+                    parent_item["graph_message_id"],
+                    att_meta["id"],
+                    mailbox_address=mailbox_address,
+                )
+                content      = raw
+                content_type = ct or content_type
+                filename     = fn or filename
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"Could not fetch attachment: {exc}")
+
+        # Fetch bytes — IMAP path
+        elif att_meta.get("imap_attachment_id"):
+            stored = await col(f"{_COLLECTION}_attachments").find_one(
+                {"_id": ObjectId(att_meta["imap_attachment_id"])}
+            )
+            if not stored:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Attachment bytes not found (may have expired): {filename}",
+                )
+            content = bytes(stored["content"])
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot retrieve bytes for attachment: {filename}",
+            )
+
+        if not content:
+            raise HTTPException(status_code=400, detail=f"Attachment is empty: {filename}")
+
+        ext    = os.path.splitext(filename)[1] or ".pdf"
+        r2_key = f"onboarding/sessions/{session_id}/{mapping.doc_type}{ext}"
+        await r2_put(r2_key, content, content_type)
+
+        documents.append({
+            "doc_type":    mapping.doc_type,
+            "label":       _REQUIRED_DOC_TYPES[mapping.doc_type],
+            "r2_key":      r2_key,
+            "filename":    filename,
+            "size":        len(content),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    return {"session_id": session_id, "documents": documents}
