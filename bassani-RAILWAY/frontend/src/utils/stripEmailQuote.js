@@ -62,23 +62,22 @@ export function stripEmailQuote(html) {
     if (yahoo) snip(yahoo);
   }
 
-  // 5. Outlook plain-HR pattern: <hr> followed immediately by From:/Sent:/To: text
+  // 5. Any remaining <hr> — in a reply context, an <hr> is always a quote
+  //    separator. We only reach this if no other pattern matched, so strip
+  //    the <hr> and everything after it unconditionally.
   if (!hasQuote) {
     const hr = div.querySelector("hr");
     if (hr) {
-      const next = hr.nextElementSibling;
-      if (next && /\b(from|sent|to|subject)\s*:/i.test(next.textContent)) {
-        const snippets = [];
-        let node = hr;
-        while (node) {
-          const nx = node.nextSibling;
-          snippets.push(node.outerHTML || node.textContent || "");
-          node.remove();
-          node = nx;
-        }
-        quoteHtml = snippets.join("");
-        hasQuote = true;
+      const snippets = [];
+      let node = hr;
+      while (node) {
+        const nx = node.nextSibling;
+        snippets.push(node.outerHTML || node.textContent || "");
+        node.remove();
+        node = nx;
       }
+      quoteHtml = snippets.join("");
+      hasQuote = true;
     }
   }
 
