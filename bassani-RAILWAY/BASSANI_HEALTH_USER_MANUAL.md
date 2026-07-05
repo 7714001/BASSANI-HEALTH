@@ -577,12 +577,17 @@ The Onboarding Inbox uses the same two-panel layout as the Sales Inbox:
 **Status tabs** across the top:
 - **Inbox** (default) — all active threads, excluding archived
 - **New** — unhandled threads only
-- **In Progress** — threads where some (but not all) required documents have been saved
+- **In Progress** — threads where some (but not all) required documents have been saved to the customer profile
+- **Linked** — threads linked to a pending onboarding application (typically reseller-originated)
 - **Docs Complete** — threads where all five required documents have been received and saved
-- **Linked** — threads linked to an onboarding application
 - **Archived** — dismissed threads
 
 **Document progress pills** on each thread row show how many of the five required documents have been saved for that thread. An amber **N/5 docs** pill means more documents are still outstanding. A green **N/5 docs** pill with a checkmark means all five required documents have been received and saved to the customer's profile.
+
+**Thread header chips:**
+- Green **Application linked** chip — thread is linked to a pending reseller application; click to open the application
+- Blue **Customer** chip — thread is linked to a known Odoo customer
+- Red **Unknown** — sender has not been matched; action required
 
 ### Opening a Thread
 
@@ -600,38 +605,60 @@ The reply goes out from the onboarding mailbox address and is stored in the port
 
 ### Creating a New Customer from the Inbox
 
-When a thread comes from a sender who is not yet in the system, use **Create Customer** to onboard them without leaving the inbox:
+When a thread comes from a sender who is not yet in the system and is **not** linked to a reseller application, use **Create Customer** to onboard them directly:
 
-1. Open the thread — a **Create Customer** button appears in the header when the sender has no linked customer
+1. Open the thread — a **Create Customer** button appears in the header when the sender has no linked customer and no pending application
 2. Click **Create Customer**
 
-**Step 1 — Map Documents:** The five required onboarding document slots are displayed. For each slot, choose the matching attachment from the email using the dropdown. The customer may have renamed the files — match by content, not filename. Leave a slot blank if that document was not included in this email.
+**Step 1 — Map Documents:** The five required onboarding document slots are displayed. For each slot, choose the matching attachment from the email using the dropdown. Leave a slot blank if that document was not included in this email.
 
-3. Click **Continue** — the portal copies the matched attachments from the email into a secure staging area (R2) in the background
+3. Click **Continue**
 
-**Step 2 — Customer Details:** The form opens pre-filled with the sender's name and email address. Complete the remaining fields (phone, address, VAT number, customer type, credit limit). Any document slots not matched in step 1 show an **Upload** button — click it to upload those files from your computer.
+**Step 2 — Customer Details:** The form opens pre-filled with the sender's name and email address. Complete the remaining fields (phone, address, VAT number, customer type, credit limit).
 
-4. When all five documents show a green tick, click **Create Customer**
+4. Click **Create Customer**
 
-The customer record is created directly in the system, all five documents are attached to their profile, and the inbox thread is automatically linked to the new customer. The **Customer** pill appears on the thread row immediately.
+The customer record is created in the system, all mapped documents are saved to their profile in one step, and the inbox thread is linked to the new customer. The **Customer** pill appears on the thread row immediately.
 
-If the system finds a customer with the same email address or VAT number, it will block creation and show the duplicate's name. Use **Link** instead to connect the thread to the existing record.
+If the system finds a customer with the same email address or VAT number, creation is blocked. Use **Link** instead to connect the thread to the existing record.
+
+### Reseller-Originated Threads — Saving Documents to an Application
+
+When a reseller sends onboarding documents to a customer via the portal's **Onboarding Docs** page, the system automatically creates a draft onboarding application and links it to that reseller. When the customer replies with their signed documents, the thread appears in the Onboarding Inbox with a green **Application linked** chip — clicking it opens the application directly.
+
+**The correct flow for these threads:**
+
+1. Open the thread — a **Review Application** button and a **Save to Application** button appear in the header
+2. Click **Save to Application** to attach the customer's signed documents to the pending application:
+   - A modal lists every attachment in the thread
+   - Use the dropdown on each row to assign it to the correct document slot
+   - Set any attachment to **Don't save** if it should be skipped
+   - Click **Save N Documents** — the files are written to secure cloud storage against the application record
+3. Once all required documents are saved, click **Review Application** to open the application detail
+4. Enter the customer's registered company name (required for account creation)
+5. Click **Approve and Create Customer**
+
+On approval, the system creates the customer record, automatically links all application documents to the customer's profile (no re-upload), and writes the reseller ownership link so the customer appears under the correct reseller's account.
+
+> **Why this flow instead of Create Customer?** Threads linked to a reseller application bypass the direct "Create Customer" path. This preserves the reseller ownership link and ensures the full document audit trail flows through the application — the reseller can see the application status in their portal, and admin has a complete record of which reseller introduced the customer.
 
 ### Saving Documents to a Customer's Profile
 
-When a customer replies with their signed onboarding documents attached:
+When a known customer emails a signed document and the thread already has a linked customer:
 
-1. Open the thread — **Save Documents** appears in the header when attachments are present
+1. Open the thread — **Save Documents** appears in the header when attachments are present and a customer is already linked
 2. Click **Save Documents**
-3. A modal lists every attachment in the thread. For each one, use the dropdown to assign it to the correct document slot (Signed Store Onboarding Agreement, Signed NDA, etc.). Attachments highlighted amber have not yet been assigned — each must be mapped before saving.
-4. Set any attachment to **Don't save this attachment** if it should be skipped (e.g. a duplicate or a cover note).
+3. A modal lists every attachment in the thread. For each one, use the dropdown to assign it to the correct document slot (Signed Store Onboarding Agreement, Signed NDA, etc.)
+4. Set any attachment to **Don't save this attachment** if it should be skipped
 5. Click **Save N Documents**
 
-The documents are uploaded directly from the email to secure cloud storage and linked to the customer's profile. No manual download or re-upload is needed.
+If the customer already has a document of the same type on file, an amber warning appears on that row showing the existing filename. A confirmation step lists old → new before overwriting.
 
-**Document progress tracking:** After saving, the thread's status updates automatically. An amber **N/5 docs** pill appears on the thread row showing how many of the five required documents have been received. When all five are saved, the pill turns green with a checkmark and the thread moves to the **Docs Complete** tab. If only some documents arrived in the first reply (a common edge case), reply to request the remaining ones — the progress count will increment each time you save from a subsequent reply.
+The documents are saved directly from the email to secure cloud storage and linked to the customer's profile. No manual download or re-upload is needed.
 
-The customer's profile (in Customers) shows the same structured view: each of the five document types has its own row with a green dot when uploaded, and a grey dot when still outstanding.
+**Document progress tracking:** After saving, the thread's status updates automatically. An amber **N/5 docs** pill appears on the thread row showing how many of the five required documents have been received. When all five are saved, the pill turns green and the thread moves to the **Docs Complete** tab.
+
+The customer's profile shows the same structured view: each of the five document types has its own row with a green dot when uploaded and a grey dot when outstanding.
 
 ### Archiving a Thread
 
@@ -656,25 +683,39 @@ The email goes out from the onboarding mailbox address. When the customer replie
 
 Click the **eye icon** next to any `.pdf` attachment to preview it inline without downloading. The PDF opens in a secure viewer within the portal. Close the viewer when done.
 
-### Typical Workflow — New Customer via Email
+### Typical Workflow — Reseller Customer via Email
 
-- Staff sends onboarding template PDFs via **Send Docs** in the Onboarding Inbox
+This covers the most common path: a reseller sends onboarding documents to a prospective customer, the customer replies with signed copies, and admin processes the application.
+
+1. Reseller logs in and navigates to **Onboarding Docs**
+2. Reseller enters the customer's name and email address, clicks **Send Documents**
+3. The system sends the four template PDFs to the customer and creates a draft onboarding application linked to that reseller
+4. Customer signs and returns all documents by replying to the email
+5. The reply appears in the Onboarding Inbox with a green **Application linked** chip
+6. Admin opens the thread and clicks **Save to Application** — assigns each attachment to its document slot, saves
+7. Admin clicks **Review Application** — enters the company name, clicks **Approve and Create Customer**
+8. Customer is created in the system, documents are linked to their profile, and the reseller ownership link is written automatically
+9. Admin archives the inbox thread
+
+### Typical Workflow — Direct Customer via Email (No Reseller)
+
+- Admin sends onboarding template PDFs via **Send Docs** in the top bar of the Onboarding Inbox
 - Customer signs and replies to the email with the completed documents attached
 - The reply threads into the Onboarding Inbox automatically
-- Auto-detection identifies the customer if their email matches an Odoo record; if not, an **Unknown** pill appears
-- Staff opens the thread and clicks **Create Customer**
-- Step 1: maps each signed document attachment to the correct doc slot
+- Auto-detection identifies the customer if their email matches an existing record; if not, an **Unknown** pill appears
+- Admin opens the thread and clicks **Create Customer**
+- Step 1: maps each signed document attachment to the correct document slot
 - Step 2: completes the customer details form (pre-filled from the sender's name and email)
-- Customer is created, documents are stored, thread is linked — all in one action
-- Staff replies from the portal to confirm receipt, then **Archives** the thread
+- Customer is created, documents are saved, thread is linked — all in one action
+- Admin replies from the portal to confirm receipt, then archives the thread
 
 ### Typical Workflow — Documents for an Existing Customer
 
 - A known customer emails a new document (e.g. a renewed Section 21 authorisation) to the onboarding address
 - Auto-detection resolves the customer — a blue **Customer** pill appears on the thread row
-- Staff opens the thread and clicks **Save** next to the attachment, adds a descriptive label, and clicks **Save to Profile**
+- Admin opens the thread and clicks **Save Documents**, assigns the attachment to the correct slot, and saves
 - The document appears in the customer's profile immediately
-- Staff archives the thread
+- Admin archives the thread
 
 ---
 

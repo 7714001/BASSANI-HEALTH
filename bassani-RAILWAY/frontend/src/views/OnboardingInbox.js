@@ -3,6 +3,7 @@ import { stripEmailQuote } from "../utils/stripEmailQuote";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
+import { useNavigate } from "react-router-dom";
 import {
   Mail, AlertCircle, Paperclip, RefreshCw,
   ExternalLink, Send, Archive, Save,
@@ -17,11 +18,12 @@ import {
 const API = "/api/onboarding-inbox";
 
 const TABS = [
-  { value: "open",         label: "Inbox"         },
-  { value: "unhandled",    label: "New"           },
-  { value: "in_progress",  label: "In Progress"   },
-  { value: "docs_complete",label: "Docs Complete" },
-  { value: "archived",     label: "Archived"      },
+  { value: "open",              label: "Inbox"         },
+  { value: "unhandled",         label: "New"           },
+  { value: "in_progress",       label: "In Progress"   },
+  { value: "application_linked",label: "Linked"        },
+  { value: "docs_complete",     label: "Docs Complete" },
+  { value: "archived",          label: "Archived"      },
 ];
 
 const REQUIRED_DOC_TYPES = [
@@ -40,13 +42,14 @@ const BLANK_CREATE_FORM = {
 };
 
 const STATUS_META = {
-  unhandled:           { label: "New",           color: "red"   },
-  reply:               { label: "Reply",         color: "blue"  },
-  in_progress:         { label: "In Progress",   color: "amber" },
-  docs_complete:       { label: "Docs Complete", color: "green" },
-  application_linked:  { label: "Linked",        color: "green" },
-  archived:            { label: "Archived",      color: "gray"  },
-  sent:                { label: "Sent",          color: "teal"  },
+  unhandled:           { label: "New",            color: "red"    },
+  reply:               { label: "Reply",          color: "blue"   },
+  in_progress:         { label: "In Progress",    color: "amber"  },
+  awaiting_docs:       { label: "Awaiting Docs",  color: "amber"  },
+  docs_complete:       { label: "Docs Complete",  color: "green"  },
+  application_linked:  { label: "Linked",         color: "green"  },
+  archived:            { label: "Archived",       color: "gray"   },
+  sent:                { label: "Sent",           color: "teal"   },
 };
 
 function initials(name) {
@@ -296,6 +299,7 @@ function MessageBubble({ msg, showDateDivider, onSaveToProfile, onPreview }) {
 
 export default function OnboardingInbox() {
   const { can } = useAuth();
+  const navigate = useNavigate();
 
   const [tab,            setTab           ] = useState("open");
   const [q,              setQ             ] = useState("");
@@ -349,7 +353,12 @@ export default function OnboardingInbox() {
   const [createForm,     setCreateForm    ] = useState(BLANK_CREATE_FORM);
   const [createSaving,   setCreateSaving  ] = useState(false);
 
-  // Save Documents modal
+  // Save to Application modal (reseller-originated threads — no customer yet)
+  const [saveAppOpen,        setSaveAppOpen       ] = useState(false);
+  const [saveAppAssignments, setSaveAppAssignments] = useState({});
+  const [saveAppSaving,      setSaveAppSaving     ] = useState(false);
+
+  // Save Documents modal (threads with a linked customer)
   const [saveDocsOpen,        setSaveDocsOpen       ] = useState(false);
   const [saveDocsStep,        setSaveDocsStep       ] = useState("assign"); // "assign" | "confirm" | "overwrite-confirm"
   const [saveDocsAssignments, setSaveDocsAssignments] = useState({}); // { att_key: { label, doc_type } }
@@ -552,6 +561,34 @@ export default function OnboardingInbox() {
       }
     } finally {
       setCreateSaving(false);
+    }
+  }
+
+  function openSaveAppModal() {
+    setSaveAppAssignments({});
+    setSaveAppOpen(true);
+  }
+
+  async function saveToApplication() {
+    const assignments = Object.entries(saveAppAssignments)
+      .filter(([, v]) => v?.doc_type && v.doc_type !== "__skip__")
+      .map(([att_key, v]) => ({ attachment_id: att_key, label: v.label, doc_type: v.doc_type }));
+
+    if (!assignments.length) { toast.error("Assign at least one attachment to a document slot"); return; }
+    setSaveAppSaving(true);
+    try {
+      const res = await api.post(`${API}/${selectedThread.id}/save-documents-to-application`, {
+        app_id: detail.application_id,
+        assignments,
+      });
+      const n = res.data.saved;
+      toast.success(`${n} document${n !== 1 ? "s" : ""} saved to application`);
+      setSaveAppOpen(false);
+      loadList(true);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save documents to application");
+    } finally {
+      setSaveAppSaving(false);
     }
   }
 
@@ -812,17 +849,33 @@ export default function OnboardingInbox() {
                     </span>
                   )}
                   {detail.application_id && (
-                    <span className="text-[11px] text-green-600 font-medium">Linked to application</span>
+                    <button
+                      onClick={() => navigate(`/applications/${detail.application_id}`)}
+                      className="inline-flex items-center gap-1 text-[11px] text-green-600 font-medium bg-green-50 border border-green-100 rounded px-1.5 py-0.5 hover:bg-green-100 transition-colors"
+                    >
+                      <Link2 size={9} /> Application linked
+                    </button>
                   )}
                   <StatusBadge status={detail.status} />
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                {!detail.customer_id && (
+                {detail.application_id ? (
+                  <BtnPrimary onClick={() => navigate(`/applications/${detail.application_id}`)}>
+                    <Link2 size={14} /> Review Application
+                  </BtnPrimary>
+                ) : !detail.customer_id ? (
                   <BtnPrimary onClick={openCreateModal}>
                     <UserPlus size={14} /> Create Customer
                   </BtnPrimary>
+                ) : null}
+                {/* Save to Application — reseller thread, no customer yet */}
+                {detail.application_id && !detail.customer_id && threadAttachments.length > 0 && (
+                  <BtnSecondary onClick={openSaveAppModal}>
+                    <Save size={14} /> Save to Application
+                  </BtnSecondary>
                 )}
+                {/* Save Documents — thread has a linked customer */}
                 {detail.customer_id && threadAttachments.length > 0 && (
                   <BtnPrimary onClick={openSaveDocsModal}>
                     <Save size={14} /> Save Documents
@@ -1089,6 +1142,71 @@ export default function OnboardingInbox() {
               </div>
             </div>
           )}
+        </Modal>
+      )}
+
+      {/* Save to Application modal */}
+      {saveAppOpen && (
+        <Modal onClose={() => setSaveAppOpen(false)} title="Save Documents to Application" width="max-w-xl">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+              <Link2 size={12} />
+              Saving to application: <strong>{detail?.application_id}</strong>
+            </div>
+            <p className="text-xs text-gray-500">
+              Assign each attachment to a document slot. Documents saved here are held against the pending application.
+              When the application is approved and the customer is created, these documents are automatically linked to their profile — no re-upload needed.
+            </p>
+            {threadAttachments.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No attachments found in this thread.</p>
+            ) : (
+              <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg overflow-hidden">
+                {threadAttachments.map(att => {
+                  const assignment = saveAppAssignments[att.key] || {};
+                  const docType    = assignment.doc_type || "";
+                  return (
+                    <div key={att.key} className="px-3 py-3 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <FileText size={12} className="text-gray-400 shrink-0" />
+                        <span className="text-xs font-medium text-gray-700 truncate flex-1">{att.name}</span>
+                        {att.size > 0 && <span className="text-[10px] text-gray-400 shrink-0">{Math.round(att.size / 1024)}KB</span>}
+                      </div>
+                      <select
+                        value={docType}
+                        onChange={e => {
+                          const val = e.target.value;
+                          const opt = REQUIRED_DOC_TYPES.find(d => d.key === val);
+                          setSaveAppAssignments(prev => ({
+                            ...prev,
+                            [att.key]: { doc_type: val, label: opt?.label || val },
+                          }));
+                        }}
+                        className={`w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300 ${
+                          !docType ? "border-amber-300 bg-amber-50" : "border-gray-200"
+                        }`}
+                      >
+                        <option value="">— assign to document slot —</option>
+                        <option value="__skip__">Don't save this attachment</option>
+                        {REQUIRED_DOC_TYPES.map(dt => (
+                          <option key={dt.key} value={dt.key}>{dt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => setSaveAppOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary
+                onClick={saveToApplication}
+                disabled={saveAppSaving || !Object.values(saveAppAssignments).some(v => v?.doc_type && v.doc_type !== "__skip__")}
+              >
+                {saveAppSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save {Object.values(saveAppAssignments).filter(v => v?.doc_type && v.doc_type !== "__skip__").length || ""} Documents
+              </BtnPrimary>
+            </div>
+          </div>
         </Modal>
       )}
 

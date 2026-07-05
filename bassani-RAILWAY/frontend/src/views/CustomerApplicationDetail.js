@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
-  MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle, Eye, X,
+  MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle, Eye, X, Link2, Mail,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -12,9 +12,10 @@ import { Spinner, fmtDate } from "../components/UI";
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  pending:  { label: "Pending Review", cls: "bg-amber-50 text-amber-700 border-amber-200",  dot: "bg-amber-400",  icon: Clock },
-  approved: { label: "Approved",       cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
-  rejected: { label: "Rejected",       cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle },
+  pending:       { label: "Pending Review",  cls: "bg-amber-50 text-amber-700 border-amber-200",  dot: "bg-amber-400",  icon: Clock },
+  awaiting_docs: { label: "Awaiting Docs",   cls: "bg-amber-50 text-amber-700 border-amber-200",  dot: "bg-amber-400",  icon: Clock },
+  approved:      { label: "Approved",        cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
+  rejected:      { label: "Rejected",        cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle },
 };
 
 function StatusBadge({ status, size = "md" }) {
@@ -167,12 +168,16 @@ function DocumentsCard({ appId }) {
 
 // ── Actions sidebar ────────────────────────────────────────────────────────────
 
-function ActionsCard({ app, canApprove, canReject, onApprove, onReject }) {
+function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate }) {
   const [rejectMode,   setRejectMode  ] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [companyName,  setCompanyName ] = useState(app.company_name || "");
   const [loading,      setLoading     ] = useState(false);
 
-  if (app.status !== "pending") {
+  const isAwaitingDocs = app.status === "awaiting_docs";
+  const isActionable   = app.status === "pending" || isAwaitingDocs;
+
+  if (!isActionable) {
     return (
       <Card title="Decision">
         <MetaRow label="Outcome"     value={STATUS_CFG[app.status]?.label} />
@@ -189,8 +194,12 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject }) {
   }
 
   const handleApprove = async () => {
+    if (isAwaitingDocs && !companyName.trim()) {
+      toast.error("Enter the customer / company name before approving");
+      return;
+    }
     setLoading(true);
-    try { await onApprove(); } finally { setLoading(false); }
+    try { await onApprove(isAwaitingDocs ? companyName.trim() : undefined); } finally { setLoading(false); }
   };
 
   const handleReject = async () => {
@@ -201,10 +210,40 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject }) {
 
   return (
     <Card title="Actions">
+      {/* Inbox thread link for awaiting_docs apps */}
+      {isAwaitingDocs && app.inbox_thread_id && (
+        <div className="mb-4 -mt-1">
+          <button
+            onClick={() => navigate(`/onboarding-inbox?thread=${app.inbox_thread_id}`)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-xl transition-colors border border-gray-200"
+          >
+            <Mail size={13} /> View Inbox Thread
+          </button>
+        </div>
+      )}
+
       {!rejectMode ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Company name input — required for inbox-sourced (awaiting_docs) apps */}
+          {isAwaitingDocs && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Customer / Company Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+                placeholder="Registered company name for Odoo"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-bassani-300 placeholder-gray-400"
+              />
+              <p className="text-[10px] text-gray-400 mt-1">
+                This application arrived via email. Enter the company name before approving.
+              </p>
+            </div>
+          )}
+
           {canApprove && (
-            <button onClick={handleApprove} disabled={loading}
+            <button onClick={handleApprove} disabled={loading || (isAwaitingDocs && !companyName.trim())}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
               {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
               Approve & Create Customer
@@ -267,11 +306,16 @@ export default function CustomerApplicationDetail() {
       .finally(() => setLoading(false));
   }, [id, navigate]);
 
-  const approve = async () => {
+  const approve = async (companyName) => {
     try {
-      await api.put(`/api/onboarding/${id}/approve`);
-      toast.success("Customer approved and created in Odoo");
-      setApp(prev => ({ ...prev, status: "approved" }));
+      const body = companyName ? { company_name: companyName } : {};
+      await api.put(`/api/onboarding/${id}/approve`, body);
+      toast.success("Customer approved and created");
+      setApp(prev => ({
+        ...prev,
+        status: "approved",
+        company_name: companyName || prev.company_name,
+      }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Approval failed");
       throw e;
@@ -312,19 +356,36 @@ export default function CustomerApplicationDetail() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-lg font-bold text-gray-900">{app.company_name}</h1>
+              <h1 className="text-lg font-bold text-gray-900">
+                {app.company_name || app.contact_name || "Unnamed Application"}
+              </h1>
               {app.trading_name && (
                 <span className="text-xs text-gray-400 font-medium">t/a {app.trading_name}</span>
               )}
+              {app.source === "inbox" && !app.company_name && (
+                <span className="text-[11px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                  Company name required before approval
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <span className="font-mono text-xs text-bassani-700 font-semibold bg-bassani-50 px-2 py-0.5 rounded-md">
                 {app.id}
               </span>
               <StatusBadge status={app.status} size="md" />
-              <span className="text-xs text-gray-400">
-                Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> · {fmtDate(app.submitted_at)}
-              </span>
+              {app.reseller_name && (
+                <span className="text-xs text-gray-400">
+                  Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> · {fmtDate(app.submitted_at)}
+                </span>
+              )}
+              {app.inbox_thread_id && (
+                <button
+                  onClick={() => navigate(`/onboarding-inbox?thread=${app.inbox_thread_id}`)}
+                  className="inline-flex items-center gap-1 text-[11px] text-blue-600 font-medium bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 hover:bg-blue-100 transition-colors"
+                >
+                  <Mail size={9} /> View inbox thread
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -392,6 +453,7 @@ export default function CustomerApplicationDetail() {
                 canReject={can("customers.reject_onboarding")}
                 onApprove={approve}
                 onReject={reject}
+                navigate={navigate}
               />
 
             </div>

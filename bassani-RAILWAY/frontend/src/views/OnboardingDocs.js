@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { FileText, Download, Mail, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FileText, Download, Mail, Loader2, CheckCircle, ExternalLink } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar } from "../components/UI";
+import { useAuth } from "../AuthContext";
 
 const TEMPLATES = [
   { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
@@ -12,9 +14,15 @@ const TEMPLATES = [
 ];
 
 export default function OnboardingDocs() {
-  const [emailTarget,  setEmailTarget ] = useState("");
-  const [emailSending, setEmailSending] = useState(false);
-  const [downloading,  setDownloading ] = useState(null);
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const isReseller = user?.role === "reseller";
+
+  const [emailTarget,    setEmailTarget   ] = useState("");
+  const [customerName,   setCustomerName  ] = useState("");
+  const [emailSending,   setEmailSending  ] = useState(false);
+  const [downloading,    setDownloading   ] = useState(null);
+  const [sentApp,        setSentApp       ] = useState(null); // { email, application_id } after send
 
   const downloadTemplate = async (filename, label) => {
     setDownloading(filename);
@@ -35,9 +43,14 @@ export default function OnboardingDocs() {
     if (!emailTarget.trim()) return toast.error("Enter the customer's email address");
     setEmailSending(true);
     try {
-      await api.post("/api/onboarding/templates/email", { to_email: emailTarget.trim() });
+      const res = await api.post("/api/onboarding/templates/email", {
+        to_email:      emailTarget.trim(),
+        customer_name: customerName.trim(),
+      });
       toast.success("Documents sent to " + emailTarget.trim());
+      setSentApp({ email: emailTarget.trim(), application_id: res.data.application_id });
       setEmailTarget("");
+      setCustomerName("");
     } catch {
       toast.error("Failed to send documents");
     } finally {
@@ -53,6 +66,32 @@ export default function OnboardingDocs() {
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto space-y-6">
+
+          {/* Success banner — shown after sending */}
+          {sentApp && (
+            <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+              <CheckCircle size={16} className="text-green-600 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-green-800">Documents sent to {sentApp.email}</p>
+                {sentApp.application_id ? (
+                  <p className="text-xs text-green-700 mt-0.5">
+                    An onboarding application has been created and will track this customer's progress.{" "}
+                    <button
+                      onClick={() => navigate(`/applications/${sentApp.application_id}`)}
+                      className="font-semibold underline underline-offset-2 inline-flex items-center gap-1"
+                    >
+                      View application <ExternalLink size={11} />
+                    </button>
+                  </p>
+                ) : (
+                  <p className="text-xs text-green-700 mt-0.5">
+                    The customer's reply will appear in the Onboarding Inbox.
+                  </p>
+                )}
+              </div>
+              <button onClick={() => setSentApp(null)} className="text-green-400 hover:text-green-700 text-xs font-medium shrink-0">Dismiss</button>
+            </div>
+          )}
 
           {/* Template downloads */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -90,26 +129,36 @@ export default function OnboardingDocs() {
               <Mail size={15} className="text-bassani-600 shrink-0" />
               <h3 className="text-sm font-bold text-gray-900">Email Documents to Customer</h3>
             </div>
-            <div className="px-6 py-5">
-              <p className="text-xs text-gray-500 mb-4">
-                Send all four template documents to your customer's email address as attachments.
+            <div className="px-6 py-5 space-y-3">
+              <p className="text-xs text-gray-500">
+                Send all four template documents directly to your customer.
+                {isReseller && " An onboarding application will be created automatically to track their progress and link them to your account once approved."}
               </p>
-              <div className="flex gap-2">
+              <div className="space-y-2">
                 <input
-                  type="email"
-                  value={emailTarget}
-                  onChange={e => setEmailTarget(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && emailTemplates()}
-                  placeholder="customer@example.co.za"
-                  className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                  type="text"
+                  value={customerName}
+                  onChange={e => setCustomerName(e.target.value)}
+                  placeholder="Customer / company name (optional)"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
                 />
-                <button
-                  onClick={emailTemplates}
-                  disabled={emailSending || !emailTarget.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-                  {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
-                  Send Documents
-                </button>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={emailTarget}
+                    onChange={e => setEmailTarget(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && emailTemplates()}
+                    placeholder="customer@example.co.za"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                  />
+                  <button
+                    onClick={emailTemplates}
+                    disabled={emailSending || !emailTarget.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                    {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                    Send Documents
+                  </button>
+                </div>
               </div>
             </div>
           </div>

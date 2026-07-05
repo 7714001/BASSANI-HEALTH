@@ -87,7 +87,12 @@ class ApproveLinkBody(BaseModel):
 
 
 class TemplateEmailBody(BaseModel):
-    to_email: str
+    to_email:      str
+    customer_name: Optional[str] = ""
+
+
+class ApproveBody(BaseModel):
+    company_name: Optional[str] = None  # required for inbox-sourced apps that have no company_name yet
 
 
 class UpdateApplicationBody(BaseModel):
@@ -235,9 +240,40 @@ async def email_templates(
     }
     result = await col("onboarding_inbox").insert_one(thread_doc)
     item_id_str = str(result.inserted_id)
+    thread_stamp: dict = {"thread_root_id": item_id_str}
+
+    # When a reseller sends onboarding docs, create a draft application so the
+    # customer remains associated with that reseller once their account is created.
+    application_id: str | None = None
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        if reseller:
+            app_ref = "APP-" + str(uuid.uuid4())[:8].upper()
+            await col("customer_onboarding").insert_one({
+                "id":            app_ref,
+                "reseller_id":   reseller.get("id"),
+                "reseller_name": reseller.get("name", current_user.get("username", "")),
+                "status":        "awaiting_docs",
+                "source":        "inbox",
+                "contact_email": body.to_email.strip(),
+                "contact_name":  (body.customer_name or "").strip(),
+                "company_name":  (body.customer_name or "").strip(),
+                "inbox_thread_id": item_id_str,
+                "created_at":    now,
+                "submitted_at":  None,
+                "reviewed_at":   None,
+                "reviewed_by":   None,
+                "documents":     [],
+            })
+            application_id = app_ref
+            thread_stamp["application_id"] = app_ref
+            thread_stamp["reseller_id"]    = reseller.get("id")
+            thread_stamp["reseller_name"]  = reseller.get("name", "")
+            thread_stamp["status"]         = "application_linked"
+
     await col("onboarding_inbox").update_one(
         {"_id": result.inserted_id},
-        {"$set": {"thread_root_id": item_id_str}},
+        {"$set": thread_stamp},
     )
 
     async def _do_send():
@@ -279,7 +315,7 @@ async def email_templates(
         user=current_user,
         after={"to_email": body.to_email.strip()},
     )
-    return {"success": True}
+    return {"success": True, "item_id": item_id_str, "application_id": application_id}
 
 
 # ── Document upload endpoints ─────────────────────────────────────────────────
@@ -582,28 +618,44 @@ async def replace_application_document(
 async def approve_application(
     app_id: str,
     background_tasks: BackgroundTasks,
+    body: ApproveBody = None,
     current_user: dict = Depends(require_permission("customers.approve_onboarding")),
 ):
     """
     Approve an onboarding application:
-    1. Verify all 5 required documents are present
+    1. Verify all 5 required documents are present (skipped for inbox-sourced apps)
     2. Create res.partner in Odoo
     3. Insert customer_ownership record linking partner to reseller
     4. Mark application as approved
+    5. If inbox-sourced, stamp customer_id on the linked inbox thread
     """
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app["status"] != "pending":
+
+    is_inbox_source = app.get("source") == "inbox"
+    allowed_statuses = {"pending", "awaiting_docs"} if is_inbox_source else {"pending"}
+    if app["status"] not in allowed_statuses:
         raise HTTPException(status_code=400, detail=f"Application is already {app['status']}")
 
-    submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
-    missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot approve — missing required documents: {', '.join(missing)}",
+    # Inbox-sourced apps skip the doc check — docs arrive via email and are saved
+    # to the customer profile after the account is created (via the inbox thread).
+    if not is_inbox_source:
+        submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
+        missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve — missing required documents: {', '.join(missing)}",
+            )
+
+    # For inbox-sourced apps the admin supplies company_name at approval time
+    # if it wasn't collected upfront.
+    if body and body.company_name:
+        await col("customer_onboarding").update_one(
+            {"id": app_id}, {"$set": {"company_name": body.company_name.strip()}}
         )
+        app["company_name"] = body.company_name.strip()
 
     odoo = get_odoo_client()
 
@@ -666,24 +718,60 @@ async def approve_application(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to create Odoo customer: {str(e)}")
 
+    now_approved = datetime.now(timezone.utc)
+
     await col("customer_ownership").insert_one({
         "odoo_partner_id":     partner_id,
         "reseller_id":         app["reseller_id"],
         "reseller_name":       app.get("reseller_name", ""),
-        "created_at":          datetime.now(timezone.utc),
+        "created_at":          now_approved,
         "created_by_username": current_user.get("username", ""),
         "onboarding_ref":      app_id,
     })
+
+    # Transfer application docs to customer_documents by reference — same R2 keys,
+    # no byte copy. Works for both portal-wizard and inbox-sourced applications.
+    for doc in (app.get("documents") or []):
+        r2_key = doc.get("r2_key")
+        if not r2_key:
+            continue
+        record = {
+            "id":              str(uuid.uuid4()),
+            "odoo_partner_id": partner_id,
+            "label":           doc.get("label") or doc.get("doc_type") or "Document",
+            "filename":        doc.get("filename", ""),
+            "r2_key":          r2_key,
+            "size":            doc.get("size", 0),
+            "doc_type":        doc.get("doc_type"),
+            "uploaded_at":     now_approved,
+            "source":          "onboarding",
+            "onboarding_ref":  app_id,
+        }
+        await col("customer_documents").insert_one(record)
 
     await col("customer_onboarding").update_one(
         {"id": app_id},
         {"$set": {
             "status":          "approved",
             "odoo_partner_id": partner_id,
-            "reviewed_at":     datetime.now(timezone.utc),
+            "reviewed_at":     now_approved,
             "reviewed_by":     current_user.get("username", ""),
         }},
     )
+
+    # For inbox-sourced applications, stamp the linked thread with the new
+    # customer_id so Save Documents becomes available immediately.
+    if is_inbox_source and app.get("inbox_thread_id"):
+        from bson import ObjectId as _OID
+        try:
+            tid = app["inbox_thread_id"]
+            await col("onboarding_inbox").update_many(
+                {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
+                {"$set": {"customer_id": partner_id, "customer_name": app.get("company_name", "")}},
+            )
+        except Exception:
+            pass  # non-fatal — thread link can be set manually
+
     await audit_log("onboarding.approve", "customer_onboarding", app_id,
                     entity_label=app.get("company_name", ""), user=current_user,
                     detail={"odoo_partner_id": partner_id},
@@ -724,20 +812,41 @@ async def approve_application_link(
     if not records:
         raise HTTPException(status_code=404, detail="Odoo partner not found")
 
+    now_link = datetime.now(timezone.utc)
+
     await col("customer_ownership").insert_one({
         "odoo_partner_id":     body.odoo_partner_id,
         "reseller_id":         app["reseller_id"],
         "reseller_name":       app.get("reseller_name", ""),
-        "created_at":          datetime.now(timezone.utc),
+        "created_at":          now_link,
         "created_by_username": current_user.get("username", ""),
         "onboarding_ref":      app_id,
     })
+
+    # Transfer application docs to customer_documents by reference (same R2 keys, no byte copy)
+    for doc in (app.get("documents") or []):
+        r2_key = doc.get("r2_key")
+        if not r2_key:
+            continue
+        await col("customer_documents").insert_one({
+            "id":              str(uuid.uuid4()),
+            "odoo_partner_id": body.odoo_partner_id,
+            "label":           doc.get("label") or doc.get("doc_type") or "Document",
+            "filename":        doc.get("filename", ""),
+            "r2_key":          r2_key,
+            "size":            doc.get("size", 0),
+            "doc_type":        doc.get("doc_type"),
+            "uploaded_at":     now_link,
+            "source":          "onboarding",
+            "onboarding_ref":  app_id,
+        })
+
     await col("customer_onboarding").update_one(
         {"id": app_id},
         {"$set": {
             "status":          "approved",
             "odoo_partner_id": body.odoo_partner_id,
-            "reviewed_at":     datetime.now(timezone.utc),
+            "reviewed_at":     now_link,
             "reviewed_by":     current_user.get("username", ""),
         }},
     )
@@ -769,7 +878,7 @@ async def reject_application(
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app["status"] != "pending":
+    if app["status"] not in {"pending", "awaiting_docs"}:
         raise HTTPException(status_code=400, detail=f"Application is already {app['status']}")
 
     await col("customer_onboarding").update_one(

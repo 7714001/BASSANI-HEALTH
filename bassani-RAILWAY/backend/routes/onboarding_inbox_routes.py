@@ -93,6 +93,11 @@ class CreateCustomerSessionBody(BaseModel):
     mappings: List[DocMapping]
 
 
+class SaveToApplicationBody(BaseModel):
+    app_id: str
+    assignments: List[DocAssignment]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _onboarding_configured() -> bool:
@@ -841,6 +846,147 @@ async def link_customer(
     )
 
     return {"success": True, "customer_name": customer_name}
+
+
+# ── Save inbox attachments to an onboarding application ──────────────────────
+
+@router.post("/{item_id}/save-documents-to-application")
+async def save_documents_to_application(
+    item_id: str,
+    body: SaveToApplicationBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("onboarding.inbox")),
+):
+    """
+    Save inbox thread attachments directly to an onboarding application's document slots.
+    Used for reseller-originated threads where the Odoo customer doesn't exist yet.
+    Bytes are fetched from inbox storage and written to R2 under
+    onboarding/applications/{app_id}/{doc_type}. Replaces any existing entry for
+    the same doc_type in the application's documents array.
+    On approval, the application's documents are referenced into customer_documents
+    by key — no R2 copy is made at that point.
+    """
+    from services.graph_client import get_attachment_content, graph_configured
+    from services.imap_client import get_graph_mailbox_address
+    from services.r2_client import r2_put
+
+    app = await col("customer_onboarding").find_one({"id": body.app_id})
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.get("status") not in {"pending", "awaiting_docs"}:
+        raise HTTPException(status_code=400, detail="Application is not in a state that accepts document uploads")
+
+    root_doc = await col(_COLLECTION).find_one({"_id": _oid(item_id)})
+    if not root_doc:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+
+    thread_root_id = root_doc.get("thread_root_id") or str(root_doc["_id"])
+    root_oid = ObjectId(thread_root_id)
+
+    thread_items: list[dict] = []
+    async for doc in col(_COLLECTION).find(
+        {"$or": [{"_id": root_oid}, {"thread_root_id": thread_root_id}]}
+    ):
+        thread_items.append(doc)
+
+    att_map: dict[str, tuple] = {}
+    for ti in thread_items:
+        for att in ti.get("attachments", []):
+            key = att.get("id") or att.get("imap_attachment_id")
+            if key and key not in att_map:
+                att_map[key] = (att, ti)
+
+    mailbox_address = get_graph_mailbox_address(_MAILBOX)
+    saved_docs: list[dict] = []
+    existing_docs = list(app.get("documents") or [])
+
+    for assignment in body.assignments:
+        if not assignment.doc_type or assignment.doc_type not in _REQUIRED_DOC_TYPES:
+            continue
+
+        pair = att_map.get(assignment.attachment_id)
+        if not pair:
+            logger.warning(
+                "onboarding_inbox.save_to_app_att_missing att=%s app=%s",
+                assignment.attachment_id, body.app_id,
+            )
+            continue
+
+        att_meta, parent_item = pair
+        filename     = att_meta.get("name", "attachment")
+        content_type = att_meta.get("content_type", "application/octet-stream")
+        content: bytes = b""
+
+        if att_meta.get("r2_key"):
+            from services.r2_client import r2_get
+            try:
+                content = await r2_get(att_meta["r2_key"])
+            except Exception as exc:
+                logger.error("onboarding_inbox.save_to_app_r2_error att=%s error=%s", assignment.attachment_id, exc)
+                continue
+
+        elif graph_configured() and parent_item.get("graph_message_id") and att_meta.get("id"):
+            try:
+                raw, ct, fn = await get_attachment_content(
+                    parent_item["graph_message_id"], att_meta["id"],
+                    mailbox_address=mailbox_address,
+                )
+                content = raw; content_type = ct or content_type; filename = fn or filename
+            except Exception as exc:
+                logger.error("onboarding_inbox.save_to_app_graph_error att=%s error=%s", assignment.attachment_id, exc)
+                continue
+
+        elif att_meta.get("imap_attachment_id"):
+            stored = await col(f"{_COLLECTION}_attachments").find_one(
+                {"_id": ObjectId(att_meta["imap_attachment_id"])}
+            )
+            if not stored:
+                logger.warning("onboarding_inbox.save_to_app_att_expired att=%s", assignment.attachment_id)
+                continue
+            content = bytes(stored["content"])
+
+        else:
+            continue
+
+        if not content:
+            continue
+
+        ext    = os.path.splitext(filename)[1] or ".pdf"
+        r2_key = f"onboarding/applications/{body.app_id}/{assignment.doc_type}{ext}"
+        await r2_put(r2_key, content, content_type)
+
+        new_doc = {
+            "doc_type":    assignment.doc_type,
+            "label":       _REQUIRED_DOC_TYPES[assignment.doc_type],
+            "r2_key":      r2_key,
+            "filename":    filename,
+            "size":        len(content),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "source":      "inbox",
+        }
+        existing_docs = [d for d in existing_docs if d.get("doc_type") != assignment.doc_type]
+        existing_docs.append(new_doc)
+        saved_docs.append(new_doc)
+
+    if saved_docs:
+        await col("customer_onboarding").update_one(
+            {"id": body.app_id},
+            {"$set": {"documents": existing_docs, "updated_at": datetime.now(timezone.utc)}},
+        )
+
+    background_tasks.add_task(
+        audit_log,
+        "onboarding_inbox.docs_saved_to_application", _COLLECTION, str(root_oid),
+        entity_label=f"app:{body.app_id}",
+        user=current_user,
+        after={
+            "saved": len(saved_docs),
+            "app_id": body.app_id,
+            "documents": [{"doc_type": d["doc_type"], "filename": d["filename"]} for d in saved_docs],
+        },
+    )
+
+    return {"saved": len(saved_docs), "docs": saved_docs}
 
 
 # ── Stage inbox attachments into an onboarding R2 session ────────────────────
