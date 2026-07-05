@@ -692,21 +692,33 @@ async def send_docs(
                     "content_type": "application/pdf",
                 })
 
-    from services.email_service import _wrap as _email_wrap
+    from services.email_service import _wrap as _email_wrap, _h1, _p, _info_box, _divider
     greeting = f"Dear {body.customer_name}," if body.customer_name else "Dear Customer,"
-    body_html = _email_wrap(f"""
-<p style="margin:0 0 16px;font-size:15px;color:#1e293b;">{greeting}</p>
-<p style="margin:0 0 16px;font-size:15px;color:#374151;">Please find your Bassani Health onboarding documents attached to this email.</p>
-<p style="margin:0 0 16px;font-size:15px;color:#374151;">Once you have completed and signed all documents, please <strong>reply directly to this email</strong> with the signed copies attached. Your reply will be received in our secure onboarding inbox and reviewed by our team promptly.</p>
-<p style="margin:0 0 8px;font-size:15px;color:#374151;">The following documents are attached:</p>
-<ul style="margin:0 0 16px;padding-left:20px;color:#374151;font-size:15px;">
-  <li style="margin-bottom:6px;">Store Onboarding Agreement</li>
-  <li style="margin-bottom:6px;">Customer Information Form</li>
-  <li style="margin-bottom:6px;">NDA</li>
-  <li style="margin-bottom:6px;">TQA Document</li>
-</ul>
-<p style="margin:0;font-size:15px;color:#374151;">If you have any questions, please reply to this email and a member of the team will assist you.</p>
-""")
+    body_html = _email_wrap(
+        _p(greeting)
+        + _h1("Your onboarding documents")
+        + _p("Please find your Bassani Health onboarding documents attached to this email.")
+        + _p(
+            "Once you have completed and signed all documents, please "
+            "<strong>reply directly to this email</strong> with all five signed documents "
+            "attached. Your reply will be received in our secure onboarding inbox and reviewed "
+            "by our team promptly."
+        )
+        + _info_box([
+            ("Attached templates",   f"{len(file_attachments)} documents"),
+            ("Also required",        "CIPC Company Registration Certificate"),
+            ("How to return signed docs", "Reply directly to this email with all five attached"),
+        ])
+        + _divider()
+        + _p(
+            "If you have any questions before returning your documents, please reply to this email "
+            "and a member of the team will assist you.", muted=True
+        ),
+        footer_note=(
+            "Please reply to this email with your five completed documents attached. "
+            "Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami"
+        ),
+    )
     subject = "Bassani Health: Onboarding Documents"
     now = datetime.now(timezone.utc)
     if use_graph:

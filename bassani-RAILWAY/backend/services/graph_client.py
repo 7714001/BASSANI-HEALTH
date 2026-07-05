@@ -232,7 +232,7 @@ async def send_reply(
 ) -> None:
     mailbox = _resolve_mailbox(mailbox_address)
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}/reply"
-    payload = {"message": {"body": {"contentType": "HTML", "content": body_html}}}
+    payload = {"message": {"from": {"emailAddress": {"name": "Bassani Health", "address": mailbox}}, "body": {"contentType": "HTML", "content": body_html}}}
     async with httpx.AsyncClient(timeout=20) as client:
         async def _call():
             return await client.post(url, headers=await _headers(), json=payload)
@@ -268,6 +268,7 @@ async def send_mail(
         "message": {
             "subject": subject,
             "body":    {"contentType": "HTML", "content": body_html},
+            "from":    {"emailAddress": {"name": "Bassani Health", "address": mailbox}},
             "toRecipients": [{"emailAddress": {"address": to_email}}],
             "attachments":  att_payload,
         },

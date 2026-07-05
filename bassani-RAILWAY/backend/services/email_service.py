@@ -54,8 +54,15 @@ def _send(
 
 # HTML primitives
 
-def _wrap(body_html: str) -> str:
-    """Branded email shell. Table-based for cross-client compatibility."""
+def _wrap(body_html: str, footer_note: str = "") -> str:
+    """Branded email shell. Table-based for cross-client compatibility.
+    footer_note overrides the default 'do not reply' line when the email
+    intentionally invites a reply (e.g. onboarding documents).
+    """
+    _footer = footer_note or (
+        "This is an automated message from the Bassani Health operations portal. "
+        "Please do not reply directly to this email."
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -103,8 +110,7 @@ def _wrap(body_html: str) -> str:
               Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami
             </p>
             <p style="margin:5px 0 0;font-size:11px;color:#cbd5e1;line-height:1.6;">
-              This is an automated message from the Bassani Health operations portal.
-              Please do not reply directly to this email.
+              {_footer}
             </p>
           </td>
         </tr>
