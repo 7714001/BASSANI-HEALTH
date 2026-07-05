@@ -1137,8 +1137,8 @@ async def save_documents(
             "docs_complete" if _REQUIRED_DOC_KEYS.issubset(set(all_received))
             else "in_progress"
         )
-        await col(_COLLECTION).update_one(
-            {"_id": root_oid},
+        await col(_COLLECTION).update_many(
+            {"$or": [{"_id": root_oid}, {"thread_root_id": thread_root_id}]},
             {"$set": {"received_doc_types": all_received, "status": new_status}},
         )
 
