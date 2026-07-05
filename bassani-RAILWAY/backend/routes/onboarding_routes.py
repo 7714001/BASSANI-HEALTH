@@ -12,7 +12,7 @@ from middleware.audit import audit_log
 from routes.settings_routes import get_email_routing
 from services.email_service import (
     send_onboarding_submitted, send_onboarding_approved,
-    send_onboarding_rejected, send_onboarding_templates,
+    send_onboarding_rejected,
 )
 from services.r2_client import r2_put, r2_delete, r2_presign
 
@@ -145,18 +145,123 @@ async def email_templates(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    """Email all four Bassani template PDFs to the customer's email address."""
+    """
+    Email all four Bassani template PDFs to the customer's email address.
+    Uses the connected onboarding mailbox (Graph or IMAP) so the email comes
+    from the business address and customer replies land in the Onboarding Inbox.
+    """
     if not body.to_email.strip():
         raise HTTPException(status_code=400, detail="Email address required")
 
-    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-    reseller_name = reseller.get("name", current_user.get("username", "")) if reseller else current_user.get("username", "")
+    from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
+    from services.graph_client import graph_configured
 
-    background_tasks.add_task(
-        send_onboarding_templates,
-        to_email=body.to_email.strip(),
-        reseller_name=reseller_name,
+    onboarding_graph_address = get_graph_mailbox_address("onboarding")
+    imap_cfg = _imap_cfg("onboarding")
+    use_graph = graph_configured() and bool(onboarding_graph_address)
+
+    if not use_graph and not imap_cfg:
+        raise HTTPException(
+            status_code=503,
+            detail="Onboarding mailbox not configured. Set up the mailbox in Settings before sending documents.",
+        )
+
+    _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
+    _TEMPLATES = [
+        ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
+        ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
+        ("nda.pdf",                        "Bassani Health NDA"),
+        ("tqa.pdf",                        "Bassani Health TQA Document"),
+    ]
+    file_attachments = []
+    for filename, display_name in _TEMPLATES:
+        fpath = os.path.join(_TEMPLATE_DIR, filename)
+        if os.path.exists(fpath):
+            with open(fpath, "rb") as f:
+                file_attachments.append({
+                    "filename":     f"{display_name}.pdf",
+                    "content":      f.read(),
+                    "content_type": "application/pdf",
+                })
+
+    from services.email_service import _wrap as _email_wrap
+    body_html = _email_wrap("""
+<p style="margin:0 0 16px;font-size:15px;color:#1e293b;">Dear Customer,</p>
+<p style="margin:0 0 16px;font-size:15px;color:#374151;">Please find your Bassani Health onboarding documents attached to this email.</p>
+<p style="margin:0 0 16px;font-size:15px;color:#374151;">Once you have completed and signed all documents, please <strong>reply directly to this email</strong> with the signed copies attached. Our onboarding team will review them and activate your account.</p>
+<p style="margin:0 0 8px;font-size:15px;color:#374151;">The following documents are attached:</p>
+<ul style="margin:0 0 16px;padding-left:20px;color:#374151;font-size:15px;">
+  <li style="margin-bottom:6px;">Store Onboarding Agreement</li>
+  <li style="margin-bottom:6px;">Customer Information Form</li>
+  <li style="margin-bottom:6px;">NDA</li>
+  <li style="margin-bottom:6px;">TQA Document</li>
+</ul>
+<p style="margin:0;font-size:15px;color:#374151;">If you have any questions, please reply to this email and a member of the team will assist you.</p>
+""")
+    subject = "Bassani Health: Onboarding Documents"
+    from_address = onboarding_graph_address if use_graph else (
+        imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
     )
+
+    # Create thread root in the onboarding inbox so the customer's reply
+    # auto-threads and appears in the Onboarding Inbox for staff to action.
+    now = datetime.now(timezone.utc)
+    thread_doc = {
+        "from_email":      from_address,
+        "from_name":       "Bassani Health",
+        "to_email":        body.to_email.strip(),
+        "subject":         subject,
+        "body_html":       body_html,
+        "body_preview":    f"Onboarding documents sent to {body.to_email.strip()}",
+        "is_outgoing":     True,
+        "status":          "sent",
+        "received_at":     now,
+        "has_attachments": bool(file_attachments),
+        "attachments":     [{"name": a["filename"]} for a in file_attachments],
+        "thread_root_id":  None,
+        "is_read":         True,
+        "created_at":      now,
+        "sent_by":         current_user.get("username"),
+    }
+    result = await col("onboarding_inbox").insert_one(thread_doc)
+    item_id_str = str(result.inserted_id)
+    await col("onboarding_inbox").update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"thread_root_id": item_id_str}},
+    )
+
+    async def _do_send():
+        try:
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=body.to_email.strip(),
+                    subject=subject,
+                    body_html=body_html,
+                    file_attachments=file_attachments,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                from services.imap_client import send_new_email as imap_send_new
+                message_id = await imap_send_new(
+                    to_email=body.to_email.strip(),
+                    subject=subject,
+                    body_html=body_html,
+                    file_attachments=file_attachments,
+                    mailbox="onboarding",
+                )
+                await col("onboarding_inbox").update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "onboarding.email_templates_send_failed to=%s error=%s",
+                body.to_email, exc,
+            )
+
+    background_tasks.add_task(_do_send)
     return {"success": True}
 
 
