@@ -341,25 +341,21 @@ export default function OnboardingInbox() {
   const [sendDocsSending,  setSendDocsSending ] = useState(false);
 
   // Create customer from inbox flow
-  const [createOpen,          setCreateOpen         ] = useState(false);
-  const [createStep,          setCreateStep         ] = useState("map"); // "map" | "details"
-  const [createMappings,      setCreateMappings     ] = useState({}); // { doc_type: att_key }
-  const [createStaging,       setCreateStaging      ] = useState(false);
-  const [createSessionId,     setCreateSessionId    ] = useState("");
-  const [createDocs,          setCreateDocs         ] = useState([]);  // staged docs from session
-  const [createForm,          setCreateForm         ] = useState(BLANK_CREATE_FORM);
-  const [createSaving,        setCreateSaving       ] = useState(false);
-  const [createDocUploading,  setCreateDocUploading ] = useState(null); // doc_type being uploaded
+  const [createOpen,     setCreateOpen    ] = useState(false);
+  const [createStep,     setCreateStep    ] = useState("map"); // "map" | "details"
+  const [createMappings, setCreateMappings] = useState({}); // { doc_type: att_key }
+  const [createForm,     setCreateForm    ] = useState(BLANK_CREATE_FORM);
+  const [createSaving,   setCreateSaving  ] = useState(false);
 
   // Save Documents modal
   const [saveDocsOpen,        setSaveDocsOpen       ] = useState(false);
-  const [saveDocsStep,        setSaveDocsStep       ] = useState("assign"); // "confirm" | "assign"
+  const [saveDocsStep,        setSaveDocsStep       ] = useState("assign"); // "assign" | "confirm" | "overwrite-confirm"
   const [saveDocsAssignments, setSaveDocsAssignments] = useState({}); // { att_key: { label, doc_type } }
   const [saveDocsCustomLabels,setSaveDocsCustomLabels] = useState({}); // { att_key: custom label text }
   const [saveDocsSaving,      setSaveDocsSaving     ] = useState(false);
+  const [saveDocsExisting,    setSaveDocsExisting   ] = useState({}); // { doc_type: docRecord } — existing docs on the customer profile
 
   const threadEndRef     = useRef(null);
-  const createFileRefs   = useRef({});
   const selectedThreadId = selectedThread?.id;
 
   // All attachments across non-outgoing thread messages — used by the create-customer doc mapper
@@ -484,8 +480,6 @@ export default function OnboardingInbox() {
   function openCreateModal() {
     setCreateStep("map");
     setCreateMappings({});
-    setCreateSessionId("");
-    setCreateDocs([]);
     setCreateForm({
       ...BLANK_CREATE_FORM,
       name:  selectedThread?.from_name  || "",
@@ -494,74 +488,42 @@ export default function OnboardingInbox() {
     setCreateOpen(true);
   }
 
-  async function stageDocuments() {
-    const mappings = Object.entries(createMappings)
-      .filter(([, attKey]) => attKey)
-      .map(([doc_type, attachment_id]) => ({ attachment_id, doc_type }));
-
-    if (!mappings.length) { toast.error("Map at least one attachment to a document slot"); return; }
-    setCreateStaging(true);
-    try {
-      const res = await api.post(`${API}/${selectedThread.id}/create-customer-session`, { mappings });
-      setCreateSessionId(res.data.session_id);
-      setCreateDocs(res.data.documents || []);
-      setCreateStep("details");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to stage documents");
-    } finally {
-      setCreateStaging(false);
-    }
-  }
-
-  async function uploadCreateDoc(docKey, docLabel, file) {
-    setCreateDocUploading(docKey);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await api.post(
-        `/api/onboarding/documents/upload?session_id=${createSessionId}&doc_type=${docKey}`,
-        fd, { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      setCreateDocs(prev => {
-        const without = prev.filter(d => d.doc_type !== docKey);
-        return [...without, { ...res.data, label: docLabel }];
-      });
-    } catch { toast.error(`Failed to upload ${docLabel}`); }
-    finally { setCreateDocUploading(null); }
-  }
-
-  async function removeCreateDoc(docKey) {
-    try {
-      await api.delete(`/api/onboarding/documents/${createSessionId}/${docKey}`);
-      setCreateDocs(prev => prev.filter(d => d.doc_type !== docKey));
-    } catch { toast.error("Failed to remove document"); }
-  }
-
   async function createCustomer() {
     if (!createForm.name.trim()) { toast.error("Customer name is required"); return; }
-    const missing = REQUIRED_DOC_TYPES.filter(dt => !createDocs.find(d => d.doc_type === dt.key));
-    if (missing.length) {
-      toast.error(`Upload remaining docs: ${missing.map(d => d.label).join(", ")}`);
-      return;
-    }
     setCreateSaving(true);
     try {
-      const payload = {
+      // 1. Create the Odoo customer record (no docs yet — upload happens after linking)
+      const res = await api.post("/api/customers/", {
         ...createForm,
-        credit_limit:        parseFloat(createForm.credit_limit) || 0,
-        document_session_id: createSessionId,
-        documents:           createDocs,
-      };
-      const res = await api.post("/api/customers/", payload);
-      // Auto-link this thread to the new customer
+        credit_limit: parseFloat(createForm.credit_limit) || 0,
+      });
+      const newCustomerId = res.data.customer_id;
+
+      // 2. Link this inbox thread to the new customer
       try {
         await api.post(`${API}/${selectedThread.id}/link-customer`, {
-          odoo_partner_id: res.data.customer_id,
+          odoo_partner_id: newCustomerId,
         });
       } catch { /* non-fatal */ }
+
+      // 3. Save any mapped email attachments to the customer's profile
+      //    Uses the existing save-documents endpoint — R2 write happens here, once, on success
+      const assignments = Object.entries(createMappings)
+        .filter(([, attKey]) => attKey)
+        .map(([doc_type, attachment_id]) => ({
+          attachment_id,
+          doc_type,
+          label: REQUIRED_DOC_TYPES.find(d => d.key === doc_type)?.label || doc_type,
+        }));
+      if (assignments.length) {
+        try {
+          await api.post(`${API}/${selectedThread.id}/save-documents`, { assignments });
+        } catch { /* non-fatal — docs can be uploaded via customer profile */ }
+      }
+
       toast.success(`Customer ${createForm.name} created`);
       setCreateOpen(false);
-      // Refresh thread to show linked customer
+      // Refresh thread to show linked customer + updated doc state
       const updated = await api.get(`${API}/${selectedThread.id}`);
       setSelectedThread(updated.data);
       loadList(true);
@@ -580,19 +542,22 @@ export default function OnboardingInbox() {
   function openSaveDocsModal() {
     setSaveDocsAssignments({});
     setSaveDocsCustomLabels({});
-    if (selectedThread?.customer_id) {
-      setSaveDocsStep("assign");
-    } else {
-      // Reuse the link-modal customer state for the confirm step
-      const detectedId   = selectedThread?.customer_id   || null;
-      const detectedName = selectedThread?.customer_name || "";
-      setSelectedCustId(detectedId);
-      setSelectedCustName(detectedName);
-      setCustSearch(detectedName);
-      setCustResults(detectedId ? [{ id: detectedId, name: detectedName, email: selectedThread?.from_email }] : []);
-      setSaveDocsStep("confirm");
-    }
+    setSaveDocsExisting({});
+    setSaveDocsStep("assign");
     setSaveDocsOpen(true);
+
+    // Fetch existing docs for this customer so we can warn before overwriting
+    if (selectedThread?.customer_id) {
+      api.get(`/api/customers/${selectedThread.customer_id}/documents`)
+        .then(r => {
+          const byType = {};
+          for (const doc of (r.data.documents || [])) {
+            if (doc.doc_type && !byType[doc.doc_type]) byType[doc.doc_type] = doc;
+          }
+          setSaveDocsExisting(byType);
+        })
+        .catch(() => {}); // non-fatal — missing existing-doc info just skips the warning
+    }
   }
 
   async function confirmCustomerForSave() {
@@ -624,6 +589,17 @@ export default function OnboardingInbox() {
       toast.error("Assign at least one attachment to a document slot");
       return;
     }
+
+    // Gate: if any assigned doc_types already exist on the customer profile and the user
+    // hasn't explicitly confirmed the overwrite, switch to the confirmation step.
+    if (saveDocsStep !== "overwrite-confirm") {
+      const overwrites = assignments.filter(a => a.doc_type && saveDocsExisting[a.doc_type]);
+      if (overwrites.length > 0) {
+        setSaveDocsStep("overwrite-confirm");
+        return;
+      }
+    }
+
     setSaveDocsSaving(true);
     try {
       const res = await api.post(`${API}/${selectedThread.id}/save-documents`, { assignments });
@@ -825,7 +801,7 @@ export default function OnboardingInbox() {
                     <UserPlus size={14} /> Create Customer
                   </BtnPrimary>
                 )}
-                {threadAttachments.length > 0 && (
+                {detail.customer_id && threadAttachments.length > 0 && (
                   <BtnPrimary onClick={openSaveDocsModal}>
                     <Save size={14} /> Save Documents
                   </BtnPrimary>
@@ -986,9 +962,8 @@ export default function OnboardingInbox() {
                 <span className="text-xs text-gray-400">
                   {Object.values(createMappings).filter(Boolean).length} of {REQUIRED_DOC_TYPES.length} matched from email
                 </span>
-                <BtnPrimary onClick={stageDocuments} disabled={createStaging}>
-                  {createStaging ? <Loader2 size={14} className="animate-spin" /> : null}
-                  {createStaging ? "Staging…" : "Continue"}
+                <BtnPrimary onClick={() => setCreateStep("details")}>
+                  Continue
                 </BtnPrimary>
               </div>
             </div>
@@ -997,55 +972,47 @@ export default function OnboardingInbox() {
           {/* ── Step 2: Customer details ── */}
           {createStep === "details" && (
             <div className="space-y-4">
-              {/* Doc status row */}
-              <div className="rounded-lg border border-gray-100 overflow-hidden">
-                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                  <p className="text-xs font-semibold text-gray-600">Onboarding Documents</p>
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                    createDocs.length === REQUIRED_DOC_TYPES.length ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
-                  }`}>{createDocs.length} / {REQUIRED_DOC_TYPES.length}</span>
-                </div>
-                <div className="divide-y divide-gray-50">
-                  {REQUIRED_DOC_TYPES.map(dt => {
-                    const staged    = createDocs.find(d => d.doc_type === dt.key);
-                    const uploading = createDocUploading === dt.key;
-                    return (
-                      <div key={dt.key} className={`flex items-center gap-3 px-3 py-2 ${staged ? "bg-green-50/50" : ""}`}>
-                        <div className="shrink-0">
-                          {staged
-                            ? <CheckCircle size={13} className="text-green-600" />
-                            : <div className="w-3 h-3 rounded-full border-2 border-gray-300" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-[11px] font-semibold truncate ${staged ? "text-green-800" : "text-gray-600"}`}>{dt.label}</p>
-                          {staged && <p className="text-[10px] text-green-600 truncate">{staged.filename}</p>}
-                        </div>
-                        {staged ? (
-                          <button onClick={() => removeCreateDoc(dt.key)}
-                            className="text-[11px] text-red-400 hover:text-red-600 font-medium shrink-0">
-                            <X size={12} />
-                          </button>
-                        ) : (
-                          <>
-                            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                              className="hidden"
-                              ref={el => { createFileRefs.current[dt.key] = el; }}
-                              onChange={e => { if (e.target.files[0]) uploadCreateDoc(dt.key, dt.label, e.target.files[0]); e.target.value = ""; }}
-                            />
-                            <button
-                              onClick={() => createFileRefs.current[dt.key]?.click()}
-                              disabled={uploading || !!createDocUploading}
-                              className="flex items-center gap-1 text-[11px] font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 shrink-0">
-                              {uploading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
-                              Upload
-                            </button>
-                          </>
-                        )}
+              {/* Doc mapping preview — read-only, upload happens on Create */}
+              {(() => {
+                const mappedCount = Object.values(createMappings).filter(Boolean).length;
+                return (
+                  <div className="rounded-lg border border-gray-100 overflow-hidden">
+                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                      <p className="text-xs font-semibold text-gray-600">Documents from this email</p>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        mappedCount === REQUIRED_DOC_TYPES.length ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+                      }`}>{mappedCount} / {REQUIRED_DOC_TYPES.length} mapped</span>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {REQUIRED_DOC_TYPES.map(dt => {
+                        const attKey  = createMappings[dt.key];
+                        const attName = attKey ? threadAttachments.find(a => a.key === attKey)?.name : null;
+                        return (
+                          <div key={dt.key} className={`flex items-center gap-3 px-3 py-2 ${attName ? "bg-green-50/40" : ""}`}>
+                            <div className="shrink-0">
+                              {attName
+                                ? <CheckCircle size={13} className="text-green-600" />
+                                : <div className="w-3 h-3 rounded-full border-2 border-gray-300" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-[11px] font-semibold truncate ${attName ? "text-green-800" : "text-gray-500"}`}>{dt.label}</p>
+                              {attName
+                                ? <p className="text-[10px] text-green-600 truncate">{attName}</p>
+                                : <p className="text-[10px] text-gray-400">Not in this email — upload via customer profile after creation</p>
+                              }
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {mappedCount < REQUIRED_DOC_TYPES.length && (
+                      <div className="px-3 py-2 bg-amber-50/60 border-t border-amber-100">
+                        <p className="text-[11px] text-amber-700">Missing docs can be uploaded from the customer profile once the account is created.</p>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Customer form */}
               <div className="grid grid-cols-2 gap-3">
@@ -1154,7 +1121,52 @@ export default function OnboardingInbox() {
               </BtnPrimary>
             </div>
           </div>
-        ) : (
+        ) : saveDocsStep === "overwrite-confirm" ? (() => {
+          // Derive which assignments conflict with existing docs
+          const overwrites = Object.entries(saveDocsAssignments)
+            .filter(([, v]) => v?.doc_type && v.doc_type !== "__skip__" && v.doc_type !== "custom" && saveDocsExisting[v.doc_type])
+            .map(([att_key, v]) => ({
+              att_key,
+              doc_type:    v.doc_type,
+              label:       v.label,
+              newFilename: threadAttachments.find(a => a.key === att_key)?.name || "email attachment",
+              oldFilename: saveDocsExisting[v.doc_type]?.filename || "existing file",
+              oldSource:   saveDocsExisting[v.doc_type]?.source   || "admin",
+            }));
+          return (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Existing documents will be replaced</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {selectedThread?.customer_name || "This customer"} already has the following documents on file.
+                    Saving will permanently replace them with the versions from this email.
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-amber-100 overflow-hidden">
+                {overwrites.map(ow => (
+                  <div key={ow.doc_type} className="px-4 py-3 border-b border-amber-50 last:border-0">
+                    <p className="text-[11px] font-semibold text-gray-700">{ow.label}</p>
+                    <div className="flex items-center gap-2 mt-1 text-[11px] text-gray-500">
+                      <span className="line-through text-red-400">{ow.oldFilename}</span>
+                      <span className="text-gray-300">→</span>
+                      <span className="text-green-700 font-medium">{ow.newFilename}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <BtnSecondary onClick={() => setSaveDocsStep("assign")}>Go Back</BtnSecondary>
+                <BtnPrimary onClick={saveDocs} disabled={saveDocsSaving}>
+                  {saveDocsSaving ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                  {saveDocsSaving ? "Saving…" : "Overwrite and Save"}
+                </BtnPrimary>
+              </div>
+            </div>
+          );
+        })() : (
           <div className="space-y-4">
             {(selectedThread?.customer_name || selectedThread?.customer_id) && (
               <div className="flex items-center gap-2 text-xs text-bassani-700 bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
@@ -1215,6 +1227,12 @@ export default function OnboardingInbox() {
                             className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-300"
                             autoFocus
                           />
+                        )}
+                        {docType && docType !== "__skip__" && docType !== "custom" && saveDocsExisting[docType] && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1">
+                            <AlertCircle size={11} className="shrink-0" />
+                            Already on file: <span className="font-semibold truncate max-w-[160px]">{saveDocsExisting[docType].filename}</span> — will be replaced
+                          </div>
                         )}
                       </div>
                     );

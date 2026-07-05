@@ -21,11 +21,12 @@ function KpiCard({ label, value, sub, icon: Icon, accent }) {
   );
 }
 
-function Section({ title, children }) {
+function Section({ title, actions, children }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-50">
+      <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between gap-3">
         <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
+        {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
       </div>
       {children}
     </div>
@@ -60,7 +61,7 @@ const SOURCE_BADGE = {
   onboarding: { label: "Onboarding",   cls: "bg-bassani-50 text-bassani-700"},
 };
 
-function DocumentsSection({ customerId, canUpload }) {
+function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docsSentInfo, canSendDocs }) {
   const [docs,             setDocs            ] = useState([]);
   const [docsLoading,      setDocsLoading     ] = useState(true);
   const [uploading,        setUploading       ] = useState(null); // doc_type key or "custom"
@@ -150,8 +151,26 @@ function DocumentsSection({ customerId, canUpload }) {
   const otherDocs  = docs.filter(d => !KNOWN_DOC_KEYS.has(d.doc_type));
   const uploadedCount = ONBOARDING_DOC_TYPES.filter(dt => docByType[dt.key]).length;
 
+  const allOnboardingComplete = uploadedCount === ONBOARDING_DOC_TYPES.length;
+  const sendDocsAction = canSendDocs && !allOnboardingComplete ? (
+    <div className="flex items-center gap-2">
+      {docsSentInfo?.sent && (
+        <span className="text-[11px] text-gray-400 whitespace-nowrap hidden sm:block">
+          Sent {fmtDate(docsSentInfo.sent_at)}
+        </span>
+      )}
+      <BtnSecondary size="sm" onClick={onSendDocs} disabled={sendingDocs}>
+        {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+        Send Onboarding Docs
+      </BtnSecondary>
+    </div>
+  ) : null;
+
   return (
-    <Section title={`Documents (${uploadedCount} / ${ONBOARDING_DOC_TYPES.length} onboarding${otherDocs.length ? ` + ${otherDocs.length} other` : ""})`}>
+    <Section
+      title={`Documents (${uploadedCount} / ${ONBOARDING_DOC_TYPES.length} onboarding${otherDocs.length ? ` + ${otherDocs.length} other` : ""})`}
+      actions={sendDocsAction}
+    >
       {/* Hidden file input — triggered programmatically for structured doc types */}
       <input
         ref={fileInputRef}
@@ -479,19 +498,6 @@ export default function CustomerProfile() {
         </button>
         <div className="flex items-center gap-2">
           <BtnSecondary size="sm" onClick={() => navigate(`/invoices`)}>View Invoices</BtnSecondary>
-          {c.email && can("onboarding.inbox") && (
-            <div className="flex items-center gap-2">
-              {docsSentInfo?.sent && (
-                <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                  Docs sent {fmtDate(docsSentInfo.sent_at)} by {docsSentInfo.sent_by}
-                </span>
-              )}
-              <BtnSecondary size="sm" onClick={handleSendDocs} disabled={sendingDocs}>
-                {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-                Send Onboarding Docs
-              </BtnSecondary>
-            </div>
-          )}
           <BtnPrimary size="sm" onClick={() => navigate("/orders")}>Place Order</BtnPrimary>
         </div>
       </div>
@@ -633,7 +639,14 @@ export default function CustomerProfile() {
           </Section>
 
           {/* Documents */}
-          <DocumentsSection customerId={id} canUpload={!!canManageAddresses} />
+          <DocumentsSection
+            customerId={id}
+            canUpload={!!canManageAddresses}
+            onSendDocs={handleSendDocs}
+            sendingDocs={sendingDocs}
+            docsSentInfo={docsSentInfo}
+            canSendDocs={can("onboarding.inbox") && !!c.email}
+          />
 
           {/* Recent orders */}
           <Section title={`Recent Orders (${recent_orders.length})`}>
