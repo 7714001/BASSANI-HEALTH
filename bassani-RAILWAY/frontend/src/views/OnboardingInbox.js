@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { stripEmailQuote } from "../utils/stripEmailQuote";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -205,6 +206,13 @@ function ThreadRow({ thread, isSelected, onClick }) {
 function MessageBubble({ msg, showDateDivider, onSaveToProfile, onPreview }) {
   const isOutgoing = msg.is_outgoing;
   const name       = msg.from_name || msg.from_email || "Unknown";
+  const [showQuote, setShowQuote] = useState(false);
+
+  const { body, hasQuote, quoteHtml } = useMemo(() => {
+    if (isOutgoing) return { body: msg.body_html || `<p>${msg.body_preview || ""}</p>`, hasQuote: false, quoteHtml: "" };
+    return stripEmailQuote(msg.body_html || `<p>${msg.body_preview || ""}</p>`);
+  }, [msg.body_html, msg.body_preview, isOutgoing]);
+
   return (
     <>
       {showDateDivider && (
@@ -236,8 +244,24 @@ function MessageBubble({ msg, showDateDivider, onSaveToProfile, onPreview }) {
             </div>
             <div
               className={`prose prose-sm max-w-none text-[13px] leading-relaxed ${isOutgoing ? "prose-invert" : ""}`}
-              dangerouslySetInnerHTML={{ __html: msg.body_html || `<p>${msg.body_preview || ""}</p>` }}
+              dangerouslySetInnerHTML={{ __html: body }}
             />
+            {hasQuote && (
+              <>
+                {showQuote && (
+                  <div
+                    className="mt-3 pt-3 border-t border-gray-100 prose prose-sm max-w-none text-[12px] leading-relaxed text-gray-400"
+                    dangerouslySetInnerHTML={{ __html: quoteHtml }}
+                  />
+                )}
+                <button
+                  onClick={() => setShowQuote(v => !v)}
+                  className="mt-2 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  {showQuote ? "Hide quoted text" : "···"}
+                </button>
+              </>
+            )}
             {!isOutgoing && (
               <AttachmentList
                 attachments={msg.attachments}

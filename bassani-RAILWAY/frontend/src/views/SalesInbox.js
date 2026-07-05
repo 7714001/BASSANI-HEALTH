@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { stripEmailQuote } from "../utils/stripEmailQuote";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -200,6 +201,13 @@ function MessageBubble({ msg, itemId }) {
   const name    = msg.from_name || msg.from_email || "Unknown";
   const bgClass = isOut ? "bg-teal-50 border-teal-100" : "bg-white border-gray-100";
   const avClass = isOut ? "bg-teal-100 text-teal-700" : "bg-gray-100 text-gray-600";
+  const [showQuote, setShowQuote] = useState(false);
+
+  const { body, hasQuote, quoteHtml } = useMemo(() => {
+    if (isOut) return { body: msg.body_html || `<p style="margin:0">${msg.body_preview || ""}</p>`, hasQuote: false, quoteHtml: "" };
+    return stripEmailQuote(msg.body_html || `<p style="margin:0">${msg.body_preview || ""}</p>`);
+  }, [msg.body_html, msg.body_preview, isOut]);
+
   return (
     <div className={`flex gap-3 ${isOut ? "flex-row-reverse" : ""}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-1 ${avClass}`}>
@@ -217,7 +225,23 @@ function MessageBubble({ msg, itemId }) {
           }`}
           style={{ wordBreak: "break-word", overflow: "hidden" }}
         >
-          <div dangerouslySetInnerHTML={{ __html: msg.body_html || `<p style="margin:0">${msg.body_preview || ""}</p>` }} />
+          <div dangerouslySetInnerHTML={{ __html: body }} />
+          {hasQuote && (
+            <>
+              {showQuote && (
+                <div
+                  className="mt-3 pt-3 border-t border-gray-100 text-[12px] leading-relaxed text-gray-400"
+                  dangerouslySetInnerHTML={{ __html: quoteHtml }}
+                />
+              )}
+              <button
+                onClick={() => setShowQuote(v => !v)}
+                className="mt-2 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                {showQuote ? "Hide quoted text" : "···"}
+              </button>
+            </>
+          )}
           <AttachmentList attachments={msg.attachments} itemId={itemId} />
         </div>
       </div>
