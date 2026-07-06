@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, Building2, Server } from "lucide-react";
+import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, Building2, Server, MailX } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, BtnSecondary, LoadingState } from "../components/UI";
@@ -82,14 +82,15 @@ function SectionCard({ title, description, children }) {
 }
 
 function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
-  const [loading,    setLoading   ] = useState(true);
-  const [saving,     setSaving    ] = useState(false);
-  const [testing,    setTesting   ] = useState(false);
-  const [clearing,   setClearing  ] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [configured, setConfigured] = useState(false);
-  const [form,       setForm      ] = useState(BLANK);
-  const [imapPreset, setImapPreset] = useState("custom");
+  const [loading,       setLoading      ] = useState(true);
+  const [saving,        setSaving       ] = useState(false);
+  const [testing,       setTesting      ] = useState(false);
+  const [clearing,      setClearing     ] = useState(false);
+  const [clearingInbox, setClearingInbox] = useState(false);
+  const [testResult,    setTestResult   ] = useState(null);
+  const [configured,    setConfigured   ] = useState(false);
+  const [form,          setForm         ] = useState(BLANK);
+  const [imapPreset,    setImapPreset   ] = useState("custom");
 
   useEffect(() => {
     setLoading(true);
@@ -194,6 +195,19 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
     }
   };
 
+  const clearInbox = async () => {
+    if (!window.confirm(`Clear all messages from the ${inboxName}? This cannot be undone.`)) return;
+    setClearingInbox(true);
+    try {
+      const r = await api.delete(`${apiBase}/clear-inbox`);
+      toast.success(`${inboxName} cleared — ${r.data.deleted} message${r.data.deleted === 1 ? "" : "s"} removed`);
+    } catch {
+      toast.error("Failed to clear inbox");
+    } finally {
+      setClearingInbox(false);
+    }
+  };
+
   if (loading) return <LoadingState />;
 
   const isGraph = form.provider === "graph";
@@ -212,10 +226,16 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
           </div>
           <div className="flex items-center gap-2">
             {configured && (
-              <BtnSecondary onClick={clear} disabled={clearing}>
-                {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                Disconnect
-              </BtnSecondary>
+              <>
+                <BtnSecondary onClick={clearInbox} disabled={clearingInbox} title="Remove all messages from this inbox">
+                  {clearingInbox ? <Loader2 size={13} className="animate-spin" /> : <MailX size={13} />}
+                  Clear Inbox
+                </BtnSecondary>
+                <BtnSecondary onClick={clear} disabled={clearing}>
+                  {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  Disconnect
+                </BtnSecondary>
+              </>
             )}
             <BtnSecondary onClick={test} disabled={testing || saving}>
               {testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}

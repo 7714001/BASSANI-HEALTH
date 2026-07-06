@@ -229,7 +229,11 @@ async def unhandled_count(
 ):
     if not _onboarding_configured():
         return {"count": 0}
-    count = await col(_COLLECTION).count_documents({"status": "unhandled"})
+    count_filter: dict = {"status": "unhandled"}
+    addr = _active_onboarding_mailbox_address()
+    if addr:
+        count_filter["mailbox_address"] = addr
+    count = await col(_COLLECTION).count_documents(count_filter)
     return {"count": count}
 
 
@@ -251,6 +255,9 @@ async def list_inbox(
         return {"items": [], "total": 0, "configured": False}
 
     match: dict = {"is_outgoing": {"$ne": True}}
+    addr = _active_onboarding_mailbox_address()
+    if addr:
+        match["mailbox_address"] = addr
 
     if status == "open" or not status:
         match["status"] = {"$nin": ["archived"]}
@@ -503,6 +510,7 @@ async def reply_to_email(
     from_email_out = imap_cfg["mailbox_address"] if imap_cfg else item.get("from_email", "")
     thread_root = item.get("thread_root_id") or item_id
     outgoing = {
+        "mailbox_address":       from_email_out,
         "imap_references":       item.get("imap_message_id", ""),
         "from_email":            from_email_out,
         "from_name":             actor,

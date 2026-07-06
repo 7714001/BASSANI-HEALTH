@@ -173,6 +173,7 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
     doc = {
         "graph_message_id":      graph_message_id,
         "graph_conversation_id": conv_id,
+        "mailbox_address":       mailbox_address,
         "from_email":            from_email,
         "from_name":             from_name,
         "subject":               subject,
@@ -230,7 +231,9 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
 
 async def ingest_imap_message(collection: str, mailbox: str, msg: dict) -> None:
     """Persist one IMAP-sourced message to the given collection. Idempotent."""
-    from services.imap_client import mark_as_read as imap_mark_read
+    from services.imap_client import mark_as_read as imap_mark_read, get_graph_mailbox_address, get_config as _imap_get_cfg
+    _imap_cfg = _imap_get_cfg(mailbox) or {}
+    _mailbox_address = get_graph_mailbox_address(mailbox) or _imap_cfg.get("mailbox_address") or _imap_cfg.get("imap_username", "")
 
     message_id = msg.get("message_id")
     if message_id:
@@ -287,6 +290,7 @@ async def ingest_imap_message(collection: str, mailbox: str, msg: dict) -> None:
         "imap_uid":          imap_uid,
         "imap_in_reply_to":  in_reply_to,
         "imap_references":   references,
+        "mailbox_address":   _mailbox_address,
         "from_email":        from_email,
         "from_name":         from_name,
         "subject":           subject,

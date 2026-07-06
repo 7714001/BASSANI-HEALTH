@@ -257,6 +257,13 @@ async def clear_mailbox_config(_: dict = Depends(_require_super_admin)):
     return {"success": True}
 
 
+@router.delete("/mailbox/clear-inbox")
+async def clear_sales_inbox(_: dict = Depends(_require_super_admin)):
+    """Wipe all documents from sales_inbox. Use when swapping mailboxes during development."""
+    result = await col("sales_inbox").delete_many({})
+    return {"deleted": result.deleted_count}
+
+
 @router.post("/mailbox/test")
 async def test_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
     return await _test_mailbox(body, "mailbox_config")
@@ -287,6 +294,13 @@ async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin
     from services.imap_client import load_config_from_db
     await load_config_from_db("onboarding")
     return {"success": True}
+
+
+@router.delete("/onboarding-mailbox/clear-inbox")
+async def clear_onboarding_inbox(_: dict = Depends(_require_super_admin)):
+    """Wipe all documents from onboarding_inbox. Use when swapping mailboxes during development."""
+    result = await col("onboarding_inbox").delete_many({})
+    return {"deleted": result.deleted_count}
 
 
 @router.post("/onboarding-mailbox/test")

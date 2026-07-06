@@ -197,6 +197,7 @@ async def _ingest_message(graph_message_id: str) -> None:
     doc = {
         "graph_message_id":    graph_message_id,
         "graph_conversation_id": conv_id,
+        "mailbox_address":     _active_mailbox_address(),
         "from_email":          from_email,
         "from_name":           from_name,
         "subject":             subject,
@@ -304,6 +305,7 @@ async def _ingest_imap_message(msg: dict) -> None:
         "imap_uid":          imap_uid,
         "imap_in_reply_to":  in_reply_to,
         "imap_references":   references,
+        "mailbox_address":   _active_mailbox_address(),
         "from_email":        from_email,
         "from_name":         from_name,
         "subject":           subject,
@@ -467,7 +469,11 @@ async def unhandled_count(
 ):
     if not inbox_configured():
         return {"count": 0}
-    count = await col("sales_inbox").count_documents({"status": "unhandled"})
+    count_filter: dict = {"status": "unhandled"}
+    addr = _active_mailbox_address()
+    if addr:
+        count_filter["mailbox_address"] = addr
+    count = await col("sales_inbox").count_documents(count_filter)
     return {"count": count}
 
 
@@ -490,6 +496,9 @@ async def list_inbox(
         return {"items": [], "total": 0, "configured": False}
 
     match: dict = {"is_outgoing": {"$ne": True}}
+    addr = _active_mailbox_address()
+    if addr:
+        match["mailbox_address"] = addr
 
     if status == "open" or not status:
         match["status"] = {"$nin": ["archived", "ticket_created"]}
@@ -974,6 +983,7 @@ async def reply_to_email(
     from_email_out = imap_cfg["mailbox_address"] if imap_cfg else item.get("from_email", "")
     thread_root = item.get("thread_root_id") or item_id
     outgoing = {
+        "mailbox_address":     from_email_out,
         "imap_references":     item.get("imap_message_id", ""),
         "from_email":          from_email_out,
         "from_name":           actor,

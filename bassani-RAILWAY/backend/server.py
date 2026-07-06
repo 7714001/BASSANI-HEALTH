@@ -255,6 +255,7 @@ def _make_inbox_indexes(collection: str):
         col(collection).create_index([("graph_conversation_id", 1)]),
         col(collection).create_index([("imap_message_id", 1)], unique=True, sparse=True),
         col(collection).create_index([("thread_root_id", 1)]),
+        col(collection).create_index([("mailbox_address", 1)]),
         col(collection).create_index([("from_email", 1)]),
         col(collection).create_index([("ticket_id", 1)]),
         col(collection).create_index(
