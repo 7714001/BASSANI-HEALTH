@@ -375,6 +375,22 @@ When a customer emails or calls in an order that isn't coming through a reseller
 
 The ticket starts at `Open` stage. From here you move it forward as the conversation progresses.
 
+### Handling a Follow-up Inquiry (Link Existing Order)
+
+Sometimes an email or call is about an **existing order** rather than a new one — for example, a customer asking about collection, delivery timing, or an amendment. In these cases you do not need to build a new quote.
+
+1. Open the ticket (or create a Direct Inquiry ticket for the inquiry)
+2. In the empty-state panel or the **Actions** sidebar, click **Link Existing Order**
+3. Search by order reference (e.g. `S00123`) or customer name — results come live from Odoo
+4. Select the correct order — you will see the order ref, customer name, Odoo status, and amount
+5. Click **Link Order**
+
+The ticket advances to the appropriate stage automatically:
+- If the order is still a draft or sent quotation → ticket moves to `Quote`
+- If the order is already a confirmed sale order → ticket moves to `Sale Order`
+
+Finance, QA, and RP steps from that point follow the normal pipeline. You cannot link a cancelled Odoo order.
+
 ### Building a Quote
 
 Once you know what the customer wants:

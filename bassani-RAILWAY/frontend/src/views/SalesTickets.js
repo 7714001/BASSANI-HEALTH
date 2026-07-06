@@ -13,6 +13,7 @@ import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
+  Search, Loader2, Link2,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -132,6 +133,14 @@ export default function SalesTickets() {
   const [sending, setSending]           = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
 
+  // ── Link existing order modal ─────────────────────────────────────────────
+  const [linkOrderOpen,        setLinkOrderOpen       ] = useState(false);
+  const [linkOrderQuery,       setLinkOrderQuery      ] = useState("");
+  const [linkOrderResults,     setLinkOrderResults    ] = useState([]);
+  const [linkOrderSearching,   setLinkOrderSearching  ] = useState(false);
+  const [linkOrderSelected,    setLinkOrderSelected   ] = useState(null);
+  const [linkOrderSubmitting,  setLinkOrderSubmitting ] = useState(false);
+
   // ── WebSocket real-time updates ───────────────────────────────────────────
   const wsRef        = useRef(null);
   const reconnectRef = useRef(null);
@@ -173,6 +182,36 @@ export default function SalesTickets() {
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
   }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (!linkOrderOpen || linkOrderQuery.length < 2) { setLinkOrderResults([]); return; }
+    setLinkOrderSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get("/api/orders/", { params: { search: linkOrderQuery, limit: 10 } });
+        setLinkOrderResults(r.data.orders || []);
+      } catch { setLinkOrderResults([]); }
+      finally { setLinkOrderSearching(false); }
+    }, 300);
+    return () => { clearTimeout(t); setLinkOrderSearching(false); };
+  }, [linkOrderQuery, linkOrderOpen]);
+
+  const openLinkOrderModal = () => {
+    setLinkOrderQuery(""); setLinkOrderResults([]); setLinkOrderSelected(null);
+    setLinkOrderOpen(true);
+  };
+
+  const linkOrder = async () => {
+    if (!linkOrderSelected) return toast.error("Select an order first");
+    setLinkOrderSubmitting(true);
+    try {
+      await api.post(`/api/tickets/${detail.id}/link-order`, { order_id: linkOrderSelected.id });
+      toast.success(`Linked to order ${linkOrderSelected.name}`);
+      setLinkOrderOpen(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to link order"); }
+    finally { setLinkOrderSubmitting(false); }
+  };
 
   const openDetail = async (t) => {
     setDetail(null);
@@ -808,10 +847,13 @@ export default function SalesTickets() {
                       <ShoppingCart size={36} className="text-gray-200" />
                       <p className="text-sm font-medium text-gray-300">No quote built yet</p>
                       {(detail.source === "direct" || detail.source === "email") && canDrive && !detail.exit_status && (
-                        <div className="mt-2">
+                        <div className="mt-2 flex flex-wrap gap-2 justify-center">
                           <BtnPrimary onClick={() => openQuoteBuilder(detail)}>
                             <ShoppingCart size={14} />Build Quote
                           </BtnPrimary>
+                          <BtnSecondary onClick={openLinkOrderModal}>
+                            <Link2 size={14} />Link Existing Order
+                          </BtnSecondary>
                         </div>
                       )}
                       {detail.source === "portal" && (
@@ -918,6 +960,12 @@ export default function SalesTickets() {
                         {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
                           <button onClick={cancelQuote} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors text-left">
                             <Ban size={14} className="shrink-0" />Cancel Quote
+                          </button>
+                        )}
+
+                        {!detail.order_id && canDrive && (
+                          <button onClick={openLinkOrderModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <Link2 size={14} className="text-gray-400 shrink-0" />Link Existing Order
                           </button>
                         )}
 
@@ -1101,6 +1149,74 @@ export default function SalesTickets() {
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {/* Link existing order modal */}
+        {linkOrderOpen && (
+          <Modal title="Link Existing Order" onClose={() => setLinkOrderOpen(false)}>
+            <p className="text-xs text-gray-500 mb-4">
+              Search for an existing Odoo order to link to this ticket. The ticket stage will advance to match the order's current status.
+            </p>
+
+            {/* Order search */}
+            <div className="relative mb-3">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={linkOrderQuery}
+                onChange={e => { setLinkOrderQuery(e.target.value); setLinkOrderSelected(null); }}
+                placeholder="Order ref (S00123) or customer name…"
+                className="w-full pl-8 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                autoFocus
+              />
+              {linkOrderSearching && (
+                <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />
+              )}
+            </div>
+
+            {/* Search results */}
+            {linkOrderResults.length > 0 && !linkOrderSelected && (
+              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 mb-3 max-h-52 overflow-y-auto">
+                {linkOrderResults.map(o => (
+                  <button
+                    key={o.id}
+                    onClick={() => { setLinkOrderSelected(o); setLinkOrderResults([]); }}
+                    className="w-full flex items-start justify-between gap-3 px-4 py-3 hover:bg-gray-50 text-left transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{o.name}</p>
+                      <p className="text-xs text-gray-500 truncate">{o.partner_id?.[1] || "—"}</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-xs font-medium text-gray-700">{fmtR(o.amount_total)}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{ORDER_STATE_LABEL[o.state] || o.state}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Selected order confirmation */}
+            {linkOrderSelected && (
+              <div className="bg-bassani-50 border border-bassani-200 rounded-xl px-4 py-3 mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-bassani-900">{linkOrderSelected.name}</p>
+                  <p className="text-xs text-bassani-700 mt-0.5">{linkOrderSelected.partner_id?.[1] || "—"}</p>
+                  <p className="text-xs text-bassani-600 mt-0.5">{ORDER_STATE_LABEL[linkOrderSelected.state] || linkOrderSelected.state} · {fmtR(linkOrderSelected.amount_total)}</p>
+                </div>
+                <button onClick={() => setLinkOrderSelected(null)} className="text-bassani-400 hover:text-bassani-700 shrink-0 mt-0.5">
+                  <XCircle size={15} />
+                </button>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 mt-2">
+              <BtnSecondary onClick={() => setLinkOrderOpen(false)} disabled={linkOrderSubmitting}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={linkOrder} loading={linkOrderSubmitting} disabled={!linkOrderSelected || linkOrderSubmitting}>
+                <Link2 size={14} />Link Order
+              </BtnPrimary>
             </div>
           </Modal>
         )}

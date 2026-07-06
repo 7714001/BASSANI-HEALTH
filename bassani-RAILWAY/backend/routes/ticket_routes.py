@@ -171,6 +171,10 @@ class TicketFromOrder(BaseModel):
     order_id: int
 
 
+class LinkOrderBody(BaseModel):
+    order_id: int
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _serialize(t: dict) -> dict:
@@ -1321,3 +1325,117 @@ async def create_ticket_from_order(
     )
     await notify_ticket_assigned("sales", customer_name, current_user["id"])
     return {"success": True, "ticket_id": str(result.inserted_id)}
+
+
+@router.post("/{ticket_id}/link-order")
+async def link_existing_order(
+    ticket_id: str,
+    body: LinkOrderBody,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """Link an existing Odoo sale order to a ticket that has no order yet.
+
+    Advances the ticket stage to match the order's current Odoo state:
+    draft/sent → quote, sale/done → sale_order. Never moves the stage backwards.
+    Rejects cancelled orders and orders already tracked by another open ticket.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+
+    ticket = await col("tickets").find_one({"_id": oid, "type": "sales"})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=409, detail="Ticket is already closed")
+    if ticket.get("order_id"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Ticket already has order #{ticket['order_id']} linked. "
+                "Use Admin Override to change the order ID if needed."
+            ),
+        )
+
+    odoo = get_odoo_client()
+    try:
+        orders = odoo.read(
+            "sale.order",
+            [body.order_id],
+            fields=["name", "partner_id", "state", "amount_total"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not orders:
+        raise HTTPException(status_code=404, detail="Order not found in Odoo")
+    order = orders[0]
+
+    if order.get("state") == "cancel":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order {order['name']} is cancelled in Odoo and cannot be linked.",
+        )
+
+    existing = await col("tickets").find_one({
+        "order_id": body.order_id,
+        "type": "sales",
+        "exit_status": None,
+        "_id": {"$ne": oid},
+    })
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Order {order['name']} is already tracked by another open ticket.",
+        )
+
+    odoo_state = order.get("state", "draft")
+    _state_to_stage = {"draft": "quote", "sent": "quote", "sale": "sale_order", "done": "sale_order"}
+    target_status = _state_to_stage.get(odoo_state, "quote")
+
+    current_status = ticket.get("status", "open")
+    current_idx = STATUSES.index(current_status) if current_status in STATUSES else 0
+    target_idx  = STATUSES.index(target_status)  if target_status  in STATUSES else 1
+    final_status = STATUSES[max(current_idx, target_idx)]
+
+    now   = datetime.now(timezone.utc)
+    actor = _actor(current_user)
+
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "order_id":         body.order_id,
+                "odoo_order_state": odoo_state,
+                "status":           final_status,
+                "updated_at":       now,
+            },
+            "$push": {
+                "stage_history": {
+                    "status":      final_status,
+                    "exit_status": None,
+                    "actor_id":    current_user["id"],
+                    "actor_name":  actor,
+                    "at":          now,
+                    "note":        f"Linked to existing order {order['name']} (Odoo #{body.order_id})",
+                },
+            },
+        },
+    )
+
+    await audit_log(
+        "ticket.link_order", "tickets", ticket_id,
+        entity_label=f"{ticket.get('customer_name')} → {order['name']}",
+        user=current_user,
+        before={"order_id": None, "status": ticket.get("status")},
+        after={"order_id": body.order_id, "status": final_status, "order_name": order["name"]},
+    )
+    await ticket_manager.broadcast(ticket_id, ticket.get("reseller_id"))
+
+    return {
+        "success":    True,
+        "order_id":   body.order_id,
+        "order_ref":  order["name"],
+        "status":     final_status,
+        "odoo_state": odoo_state,
+    }
