@@ -93,13 +93,16 @@ export default function ForgotPassword() {
                   {loading ? "Sending…" : "Send reset link"}
                 </button>
               </form>
-              <div className="mt-5 text-center">
+              <div className="mt-5 text-center space-y-3">
                 <Link
                   to="/login"
-                  className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                  className="block text-sm text-gray-400 hover:text-gray-600 transition-colors"
                 >
                   Back to sign in
                 </Link>
+                <p className="text-xs text-gray-400">
+                  No email on your account? Ask an administrator to reset your password.
+                </p>
               </div>
             </>
           )}

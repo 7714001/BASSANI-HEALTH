@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 4 July 2026
+**Last Updated:** 5 July 2026
 
 ---
 
@@ -254,7 +254,8 @@ The table below documents every automated email the portal sends, when it fires,
 | **New Customer Application** | A reseller submits an onboarding application | Addresses in the Application Submitted list (or `SUPPORT_EMAIL` fallback) |
 | **Customer Approved** | An admin approves an onboarding application | The reseller who submitted it; optionally the customer contact email |
 | **Application Not Approved** | An admin rejects an onboarding application | The reseller who submitted it |
-| **Your onboarding documents** | A reseller uses "Send Documents" in the onboarding wizard | The customer email address entered by the reseller |
+| **Onboarding docs received** | Admin saves signed documents to a reseller's draft application | The reseller — with a direct link to resume and complete the application |
+| **Your onboarding documents** | A reseller sends docs to a customer in the onboarding wizard | The customer email address entered by the reseller |
 | **Commission Statement Ready** | An admin generates a monthly commission statement | The reseller |
 | **Commission Paid** | An admin marks a commission statement as paid | The reseller |
 | **Commission Dispute Resolved** | An admin resolves a commission dispute | The reseller |
@@ -685,17 +686,28 @@ Click the **eye icon** next to any `.pdf` attachment to preview it inline withou
 
 ### Typical Workflow — Reseller Customer via Email
 
-This covers the most common path: a reseller sends onboarding documents to a prospective customer, the customer replies with signed copies, and admin processes the application.
+This covers the most common path: a reseller sends onboarding documents to a customer via the wizard, fills in the application while waiting for the signed documents to arrive, and admin processes it.
 
-1. Reseller logs in and navigates to **Onboarding Docs**
-2. Reseller enters the customer's name and email address, clicks **Send Documents**
-3. The system sends the four template PDFs to the customer and creates a draft onboarding application linked to that reseller
-4. Customer signs and returns all documents by replying to the email
-5. The reply appears in the Onboarding Inbox with a green **Application linked** chip
-6. Admin opens the thread and clicks **Save to Application** — assigns each attachment to its document slot, saves
-7. Admin clicks **Review Application** — enters the company name, clicks **Approve and Create Customer**
-8. Customer is created in the system, documents are linked to their profile, and the reseller ownership link is written automatically
-9. Admin archives the inbox thread
+**Reseller side:**
+
+1. Reseller opens **Applications** → clicks **Start Application**
+2. The onboarding wizard opens at Step 0. Reseller enters the **business name** (required) and the customer's email address, clicks **Send Docs**
+3. The four template PDFs are emailed to the customer. A draft application is created and linked to the reseller
+4. The wizard unlocks Steps 1-4. Reseller continues filling in business details, contact, address, and additional info with whatever they know. Progress is saved automatically as they move between steps
+5. Reseller can close and return at any time — the draft appears in **Applications** under the **Drafts** filter with a **Continue** button
+
+**While waiting for the customer:**
+
+6. Customer signs all documents and replies to the email — the reply appears in the Onboarding Inbox with a green **Application linked** chip
+
+**Admin side:**
+
+7. Admin opens the thread, clicks **Save to Application** — assigns each attachment to the correct document slot, saves
+8. The reseller receives an email: "Docs received — complete and submit your application", with a direct link to resume
+9. Reseller clicks the link, reviews the pre-filled form, completes any remaining fields, clicks **Submit for Review**
+10. Admin opens the application from the Applications queue, clicks **Review Application** (or it was already ready if all fields were filled in step 4)
+11. Admin clicks **Approve and Create Customer** — customer is created, all application documents are linked to their profile, and the reseller ownership link is written automatically
+12. Admin archives the inbox thread
 
 ### Typical Workflow — Direct Customer via Email (No Reseller)
 
@@ -1212,7 +1224,7 @@ If you believe a statement is incorrect:
 
 ### Onboarding Docs — Quick Access
 
-Before you start an onboarding application, you may need to send the Bassani Health template documents to your prospective customer so they can read, sign, and return them.
+The **Onboarding Docs** page lets you send or download the four Bassani Health template documents at any time — for example, when a prospect asks for the documents before you are ready to start a formal application.
 
 Go to **Onboarding Docs** in the sidebar. From here you can:
 
@@ -1223,49 +1235,65 @@ Go to **Onboarding Docs** in the sidebar. From here you can:
   - TQA Document
 - **Email all four templates** to your customer by entering their email address and clicking **Send Documents** — the files are delivered as attachments from the Bassani Health email system
 
-This page is available at any time, not just during an active onboarding. Use it whenever a prospect asks for the documents before you have started the application.
+> **For a formal onboarding, use the wizard instead.** Go to **Applications** → **Start Application**. The wizard includes the same send-docs step and also creates the application, saves your progress, and notifies you when the signed documents arrive. Using the wizard avoids having to re-enter the customer's details later.
 
 ---
 
 ### Onboarding a New Customer
 
-When you bring on a new pharmacy, clinic, or dispensary:
-
-1. Go to **Customers** → click **Onboard Customer**
-2. The wizard opens at **Step 0 — Documents** (this step must be completed before you can proceed)
+Go to **Applications** in the sidebar → click **Start Application**. The wizard opens at Step 0.
 
 #### Step 0 — Documents
 
-This step has two sections:
+Step 0 has two paths depending on whether you have the signed documents in hand.
 
-**Section A — Share documents with customer**  
-If you haven't already sent the template documents, you can download or email them from here. These are the blank templates your customer needs to complete and sign.
+**Path A — Email the docs and continue (recommended)**
 
-**Section B — Upload signed documents**  
-Before the application can be submitted, all five of the following documents must be uploaded:
+Enter the **customer's business name** (required) and their email address, then click **Send Docs**. The four template PDFs are emailed to the customer from the Bassani Health address. As soon as the email is sent:
+
+- A draft application is created and linked to you
+- The rest of the wizard unlocks immediately — you do not need to wait for the customer to return the docs
+- Click **Continue — fill in details** and complete Steps 1-4 with whatever you know now
+
+The customer's signed documents will arrive via email. The Bassani admin team will save them to your application and you will receive an email notification with a link to resume and submit.
+
+**Path B — Upload signed documents directly**
+
+If the customer has already returned the signed documents, upload them here instead. All five must be uploaded before you can continue:
 - Signed Store Onboarding Agreement
 - Signed Customer Information Form
 - Signed NDA
 - Signed TQA Document
 - CIPC Company Registration Certificate
 
-For each document, click the upload area, select the file from your device, and wait for the green tick to confirm the upload succeeded. You can remove and re-upload any document before submitting. The progress counter in the top right of this section shows how many of the five have been uploaded (e.g. `3 / 5`).
+Click **Upload** next to each document, select the file, and wait for the green tick. The progress counter shows how many are done (e.g. `3 / 5`). Once all 5 are uploaded, click **Continue**.
 
-> **You cannot proceed to Step 1 until all 5 documents are uploaded.** The Continue button remains disabled until every slot is filled.
+#### Steps 1-4 — Application Details
 
-> **Documents are uploaded to secure cloud storage (Cloudflare R2) as you go** — they are attached to the application the moment you upload them, not when you submit. If you close the browser and return, you will need to start a new application and re-upload.
+- **Step 1:** Business details — company name (required), trading name, registration number, VAT, business type
+- **Step 2:** Primary contact — name, email, phone
+- **Step 3:** Business address — street, city, province
+- **Step 4:** Ordering volume and additional notes
 
-3. Once all 5 documents are uploaded, click **Continue** to proceed through the remaining steps:
-   - Step 1: Business details (company name, VAT, registration number)
-   - Step 2: Primary contact
-   - Step 3: Business address
-   - Step 4: Ordering volume and additional information
-4. Review the summary and click **Submit Application**
+Progress is saved automatically each time you move between steps (email path). You can close the browser and resume later.
 
-The Bassani admin team is notified by email. Once they approve the application, the customer is created in Odoo and you receive confirmation. The customer is linked to your account — their orders count toward your commission turnover.
+#### Submitting for Review
 
-You can track all your applications under **Customers → My Applications**:
-- **Pending** — awaiting admin review
+When all fields are filled and documents are on file, click **Submit for Review**. The Bassani admin team is notified and will action the application.
+
+Once approved, the customer is created and linked to your account — their orders count toward your commission turnover. You will receive a confirmation email.
+
+#### Resuming a Draft
+
+Draft applications (email path, waiting for docs) appear in **Applications** under the **Drafts** filter. Click any row to resume the wizard.
+
+You can also use the link in the "Docs received" notification email, which takes you directly to the wizard pre-loaded with the application.
+
+#### Tracking Your Applications
+
+All applications are listed under **Applications**:
+- **Drafts** — email sent, waiting for docs or not yet submitted
+- **Pending** — submitted, awaiting admin review
 - **Approved** — customer is active and linked to you
 - **Rejected** — includes the rejection reason so you can address it
 
@@ -1400,6 +1428,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 4 July 2026
+**Last Updated:** 5 July 2026
 
 *This manual covers the system as built through Phase 12 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

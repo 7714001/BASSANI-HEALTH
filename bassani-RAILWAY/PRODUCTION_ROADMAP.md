@@ -22,7 +22,7 @@
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–13 (8.1–8.14 code complete, three-tier reseller onboarding fix) — 2026-07-05 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
-| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) — 2026-07-05 |
+| 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 
@@ -1550,6 +1550,18 @@ Closes the doc-transfer gap in both onboarding paths: application documents were
 - [x] `BASSANI_HEALTH_USER_MANUAL.md` — three-path workflow documented: reseller customer via email (save to application → approve → auto-transfer), direct customer via email (Create Customer), existing customer (Save Documents)
 
 **Design decision — reference not copy:** On approval, `customer_documents` records point to the same R2 objects the application already references. No bytes moved, no storage cost. The only write is a new MongoDB document stamped with `odoo_partner_id`.
+
+**11.C.5 — Reseller wizard draft/resume flow (2026-07-05):** *Complete*
+
+Closes the UX gap where resellers were blocked at Step 0 until all five signed documents were uploaded, even when they had already emailed the docs to the customer and needed to wait for the reply.
+
+- [x] `CustomerOnboarding.js` — Step 0 now has two paths: (A) email path: reseller enters business name (required) + customer email, clicks Send Docs — wizard unlocks Steps 1-4 immediately; (B) upload path: reseller uploads all 5 signed docs before continuing. Business name is validated client- and server-side before email send. On send, business name is passed as `customer_name` and pre-filled into Step 1's company name field
+- [x] `CustomerOnboarding.js` — resume mode: `?resume=APP-XXX` URL param loads existing `awaiting_docs` application into the wizard, populates all form fields, starts at Step 1; draft indicator banner shown with app reference
+- [x] `CustomerOnboarding.js` — auto-save on step navigation (email/draft path): each call to `next()` calls `PUT /api/onboarding/:draftAppId` before advancing; final step calls `POST /api/onboarding/:draftAppId/submit` instead of the fresh-submit endpoint
+- [x] `onboarding_routes.py` — `PUT /api/onboarding/:app_id` now accepts `awaiting_docs` status in addition to `pending`; new `POST /api/onboarding/:app_id/submit` endpoint transitions `awaiting_docs → pending`, validates all required fields and all 5 docs present, fires admin notification email
+- [x] `onboarding_inbox_routes.py` — after `save-documents-to-application` saves docs, if `application.reseller_id` is set, fetches reseller user email and fires `send_onboarding_docs_received_reseller` as a background task
+- [x] `email_service.py` — new `send_onboarding_docs_received_reseller` template: warm notification to reseller with direct `/onboard?resume=:app_id` link
+- [x] `ResellerApplications.js` — `awaiting_docs` added as "Draft" status with blue badge; "Drafts" filter chip added; clicking a draft row navigates to `/onboard?resume=:id` with "Continue" CTA in the row
 
 **11.C.1 — Thread document progress tracking (2026-07-05):** *Complete*
 

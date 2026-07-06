@@ -187,7 +187,7 @@ async def forgot_password(
         {"email": {"$regex": f"^{re.escape(email_lower)}$", "$options": "i"},
          "active": {"$ne": False}},
     )
-    if user:
+    if user and not user.get("is_super_admin") and user.get("role") != "super_admin":
         user["id"] = str(user.pop("_id"))
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -251,6 +251,8 @@ async def reset_password(
     user = await get_user_by_username(record["username"])
     if not user or not user.get("active", True):
         raise HTTPException(status_code=400, detail="Account not found or inactive.")
+    if user.get("is_super_admin") or user.get("role") == "super_admin":
+        raise HTTPException(status_code=400, detail="This account's password is managed through the system configuration and cannot be reset here.")
 
     new_version = (user.get("token_version") or 0) + 1
     await col("users").update_one(
