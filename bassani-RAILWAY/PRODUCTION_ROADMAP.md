@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-06  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete)  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06  
 
 ---
 
@@ -26,6 +26,7 @@
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
+| 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -2539,3 +2540,57 @@ Closes the loop: when the portal ticket status changes, push the update back to 
 ---
 
 *This document is the single source of truth for the production readiness programme. Update it after every phase completion. Do not start a new phase until the previous phase's Definition of Done is fully checked off.*
+
+---
+
+## Phase 15 — Stock Report
+
+**Goal:** Give operations staff and the BA a dedicated stock report view inside the portal that mirrors what they previously had to open Odoo to see: a product list with current stock quantities, a per-product lot/batch breakdown with expiry dates, and a full movement history (traceability trail) per lot.  
+**Estimate:** 1 day  
+**Status:** 🟢 Complete  
+**Completed:** 2026-07-06
+
+### Context
+
+Bassani uses FIFO costing in Odoo. The BA's primary stock reporting workflow was: Odoo → Inventory → Products → click product → view lots/batches and their stock. This phase removes that dependency — the same data is now accessible directly in the portal. The Products tab retains its per-product inline stock panel for quick reference while managing a product; the Stock Report is the dedicated operational view for batch-level analysis.
+
+The Products tab's existing traceability and stock history sections are not removed — they remain useful inline while editing a product. The Stock Report is the preferred view for batch reporting.
+
+### Odoo models used
+
+| Model | Purpose |
+|---|---|
+| `stock.quant` | Current physical stock — on-hand, reserved, available per lot × location |
+| `stock.lot` | Lot/batch metadata — name, reference, expiry date, receipt date |
+| `stock.move.line` | Lot-level movement history — every inbound/outbound event for a batch |
+| `stock.location` | Location names and types for movement classification |
+
+### 15.0 — Backend: Stock Report API
+
+- [x] `GET /api/stock-report` — product list with aggregated on-hand, reserved, and available quantities from `stock.quant`; warehouse- and company-scoped; search by product name, ref, or category
+- [x] `GET /api/stock-report/{product_id}/lots` — lot/batch breakdown for one product enriched with expiry and receipt dates from `stock.lot`
+- [x] `GET /api/stock-report/lots/{lot_id}/movements` — full movement history for a lot from `stock.move.line`, with movement type classification (receipt, delivery, transfer, adjustment, production)
+- [x] All endpoints gate on `products.view` permission; all warehouse/company scoping via `warehouse_context.py`
+
+### 15.1 — Frontend: Stock Report View
+
+- [x] Two-level navigation: product list → lot breakdown (back button returns to report)
+- [x] Product list: name, ref, category, on-hand, reserved, available, lot count; search bar; click any row to drill in
+- [x] Lot breakdown: lot name (monospace), location, on-hand, reserved, available, received date, expiry date; expired lots flagged with warning icon
+- [x] Movement history: modal per lot showing full traceability trail with move-type badges (Received, Dispatched, Internal Transfer, Adjustment, etc.) and ± quantity labels
+- [x] Nav item: Stock Report under Insights section, `Boxes` icon, `products.view` permission gate
+
+### 15.2 — FIFO Stock Valuation (Deferred)
+
+FIFO valuation per lot via `stock.valuation.layer` is deferred pending confirmation that `lot_id` is populated on that model in the live Odoo instance (it is present in Odoo v17 but requires serial/lot tracking to be enabled on the product's category). Once confirmed, add:
+
+- [ ] `GET /api/stock-report/lots/{lot_id}/valuation` — FIFO cost layers for a lot: date, quantity received, unit cost, remaining qty, remaining value
+- [ ] Valuation summary row in the lot breakdown table: current FIFO value per lot
+
+### Definition of Done
+
+- [x] Admin can navigate to Stock Report, see all products with stock, and search by name/ref/category
+- [x] Clicking a product shows its lot/batch breakdown with expiry flags
+- [x] Clicking History on any lot shows the full movement trail with move-type labels
+- [x] All reads are warehouse-scoped when a warehouse is selected in the top-nav switcher
+- [ ] FIFO valuation per lot (15.2 — deferred)

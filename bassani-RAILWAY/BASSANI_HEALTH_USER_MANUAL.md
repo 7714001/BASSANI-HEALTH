@@ -1165,6 +1165,20 @@ Reports include:
 - Dead stock (products with no sales in the last 90 days and low available stock)
 - Top customers by spend
 
+### Stock Report
+
+*Requires `products.view` permission — found in the Insights section of the sidebar*
+
+The Stock Report mirrors the Odoo stock report view, giving operations staff and the BA a dedicated place to check batch-level stock without opening Odoo.
+
+**Product list:** Shows every product with stock on hand, including aggregated on-hand, reserved (committed to open orders), and available quantities. Use the search bar to filter by product name, internal reference code, or category. The Lots column shows how many distinct batches are currently in stock for that product.
+
+**Lot / batch breakdown:** Click any product row to drill into its lot-level breakdown. Each row shows the batch name, storage location, on-hand, reserved, and available quantities, the date the batch was received, and the expiry date. Expired lots are flagged with a warning icon.
+
+**Movement history (traceability):** Click the History button on any lot to open its full movement trail. Every inbound and outbound event is shown with a move-type label (Received, Dispatched, Internal Transfer, Adjustment, and so on), the quantity moved, and the date. This is the portal-native equivalent of Odoo's traceability report.
+
+All stock figures are scoped to the warehouse you have selected in the top navigation. Switching warehouse updates the report automatically.
+
 ### Audit Trail
 
 *Requires `audit.view` permission*

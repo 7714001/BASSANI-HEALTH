@@ -45,6 +45,7 @@ import ProductUOM            from "./views/ProductUOM";
 import ChangePassword        from "./views/ChangePassword";
 import ForgotPassword        from "./views/ForgotPassword";
 import ResetPassword         from "./views/ResetPassword";
+import StockReport           from "./views/StockReport";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -206,6 +207,9 @@ export default function App() {
         } />
         <Route path="/reports" element={
           <ProtectedRoute adminOnly><AppLayout><Reports /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/stock-report" element={
+          <ProtectedRoute adminOnly><AppLayout><StockReport /></AppLayout></ProtectedRoute>
         } />
         <Route path="/healthcare" element={
           <ProtectedRoute adminOnly><AppLayout><Healthcare /></AppLayout></ProtectedRoute>
