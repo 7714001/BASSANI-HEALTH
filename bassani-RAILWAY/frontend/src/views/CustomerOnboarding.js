@@ -122,16 +122,19 @@ export default function CustomerOnboarding() {
 
   // Draft/email-path state
   const [draftAppId,  setDraftAppId]   = useState(resumeId || null);
-  const [emailSent,   setEmailSent]    = useState(false);
+  const [emailSent,   setEmailSent]    = useState(false);   // backward-compat: resumed awaiting_docs drafts
   const [serverDocs,  setServerDocs]   = useState([]); // docs already saved to the draft application
 
-  // Step 0 — document state (for upload path)
-  const [uploads,           setUploads      ] = useState({});
-  const [uploadingDoc,      setUploadingDoc ] = useState(null);
-  const [removingDoc,       setRemovingDoc  ] = useState(null);
-  const [emailTarget,       setEmailTarget  ] = useState("");
-  const [emailBusinessName, setEmailBusinessName] = useState("");
-  const [emailSending,      setEmailSending ] = useState(false);
+  // Step 0 — document upload path state
+  const [uploads,       setUploads     ] = useState({});
+  const [uploadingDoc,  setUploadingDoc] = useState(null);
+  const [removingDoc,   setRemovingDoc ] = useState(null);
+
+  // Step 0 — invitation path state
+  const [inviteSent,    setInviteSent  ] = useState(false);
+  const [inviteEmail,   setInviteEmail ] = useState("");
+  const [customerName,  setCustomerName] = useState("");
+  const [inviteSending, setInviteSending] = useState(false);
   const fileInputRefs = useRef({});
 
   const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
@@ -190,28 +193,23 @@ export default function CustomerOnboarding() {
     }
   };
 
-  const emailTemplates = async () => {
-    if (!emailBusinessName.trim()) return toast.error("Enter the customer's business name");
-    if (!emailTarget.trim()) return toast.error("Enter the customer's email address");
-    setEmailSending(true);
+  const sendInvite = async () => {
+    if (!inviteEmail.trim()) return toast.error("Enter the customer's email address");
+    setInviteSending(true);
     try {
-      const { data } = await api.post("/api/onboarding/templates/email", {
-        to_email:      emailTarget.trim(),
-        customer_name: emailBusinessName.trim(),
+      await api.post("/api/onboarding/invite", {
+        to_email:         inviteEmail.trim(),
+        customer_name:    customerName.trim(),
+        registration_url: `${window.location.origin}/apply?ref=${user?.id}`,
       });
-      toast.success("Documents sent to " + emailTarget.trim());
-      // Pre-fill company name into the form so Step 1 is already populated
-      setForm(f => ({ ...f, company_name: emailBusinessName.trim() }));
-      setEmailTarget("");
-      setEmailBusinessName("");
-      setEmailSent(true);
-      if (data.application_id) {
-        setDraftAppId(data.application_id);
-      }
+      toast.success("Invitation sent to " + inviteEmail.trim());
+      setInviteEmail("");
+      setCustomerName("");
+      setInviteSent(true);
     } catch {
-      toast.error("Failed to send email");
+      toast.error("Failed to send invitation");
     } finally {
-      setEmailSending(false);
+      setInviteSending(false);
     }
   };
 
@@ -378,7 +376,7 @@ export default function CustomerOnboarding() {
   const step0Content = (
     <div className="space-y-6">
 
-      {/* Email sent banner */}
+      {/* Backward-compat banner for resumed awaiting_docs drafts */}
       {emailSent && (
         <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
           <Clock size={14} className="text-blue-600 shrink-0 mt-0.5" />
@@ -392,101 +390,86 @@ export default function CustomerOnboarding() {
         </div>
       )}
 
-      {/* Referral link (reseller only) */}
-      {user?.role === "reseller" && !emailSent && (
-        <div className="border border-bassani-100 rounded-xl p-4 bg-bassani-50/40">
-          <p className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
-            <Link2 size={12} className="text-bassani-500" />
-            Or send your customer a self-registration link
-          </p>
-          <p className="text-xs text-gray-500 mb-3">
-            Your customer can complete the full application themselves. Once approved, they will be linked to your account automatically.
-          </p>
-          <div className="flex gap-2">
-            <input
-              readOnly
-              value={`${window.location.origin}/apply?ref=${user.id}`}
-              className="flex-1 px-3 py-2 text-xs font-mono border border-bassani-200 rounded-lg bg-white text-gray-700 select-all"
-            />
+      {/* Invitation sent — terminal state */}
+      {inviteSent && (
+        <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-4">
+          <CheckCircle size={15} className="text-green-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-green-800 mb-1">Invitation sent</p>
+            <p className="text-xs text-green-700">
+              Your customer will receive a link to complete their own registration. Once they submit and are approved, they will appear in your customer list automatically.
+            </p>
             <button
-              onClick={() => {
-                navigator.clipboard.writeText(`${window.location.origin}/apply?ref=${user.id}`);
-                toast.success("Referral link copied");
-              }}
-              className="px-3 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-              Copy link
+              onClick={() => { setInviteSent(false); setInviteEmail(""); setCustomerName(""); }}
+              className="mt-2 text-xs font-semibold text-green-700 underline underline-offset-2 hover:text-green-900">
+              Send another invitation
             </button>
           </div>
         </div>
       )}
 
-      {/* Section A — share templates */}
-      <div>
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-          Step A — Share documents with customer
-        </p>
-        <p className="text-xs text-gray-400 mb-3">
-          Download and send the four Bassani Health onboarding documents to your customer for completion and signing.
-        </p>
-        <div className="space-y-2 mb-4">
-          {TEMPLATES.map(t => (
-            <div key={t.filename} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText size={13} className="text-bassani-600 shrink-0" />
-                <span className="text-xs font-medium text-gray-700 truncate">{t.label}</span>
-              </div>
-              <button
-                onClick={() => downloadTemplate(t.filename, t.label)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 shrink-0 ml-3 transition-colors">
-                <Download size={12} />
-                Download
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Email to customer */}
-        {!emailSent && (
-          <div className="border border-gray-100 rounded-xl p-4 bg-white">
-            <p className="text-xs font-semibold text-gray-600 mb-3 flex items-center gap-1.5">
-              <Mail size={12} className="text-gray-400" />
-              Email all documents to customer
+      {/* Step A — invite customer (shown when not on email-docs path and not yet invited) */}
+      {!emailSent && !inviteSent && (
+        <>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              Step A — Invite your customer to register
             </p>
-            <div className="space-y-2 mb-2">
-              <input
-                type="text"
-                value={emailBusinessName}
-                onChange={e => setEmailBusinessName(e.target.value)}
-                placeholder="Customer business name (required)"
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
-              />
+            {/* Referral link copy */}
+            <div className="border border-bassani-100 rounded-xl p-4 bg-bassani-50/30 mb-3">
+              <p className="text-xs text-gray-500 mb-2">Share your registration link — any application they submit will be linked to your account automatically.</p>
               <div className="flex gap-2">
                 <input
-                  type="email"
-                  value={emailTarget}
-                  onChange={e => setEmailTarget(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && emailTemplates()}
-                  placeholder="customer@example.co.za"
-                  className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                  readOnly
+                  value={`${window.location.origin}/apply?ref=${user?.id}`}
+                  className="flex-1 px-3 py-2 text-xs font-mono border border-bassani-200 rounded-lg bg-white text-gray-700 select-all"
                 />
                 <button
-                  onClick={emailTemplates}
-                  disabled={emailSending || !emailTarget.trim() || !emailBusinessName.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-                  {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
-                  Send Docs
+                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/apply?ref=${user?.id}`); toast.success("Link copied"); }}
+                  className="px-3 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                  Copy
                 </button>
               </div>
             </div>
-            <p className="text-[10px] text-gray-400">
-              Sending via email lets you continue filling in details immediately — signed docs will be saved once the customer replies.
-            </p>
+            {/* Email invitation */}
+            <div className="border border-gray-100 rounded-xl p-4 bg-white">
+              <p className="text-xs font-semibold text-gray-600 mb-3 flex items-center gap-1.5">
+                <Mail size={12} className="text-gray-400" />
+                Or email the invitation link directly
+              </p>
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={e => setCustomerName(e.target.value)}
+                  placeholder="Customer / company name (optional)"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={e => setInviteEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && sendInvite()}
+                    placeholder="customer@example.co.za"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                  />
+                  <button
+                    onClick={sendInvite}
+                    disabled={inviteSending || !inviteEmail.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                    {inviteSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                    Send Invite
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
 
-      {/* Section B — upload signed docs (shown when not on email path) */}
-      {!emailSent && (
+      {/* Section B — upload signed docs (shown when not on invitation/email path) */}
+      {!emailSent && !inviteSent && (
         <>
           <div className="border-t border-gray-100" />
           <div>
@@ -804,11 +787,11 @@ export default function CustomerOnboarding() {
                   Cancel
                 </button>
               )}
-              {step < STEPS.length - 1 ? (
+              {step < STEPS.length - 1 && !inviteSent ? (
                 <button
                   onClick={next}
                   disabled={step === 0 && !emailSent && !allUploaded}
-                  title={step === 0 && !emailSent && !allUploaded ? `Upload all documents or email them to your customer to continue` : undefined}
+                  title={step === 0 && !emailSent && !allUploaded ? "Upload all documents to continue, or send an invitation so your customer registers themselves" : undefined}
                   className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors">
                   {step === 0 && emailSent ? "Continue — fill in details →" : "Continue →"}
                 </button>
@@ -830,7 +813,7 @@ export default function CustomerOnboarding() {
                   <span className="text-gray-400">Documents</span>
                   {emailSent
                     ? <span className="font-medium text-blue-600">{serverDocs.length} / {REQUIRED_DOCS.length} on file</span>
-                    : <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded ✓</span>
+                    : <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded</span>
                   }
                 </div>
                 {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}

@@ -171,7 +171,7 @@ async def submit_public_registration(
     All 5 documents are required before submission (no inbox fallback on this path).
     """
     from routes.settings_routes import get_email_routing
-    from services.email_service import send_onboarding_submitted, send_registration_confirmation
+    from services.email_service import send_onboarding_submitted
 
     # Resolve referral code to reseller (silently ignored if invalid)
     reseller_id   = None
@@ -224,12 +224,120 @@ async def submit_public_registration(
         to=routing["application_submitted_to"],
         source="self_service",
     )
-    background_tasks.add_task(
-        send_registration_confirmation,
-        company_name=registration.company_name,
-        contact_name=registration.contact_name,
-        contact_email=registration.contact_email,
-        app_ref=ref,
-    )
+
+    async def _send_confirmation():
+        """
+        Send the registration confirmation from the onboarding mailbox so the
+        applicant's reply auto-threads back into Onboarding Inbox and is linked
+        to this application. Falls back to Resend when the mailbox is not yet set up.
+        """
+        from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
+        from services.graph_client import graph_configured
+        from services.email_service import (
+            _wrap as _email_wrap, _h1, _p, _info_box, _divider,
+            send_registration_confirmation,
+        )
+
+        onboarding_graph_address = get_graph_mailbox_address("onboarding")
+        imap_cfg = _imap_cfg("onboarding")
+        use_graph = graph_configured() and bool(onboarding_graph_address)
+        mailbox_configured = use_graph or bool(imap_cfg)
+
+        if not mailbox_configured:
+            send_registration_confirmation(
+                company_name=registration.company_name,
+                contact_name=registration.contact_name,
+                contact_email=registration.contact_email,
+                app_ref=ref,
+            )
+            return
+
+        from_address = onboarding_graph_address if use_graph else (
+            imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+        )
+
+        contact_name = registration.contact_name or registration.company_name
+        subject = f"Application Received: {registration.company_name}"
+        body_html = _email_wrap(
+            _h1("We have received your application")
+            + _p(f"Hi {contact_name},")
+            + _p(
+                "Thank you for submitting your registration with Bassani Health. "
+                "We have received your application and will review it within 2 to 3 business days."
+            )
+            + _info_box([
+                ("Reference",     ref),
+                ("Business name", registration.company_name),
+                ("Contact email", registration.contact_email),
+            ])
+            + _divider()
+            + _p(
+                "If you have any questions, please reply directly to this email and "
+                "a member of our team will assist you.",
+                muted=True,
+            )
+        )
+
+        now_ts = datetime.now(timezone.utc)
+        thread_doc = {
+            "from_email":      from_address,
+            "from_name":       "Bassani Health",
+            "to_email":        registration.contact_email,
+            "subject":         subject,
+            "body_html":       body_html,
+            "body_preview":    f"Application received. Reference: {ref}",
+            "is_outgoing":     True,
+            "status":          "application_linked",
+            "received_at":     now_ts,
+            "has_attachments": False,
+            "attachments":     [],
+            "thread_root_id":  None,
+            "is_read":         True,
+            "created_at":      now_ts,
+            "sent_by":         "system",
+            "application_id":  ref,
+            "reseller_id":     reseller_id,
+            "reseller_name":   reseller_name,
+        }
+        result = await col("onboarding_inbox").insert_one(thread_doc)
+        item_id_str = str(result.inserted_id)
+
+        await col("onboarding_inbox").update_one(
+            {"_id": result.inserted_id},
+            {"$set": {"thread_root_id": item_id_str}},
+        )
+        await col("customer_onboarding").update_one(
+            {"id": ref},
+            {"$set": {"inbox_thread_id": item_id_str}},
+        )
+
+        try:
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=registration.contact_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                from services.imap_client import send_new_email as imap_send_new
+                message_id = await imap_send_new(
+                    to_email=registration.contact_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox="onboarding",
+                )
+                await col("onboarding_inbox").update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "public.register_confirmation_send_failed app=%s error=%s", ref, exc
+            )
+
+    background_tasks.add_task(_send_confirmation)
 
     return {"success": True, "reference": ref}

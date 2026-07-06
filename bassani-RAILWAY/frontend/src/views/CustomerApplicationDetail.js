@@ -168,11 +168,15 @@ function DocumentsCard({ appId }) {
 
 // ── Actions sidebar ────────────────────────────────────────────────────────────
 
-function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate }) {
-  const [rejectMode,   setRejectMode  ] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const [companyName,  setCompanyName ] = useState(app.company_name || "");
-  const [loading,      setLoading     ] = useState(false);
+function ActionsCard({ app, canApprove, canReject, onApprove, onReject, onUpdate, navigate }) {
+  const [rejectMode,      setRejectMode     ] = useState(false);
+  const [rejectReason,    setRejectReason   ] = useState("");
+  const [companyName,     setCompanyName    ] = useState(app.company_name || "");
+  const [loading,         setLoading        ] = useState(false);
+  const [contactMode,     setContactMode    ] = useState(false);
+  const [contactSubject,  setContactSubject ] = useState("");
+  const [contactMessage,  setContactMessage ] = useState("");
+  const [contactSending,  setContactSending ] = useState(false);
 
   const isAwaitingDocs = app.status === "awaiting_docs";
   const isActionable   = app.status === "pending" || isAwaitingDocs;
@@ -208,10 +212,30 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate
     try { await onReject(rejectReason.trim()); } finally { setLoading(false); }
   };
 
+  const handleContact = async () => {
+    if (!contactMessage.trim()) return toast.error("Enter a message");
+    setContactSending(true);
+    try {
+      const r = await api.post(`/api/onboarding/${app.id}/contact`, {
+        subject: contactSubject.trim(),
+        message: contactMessage.trim(),
+      });
+      onUpdate({ inbox_thread_id: r.data.inbox_thread_id });
+      toast.success("Message sent");
+      setContactMode(false);
+      setContactSubject("");
+      setContactMessage("");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send message");
+    } finally {
+      setContactSending(false);
+    }
+  };
+
   return (
     <Card title="Actions">
-      {/* Inbox thread link for awaiting_docs apps */}
-      {isAwaitingDocs && app.inbox_thread_id && (
+      {/* Inbox thread link — show whenever a thread has been started */}
+      {app.inbox_thread_id && !contactMode && !rejectMode && (
         <div className="mb-4 -mt-1">
           <button
             onClick={() => navigate(`/onboarding-inbox?thread=${app.inbox_thread_id}`)}
@@ -222,7 +246,76 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate
         </div>
       )}
 
-      {!rejectMode ? (
+      {contactMode ? (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">To</label>
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 truncate">
+              {app.contact_email || "No email on record"}
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Subject</label>
+            <input
+              value={contactSubject}
+              onChange={e => setContactSubject(e.target.value)}
+              placeholder={`Your application: ${app.company_name || app.contact_name || app.id}`}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-bassani-300 placeholder-gray-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Message <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              value={contactMessage}
+              onChange={e => setContactMessage(e.target.value)}
+              rows={5}
+              autoFocus
+              placeholder="Write your message to the applicant…"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-bassani-300 resize-none placeholder-gray-400"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">
+              Sent from the onboarding mailbox. Replies land in Onboarding Inbox and are linked to this application.
+            </p>
+          </div>
+          <button onClick={handleContact} disabled={contactSending || !contactMessage.trim()}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+            {contactSending ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+            Send Message
+          </button>
+          <button onClick={() => { setContactMode(false); setContactSubject(""); setContactMessage(""); }}
+            disabled={contactSending}
+            className="w-full px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors">
+            Cancel
+          </button>
+        </div>
+      ) : rejectMode ? (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Reason for rejection <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="Provide a clear reason — this will be visible to the reseller…"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-200 resize-none placeholder-gray-400"
+            />
+          </div>
+          <button onClick={handleReject} disabled={loading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+            Confirm Rejection
+          </button>
+          <button onClick={() => { setRejectMode(false); setRejectReason(""); }} disabled={loading}
+            className="w-full px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors">
+            Cancel
+          </button>
+        </div>
+      ) : (
         <div className="space-y-3">
           {/* Company name input — required for inbox-sourced (awaiting_docs) apps */}
           {isAwaitingDocs && (
@@ -249,6 +342,16 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate
               Approve & Create Customer
             </button>
           )}
+
+          {/* Contact applicant — only when no thread exists yet */}
+          {!app.inbox_thread_id && canApprove && (
+            <button onClick={() => setContactMode(true)} disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-semibold rounded-xl transition-colors border border-gray-200">
+              <Mail size={14} />
+              Contact Applicant
+            </button>
+          )}
+
           {canReject && (
             <button onClick={() => setRejectMode(true)} disabled={loading}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-xl transition-colors border border-red-100">
@@ -259,31 +362,6 @@ function ActionsCard({ app, canApprove, canReject, onApprove, onReject, navigate
           {!canApprove && !canReject && (
             <p className="text-xs text-gray-400 text-center py-2">You do not have permission to action this application.</p>
           )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Reason for rejection <span className="text-red-400">*</span>
-            </label>
-            <textarea
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              rows={4}
-              autoFocus
-              placeholder="Provide a clear reason — this will be visible to the reseller…"
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-200 resize-none placeholder-gray-400"
-            />
-          </div>
-          <button onClick={handleReject} disabled={loading}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
-            Confirm Rejection
-          </button>
-          <button onClick={() => { setRejectMode(false); setRejectReason(""); }} disabled={loading}
-            className="w-full px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors">
-            Cancel
-          </button>
         </div>
       )}
     </Card>
@@ -331,6 +409,10 @@ export default function CustomerApplicationDetail() {
       toast.error(e.response?.data?.detail || "Rejection failed");
       throw e;
     }
+  };
+
+  const updateApp = (fields) => {
+    setApp(prev => ({ ...prev, ...fields }));
   };
 
   if (loading) return (
@@ -453,6 +535,7 @@ export default function CustomerApplicationDetail() {
                 canReject={can("customers.reject_onboarding")}
                 onApprove={approve}
                 onReject={reject}
+                onUpdate={updateApp}
                 navigate={navigate}
               />
 

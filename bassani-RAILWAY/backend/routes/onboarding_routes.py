@@ -91,6 +91,17 @@ class TemplateEmailBody(BaseModel):
     customer_name: Optional[str] = ""
 
 
+class InviteBody(BaseModel):
+    to_email:         str
+    customer_name:    Optional[str] = ""
+    registration_url: str  # full URL (with ?ref= if applicable), constructed by the frontend
+
+
+class ContactApplicantBody(BaseModel):
+    subject: Optional[str] = ""
+    message: str
+
+
 class ApproveBody(BaseModel):
     company_name: Optional[str] = None  # required for inbox-sourced apps that have no company_name yet
 
@@ -316,6 +327,266 @@ async def email_templates(
         after={"to_email": body.to_email.strip()},
     )
     return {"success": True, "item_id": item_id_str, "application_id": application_id}
+
+
+@router.post("/invite")
+async def send_registration_invite(
+    body: InviteBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Email a self-registration invitation link to a prospective customer.
+    The link (and any referral code) is constructed by the frontend so the
+    backend never needs to know the portal's public URL.
+    Sent from the onboarding mailbox — replies thread back into Onboarding Inbox.
+    """
+    if not body.to_email.strip():
+        raise HTTPException(status_code=400, detail="Email address required")
+    if not body.registration_url.strip():
+        raise HTTPException(status_code=400, detail="Registration URL required")
+
+    from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
+    from services.graph_client import graph_configured
+    from services.email_service import _wrap as _email_wrap, _h1, _p, _divider
+
+    onboarding_graph_address = get_graph_mailbox_address("onboarding")
+    imap_cfg = _imap_cfg("onboarding")
+    use_graph = graph_configured() and bool(onboarding_graph_address)
+
+    if not use_graph and not imap_cfg:
+        raise HTTPException(
+            status_code=503,
+            detail="Onboarding mailbox not configured. Set up the mailbox in Settings before sending invitations.",
+        )
+
+    from_address = onboarding_graph_address if use_graph else (
+        imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+    )
+
+    reg_url = body.registration_url.strip()
+    customer_name = body.customer_name.strip() if body.customer_name else None
+    greeting = f"Hi {customer_name}," if customer_name else "Hi,"
+    subject = "You're invited to register with Bassani Health"
+
+    body_html = _email_wrap(
+        _h1("Register with Bassani Health")
+        + _p(greeting)
+        + _p(
+            "You have been invited to complete your registration with Bassani Health. "
+            "Click the button below to get started. You will be guided through a short "
+            "registration form and asked to upload your signed documents."
+        )
+        + f"""<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+          <tr><td align="center">
+            <a href="{reg_url}"
+               style="display:inline-block;padding:12px 28px;background:#0f6e56;color:#fff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:-0.2px;">
+              Start Registration
+            </a>
+          </td></tr>
+        </table>"""
+        + _p(
+            f'Or copy this link: <a href="{reg_url}" style="color:#0f6e56;word-break:break-all;">{reg_url}</a>',
+            muted=True,
+        )
+        + _divider()
+        + _p(
+            "If you were not expecting this invitation, you can safely ignore this email.",
+            muted=True,
+        ),
+        footer_note="Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami",
+    )
+
+    now = datetime.now(timezone.utc)
+    thread_doc = {
+        "from_email":      from_address,
+        "from_name":       "Bassani Health",
+        "to_email":        body.to_email.strip(),
+        "subject":         subject,
+        "body_html":       body_html,
+        "body_preview":    f"Registration invitation sent to {body.to_email.strip()}",
+        "is_outgoing":     True,
+        "status":          "sent",
+        "received_at":     now,
+        "has_attachments": False,
+        "attachments":     [],
+        "thread_root_id":  None,
+        "is_read":         True,
+        "created_at":      now,
+        "sent_by":         current_user.get("username"),
+    }
+    result = await col("onboarding_inbox").insert_one(thread_doc)
+    item_id_str = str(result.inserted_id)
+    await col("onboarding_inbox").update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"thread_root_id": item_id_str}},
+    )
+
+    async def _do_send():
+        try:
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=body.to_email.strip(),
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                from services.imap_client import send_new_email as imap_send_new
+                message_id = await imap_send_new(
+                    to_email=body.to_email.strip(),
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox="onboarding",
+                )
+                await col("onboarding_inbox").update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "onboarding.invite_send_failed to=%s error=%s", body.to_email, exc
+            )
+
+    background_tasks.add_task(_do_send)
+    background_tasks.add_task(
+        audit_log,
+        "onboarding.invite_sent", "onboarding_inbox", item_id_str,
+        entity_label=body.to_email.strip(),
+        user=current_user,
+        after={"to_email": body.to_email.strip()},
+    )
+
+    return {"success": True}
+
+
+@router.post("/{app_id}/contact")
+async def contact_applicant(
+    app_id: str,
+    body: ContactApplicantBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Initiate a correspondence thread with an applicant from the application detail view.
+    Creates an onboarding inbox thread linked to the application and sends the message
+    from the onboarding mailbox. Only valid when no thread exists yet.
+    """
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="Message body required")
+
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    contact_email = app.get("contact_email", "").strip()
+    if not contact_email:
+        raise HTTPException(status_code=400, detail="This application has no contact email address")
+
+    if app.get("inbox_thread_id"):
+        raise HTTPException(status_code=409, detail="An inbox thread already exists for this application")
+
+    from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
+    from services.graph_client import graph_configured
+
+    onboarding_graph_address = get_graph_mailbox_address("onboarding")
+    imap_cfg = _imap_cfg("onboarding")
+    use_graph = graph_configured() and bool(onboarding_graph_address)
+
+    if not use_graph and not imap_cfg:
+        raise HTTPException(
+            status_code=503,
+            detail="Onboarding mailbox not configured. Set up the mailbox in Settings before sending messages.",
+        )
+
+    from_address = onboarding_graph_address if use_graph else (
+        imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+    )
+
+    company_name = app.get("company_name") or app.get("contact_name") or "Applicant"
+    subject = body.subject.strip() if body.subject and body.subject.strip() else f"Your application: {company_name}"
+
+    from services.email_service import _wrap as _email_wrap, _p, _divider
+    body_html = _email_wrap(
+        _p(body.message.strip().replace("\n", "<br>"))
+        + _divider()
+        + _p(f"Application reference: <strong>{app_id}</strong>", muted=True)
+    )
+
+    now = datetime.now(timezone.utc)
+    thread_doc = {
+        "from_email":      from_address,
+        "from_name":       "Bassani Health",
+        "to_email":        contact_email,
+        "subject":         subject,
+        "body_html":       body_html,
+        "body_preview":    body.message.strip()[:120],
+        "is_outgoing":     True,
+        "status":          "application_linked",
+        "received_at":     now,
+        "has_attachments": False,
+        "attachments":     [],
+        "thread_root_id":  None,
+        "is_read":         True,
+        "created_at":      now,
+        "sent_by":         current_user.get("username"),
+        "application_id":  app_id,
+        "reseller_id":     app.get("reseller_id"),
+        "reseller_name":   app.get("reseller_name"),
+    }
+
+    result = await col("onboarding_inbox").insert_one(thread_doc)
+    item_id_str = str(result.inserted_id)
+
+    await col("onboarding_inbox").update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"thread_root_id": item_id_str}},
+    )
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"inbox_thread_id": item_id_str}},
+    )
+
+    async def _do_send():
+        try:
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=contact_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                from services.imap_client import send_new_email as imap_send_new
+                message_id = await imap_send_new(
+                    to_email=contact_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox="onboarding",
+                )
+                await col("onboarding_inbox").update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "onboarding.contact_send_failed app=%s error=%s", app_id, exc
+            )
+
+    background_tasks.add_task(_do_send)
+    background_tasks.add_task(
+        audit_log,
+        "onboarding.contact_sent", "customer_onboarding", app_id,
+        entity_label=company_name,
+        user=current_user,
+        after={"to_email": contact_email, "inbox_thread_id": item_id_str},
+    )
+
+    return {"inbox_thread_id": item_id_str, "to_email": contact_email}
 
 
 # ── Document upload endpoints ─────────────────────────────────────────────────
