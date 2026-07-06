@@ -164,6 +164,7 @@ export function Products() {
     setMoqMap(prev => ({ ...prev, [productId]: v }));
     try {
       await api.put(`/api/reseller-catalog/${productId}/moq`, { moq: v });
+      toast.success(v > 0 ? `Minimum order quantity set to ${v}` : "Minimum order quantity removed");
     } catch { toast.error("Failed to update minimum order quantity"); }
   };
 
