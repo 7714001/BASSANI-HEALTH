@@ -2590,14 +2590,19 @@ export function Reports() {
   const [activeReport, setActiveReport] = useState("monthly-turnover");
   const [data,   setData  ] = useState(null);
   const [loading,setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const REPORTS = [
-    { key:"monthly-turnover",   label:"Monthly Turnover"   },
-    { key:"best-sellers",      label:"Best Sellers"       },
-    { key:"best-customers",    label:"Best Customers"     },
-    { key:"best-resellers",    label:"Best Resellers"     },
-    { key:"dead-stock",        label:"Dead Stock"         },
-    { key:"category-performance", label:"Category Performance" },
+  const ANALYTICS = [
+    { key:"monthly-turnover",      label:"Monthly Turnover"      },
+    { key:"best-sellers",          label:"Best Sellers"          },
+    { key:"best-customers",        label:"Best Customers"        },
+    { key:"best-resellers",        label:"Best Resellers"        },
+    { key:"dead-stock",            label:"Dead Stock"            },
+    { key:"category-performance",  label:"Category Performance"  },
+  ];
+
+  const INVENTORY = [
+    { key:"stock-positions", label:"Stock Positions", href:"/stock-report" },
   ];
 
   const { user } = useAuth();
@@ -2617,12 +2622,22 @@ export function Reports() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col sm:flex-row gap-4 sm:gap-5">
         {/* Report nav */}
         <div className="sm:w-44 sm:flex-shrink-0">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 sm:mb-3">Reports</p>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 sm:mb-3">Analytics</p>
           <div className="flex sm:flex-col gap-1 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-            {REPORTS.map(r=>(
+            {ANALYTICS.map(r=>(
               <button key={r.key} onClick={()=>{ setActiveReport(r.key); setData(null); }}
                 className={`w-full text-left text-xs px-3 py-2.5 rounded-lg transition-all border font-medium ${activeReport===r.key?"border-bassani-600 text-bassani-700 bg-bassani-50":"border-transparent text-gray-500 hover:bg-gray-100"}`}>
                 {r.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-4 mb-2 sm:mb-3">Inventory</p>
+          <div className="flex sm:flex-col gap-1 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
+            {INVENTORY.map(r=>(
+              <button key={r.key} onClick={()=>navigate(r.href)}
+                className="w-full text-left text-xs px-3 py-2.5 rounded-lg transition-all border font-medium border-transparent text-gray-500 hover:bg-gray-100 flex items-center justify-between group">
+                {r.label}
+                <span className="text-gray-300 group-hover:text-bassani-500 transition-colors">→</span>
               </button>
             ))}
           </div>

@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, Boxes,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -39,7 +39,6 @@ const NAV = [
   { label: "Invoices",     path: "/invoices",    icon: FileText,        section: "Finance",  permission: "invoices.view"       },
   { label: "Targets",      path: "/targets",     icon: Target,          section: "Finance",  permission: "reports.view"        },
   { label: "Reports",      path: "/reports",      icon: BarChart3,       section: "Insights", permission: "reports.view"  },
-  { label: "Stock Report", path: "/stock-report", icon: Boxes,           section: "Insights", permission: "products.view" },
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },
   { label: "Sales Inbox",       path: "/inbox",            icon: Mail,   section: "Tickets", permission: "inbox.view",        showInboxBadge: true },

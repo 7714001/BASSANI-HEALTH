@@ -91,13 +91,14 @@ async def stock_report_products(
             prods = odoo.search_read(
                 "product.product",
                 domain=[("id", "in", list(agg.keys()))],
-                fields=["id", "default_code", "categ_id"],
+                fields=["id", "default_code", "categ_id", "uom_id"],
                 limit=5000,
             )
             for p in prods:
                 if p["id"] in agg:
                     agg[p["id"]]["product_ref"] = p.get("default_code") or ""
                     agg[p["id"]]["category"]    = p["categ_id"][1] if p.get("categ_id") else ""
+                    agg[p["id"]]["uom_name"]    = p["uom_id"][1]   if p.get("uom_id")   else ""
         except Exception:
             pass
 
@@ -108,6 +109,7 @@ async def stock_report_products(
             "product_name":  r["product_name"],
             "product_ref":   r.get("product_ref", ""),
             "category":      r.get("category", ""),
+            "uom_name":      r.get("uom_name", ""),
             "qty_onhand":    round(r["qty_onhand"],                      4),
             "qty_reserved":  round(r["qty_reserved"],                     4),
             "qty_available": round(r["qty_onhand"] - r["qty_reserved"],   4),
@@ -207,7 +209,7 @@ async def product_lot_breakdown(
 async def lot_movement_history(
     lot_id: int,
     limit: int = Query(200, le=500),
-    current_user: dict = Depends(require_permission("products.view")),
+    _: dict = Depends(require_permission("products.view")),
 ):
     """
     Full movement history (traceability trail) for a lot/batch.
