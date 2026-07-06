@@ -188,7 +188,9 @@ export default function SalesTickets() {
     setLinkOrderSearching(true);
     const t = setTimeout(async () => {
       try {
-        const r = await api.get("/api/orders/", { params: { search: linkOrderQuery, limit: 10 } });
+        const params = { search: linkOrderQuery, limit: 10 };
+      if (detail?.customer_id) params.partner_id = detail.customer_id;
+      const r = await api.get("/api/orders/", { params });
         setLinkOrderResults(r.data.orders || []);
       } catch { setLinkOrderResults([]); }
       finally { setLinkOrderSearching(false); }

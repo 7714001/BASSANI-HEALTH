@@ -69,7 +69,7 @@ CUSTOMER_FIELDS = [
     "property_payment_term_id", "active", "comment",
 ]
 
-ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "email"]
+ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "mobile", "email", "function"]
 
 
 def _format_address(r: dict) -> dict:
@@ -254,8 +254,21 @@ async def customer_profile(
     # Ownership
     ownership = await col("customer_ownership").find_one({"odoo_partner_id": customer_id}, NO_ID)
 
+    # Contact persons — child res.partner records of type "contact"
+    contact_ids = odoo.search(
+        "res.partner",
+        [["parent_id", "=", customer_id], ["type", "=", "contact"], ["active", "=", True]],
+        limit=50,
+    )
+    contacts = []
+    if contact_ids:
+        raw_contacts = odoo.read("res.partner", contact_ids, fields=["id", "name", "email", "phone", "mobile", "function"])
+        for ct in raw_contacts:
+            contacts.append({k: (v if v is not False else None) for k, v in ct.items()})
+
     return {
         "customer":             customer,
+        "contacts":             contacts,
         "stats":                stats,
         "recent_orders":        all_orders[:10],
         "outstanding_invoices": invoices,

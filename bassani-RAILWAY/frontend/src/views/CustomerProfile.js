@@ -477,7 +477,7 @@ export default function CustomerProfile() {
   if (loading) return <LoadingState />;
   if (!data)   return null;
 
-  const { customer: c, stats, recent_orders, outstanding_invoices, ownership } = data;
+  const { customer: c, stats, recent_orders, outstanding_invoices, ownership, contacts = [] } = data;
   const invSlice  = outstanding_invoices.slice(invPage * INV_PAGE_SIZE,  (invPage  + 1) * INV_PAGE_SIZE);
   const typeMatch = c.comment?.match(/Type: (\w+)/);
   const customerType = typeMatch?.[1] || null;
@@ -637,6 +637,36 @@ export default function CustomerProfile() {
               </div>
             )}
           </Section>
+
+          {/* Contacts */}
+          {contacts.length > 0 && (
+            <Section title={`Contacts (${contacts.length})`}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Job Title</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Email</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Phone</th>
+                      <th className="text-left px-5 py-2.5 font-medium">Mobile</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contacts.map(ct => (
+                      <tr key={ct.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3 font-medium text-gray-900">{ct.name}</td>
+                        <td className="px-5 py-3 text-gray-500">{ct.function || "—"}</td>
+                        <td className="px-5 py-3 text-gray-500">{ct.email || "—"}</td>
+                        <td className="px-5 py-3 text-gray-500">{ct.phone || "—"}</td>
+                        <td className="px-5 py-3 text-gray-500">{ct.mobile || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
 
           {/* Documents */}
           <DocumentsSection

@@ -48,6 +48,7 @@ ORDER_FIELDS = [
 async def list_orders(
     status: Optional[str] = None,
     search: Optional[str] = None,
+    partner_id: Optional[int] = None,
     reseller_id: Optional[str] = None,
     limit: int = Query(20, le=100),
     offset: int = 0,
@@ -81,6 +82,8 @@ async def list_orders(
         domain.append(("id", "in", allowed_odoo_ids))
     if status and status != "all":
         domain.append(("state", "=", status))
+    if partner_id:
+        domain.append(("commercial_partner_id", "=", partner_id))
     if search:
         domain.append("|")
         domain.append(("name", "ilike", search))

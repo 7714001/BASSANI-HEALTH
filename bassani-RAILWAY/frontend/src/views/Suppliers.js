@@ -86,7 +86,7 @@ export default function Suppliers() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Suppliers" subtitle={`${total} supplier${total !== 1 ? "s" : ""} in Odoo`} />
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-100 bg-white">
-        <SearchBar value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email…" />
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by name or email…" />
       </div>
       {loading
         ? <LoadingState />
