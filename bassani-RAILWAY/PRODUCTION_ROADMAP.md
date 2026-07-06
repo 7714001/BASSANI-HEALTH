@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-06  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06  
 
 ---
 
@@ -27,6 +27,7 @@
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
+| 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -2594,3 +2595,57 @@ FIFO valuation per lot via `stock.valuation.layer` is deferred pending confirmat
 - [x] Clicking History on any lot shows the full movement trail with move-type labels
 - [x] All reads are warehouse-scoped when a warehouse is selected in the top-nav switcher
 - [ ] FIFO valuation per lot (15.2 — deferred)
+
+---
+
+## Phase 16 — Self-Service Customer Registration
+
+**Status:** 🟢 Complete — 2026-07-06
+
+**Context:** Bassani stakeholders requested a public-facing registration path so customers can apply directly without staff involvement. This runs alongside (not replacing) the existing staff/reseller-initiated wizard. The admin review queue, Odoo customer creation, and reseller linkage are unchanged — only the intake channel is new.
+
+**What was built:**
+
+**16.0 — Backend public endpoints (`/api/public/...`)**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/public/referral/{code}` | Validate reseller referral code, return name |
+| `GET /api/public/templates` | List template documents (no auth) |
+| `GET /api/public/templates/download/{filename}` | Download template PDF (no auth) |
+| `POST /api/public/documents/upload` | Upload signed doc to R2 (session-scoped, no auth) |
+| `DELETE /api/public/documents/{session_id}/{doc_type}` | Remove uploaded doc |
+| `POST /api/public/register` | Submit registration — creates `customer_onboarding` doc with `source: "self_service"` |
+
+Session IDs are validated as UUIDs on all document endpoints to prevent R2 path traversal. File size is capped at 20 MB.
+
+**16.1 — Public registration page (`/apply`)**
+
+Fully standalone, no portal auth required. Branded Bassani Health header. Five steps mirroring the staff wizard (Documents → Business Details → Contact → Address → Additional Info) but with the email-doc-dispatch path removed (staff-only). If a `?ref=` query param is present, the referral code is validated and the applicant sees a "referred by" banner; on submission the application is linked to that reseller. Application summary sidebar appears from step 3. Responsive (works on mobile).
+
+**16.2 — Reseller referral link in onboarding wizard**
+
+Step 0 of the existing CustomerOnboarding wizard gains a "Share self-registration link" card (reseller role only). The link is `{origin}/apply?ref={user.id}`. Resellers copy and send this link to their customers; the resulting application is automatically linked to the reseller on submission and on approval creates the Odoo customer linked to that reseller. The existing email-dispatch and manual-upload paths are unchanged.
+
+**16.3 — Confirmation email to applicant**
+
+`send_registration_confirmation` sends the applicant a confirmation with reference number and expected timeline. `send_onboarding_submitted` updated with `source` parameter so the admin notification correctly labels self-service submissions.
+
+**Future: reseller self-registration**
+
+Reseller self-registration (`/reseller-apply`) is architecturally similar but requires portal account creation on approval. Descoped from Phase 16 — implement when needed.
+
+**Future: DocuSign**
+
+DocuSign requires a separate service decision and API credentials. The current download-fill-upload flow covers the immediate requirement. DocuSign completion webhooks would replace the manual upload step on this same page when the integration is ready.
+
+### Definition of Done — Phase 16
+
+- [x] `/apply` accessible without portal login, works on mobile
+- [x] `?ref=` param validated, referral banner shown, application linked to reseller on submission
+- [x] All 5 documents required before form progresses (same gate as staff wizard)
+- [x] Application lands in existing admin review queue with `source: "self_service"` tag
+- [x] Confirmation email sent to applicant with reference number
+- [x] Admin notification email updated to distinguish self-service from reseller submissions
+- [x] Reseller referral link shown in CustomerOnboarding wizard step 0 (reseller role only)
+- [x] Approval of self-service app creates Odoo customer and reseller link (handled by existing approve endpoint, unchanged)

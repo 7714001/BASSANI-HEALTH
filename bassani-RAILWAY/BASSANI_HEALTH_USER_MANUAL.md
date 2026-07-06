@@ -1195,6 +1195,43 @@ Click any row to see the before/after detail. This is your definitive record of 
 
 ---
 
+## Self-Service Customer Registration
+
+**URL:** `portal.bassanihealth.com/apply`  
+**Access:** Public — no login required
+
+Customers can register directly without contacting Bassani staff or going through a reseller. The page is accessible without a portal account and works on mobile devices.
+
+### How it works
+
+**For a customer registering directly:**
+1. Navigate to `portal.bassanihealth.com/apply`
+2. Download each of the four Bassani Health document templates, complete and sign them
+3. Upload all five signed documents (four Bassani templates plus the CIPC Company Registration Certificate)
+4. Complete the five-step form: Business Details, Contact, Address, Additional Information
+5. Submit — you receive a confirmation email with a reference number immediately
+6. Bassani staff review the application and will be in touch within 2 to 3 business days
+
+**For a customer referred by a reseller:**
+1. The reseller shares their personal referral link (see below)
+2. The customer opens the link — a "Referred by [Reseller Name]" banner confirms the association
+3. The customer completes the same registration process
+4. On approval, the customer account is automatically linked to the referring reseller — no manual linking required
+
+### Reseller referral links
+
+Resellers have a personal referral link inside the customer onboarding wizard (Step 1, Documents tab). The link looks like: `portal.bassanihealth.com/apply?ref=RESELLER_CODE`
+
+Resellers can copy this link and share it with prospective customers by email, WhatsApp, or any other channel. The link is permanent and does not expire.
+
+### What the admin sees
+
+Self-service applications appear in the existing Customer Applications review queue alongside reseller-submitted and inbox-sourced applications. They are labelled "Direct (self-service)" in the Submitted By column so staff can distinguish them. All five documents are always attached (unlike inbox-sourced applications which may have documents arriving separately).
+
+The approval workflow is identical regardless of source: review documents, approve, and the Odoo customer record is created automatically.
+
+---
+
 ## Resellers
 
 **Role in system:** `reseller`  

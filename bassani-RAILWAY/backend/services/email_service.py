@@ -348,15 +348,22 @@ def send_onboarding_submitted(
     reseller_name: str,
     app_ref: str,
     to: "str | list[str] | None" = None,
+    source: str = "reseller",
 ) -> None:
-    """Sent to configured recipients when a reseller submits an onboarding application."""
+    """Sent to configured recipients when an application is submitted for review."""
     resolved_to = to or settings.support_email
+    if source == "self_service":
+        intro = "A customer has submitted a self-service registration application for review."
+        via_label = "Direct (self-service)"
+    else:
+        intro = "A reseller has submitted a customer onboarding application for review."
+        via_label = reseller_name
     body = (
         _h1("New customer application received")
-        + _p("A reseller has submitted a customer onboarding application for review.")
+        + _p(intro)
         + _info_box([
             ("Customer", f"<strong>{company_name}</strong>"),
-            ("Submitted by", reseller_name),
+            ("Submitted by", via_label),
             ("Reference", _mono(app_ref)),
         ])
         + _button("Review application", f"{settings.portal_url}/applications")
@@ -365,6 +372,46 @@ def send_onboarding_submitted(
     )
     _send(resolved_to, f"New Application: {company_name}",
           _wrap(body))
+
+
+def send_registration_confirmation(
+    company_name: str,
+    contact_name: str,
+    contact_email: str,
+    app_ref: str,
+) -> None:
+    """Sent to the applicant immediately after a self-service registration is submitted."""
+    body = (
+        _h1("We have received your application")
+        + _p(f"Dear {contact_name},")
+        + _p(
+            f"Thank you for registering with Bassani Health. "
+            f"Your application for <strong>{company_name}</strong> has been received "
+            f"and is currently under review by our team."
+        )
+        + _info_box([
+            ("Organisation",       f"<strong>{company_name}</strong>"),
+            ("Application number", _mono(app_ref)),
+            ("Status",             _badge("Under review", "#0f6e56")),
+        ], tint="#f0fdf4", border="#86efac")
+        + _p(
+            "We aim to process applications within 2 to 3 business days. "
+            "If we require any additional information, a member of our team will contact you directly."
+        )
+        + _divider()
+        + _p(
+            f'For any questions, please contact us at '
+            f'<a href="mailto:{settings.healthcare_email}" style="color:#0f6e56;">'
+            f'{settings.healthcare_email}</a>. '
+            f'Please quote your application number <strong>{app_ref}</strong> in all correspondence.',
+            muted=True,
+        )
+    )
+    _send(
+        contact_email,
+        f"Application Received: {company_name}",
+        _wrap(body),
+    )
 
 
 def send_onboarding_approved(

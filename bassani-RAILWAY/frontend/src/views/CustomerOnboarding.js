@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle, Building2, User, MapPin, ClipboardList,
-  FileText, Download, Mail, Upload, X, Loader2, AlertCircle, Clock,
+  FileText, Download, Mail, Upload, X, Loader2, AlertCircle, Clock, Link2,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
+import { useAuth } from "../AuthContext";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,7 @@ export default function CustomerOnboarding() {
   const navigate        = useNavigate();
   const [searchParams]  = useSearchParams();
   const resumeId        = searchParams.get("resume");
+  const { user }        = useAuth();
 
   const [sessionId]            = useState(() => crypto.randomUUID());
   const [step,        setStep ]        = useState(0);
@@ -386,6 +388,34 @@ export default function CustomerOnboarding() {
               Continue filling in the details below while you wait. The admin team will save the
               signed documents once the customer replies.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Referral link (reseller only) */}
+      {user?.role === "reseller" && !emailSent && (
+        <div className="border border-bassani-100 rounded-xl p-4 bg-bassani-50/40">
+          <p className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
+            <Link2 size={12} className="text-bassani-500" />
+            Or send your customer a self-registration link
+          </p>
+          <p className="text-xs text-gray-500 mb-3">
+            Your customer can complete the full application themselves. Once approved, they will be linked to your account automatically.
+          </p>
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={`${window.location.origin}/apply?ref=${user.id}`}
+              className="flex-1 px-3 py-2 text-xs font-mono border border-bassani-200 rounded-lg bg-white text-gray-700 select-all"
+            />
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/apply?ref=${user.id}`);
+                toast.success("Referral link copied");
+              }}
+              className="px-3 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+              Copy link
+            </button>
           </div>
         </div>
       )}

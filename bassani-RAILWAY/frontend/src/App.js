@@ -46,6 +46,7 @@ import ChangePassword        from "./views/ChangePassword";
 import ForgotPassword        from "./views/ForgotPassword";
 import ResetPassword         from "./views/ResetPassword";
 import StockReport           from "./views/StockReport";
+import PublicRegister        from "./views/PublicRegister";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -149,6 +150,7 @@ export default function App() {
             : <Login />
         } />
         <Route path="/register" element={<HcpRegister />} />
+        <Route path="/apply"    element={<PublicRegister />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />
         <Route path="/change-password" element={<AuthRequired><ChangePassword /></AuthRequired>} />
