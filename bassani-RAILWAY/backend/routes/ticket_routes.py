@@ -197,7 +197,7 @@ async def create_ticket(
     already exist in Odoo — create them via the Customers page first if not."""
     odoo = get_odoo_client()
     try:
-        customers = odoo.read("res.partner", [body.customer_id], fields=["name", "parent_id"])
+        customers = odoo.read("res.partner", [body.customer_id], fields=["name", "email", "parent_id"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not customers:
@@ -207,6 +207,9 @@ async def create_ticket(
     _parent = _cust.get("parent_id")
     _company_id   = _parent[0] if _parent and _parent is not False else None
     _company_name = _parent[1] if _parent and _parent is not False else None
+    _customer_email = _cust.get("email") or None
+    if _customer_email is False:
+        _customer_email = None
 
     now = datetime.now(timezone.utc)
     _assignee_id = body.assigned_to or current_user["id"]
@@ -221,6 +224,7 @@ async def create_ticket(
         "source": "direct",
         "customer_id": body.customer_id,
         "customer_name": _cust["name"],
+        "customer_email": _customer_email,
         "customer_company_id": _company_id,
         "customer_company_name": _company_name,
         "order_id": None,
@@ -357,21 +361,29 @@ async def get_ticket(
         except Exception:
             pass  # Non-fatal — stale display is better than a broken detail page
 
-    # Lazy-backfill parent company info for tickets created before this field was stored.
-    if ticket.get("customer_id") and ticket.get("customer_company_id") is None and "customer_company_id" not in ticket:
+    # Lazy-backfill parent company + email for tickets created before these fields were stored.
+    _needs_backfill = (
+        ticket.get("customer_id") and (
+            "customer_company_id" not in ticket or
+            "customer_email" not in ticket
+        )
+    )
+    if _needs_backfill:
         try:
             _odoo = get_odoo_client()
-            _pr = _odoo.read("res.partner", [ticket["customer_id"]], fields=["parent_id"])
+            _pr = _odoo.read("res.partner", [ticket["customer_id"]], fields=["parent_id", "email"])
             if _pr:
+                _bf: dict = {}
                 _p = _pr[0].get("parent_id")
-                if _p and _p is not False:
-                    _cid, _cname = _p[0], _p[1]
-                    ticket["customer_company_id"] = _cid
-                    ticket["customer_company_name"] = _cname
-                    await col("tickets").update_one(
-                        {"_id": oid},
-                        {"$set": {"customer_company_id": _cid, "customer_company_name": _cname}},
-                    )
+                if "customer_company_id" not in ticket:
+                    _bf["customer_company_id"]   = _p[0] if _p and _p is not False else None
+                    _bf["customer_company_name"] = _p[1] if _p and _p is not False else None
+                if "customer_email" not in ticket:
+                    _em = _pr[0].get("email")
+                    _bf["customer_email"] = _em if _em and _em is not False else None
+                if _bf:
+                    ticket.update(_bf)
+                    await col("tickets").update_one({"_id": oid}, {"$set": _bf})
         except Exception:
             pass
 

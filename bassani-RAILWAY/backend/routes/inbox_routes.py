@@ -760,11 +760,14 @@ async def create_ticket_from_inbox(
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
 
+    _from_email = root_doc.get("from_email") or item.get("from_email") or None
+
     doc = {
         "type":                "sales",
         "source":              "email",
         "customer_id":         customer_id,
         "customer_name":       customer_name,
+        "customer_email":      _from_email,
         "order_id":            None,
         "invoice_id":          None,
         "orders_ticket_ref":   None,

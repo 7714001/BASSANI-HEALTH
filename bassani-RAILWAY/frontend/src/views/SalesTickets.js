@@ -5,7 +5,7 @@
 // keeping the sales clerk in one place for the entire inquiry-to-payment cycle.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -53,6 +53,7 @@ const ORDER_STATE_COLOR = {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
   const { can, user } = useAuth();
+  const navigate        = useNavigate();
   const canDrive        = can("tickets.sales");
   const canFinance      = can("tickets.finance_confirm");
   const canManage       = can("tickets.manage");
@@ -189,8 +190,6 @@ export default function SalesTickets() {
     const t = setTimeout(async () => {
       try {
         const params = { search: linkOrderQuery, limit: 10 };
-      if (detail?.customer_company_id) params.partner_id = detail.customer_company_id;
-      else if (detail?.customer_id) params.partner_id = detail.customer_id;
       const r = await api.get("/api/orders/", { params });
         setLinkOrderResults(r.data.orders || []);
       } catch { setLinkOrderResults([]); }
@@ -886,6 +885,30 @@ export default function SalesTickets() {
                       </Badge>
                     </div>
                     <div className="space-y-1.5">
+                      {detail.customer_email && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <Mail size={11} className="text-gray-400 flex-shrink-0" />
+                          <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors truncate">{detail.customer_email}</a>
+                        </p>
+                      )}
+                      {detail.customer_company_id ? (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-gray-400">Contact at <span className="font-medium text-gray-600">{detail.customer_company_name}</span></p>
+                          <button
+                            onClick={() => navigate(`/customers/${detail.customer_company_id}`)}
+                            className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
+                          >
+                            <ExternalLink size={11} />View {detail.customer_company_name} profile
+                          </button>
+                        </div>
+                      ) : detail.customer_id ? (
+                        <button
+                          onClick={() => navigate(`/customers/${detail.customer_id}`)}
+                          className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
+                        >
+                          <ExternalLink size={11} />View customer profile
+                        </button>
+                      ) : null}
                       {detail.order_id   && <p className="text-xs text-gray-400">Odoo SO #{detail.order_id}</p>}
                       {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
                       {detail.quote_sent_at && (

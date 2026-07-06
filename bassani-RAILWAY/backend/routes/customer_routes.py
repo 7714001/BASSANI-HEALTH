@@ -254,10 +254,10 @@ async def customer_profile(
     # Ownership
     ownership = await col("customer_ownership").find_one({"odoo_partner_id": customer_id}, NO_ID)
 
-    # Contact persons — child res.partner records of type "contact"
+    # Contact persons — all active child res.partner records (any type)
     contact_ids = odoo.search(
         "res.partner",
-        [["parent_id", "=", customer_id], ["type", "=", "contact"], ["active", "=", True]],
+        [["parent_id", "=", customer_id], ["active", "=", True]],
         limit=50,
     )
     contacts = []
