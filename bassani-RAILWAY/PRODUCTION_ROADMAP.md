@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-05  
+**Last Updated:** 2026-07-06  
 **Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete)  
 
 ---
@@ -25,6 +25,7 @@
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
+| 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -2383,6 +2384,145 @@ On top of the compliance foundation, the yield band system provides operational 
 > **2026-06-30 — Operational logbook reviewed (`Logbook Example for Nick Cannaverse.xlsx`):** This is the single most concrete source document for Phase 13 to date — it is the actual Excel-based system the production team is running today. 13 sheets confirmed: Index, Batch Naming, Packing Batch Shortcode, Product Naming Rules, Shortcode for products, GACP Logbook, Dry Room Logbook, Manicuring Logbook, Crush Logbook, Pre Roll Logbook, Gummy Manufacturing, Packing Logbook, 2ndary Packing Logbook. Each logbook sheet = one portal form/module. Live data confirmed from May–June 2026. Key discoveries vs prior speculation: (1) The batch suffix scheme is more complete than the V6 PDF — includes standard vs budget branching at Crush (`PC`/`TC`), pre-roll (`PCPR`/`TCPR`), and 10 distinct finished goods packaging suffixes (PTT/PJR/MP1G–5G/PP1G–5G). (2) Gummy products follow a separate lot numbering scheme (`BHG[flavour]-[instance]-[DDMMYY]`) with a distinct packing flow (supplier receipt → packing → expiry). (3) Manicured flower sub-grades: Bigs, Mids, Small (all under the `-M` suffix) plus Pops — live data tracks per-staff, per-grade output. (4) GACP logbook is row-level inside rooms (Room F4 Row 1–6 etc.), not batch-level. (5) Multiple intermediate verifications before RP sign-off: Team Leader (TL) + QA on the Crush logbook — the portal needs at least 3 approval levels per stage. (6) Batch ID format inconsistency in live data confirms portal-enforced ID generation is essential, not optional. (7) ~70 strain shortcodes already defined in the "Shortcode for products" sheet — the portal inherits this master list at launch. Remaining gap: yield bands (not tracked in any current spreadsheet) and SAHPRA report format (primary blocker).
 
 > **2026-06-30 — Batch traceability standard + Store Onboarding Agreement reviewed:** Two further source documents confirmed concrete details that were previously speculative in this phase. (1) `Medicinal Cannabis Batch Traceability Guide V6.pdf` — Bassani's own internal batch numbering protocol (not invented by this roadmap): base ID format `BH[API|B][strain][seq]-[date]`, single-letter post-harvest stage suffixes (D/U/M/P/T), compound processing suffixes (MC, MCPR), and a distinct blending convention (`BHB` prefix) for multi-batch blends with traceability back to every parent batch. This has fully replaced the placeholder cultivation-batch lifecycle and stage model in this section — see "Batch Numbering Standard" above. (2) `Bassani_Health_Store_Onboarding_Agreement_v1.pdf` (Section 21 Collection Point legal framework) — confirms the traceability chain must terminate at a **Delivery Note** linking dispensed units to a **Named Patient**, their **Script**, and their **SAHPRA Section 21 Authorisation** (medicine-specific, quantity-specific, 6-month validity). Section 10.3 of that agreement makes Bassani's own order records the legal audit trail proving lawful supply to each "Store" (the agreement's term for what the portal calls a reseller) — a volume mismatch is treated as prima facie evidence of illicit sourcing. **Separate but related finding, not folded into Phase 13:** the existing live portal's Section 21 check (`backend/routes/script_routes.py`) is a single `s21script` string + expiry date — materially thinner than what this agreement requires (a structured, medicine-specific, quantity-specific Authorisation Letter, validated per order). This is a gap in the *current, already-shipped* order flow, not a future production-tracking concept — flagged to the business for a decision on whether to scope it (likely as Phase 8 hardening) before further Phase 13 work proceeds. Document references: `Medicinal Cannabis Batch Traceability Guide V6.pdf`, `Bassani_Health_Store_Onboarding_Agreement_v1.pdf`.
+
+---
+
+## Phase 14 — External Ecommerce API
+
+**Goal:** Expose a secure, warehouse-scoped API that allows external systems to read Bassani's product catalogue and real-time stock levels, with two integration modes: a WooCommerce sync mode (portal pushes products and stock to WC; WC fires order webhooks back) and a direct REST mode for systems with REST client capability. The first integration target is Green Clouds Pharmacy's WooCommerce store.  
+**Estimate:** 3–4 weeks  
+**Status:** 🔵 Concept — Needs Scoping  
+**Completed:** —
+
+### Context
+
+Green Clouds Pharmacy is building a WooCommerce ecommerce site to sell Bassani's products. Bassani controls the Green Clouds warehouse in Odoo — it already exists as a company in the current portal setup. The WP developer is experienced with WooCommerce but not with custom REST API clients or Odoo, and builds primarily with drag-and-drop WooCommerce tooling. The **WooCommerce sync mode** is therefore the recommended path: the portal manages product data directly inside WC via the WC REST API, and WooCommerce fires its native order-created webhook when a purchase is made. This means the WP developer does not need to write custom API code — WooCommerce's built-in features handle the storefront, cart, and checkout entirely.
+
+A **direct REST mode** is documented alongside it for future integrations where the consuming system has its own REST client and does not need WooCommerce.
+
+**Compliance flag — must be resolved before building any order endpoint (14.6, 14.7):** Confirm with Green Clouds whether customers purchasing on the WP site are named patients (requiring a SAHPRA Section 21 Authorisation Letter per order, per medicine) or licensed dispensaries (who manage their own scripts and authorisations). Named patients require the portal to validate a Section 21 Authorisation before creating each `sale.order` in Odoo — this changes the architecture of the order intake endpoint materially. Do not scope or build 14.6 or 14.7 until this is answered in writing.
+
+---
+
+### 14.0 — API Key Management (Super Admin)
+
+Super admin gets a new "External API" section in settings to create and manage external API clients.
+
+- [ ] `api_clients` collection in MongoDB: `{ id, name, description, warehouse_id, key_prefix (first 8 chars for display), key_hash (SHA-256 of full key — raw key never stored), markup_pct, scoped_category_ids (null = all categories), wc_store_url, wc_consumer_key, wc_consumer_secret, active, created_at, last_used_at }`
+- [ ] Generate API key: 256-bit `secrets.token_urlsafe(32)`, returned **once** in plaintext on creation (not retrievable again), stored as SHA-256 hash only
+- [ ] Key rotation: generates new key, immediately invalidates old one — atomic swap, no window where both are valid
+- [ ] Revoke / deactivate client
+- [ ] Super Admin → Settings → External API: table of clients showing name, warehouse, last used, active status — with rotate/revoke actions
+- [ ] Client detail page: edit markup %, category scope, WC credentials, view key prefix
+- [ ] `APIKeyAuth` FastAPI dependency: reads `X-API-Key` header, SHA-256 hashes it, looks up matching active `api_clients` document, resolves `warehouse_id` via `warehouse_context.py` — used on every `/api/external/v1/` endpoint
+
+---
+
+### 14.1 — Product Catalogue Endpoint
+
+Read-only. Scoped to the client's warehouse and optional category restrictions.
+
+- [ ] `GET /api/external/v1/products` — paginated (`?page`, `?per_page`), filterable by `?category_id`
+- [ ] Response per product: `{ id, sku, name, description, category_id, category_name, price_ex_vat, price_inc_vat, unit, in_stock, qty_available, image_url }`
+- [ ] Pricing: `price_inc_vat` = Odoo list price × `(1 + markup_pct / 100)` × `(1 + vat_rate)`, rounded to 2 decimal places. `price_ex_vat` = Odoo list price × `(1 + markup_pct / 100)`
+- [ ] Category scope: if `scoped_category_ids` is set on the client, only products in those categories are returned regardless of what the caller requests
+- [ ] `GET /api/external/v1/products/{product_id}` — single product
+
+---
+
+### 14.2 — Category Endpoint
+
+- [ ] `GET /api/external/v1/categories` — list of product categories available to this client (filtered by `scoped_category_ids` if set)
+- [ ] Response: `{ id, name, product_count }`
+
+---
+
+### 14.3 — Stock Level Endpoint
+
+Live stock figures from Odoo, warehouse-scoped.
+
+- [ ] `GET /api/external/v1/stock` — `{ product_id, sku, qty_available, in_stock }[]` for all products in scope
+- [ ] `GET /api/external/v1/stock/{product_id}` — single product stock
+- [ ] `qty_available` comes from `stock.quant` via `qty_available` field, scoped to the client's warehouse location (same as the existing reseller catalogue)
+
+---
+
+### 14.4 — WooCommerce Product Sync (Portal → WooCommerce)
+
+The portal pushes its product catalogue into WooCommerce. The WP developer manages the storefront presentation using standard WC features — no custom code on the WP side.
+
+- [ ] WC credentials (`wc_store_url`, `wc_consumer_key`, `wc_consumer_secret`) stored on `api_clients` document
+- [ ] Sync function: for each scoped portal product, call WC REST API — `POST /wp-json/wc/v3/products` on first sync, `PUT .../products/{wc_id}` on subsequent syncs (upsert by SKU = Odoo product reference code)
+- [ ] Fields synced to WC: `name`, `description`, `sku`, `regular_price` (= `price_inc_vat` with markup), `categories`, `stock_quantity`, `manage_stock: true`, `stock_status: instock/outofstock`, `images` (R2 image URL if set)
+- [ ] `wc_product_map` stored in MongoDB: `{ client_id, portal_product_id, wc_product_id }` — allows updates to target the correct WC product on subsequent syncs without re-scanning by SKU
+- [ ] Manual trigger: Super Admin → External API → client detail → "Sync Products Now" button (`POST /api/external/v1/admin/sync-products/{client_id}`)
+- [ ] Scheduled sync: Railway cron every 15 minutes — runs the sync function for all active WC-configured clients
+
+---
+
+### 14.5 — Stock Sync (Portal → WooCommerce)
+
+Keeps WooCommerce's stock counts current so products flip to out-of-stock when Odoo has no qty.
+
+- [ ] On the 15-minute scheduled tick (same cron as 14.4): `PUT /wp-json/wc/v3/products/{wc_id}` with `{ stock_quantity, stock_status }` only — not a full product sync
+- [ ] Immediate stock push: whenever the portal processes a confirmed delivery or Odoo stock change for a product, trigger an immediate background stock push to all active WC clients whose scope includes that product
+- [ ] Stock push always fires as a `BackgroundTask` — never blocks the order confirmation or ticket response
+
+---
+
+### 14.6 — WooCommerce Order Webhook Receiver (WooCommerce → Portal)
+
+WooCommerce POSTs a `order.created` webhook when a customer completes checkout. The portal intakes the order, creates a `sale.order` in Odoo, and kicks off the standard sales ticket pipeline.
+
+- [ ] `POST /api/external/v1/webhooks/woocommerce/{client_id}` — validates `X-WC-Webhook-Signature` header (HMAC-SHA256 of raw payload body using the WC webhook secret); reject with 401 on mismatch
+- [ ] Idempotency: store `wc_order_id` in `external_orders` collection on first receipt; return 200 without reprocessing if the same `wc_order_id` arrives again
+- [ ] Customer resolution: match WC billing email to a customer token via 14.8; create Odoo partner if none exists
+- [ ] Line item mapping: WC product SKU → portal product ID → Odoo product ID (via `wc_product_map`)
+- [ ] Create Odoo `sale.order` in the client's warehouse-scoped company (same XML-RPC path as a reseller-placed order)
+- [ ] Create a Sales ticket for the order — it enters the standard Sales → Orders → QA/RP → Finance pipeline
+- [ ] Email internal sales: "New order received via Green Clouds Pharmacy website" with order summary and ticket link
+- [ ] Return HTTP 200 immediately; all processing is `BackgroundTask`
+- [ ] ⚠️ **Blocked on compliance scoping** — do not build until named patient vs licensed dispensary question is answered (see Context)
+
+---
+
+### 14.7 — Direct REST Order Creation (Non-WooCommerce)
+
+For integrations where the consuming system calls the portal API directly rather than via WooCommerce webhooks.
+
+- [ ] `POST /api/external/v1/orders` — body: `{ customer_token, line_items[{ product_id, qty }], external_reference, notes }`
+- [ ] Same Odoo sale.order creation and Sales ticket pipeline as 14.6
+- [ ] Returns `{ order_id, reference, status: "received" }`
+- [ ] `GET /api/external/v1/orders/{order_id}` — check intake status
+- [ ] ⚠️ **Blocked on compliance scoping** — same constraint as 14.6
+
+---
+
+### 14.8 — Customer Token Management
+
+WP purchasers must map to Odoo partners. The portal manages this mapping; no internal Odoo IDs are exposed externally.
+
+- [ ] `customer_tokens` collection: `{ token (UUID v4), client_id, odoo_partner_id, email, name, created_at }`
+- [ ] `POST /api/external/v1/customers` — body: `{ email, name }`. If a token exists for this `client_id` + `email`, return it. Otherwise create an Odoo partner (warehouse-scoped company), store the token, return it
+- [ ] `GET /api/external/v1/customers/{token}` — returns `{ token, name, email }` — Odoo partner ID is never returned in the response
+- [ ] For the WooCommerce path (14.6): customer token resolution and creation happens automatically inside the webhook receiver — the WP developer does not call this endpoint
+
+---
+
+### 14.9 — Order Status Pushback (Portal → WooCommerce)
+
+Closes the loop: when the portal ticket status changes, push the update back to WooCommerce so the customer's order history on the WP site reflects current fulfilment status.
+
+- [ ] When a Sales ticket linked to a WC order transitions to a key state, call `PUT /wp-json/wc/v3/orders/{wc_order_id}` with updated `status`
+- [ ] State mapping: portal `packing` → WC `processing`; portal `dispatched` → WC `completed`; portal `cancelled` → WC `cancelled`
+- [ ] `wc_order_id` stored on the `external_orders` document during 14.6 intake, retrieved here via `external_orders.wc_order_id`
+- [ ] Always fires as a `BackgroundTask`
+
+---
+
+### Notes
+
+> **2026-07-06 — Phase scoped following conversations with Nick (product owner) and Green Clouds Pharmacy WP developer.** Developer is experienced with WP/WooCommerce but not REST API client code or Odoo — confirmed preference is the WooCommerce sync route (14.4–14.6) so they can use native WC features for storefront, cart, and checkout without writing custom integration code. Direct REST mode (14.7) documented for future integrations. Green Clouds' warehouse already exists as an Odoo company in the current portal. Compliance flag raised: whether WP purchasers are named patients or licensed dispensaries must be confirmed in writing before 14.6 or 14.7 order intake can be built — this is not an edge case, it is the architectural fork for the order endpoint. Product sync and stock sync (14.4, 14.5) and the catalogue/stock read endpoints (14.1–14.3) have no compliance dependency and can proceed independently.
 
 ---
 

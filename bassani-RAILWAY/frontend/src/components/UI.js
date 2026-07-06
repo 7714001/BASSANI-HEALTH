@@ -129,9 +129,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-5 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-bassani-600 rounded-lg flex items-center justify-center">
-            <Package size={16} color="white" />
-          </div>
+          <img src="/favicon.ico" alt="Bassani Health" className="w-8 h-8 object-contain" />
           <div>
             <p className="text-white text-sm font-medium leading-none">Bassani</p>
             <p className="text-slate-500 text-xs mt-0.5">Health Internal</p>

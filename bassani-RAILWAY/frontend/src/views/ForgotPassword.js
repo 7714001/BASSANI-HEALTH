@@ -1,14 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Package, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 import api from "../api";
 
 const LEFT_PANEL = (
   <div className="hidden md:flex md:w-72 bg-slate-900 flex-col justify-between p-8 flex-shrink-0">
     <div>
-      <div className="w-10 h-10 bg-bassani-600 rounded-xl flex items-center justify-center mb-6">
-        <Package size={20} color="white" />
-      </div>
+      <img src="/favicon.ico" alt="Bassani Health" className="w-10 h-10 mb-6 object-contain" />
       <h1 className="text-white text-xl font-semibold">Bassani Health</h1>
       <p className="text-slate-500 text-sm mt-1">Internal Operations</p>
     </div>
