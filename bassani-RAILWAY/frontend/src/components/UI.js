@@ -44,6 +44,7 @@ const NAV = [
   { label: "Sales Inbox",       path: "/inbox",            icon: Mail,   section: "Tickets", permission: "inbox.view",        showInboxBadge: true },
   { label: "Sales Tickets", path: "/tickets/sales",  icon: Ticket, section: "Tickets", permissions: ["tickets.sales", "tickets.finance_confirm"] },
   { label: "Orders Tickets",path: "/tickets/orders", icon: Ticket, section: "Tickets", permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
+  { label: "Partner Directory", path: "/partners",            icon: Users,    section: "Admin", permission: "customers.manage"    },
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
   { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },

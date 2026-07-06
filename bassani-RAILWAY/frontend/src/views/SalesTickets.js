@@ -142,6 +142,49 @@ export default function SalesTickets() {
   const [linkOrderSelected,    setLinkOrderSelected   ] = useState(null);
   const [linkOrderSubmitting,  setLinkOrderSubmitting ] = useState(false);
 
+  // ── Link contact to company modal ────────────────────────────────────────
+  const [linkCompanyOpen,      setLinkCompanyOpen     ] = useState(false);
+  const [linkCompanyQuery,     setLinkCompanyQuery    ] = useState("");
+  const [linkCompanyResults,   setLinkCompanyResults  ] = useState([]);
+  const [linkCompanySearching, setLinkCompanySearching] = useState(false);
+  const [linkCompanySelected,  setLinkCompanySelected ] = useState(null);
+  const [linkCompanySubmitting,setLinkCompanySubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!linkCompanyOpen || !linkCompanyQuery.trim()) { setLinkCompanyResults([]); return; }
+    const t = setTimeout(async () => {
+      setLinkCompanySearching(true);
+      try {
+        const r = await api.get("/api/customers/search", { params: { q: linkCompanyQuery, limit: 8 } });
+        setLinkCompanyResults(r.data.customers || []);
+      } catch { setLinkCompanyResults([]); }
+      finally { setLinkCompanySearching(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [linkCompanyQuery, linkCompanyOpen]);
+
+  const openLinkCompanyModal = () => {
+    setLinkCompanyQuery(""); setLinkCompanyResults([]);
+    setLinkCompanySelected(null); setLinkCompanyOpen(true);
+  };
+
+  const submitLinkCompany = async () => {
+    if (!linkCompanySelected || !detail) return;
+    setLinkCompanySubmitting(true);
+    try {
+      await api.patch(`/api/customers/${detail.customer_id}/link-company`, { company_id: linkCompanySelected.id });
+      toast.success(`${detail.customer_name} linked to ${linkCompanySelected.name}`);
+      setLinkCompanyOpen(false);
+      // Re-fetch ticket so sidebar updates immediately
+      const r = await api.get(`/api/tickets/${detail.id}`);
+      setDetail(r.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link contact");
+    } finally {
+      setLinkCompanySubmitting(false);
+    }
+  };
+
   // ── WebSocket real-time updates ───────────────────────────────────────────
   const wsRef        = useRef(null);
   const reconnectRef = useRef(null);
@@ -902,12 +945,22 @@ export default function SalesTickets() {
                           </button>
                         </div>
                       ) : detail.customer_id ? (
-                        <button
-                          onClick={() => navigate(`/customers/${detail.customer_id}`)}
-                          className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
-                        >
-                          <ExternalLink size={11} />View customer profile
-                        </button>
+                        <div className="space-y-1">
+                          <button
+                            onClick={() => navigate(`/customers/${detail.customer_id}`)}
+                            className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
+                          >
+                            <ExternalLink size={11} />View customer profile
+                          </button>
+                          {can("customers.manage") && (
+                            <button
+                              onClick={openLinkCompanyModal}
+                              className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1 transition-colors"
+                            >
+                              <Link2 size={11} />Link to company
+                            </button>
+                          )}
+                        </div>
                       ) : null}
                       {detail.order_id   && <p className="text-xs text-gray-400">Odoo SO #{detail.order_id}</p>}
                       {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
@@ -1181,6 +1234,63 @@ export default function SalesTickets() {
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {/* Link contact to company modal */}
+        {linkCompanyOpen && (
+          <Modal title={`Link ${detail?.customer_name} to a Company`} onClose={() => setLinkCompanyOpen(false)}>
+            <p className="text-xs text-gray-500 mb-4">
+              Search for the company this contact belongs to. This updates their record so they appear as a contact under that company's profile.
+            </p>
+            <FormGroup label="Search companies">
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Input
+                  value={linkCompanyQuery}
+                  onChange={e => { setLinkCompanyQuery(e.target.value); setLinkCompanySelected(null); }}
+                  placeholder="Type company name…"
+                  className="pl-8"
+                  autoFocus
+                />
+                {linkCompanySearching && <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />}
+              </div>
+            </FormGroup>
+            {linkCompanyResults.length > 0 && !linkCompanySelected && (
+              <div className="mt-1 border border-gray-100 rounded-xl overflow-hidden">
+                {linkCompanyResults.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => setLinkCompanySelected(c)}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-bassani-50 text-left border-b border-gray-50 last:border-0 transition-colors"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{c.name}</p>
+                      {c.email && <p className="text-xs text-gray-400">{c.email}</p>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {linkCompanySelected && (
+              <div className="mt-2 bg-bassani-50 border border-bassani-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-bassani-800">{linkCompanySelected.name}</p>
+                  {linkCompanySelected.email && <p className="text-xs text-bassani-600">{linkCompanySelected.email}</p>}
+                </div>
+                <button onClick={() => setLinkCompanySelected(null)} className="text-xs text-gray-400 hover:text-gray-600">Change</button>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-5">
+              <BtnSecondary onClick={() => setLinkCompanyOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary
+                onClick={submitLinkCompany}
+                disabled={!linkCompanySelected || linkCompanySubmitting}
+              >
+                {linkCompanySubmitting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                Link to {linkCompanySelected?.name || "Company"}
+              </BtnPrimary>
             </div>
           </Modal>
         )}

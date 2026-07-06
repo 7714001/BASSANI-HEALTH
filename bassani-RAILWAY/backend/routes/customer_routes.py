@@ -61,6 +61,9 @@ class AddressUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
 
+class LinkCompanyBody(BaseModel):
+    company_id: int
+
 # ── Shared fields ─────────────────────────────────────────────────────────────
 
 CUSTOMER_FIELDS = [
@@ -917,4 +920,59 @@ async def get_docs_sent_history(
         "sent_at":  record["created_at"].isoformat(),
         "sent_by":  record.get("sent_by") or "Unknown",
         "to_email": record.get("to_email", ""),
+    }
+
+
+@router.patch("/{partner_id}/link-company")
+async def link_contact_to_company(
+    partner_id: int,
+    body: LinkCompanyBody,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    """Set parent_id on a standalone Odoo contact, making them a child contact
+    of the specified company. This is reversible — the contact can be unlinked
+    later by setting parent_id to False via this endpoint with company_id=0."""
+    odoo = get_odoo_client()
+
+    # Validate the contact exists
+    contacts = odoo.read("res.partner", [partner_id], fields=["name", "email", "parent_id", "is_company"])
+    if not contacts:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = contacts[0]
+    if contact.get("is_company"):
+        raise HTTPException(status_code=422, detail="This record is a company, not a contact")
+
+    before_parent = contact.get("parent_id")
+    before_company_id   = before_parent[0] if before_parent and before_parent is not False else None
+    before_company_name = before_parent[1] if before_parent and before_parent is not False else None
+
+    # Validate the target company
+    companies = odoo.read("res.partner", [body.company_id], fields=["name", "customer_rank", "is_company"])
+    if not companies:
+        raise HTTPException(status_code=404, detail="Company not found")
+    company = companies[0]
+    if not company.get("is_company"):
+        raise HTTPException(status_code=422, detail="Target must be a company record")
+
+    try:
+        odoo.write("res.partner", [partner_id], {
+            "parent_id": body.company_id,
+            "type": "contact",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    await audit_log(
+        "customer.link_company", "partner", str(partner_id),
+        entity_label=contact["name"],
+        user=current_user,
+        before={"company_id": before_company_id, "company_name": before_company_name},
+        after={"company_id": body.company_id, "company_name": company["name"]},
+    )
+
+    return {
+        "success": True,
+        "contact_name":  contact["name"],
+        "company_id":    body.company_id,
+        "company_name":  company["name"],
     }

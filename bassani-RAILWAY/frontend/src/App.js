@@ -47,6 +47,7 @@ import ForgotPassword        from "./views/ForgotPassword";
 import ResetPassword         from "./views/ResetPassword";
 import StockReport           from "./views/StockReport";
 import PublicRegister        from "./views/PublicRegister";
+import PartnerDirectory      from "./views/PartnerDirectory";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -170,6 +171,9 @@ export default function App() {
         } />
         <Route path="/customers/:id" element={
           <ProtectedRoute><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/partners" element={
+          <ProtectedRoute adminOnly><AppLayout><PartnerDirectory /></AppLayout></ProtectedRoute>
         } />
         <Route path="/suppliers" element={
           <ProtectedRoute><AppLayout><Suppliers /></AppLayout></ProtectedRoute>
