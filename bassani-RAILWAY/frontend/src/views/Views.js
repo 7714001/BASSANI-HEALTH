@@ -162,10 +162,13 @@ export function Products() {
   const saveMoq = async (productId, val) => {
     const v = Math.max(0, parseInt(val) || 0);
     setMoqMap(prev => ({ ...prev, [productId]: v }));
+    const tid = toast.loading("Saving…");
     try {
       await api.put(`/api/reseller-catalog/${productId}/moq`, { moq: v });
-      toast.success(v > 0 ? `Minimum order quantity set to ${v}` : "Minimum order quantity removed");
-    } catch { toast.error("Failed to update minimum order quantity"); }
+      toast.success(v > 0 ? `Minimum order quantity set to ${v}` : "Minimum order quantity removed", { id: tid });
+    } catch {
+      toast.error("Failed to update minimum order quantity", { id: tid });
+    }
   };
 
   const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"", barcode:"" }); setModal(true); };
@@ -287,6 +290,7 @@ export function Products() {
                         title="Minimum order quantity (leave blank for no minimum)"
                         onChange={e => setMoqMap(prev => ({ ...prev, [p.id]: parseInt(e.target.value) || 0 }))}
                         onBlur={e => saveMoq(p.id, e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") { e.target.blur(); } }}
                         className="w-16 text-xs text-center border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-bassani-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     )}
