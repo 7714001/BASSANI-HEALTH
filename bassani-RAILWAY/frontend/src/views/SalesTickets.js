@@ -13,7 +13,7 @@ import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
-  Search, Loader2, Link2,
+  Search, Loader2, Link2, Pencil,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -52,7 +52,7 @@ const ORDER_STATE_COLOR = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
-  const { can, user } = useAuth();
+  const { can, user, isAdmin } = useAuth();
   const navigate        = useNavigate();
   const canDrive        = can("tickets.sales");
   const canFinance      = can("tickets.finance_confirm");
@@ -184,6 +184,42 @@ export default function SalesTickets() {
       setLinkCompanySubmitting(false);
     }
   };
+
+  // ── Reassign ticket ───────────────────────────────────────────────────────
+  const [reassignOpen,      setReassignOpen     ] = useState(false);
+  const [staffList,         setStaffList        ] = useState([]);
+  const [staffSearch,       setStaffSearch      ] = useState("");
+  const [reassignSubmitting,setReassignSubmitting] = useState(false);
+
+  const openReassign = async () => {
+    if (staffList.length === 0) {
+      try {
+        const r = await api.get("/api/users/");
+        setStaffList((r.data.users || []).filter(u => u.role !== "reseller"));
+      } catch { toast.error("Failed to load staff"); return; }
+    }
+    setStaffSearch(""); setReassignOpen(true);
+  };
+
+  const submitReassign = async (staffMember) => {
+    if (!detail) return;
+    setReassignSubmitting(true);
+    try {
+      await api.put(`/api/tickets/${detail.id}/reassign`, { assigned_to: staffMember.id });
+      toast.success(`Reassigned to ${staffMember.name || staffMember.username}`);
+      setReassignOpen(false);
+      refreshDetail(detail.id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to reassign ticket");
+    } finally {
+      setReassignSubmitting(false);
+    }
+  };
+
+  const filteredStaff = staffList.filter(u => {
+    const q = staffSearch.toLowerCase();
+    return !q || (u.name || u.username || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q);
+  });
 
   // ── WebSocket real-time updates ───────────────────────────────────────────
   const wsRef        = useRef(null);
@@ -975,14 +1011,74 @@ export default function SalesTickets() {
                         </p>
                       )}
                     </div>
-                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-                      {detail.assigned_to_name
-                        ? <span className="text-xs text-gray-500">Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span>{detail.assigned_to_role && <span className="ml-1 text-gray-400">({ROLE_LABEL[detail.assigned_to_role] || detail.assigned_to_role})</span>}</span>
-                        : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
+                    <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        {detail.assigned_to_name
+                          ? <span className="text-xs text-gray-500">
+                              Assigned to <span className="font-medium text-gray-700">{detail.assigned_to_name}</span>
+                              {detail.assigned_to_role && <span className="ml-1 text-gray-400">({ROLE_LABEL[detail.assigned_to_role] || detail.assigned_to_role})</span>}
+                            </span>
+                          : <span className="text-xs text-amber-600 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>}
+                        {isAdmin && !detail.exit_status && (
+                          <button
+                            onClick={openReassign}
+                            className="flex items-center gap-1 text-xs text-gray-400 hover:text-bassani-600 transition-colors"
+                            title="Reassign ticket"
+                          >
+                            <Pencil size={11} />Reassign
+                          </button>
+                        )}
+                      </div>
                       {!detail.assigned_to && canDrive && (
                         <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
                           <UserPlus size={12} />Assign to me
                         </BtnSecondary>
+                      )}
+
+                      {/* Inline reassign dropdown */}
+                      {reassignOpen && (
+                        <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden shadow-md bg-white z-10">
+                          <div className="p-2 border-b border-gray-100">
+                            <div className="relative">
+                              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                              <input
+                                autoFocus
+                                value={staffSearch}
+                                onChange={e => setStaffSearch(e.target.value)}
+                                placeholder="Search staff…"
+                                className="w-full pl-7 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-100 rounded-lg outline-none focus:border-bassani-300 focus:ring-1 focus:ring-bassani-100 placeholder-gray-400"
+                                onKeyDown={e => e.key === "Escape" && setReassignOpen(false)}
+                              />
+                            </div>
+                          </div>
+                          <div className="max-h-48 overflow-y-auto">
+                            {filteredStaff.length === 0
+                              ? <p className="text-xs text-gray-400 px-3 py-2">No staff found</p>
+                              : filteredStaff.map(u => (
+                                <button
+                                  key={u.id}
+                                  disabled={reassignSubmitting}
+                                  onClick={() => submitReassign(u)}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-bassani-50 text-left border-b border-gray-50 last:border-0 transition-colors ${u.id === detail.assigned_to ? "bg-bassani-50" : ""}`}
+                                >
+                                  <div className="w-6 h-6 rounded-full bg-bassani-100 flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-bassani-700">
+                                    {(u.name || u.username || "?")[0].toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-medium text-gray-900 truncate">{u.name || u.username}</p>
+                                    <p className="text-[10px] text-gray-400 truncate">{ROLE_LABEL[u.role] || u.role}</p>
+                                  </div>
+                                  {u.id === detail.assigned_to && (
+                                    <span className="ml-auto text-[10px] text-bassani-600 font-medium">Current</span>
+                                  )}
+                                </button>
+                              ))
+                            }
+                          </div>
+                          <div className="p-2 border-t border-gray-100">
+                            <button onClick={() => setReassignOpen(false)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1 transition-colors">Cancel</button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   </div>

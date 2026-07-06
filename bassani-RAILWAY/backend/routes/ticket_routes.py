@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
 from config import get_settings
-from auth import require_permission, require_any_permission, get_user_by_username
+from auth import require_permission, require_any_permission, require_admin, get_user_by_username
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col
@@ -173,6 +173,10 @@ class TicketFromOrder(BaseModel):
 
 class LinkOrderBody(BaseModel):
     order_id: int
+
+
+class ReassignBody(BaseModel):
+    assigned_to: str  # portal user ID
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1475,4 +1479,99 @@ async def link_existing_order(
         "order_ref":  order["name"],
         "status":     final_status,
         "odoo_state": odoo_state,
+    }
+
+
+@router.put("/{ticket_id}/reassign")
+async def reassign_ticket(
+    ticket_id: str,
+    body: ReassignBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_admin),
+):
+    """Reassign a ticket to any internal staff member. Admin-only.
+    Adds a timeline entry, audit-logs the change, and sends a push
+    notification plus email to the new assignee."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Resolve new assignee from portal users
+    new_user = await col("users").find_one({"id": body.assigned_to}, {"password": 0})
+    if not new_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if new_user.get("role") == "reseller":
+        raise HTTPException(status_code=422, detail="Cannot assign a ticket to a reseller account")
+
+    new_name = new_user.get("name") or new_user.get("username") or body.assigned_to
+    new_role = new_user.get("role", "")
+    new_email = new_user.get("email", "")
+
+    prev_name = ticket.get("assigned_to_name") or "Unassigned"
+    actor     = _actor(current_user)
+    now       = datetime.now(timezone.utc)
+
+    timeline_note = f"Reassigned from {prev_name} to {new_name} by {actor}"
+
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "assigned_to":      body.assigned_to,
+                "assigned_to_name": new_name,
+                "assigned_to_role": new_role,
+                "updated_at":       now,
+            },
+            "$push": {
+                "stage_history": {
+                    "status":      ticket.get("status"),
+                    "exit_status": ticket.get("exit_status"),
+                    "actor_id":    current_user["id"],
+                    "actor_name":  actor,
+                    "at":          now,
+                    "note":        timeline_note,
+                },
+            },
+        },
+    )
+
+    await audit_log(
+        "ticket.reassign", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        before={"assigned_to": ticket.get("assigned_to"), "assigned_to_name": prev_name},
+        after={"assigned_to": body.assigned_to, "assigned_to_name": new_name},
+    )
+
+    await ticket_manager.broadcast(ticket_id, ticket.get("reseller_id"))
+
+    # Push notification to new assignee
+    background_tasks.add_task(
+        notify_ticket_assigned,
+        "sales",
+        ticket.get("customer_name", ""),
+        body.assigned_to,
+    )
+
+    # Email to new assignee
+    if new_email:
+        background_tasks.add_task(
+            send_ticket_assigned,
+            ticket_ref=f"TKT-{ticket_id[-8:].upper()}",
+            customer_name=ticket.get("customer_name", ""),
+            stage=ticket.get("status", "open"),
+            assignee_name=new_name,
+            assignee_email=new_email,
+        )
+
+    return {
+        "success":          True,
+        "assigned_to":      body.assigned_to,
+        "assigned_to_name": new_name,
+        "assigned_to_role": new_role,
     }
