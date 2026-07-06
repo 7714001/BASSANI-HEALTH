@@ -621,7 +621,7 @@ export function Customers() {
         actions={isReseller
           ? <BtnPrimary onClick={() => navigate("/onboard")}><Plus size={14}/>Onboard Customer</BtnPrimary>
           : <div className="flex gap-2">
-              <BtnSecondary onClick={() => { setObEmail(""); setShowOnboardingDocs(true); }}>
+              <BtnSecondary onClick={() => { setObInviteEmail(""); setShowOnboardingDocs(true); }}>
                 <FileText size={14} className="mr-1" />Onboarding Documents
               </BtnSecondary>
               <BtnPrimary onClick={openModal}><Plus size={14}/>Add Customer</BtnPrimary>
