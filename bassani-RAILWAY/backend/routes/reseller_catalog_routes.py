@@ -69,17 +69,17 @@ async def set_product_moq(
     current_user: dict = Depends(require_permission("products.manage")),
 ):
     moq_val = max(0, body.moq)
+    doc = await _get_catalog_doc()
+    moq = {str(k): v for k, v in (doc.get("moq") or {}).items()}
     if moq_val > 0:
-        await col("reseller_catalog").update_one(
-            {"_id": _DOC},
-            {"$set": {f"moq.{product_id}": moq_val}},
-            upsert=True,
-        )
+        moq[str(product_id)] = moq_val
     else:
-        await col("reseller_catalog").update_one(
-            {"_id": _DOC},
-            {"$unset": {f"moq.{product_id}": ""}},
-        )
+        moq.pop(str(product_id), None)
+    await col("reseller_catalog").update_one(
+        {"_id": _DOC},
+        {"$set": {"moq": moq}},
+        upsert=True,
+    )
     await audit_log(
         action="reseller_catalog.moq_set",
         entity_type="product",
