@@ -47,6 +47,7 @@ export function Products() {
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
   const [catalog,    setCatalog   ] = useState(new Set());
+  const [moq,        setMoqMap    ] = useState({});
   const [uoms,        setUoms       ] = useState([]);
   const [taxes,       setTaxes      ] = useState([]);
   const [modal,       setModal      ] = useState(false);
@@ -128,7 +129,7 @@ export function Products() {
       .then(r => setTaxes(r.data.taxes || []))
       .catch(() => {});
     api.get("/api/reseller-catalog/")
-      .then(r => setCatalog(new Set(r.data.product_ids || [])))
+      .then(r => { setCatalog(new Set(r.data.product_ids || [])); setMoqMap(r.data.moq || {}); })
       .catch(() => {});
   }, []);
 
@@ -156,6 +157,14 @@ export function Products() {
       const r = await api.post(`/api/reseller-catalog/toggle/${productId}`);
       setCatalog(new Set(r.data.product_ids));
     } catch { toast.error("Failed to update reseller catalog"); }
+  };
+
+  const saveMoq = async (productId, val) => {
+    const v = Math.max(0, parseInt(val) || 0);
+    setMoqMap(prev => ({ ...prev, [productId]: v }));
+    try {
+      await api.put(`/api/reseller-catalog/${productId}/moq`, { moq: v });
+    } catch { toast.error("Failed to update minimum order quantity"); }
   };
 
   const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"", barcode:"" }); setModal(true); };
@@ -254,18 +263,33 @@ export function Products() {
               );
             } },
             ...(can("products.manage") ? [{
-              id:"catalog", header:"Reseller", enableSorting:false, meta:{className:"hidden sm:table-cell"},
+              id:"catalog", header:"Reseller / MOQ", enableSorting:false, meta:{className:"hidden sm:table-cell"},
               cell:({ row:{original:p} }) => {
                 const active = catalog.has(p.id);
+                const moqVal = moq[p.id] || 0;
                 return (
-                  <button
-                    role="switch"
-                    aria-checked={active}
-                    onClick={e => { e.stopPropagation(); toggleCatalog(p.id); }}
-                    title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-2 ${active ? "bg-bassani-600" : "bg-gray-300"}`}>
-                    <span className={`pointer-events-none h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${active ? "translate-x-5" : "translate-x-0"}`} />
-                  </button>
+                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                    <button
+                      role="switch"
+                      aria-checked={active}
+                      onClick={() => toggleCatalog(p.id)}
+                      title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-2 ${active ? "bg-bassani-600" : "bg-gray-300"}`}>
+                      <span className={`pointer-events-none h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${active ? "translate-x-5" : "translate-x-0"}`} />
+                    </button>
+                    {active && (
+                      <input
+                        type="number"
+                        min="0"
+                        value={moqVal || ""}
+                        placeholder="Min"
+                        title="Minimum order quantity (leave blank for no minimum)"
+                        onChange={e => setMoqMap(prev => ({ ...prev, [p.id]: parseInt(e.target.value) || 0 }))}
+                        onBlur={e => saveMoq(p.id, e.target.value)}
+                        className="w-16 text-xs text-center border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-bassani-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    )}
+                  </div>
                 );
               }
             }] : []),
@@ -849,6 +873,7 @@ export function Orders() {
   // Submits straight to POST /api/orders/, which auto-creates an unassigned
   // Sales Ticket exactly like every other portal order (see order_routes.py).
   const [cartProducts,     setCartProducts    ] = useState([]);
+  const [cartMoq,          setCartMoq         ] = useState({});
   const [cartProdsLoading, setCartProdsLoading] = useState(false);
   const [cartProdSearch,   setCartProdSearch  ] = useState("");
   const [cartProdCat,      setCartProdCat     ] = useState("all");
@@ -866,8 +891,12 @@ export function Orders() {
   const loadCartProducts = async () => {
     setCartProdsLoading(true);
     try {
-      const r = await api.get("/api/products/", { params: { limit: 200 } });
-      setCartProducts(r.data.products || []);
+      const [prodR, catR] = await Promise.all([
+        api.get("/api/products/", { params: { limit: 200 } }),
+        api.get("/api/reseller-catalog/"),
+      ]);
+      setCartProducts(prodR.data.products || []);
+      setCartMoq(catR.data.moq || {});
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
   };
@@ -901,11 +930,12 @@ export function Orders() {
   // the product list endpoint returns variants, not templates.
   const addToCart = (product) => {
     const pid = product.id;
+    const minQty = cartMoq[pid] || 1;
     setCart(prev => {
       const ex = prev.find(i => i.product_id === pid);
       if (ex) return prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: i.product_uom_qty + 1 } : i);
       return [...prev, {
-        product_id: pid, product_uom_qty: 1, price_unit: product.list_price,
+        product_id: pid, product_uom_qty: minQty, price_unit: product.list_price,
         name: product.display_name || product.name, _sku: product.default_code || "",
         _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0,
       }];
@@ -913,7 +943,9 @@ export function Orders() {
   };
   const removeFromCart = (pid) => setCart(prev => prev.filter(i => i.product_id !== pid));
   const updateCartQty = (pid, qty) => {
+    const minQty = cartMoq[pid] || 1;
     if (qty <= 0) { removeFromCart(pid); return; }
+    if (qty < minQty) { toast.error(`Minimum order quantity is ${minQty}`); return; }
     setCart(prev => prev.map(i => i.product_id === pid ? { ...i, product_uom_qty: qty } : i));
   };
   const cartItemFor = (product) => cart.find(i => i.product_id === product.id) || null;
@@ -1096,6 +1128,7 @@ export function Orders() {
                     const item       = cartItemFor(p);
                     const outOfStock = (p.virtual_available ?? 0) <= 0;
                     const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
+                    const minQty     = cartMoq[p.id] || 0;
                     return (
                       <div key={p.id}
                         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
@@ -1105,7 +1138,10 @@ export function Orders() {
                             {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
                           </div>
                           {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
-                          {p.categ_id?.[1] && <span className="inline-block mt-1 text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+                          <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                            {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+                            {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
+                          </div>
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
@@ -1117,7 +1153,7 @@ export function Orders() {
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
                               className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-                            <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                            <input type="number" min={Math.max(1, minQty)} max={item._stock} value={item.product_uom_qty}
                               onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
                               className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                             <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}

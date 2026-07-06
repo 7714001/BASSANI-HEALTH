@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 |
+| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–13 (8.1–8.14 code complete, three-tier reseller onboarding fix) — 2026-07-05 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
@@ -888,6 +888,18 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - **Targets the largest `out_invoice`** — most reliable way to distinguish the full SO invoice from down payment invoices without relying on Odoo's internal link fields; down payment invoices are always for smaller amounts than the full order value
 - **No gating on exit status** — balance payment can be registered even after the ticket is marked complete or the order is collected; finance may record payments after the physical handoff
 - **Allows partial payments** — `register-payment` can be called multiple times; each call registers however much finance enters and the residual is updated in Odoo; the portal doesn't enforce "must pay remainder in one go"
+
+#### 7.11 — Minimum Order Quantity (MOQ) — Added 2026-07-06
+
+**Goal:** Admins can set a minimum order quantity per product in the reseller catalog. Resellers see the minimum on product cards and cannot submit an order with a line quantity below it.
+
+**Storage:** MOQ is a portal-layer concern — it does not exist in Odoo and Odoo has no native sales-side MOQ enforcement. Stored as a `moq` map on the existing `reseller_catalog` MongoDB document alongside `product_ids`: `{ "_id": "global", "product_ids": [...], "moq": { "123": 10, "456": 25 } }`. Products not in the map have no minimum.
+
+- [x] `GET /api/reseller-catalog/` updated to return `{ product_ids, moq }` — previously returned `product_ids` only
+- [x] `PUT /api/reseller-catalog/{product_id}/moq` — sets or clears the MOQ for a product; `moq: 0` unsets the key; audit-logged as `reseller_catalog.moq_set`; requires `products.manage` permission
+- [x] Admin Products table — "Reseller / MOQ" column: toggle remains as-is; when the toggle is on, a small number input appears inline to set the MOQ (saves on blur); input hides when the product is toggled off
+- [x] Reseller catalog (read-only view) — "Min. X units" amber badge next to SKU on any product with `moq > 0`
+- [x] Reseller order builder (cart) — MOQ data loaded alongside products; "Min. X units" badge on product cards; `addToCart` starts at MOQ qty (not 1) when MOQ > 1; `updateCartQty` blocks quantities below MOQ with a toast error; qty input `min` attribute set to `Math.max(1, moq)` for native browser validation
 
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email

@@ -21,12 +21,16 @@ export default function ResellerCatalog() {
   const [cat,        setCat       ] = useState("all");
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
+  const [moq,        setMoq       ] = useState({});
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
   useEffect(() => {
     api.get("/api/products/categories")
       .then(r => setCategories(r.data.categories || []))
+      .catch(() => {});
+    api.get("/api/reseller-catalog/")
+      .then(r => setMoq(r.data.moq || {}))
       .catch(() => {});
   }, []);
 
@@ -101,12 +105,22 @@ export default function ResellerCatalog() {
             {
               accessorKey: "name",
               header: "Product / SKU",
-              cell: ({ row: { original: p } }) => (
-                <div>
-                  <p className="font-medium text-gray-900">{p.display_name || p.name}</p>
-                  <p className="font-mono text-[10px] text-gray-400">{p.default_code || "—"}</p>
-                </div>
-              ),
+              cell: ({ row: { original: p } }) => {
+                const minQty = moq[p.id] || 0;
+                return (
+                  <div>
+                    <p className="font-medium text-gray-900">{p.display_name || p.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="font-mono text-[10px] text-gray-400">{p.default_code || "—"}</p>
+                      {minQty > 0 && (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">
+                          Min. {minQty} units
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              },
             },
             {
               id: "category",

@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 5 July 2026
+**Last Updated:** 6 July 2026
 
 ---
 
@@ -925,6 +925,10 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 **Adding/editing products:** The portal syncs with Odoo. When you create or edit a product here, it writes directly to Odoo. You do not need to log into Odoo to manage your catalogue.
 
+**Reseller catalog toggle:** The "Reseller / MOQ" column controls which products appear in the reseller catalog. The toggle switch adds or removes the product. When a product is toggled on, a small number input appears next to the toggle — enter a minimum order quantity (MOQ) and click away to save. Leave it blank for no minimum. If you toggle a product off and back on, any previously set MOQ is restored.
+
+**Minimum Order Quantity (MOQ):** Setting an MOQ means resellers cannot add fewer than that number of units to an order for that product. The minimum appears as an amber "Min. X units" badge on the product card in the reseller catalog and order builder. When a reseller opens the order cart and clicks "Add to Order", the quantity starts at the MOQ rather than 1. If they try to reduce below the minimum, the system blocks it with an error.
+
 **Low stock:** The dashboard highlights any product with forecasted stock below 10 units. This is the same figure that drives the orange badge in the order catalogue.
 
 ### Customers
@@ -1193,6 +1197,7 @@ Each product shows:
 - Category
 - Sale price (the price you order at)
 - **Available Stock** — the forecasted quantity available for new orders. This is the same figure the order cart uses when you place an order. If this is 0 or negative, those units are committed to existing orders
+- **Min. X units** (amber badge, where applicable) — the minimum order quantity set by Bassani admin. You must order at least this many units of this product per order line
 
 **Filtering by category:** The category chips at the top of the page show only the categories that have products in the current catalog — no empty categories appear. Click a category chip to filter. If a category has product variants (e.g. different strengths or sizes), a second row of chips appears below letting you narrow further.
 
@@ -1428,6 +1433,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 5 July 2026
+**Last Updated:** 6 July 2026
 
 *This manual covers the system as built through Phase 12 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
