@@ -178,7 +178,7 @@ async def _save_mailbox_doc(settings_id: str, body: MailboxConfig, mailbox: str)
     await load_config_from_db(mailbox)
 
 
-async def _test_mailbox(body: MailboxConfig) -> dict:
+async def _test_mailbox(body: MailboxConfig, settings_id: str = "mailbox_config") -> dict:
     """Test Graph token fetch or IMAP connection. Returns success dict or raises."""
     if body.provider == "graph":
         if not body.ms_tenant_id or not body.ms_client_id or not body.ms_client_secret:
@@ -186,6 +186,16 @@ async def _test_mailbox(body: MailboxConfig) -> dict:
                 status_code=422,
                 detail="Tenant ID, Client ID, and Client Secret are required for the connection test.",
             )
+        # Resolve the redacted placeholder back to the real stored secret
+        secret = body.ms_client_secret
+        if secret == "••••••••":
+            doc = await col("portal_settings").find_one({"_id": settings_id})
+            secret = (doc or {}).get("ms_client_secret", "")
+            if not secret:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Client Secret could not be resolved. Re-enter it to run the test.",
+                )
         token_url = (
             f"https://login.microsoftonline.com/{body.ms_tenant_id.strip()}/oauth2/v2.0/token"
         )
@@ -195,7 +205,7 @@ async def _test_mailbox(body: MailboxConfig) -> dict:
                 r = await client.post(token_url, data={
                     "grant_type":    "client_credentials",
                     "client_id":     body.ms_client_id.strip(),
-                    "client_secret": body.ms_client_secret,
+                    "client_secret": secret,
                     "scope":         "https://graph.microsoft.com/.default",
                 })
                 r.raise_for_status()
@@ -249,7 +259,7 @@ async def clear_mailbox_config(_: dict = Depends(_require_super_admin)):
 
 @router.post("/mailbox/test")
 async def test_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
-    return await _test_mailbox(body)
+    return await _test_mailbox(body, "mailbox_config")
 
 
 # ── Onboarding mailbox config ─────────────────────────────────────────────────
@@ -281,4 +291,4 @@ async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin
 
 @router.post("/onboarding-mailbox/test")
 async def test_onboarding_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
-    return await _test_mailbox(body)
+    return await _test_mailbox(body, _ONBOARDING_KEY)
