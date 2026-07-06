@@ -233,6 +233,7 @@ async def email_templates(
     # auto-threads and appears in the Onboarding Inbox for staff to action.
     now = datetime.now(timezone.utc)
     thread_doc = {
+        "mailbox_address": from_address,
         "from_email":      from_address,
         "from_name":       "Bassani Health",
         "to_email":        body.to_email.strip(),
@@ -399,6 +400,7 @@ async def send_registration_invite(
 
     now = datetime.now(timezone.utc)
     thread_doc = {
+        "mailbox_address": from_address,
         "from_email":      from_address,
         "from_name":       "Bassani Health",
         "to_email":        body.to_email.strip(),
@@ -517,6 +519,7 @@ async def contact_applicant(
 
     now = datetime.now(timezone.utc)
     thread_doc = {
+        "mailbox_address": from_address,
         "from_email":      from_address,
         "from_name":       "Bassani Health",
         "to_email":        contact_email,

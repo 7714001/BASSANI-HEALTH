@@ -290,6 +290,7 @@ async def _run_inbox_startup(
     from services.imap_client import (
         load_config_from_db,
         get_graph_mailbox_address,
+        get_config as get_imap_config,
         imap_configured as imap_ok,
         fetch_new_messages,
     )
@@ -312,6 +313,28 @@ async def _run_inbox_startup(
     await load_config_from_db(mailbox)
 
     mailbox_address = get_graph_mailbox_address(mailbox)
+
+    # Backfill mailbox_address on existing docs that were ingested before the field
+    # was reliably stamped. Without this, the list query (which filters by
+    # mailbox_address) silently hides all pre-backfill messages.
+    _resolved_addr = mailbox_address or (
+        (get_imap_config(mailbox) or {}).get("mailbox_address")
+        or (get_imap_config(mailbox) or {}).get("imap_username", "")
+    )
+    if _resolved_addr:
+        _backfill_result = await col(collection).update_many(
+            {"$or": [
+                {"mailbox_address": {"$exists": False}},
+                {"mailbox_address": None},
+                {"mailbox_address": ""},
+            ]},
+            {"$set": {"mailbox_address": _resolved_addr}},
+        )
+        if _backfill_result.modified_count:
+            logger.info(
+                "%s_mailbox_address_backfill count=%d address=%s",
+                label, _backfill_result.modified_count, _resolved_addr,
+            )
 
     # Delay subscription creation so the server is fully routing traffic before
     # Microsoft sends the webhook validation callback (a 400 results if it arrives

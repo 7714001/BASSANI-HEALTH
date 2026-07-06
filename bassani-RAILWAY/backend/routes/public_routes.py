@@ -280,6 +280,7 @@ async def submit_public_registration(
 
         now_ts = datetime.now(timezone.utc)
         thread_doc = {
+            "mailbox_address": from_address,
             "from_email":      from_address,
             "from_name":       "Bassani Health",
             "to_email":        registration.contact_email,
