@@ -197,11 +197,16 @@ async def create_ticket(
     already exist in Odoo — create them via the Customers page first if not."""
     odoo = get_odoo_client()
     try:
-        customers = odoo.read("res.partner", [body.customer_id], fields=["name"])
+        customers = odoo.read("res.partner", [body.customer_id], fields=["name", "parent_id"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not customers:
         raise HTTPException(status_code=404, detail="Customer not found")
+
+    _cust = customers[0]
+    _parent = _cust.get("parent_id")
+    _company_id   = _parent[0] if _parent and _parent is not False else None
+    _company_name = _parent[1] if _parent and _parent is not False else None
 
     now = datetime.now(timezone.utc)
     _assignee_id = body.assigned_to or current_user["id"]
@@ -215,7 +220,9 @@ async def create_ticket(
         "type": "sales",
         "source": "direct",
         "customer_id": body.customer_id,
-        "customer_name": customers[0]["name"],
+        "customer_name": _cust["name"],
+        "customer_company_id": _company_id,
+        "customer_company_name": _company_name,
         "order_id": None,
         "invoice_id": None,
         "orders_ticket_ref": None,
@@ -236,9 +243,9 @@ async def create_ticket(
         "updated_at": now,
     }
     result = await col("tickets").insert_one(doc)
-    await audit_log("ticket.create", "ticket", str(result.inserted_id), entity_label=customers[0]["name"],
+    await audit_log("ticket.create", "ticket", str(result.inserted_id), entity_label=_cust["name"],
                     user=current_user, after={"status": "open", "customer_id": body.customer_id})
-    await notify_ticket_assigned("sales", customers[0]["name"], doc["assigned_to"])
+    await notify_ticket_assigned("sales", _cust["name"], doc["assigned_to"])
     return {"success": True, "ticket_id": str(result.inserted_id)}
 
 
@@ -349,6 +356,24 @@ async def get_ticket(
                     ticket["odoo_order_state"] = live_state
         except Exception:
             pass  # Non-fatal — stale display is better than a broken detail page
+
+    # Lazy-backfill parent company info for tickets created before this field was stored.
+    if ticket.get("customer_id") and ticket.get("customer_company_id") is None and "customer_company_id" not in ticket:
+        try:
+            _odoo = get_odoo_client()
+            _pr = _odoo.read("res.partner", [ticket["customer_id"]], fields=["parent_id"])
+            if _pr:
+                _p = _pr[0].get("parent_id")
+                if _p and _p is not False:
+                    _cid, _cname = _p[0], _p[1]
+                    ticket["customer_company_id"] = _cid
+                    ticket["customer_company_name"] = _cname
+                    await col("tickets").update_one(
+                        {"_id": oid},
+                        {"$set": {"customer_company_id": _cid, "customer_company_name": _cname}},
+                    )
+        except Exception:
+            pass
 
     return _serialize(ticket)
 

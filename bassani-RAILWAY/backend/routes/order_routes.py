@@ -83,6 +83,14 @@ async def list_orders(
     if status and status != "all":
         domain.append(("state", "=", status))
     if partner_id:
+        # Resolve to the top-level company so orders placed against a child contact
+        # (e.g. Stuart Oakes under Cannex) are still found.
+        try:
+            _pr = odoo.read("res.partner", [partner_id], fields=["commercial_partner_id"])
+            if _pr and _pr[0].get("commercial_partner_id") and _pr[0]["commercial_partner_id"] is not False:
+                partner_id = _pr[0]["commercial_partner_id"][0]
+        except Exception:
+            pass
         domain.append(("commercial_partner_id", "=", partner_id))
     if search:
         domain.append("|")

@@ -189,7 +189,8 @@ export default function SalesTickets() {
     const t = setTimeout(async () => {
       try {
         const params = { search: linkOrderQuery, limit: 10 };
-      if (detail?.customer_id) params.partner_id = detail.customer_id;
+      if (detail?.customer_company_id) params.partner_id = detail.customer_company_id;
+      else if (detail?.customer_id) params.partner_id = detail.customer_id;
       const r = await api.get("/api/orders/", { params });
         setLinkOrderResults(r.data.orders || []);
       } catch { setLinkOrderResults([]); }
@@ -643,7 +644,13 @@ export default function SalesTickets() {
     return (
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
         <TopBar
-          title={detail?.customer_name || "Loading…"}
+          title={
+            detail?.customer_name
+              ? detail.customer_company_name
+                ? `${detail.customer_name} (${detail.customer_company_name})`
+                : detail.customer_name
+              : "Loading…"
+          }
           subtitle={
             detail
               ? detail.exit_status
@@ -1517,7 +1524,12 @@ export default function SalesTickets() {
             columns={[
               { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: t } }) => (
                 <div>
-                  <p className="font-medium text-gray-900">{t.customer_name}</p>
+                  <p className="font-medium text-gray-900">
+                    {t.customer_name}
+                    {t.customer_company_name && (
+                      <span className="font-normal text-gray-400 ml-1">({t.customer_company_name})</span>
+                    )}
+                  </p>
                   <Badge color={t.source === "portal" ? "blue" : "gray"} className="mt-0.5">
                     {t.source === "portal" ? "Portal Order" : "Direct Inquiry"}
                   </Badge>
