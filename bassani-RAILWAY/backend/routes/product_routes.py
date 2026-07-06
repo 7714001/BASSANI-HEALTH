@@ -162,20 +162,47 @@ async def list_products(
     company_id = get_company_id(odoo, warehouse_id)
 
     try:
-        products = odoo.search_read(
-            "product.product",
-            domain=domain,
-            fields=PRODUCT_FIELDS,
-            limit=limit,
-            offset=offset,
-            order=f"{sort_by} {sort_dir}",
-            context=odoo_context(warehouse_id, company_id),
-        )
-        # Normalise lst_price → list_price so the frontend doesn't need to change
-        for p in products:
-            p["list_price"] = p.pop("lst_price", 0)
-        _attach_tax_rates(odoo, products, company_id)
-        total = odoo.count("product.product", domain)
+        # When a search term is active, Odoo v17's ilike uses PostgreSQL trigram
+        # similarity indexing, which returns fuzzy matches (e.g. "CannaCrafters"
+        # when searching "Cannacraze"). Fetch a broader batch and post-filter to
+        # strict substring matching so only products whose name or SKU actually
+        # contains the search term are returned.
+        if search:
+            search_lower = search.lower()
+            raw = odoo.search_read(
+                "product.product",
+                domain=domain,
+                fields=PRODUCT_FIELDS,
+                limit=500,
+                offset=0,
+                order=f"{sort_by} {sort_dir}",
+                context=odoo_context(warehouse_id, company_id),
+            )
+            for p in raw:
+                p["list_price"] = p.pop("lst_price", 0)
+            filtered = [
+                p for p in raw
+                if search_lower in (p.get("name") or "").lower()
+                or search_lower in (p.get("display_name") or "").lower()
+                or search_lower in (p.get("default_code") or "").lower()
+            ]
+            _attach_tax_rates(odoo, filtered, company_id)
+            total = len(filtered)
+            products = filtered[offset: offset + limit]
+        else:
+            products = odoo.search_read(
+                "product.product",
+                domain=domain,
+                fields=PRODUCT_FIELDS,
+                limit=limit,
+                offset=offset,
+                order=f"{sort_by} {sort_dir}",
+                context=odoo_context(warehouse_id, company_id),
+            )
+            for p in products:
+                p["list_price"] = p.pop("lst_price", 0)
+            _attach_tax_rates(odoo, products, company_id)
+            total = odoo.count("product.product", domain)
         return {"products": products, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

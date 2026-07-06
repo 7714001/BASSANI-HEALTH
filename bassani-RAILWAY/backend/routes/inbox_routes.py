@@ -974,7 +974,6 @@ async def reply_to_email(
     from_email_out = imap_cfg["mailbox_address"] if imap_cfg else item.get("from_email", "")
     thread_root = item.get("thread_root_id") or item_id
     outgoing = {
-        "imap_message_id":     sent_message_id,   # enables thread detection for next reply
         "imap_references":     item.get("imap_message_id", ""),
         "from_email":          from_email_out,
         "from_name":           actor,
@@ -998,6 +997,8 @@ async def reply_to_email(
         "handled_by":          current_user.get("username"),
         "handled_at":          now,
     }
+    if sent_message_id:
+        outgoing["imap_message_id"] = sent_message_id
     await col("sales_inbox").insert_one(outgoing)
 
     background_tasks.add_task(
