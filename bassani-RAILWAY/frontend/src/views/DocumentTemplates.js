@@ -199,8 +199,8 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
       // Bassani / date fields are auto-filled from the signing authority profile —
       // they never appear in the customer form and are not in textValues.
       if (name.startsWith("bassani_") || name.startsWith("effective_date")) {
-        if (n.includes("location")) val = sigProfile?.location || "";
-        else if (n.includes("position")) val = sigProfile?.title || "";
+        if (n.includes("location")) val = signingProfile?.location || "";
+        else if (n.includes("position")) val = signingProfile?.title || "";
         else val = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
       } else {
         val = textValues[name] ?? "";
@@ -242,7 +242,7 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
 
   try { form.flatten(); } catch {}
 
-  pages[0].drawText("TEST DOCUMENT — NOT FOR USE", {
+  pages[0].drawText("TEST DOCUMENT - NOT FOR USE", {
     x: 40, y: pages[0].getHeight() - 30,
     size: 9, font: fontReg, color: rgb(0.8, 0.2, 0.2), opacity: 0.7,
   });
@@ -337,6 +337,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       setPdfUrl(url);
       setSigProfile(authRes?.data || null);
       const detected = await detectFields(bytes);
+      console.log("detected fields:", detected.map(f => `${f.name} [${f.type}]`));
       setFields(detected);
       // Only initialise customer-facing fields — bassani_* and effective_date* are
       // auto-filled from the signing authority profile and never shown in the form.
@@ -354,8 +355,9 @@ function TestSigningModal({ docType, docLabel, onClose }) {
         else if (n.includes("date"))                        init[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
         else                                                init[f.name] = "";
       });
+      console.log("textValues init:", init);
       setTextValues(init);
-    }).catch(() => setError("Failed to load document"))
+    }).catch((e) => { console.error("TestSigningModal load error:", e); setError("Failed to load document"); })
       .finally(() => setLoading(false));
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [docType]);
@@ -426,7 +428,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       a.href = url; a.download = `${docType}-test-signed-${new Date().toISOString().slice(0, 10)}.pdf`; a.click();
       URL.revokeObjectURL(url);
       toast.success("Test PDF downloaded");
-    } catch { toast.error("Failed to generate test PDF"); }
+    } catch (err) { console.error("generateTestPdf error:", err); toast.error("Failed to generate test PDF"); }
     finally { setGenerating(false); }
   };
 
