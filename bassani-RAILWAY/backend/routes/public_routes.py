@@ -327,7 +327,7 @@ async def submit_public_registration(
             "body_html":       body_html,
             "body_preview":    f"Application received. Reference: {ref}",
             "is_outgoing":     True,
-            "status":          "docs_complete",
+            "status":          "application_linked",
             "received_at":     now_ts,
             "has_attachments": False,
             "attachments":     [],

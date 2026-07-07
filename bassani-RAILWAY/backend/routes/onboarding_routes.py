@@ -1072,6 +1072,24 @@ async def countersign_document(
         after={"doc_type": doc_type, "r2_key": key},
     )
 
+    # Advance the inbox thread to docs_complete once every portal-signed
+    # Bassani-sig doc has been countersigned.
+    all_countersigned = all(
+        d.get("countersigned_at") or d.get("doc_type") == doc_type
+        for d in updated_docs
+        if d.get("signed_in_portal") and d.get("doc_type") in BASSANI_SIG_DOC_TYPES
+    )
+    if all_countersigned and app.get("inbox_thread_id"):
+        from bson import ObjectId as _OID
+        try:
+            tid = app["inbox_thread_id"]
+            await col("onboarding_inbox").update_many(
+                {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
+                {"$set": {"status": "docs_complete"}},
+            )
+        except Exception:
+            pass
+
     return {
         "doc_type":         doc_type,
         "countersigned_at": now.isoformat(),
