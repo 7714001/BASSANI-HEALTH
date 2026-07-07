@@ -129,18 +129,11 @@ async function detectFields(pdfBytes) {
   const form   = pdfDoc.getForm();
   const pages  = pdfDoc.getPages();
 
-  // Build annotation → page index map
-  const annotPageMap = new Map();
-  pages.forEach((page, idx) => {
-    try {
-      const annots = page.node.Annots();
-      if (!annots) return;
-      for (let i = 0; i < annots.size(); i++) {
-        const ref = annots.get(i);
-        if (ref?.objectNumber != null) annotPageMap.set(ref.objectNumber, idx);
-      }
-    } catch { /* page has no annots */ }
-  });
+  // Map page object number → page index using each page's own ref.
+  // (The annotPageMap approach doesn't work: PDFArray.get() dereferences to a
+  // PDFDict, not a PDFRef, so objectNumber is always undefined.)
+  const pageRefToIdx = new Map();
+  pages.forEach((page, idx) => pageRefToIdx.set(page.ref.objectNumber, idx));
 
   return form.getFields().map(field => {
     const name    = field.getName();
@@ -148,8 +141,10 @@ async function detectFields(pdfBytes) {
     const type    = FIELD_TYPE_LABELS[rawType] || rawType;
     const widgets = field.acroField.getWidgets();
     const widget  = widgets[0];
-    const pageIdx = widget?.ref?.objectNumber != null
-      ? (annotPageMap.get(widget.ref.objectNumber) ?? 0)
+    // widget.P() returns the PDFRef of the containing page — the correct source.
+    const pageRef = widget?.P?.();
+    const pageIdx = pageRef?.objectNumber != null
+      ? (pageRefToIdx.get(pageRef.objectNumber) ?? 0)
       : 0;
     const rect    = widget?.getRectangle?.() || null;
     return { name, type, page: pageIdx + 1, rect };
@@ -164,18 +159,9 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile) {
   const font   = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  // Build annotation → page map again (fresh doc instance)
-  const annotPageMap = new Map();
-  pages.forEach((page, idx) => {
-    try {
-      const annots = page.node.Annots();
-      if (!annots) return;
-      for (let i = 0; i < annots.size(); i++) {
-        const ref = annots.get(i);
-        if (ref?.objectNumber != null) annotPageMap.set(ref.objectNumber, idx);
-      }
-    } catch {}
-  });
+  // Map page object number → page index (same fix as detectFields)
+  const pageRefToIdx = new Map();
+  pages.forEach((page, idx) => pageRefToIdx.set(page.ref.objectNumber, idx));
 
   // Embed Mike's signature image if signing authority is configured
   let mikeImage = null;
@@ -203,8 +189,9 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile) {
     for (const widget of widgets) {
       const rect    = widget.getRectangle?.();
       if (!rect) continue;
-      const pageIdx = widget.ref?.objectNumber != null
-        ? (annotPageMap.get(widget.ref.objectNumber) ?? 0)
+      const pageRef = widget.P?.();
+      const pageIdx = pageRef?.objectNumber != null
+        ? (pageRefToIdx.get(pageRef.objectNumber) ?? 0)
         : 0;
       const page    = pages[pageIdx];
       if (!page) continue;
