@@ -121,7 +121,6 @@ function VersionHistory({ docType, isSuperAdmin, onActivated }) {
 }
 
 // ── Test Signing Modal ────────────────────────────────────────────────────────
-const FIELD_TYPE_LABELS = { Text: "Text", Signature: "Signature", CheckBox: "Checkbox", Dropdown: "Dropdown" };
 
 async function detectFields(pdfBytes) {
   const { PDFDocument } = await import("pdf-lib");
@@ -136,13 +135,9 @@ async function detectFields(pdfBytes) {
   pages.forEach((page, idx) => pageRefToIdx.set(page.ref.objectNumber, idx));
 
   return form.getFields().map(field => {
-    const name    = field.getName();
-    const rawType = field.constructor.name.replace("PDF", "").replace("Field", "");
-    // Fall back to name-based detection: Acrobat's _es_:signer:signature tag and
-    // plain "signature" names are text fields (/Tx) in the PDF but we treat them
-    // as signature slots so images are drawn rather than setText() being called.
-    const isSigByName = name.toLowerCase().includes("signature");
-    const type    = isSigByName ? "Signature" : (FIELD_TYPE_LABELS[rawType] || rawType);
+    const name = field.getName();
+    // constructor.name is minified in production — use name-based detection only.
+    const type = name.toLowerCase().includes("signature") ? "Signature" : "Text";
     const widgets = field.acroField.getWidgets();
     const widget  = widgets[0];
     const pageRef = widget?.P?.();
@@ -188,10 +183,8 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
 
   for (const field of form.getFields()) {
     const name       = field.getName();
-    const rawType    = field.constructor.name.replace("PDF", "").replace("Field", "");
-    // Treat any field whose name contains "signature" as a signature slot — covers
-    // both true /Sig fields and Acrobat's _es_:signer:signature text-tag convention.
-    const isSigField = rawType === "Signature" || name.toLowerCase().includes("signature");
+    // Name-based detection only — constructor.name is minified in production builds.
+    const isSigField = name.toLowerCase().includes("signature");
 
     if (!isSigField) {
       let val = "";
@@ -344,7 +337,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       const isAutoFilled = (name) =>
         name.startsWith("bassani_") || name.startsWith("effective_date");
       const init = {};
-      detected.filter(f => f.type === "Text" && !isAutoFilled(f.name)).forEach(f => {
+      detected.filter(f => f.type !== "Signature" && !isAutoFilled(f.name)).forEach(f => {
         const n = f.name.toLowerCase();
         if (n.includes("address"))                          init[f.name] = "123 Main Road, Johannesburg, Gauteng, 2000";
         else if (n.includes("reg"))                         init[f.name] = "2024/123456/07";
@@ -397,8 +390,8 @@ function TestSigningModal({ docType, docLabel, onClose }) {
 
   // Customer-facing text fields only (bassani_* and effective_date* are auto-filled).
   const isAutoFilled   = (name) => name.startsWith("bassani_") || name.startsWith("effective_date");
-  const companyFields  = fields.filter(f => f.type === "Text" && !isAutoFilled(f.name) && f.name.startsWith("company_"));
-  const customerFields = fields.filter(f => f.type === "Text" && !isAutoFilled(f.name) && f.name.startsWith("customer_"));
+  const companyFields  = fields.filter(f => f.type !== "Signature" && !isAutoFilled(f.name) && f.name.startsWith("company_"));
+  const customerFields = fields.filter(f => f.type !== "Signature" && !isAutoFilled(f.name) && f.name.startsWith("customer_"));
 
   // Friendly labels for the form inputs
   const FIELD_LABELS = {
