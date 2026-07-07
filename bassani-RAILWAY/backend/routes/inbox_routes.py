@@ -22,6 +22,7 @@ Architecture notes:
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import httpx
 
 from bson import Binary as BsonBinary, ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -136,6 +137,21 @@ async def _ingest_message(graph_message_id: str) -> None:
 
     try:
         msg = await get_message(graph_message_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            # Message was deleted/moved before we could fetch it — known Graph
+            # webhook behaviour (ZAP, spam filter, inbox rule).  Not actionable.
+            logger.info(
+                "inbox_message_not_found graph_message_id=%s (removed before fetch)",
+                graph_message_id,
+            )
+        else:
+            logger.error(
+                "inbox_message_fetch_failed graph_message_id=%s error=%s",
+                graph_message_id,
+                exc,
+            )
+        return
     except Exception as exc:
         logger.error(
             "inbox_message_fetch_failed graph_message_id=%s error=%s",
