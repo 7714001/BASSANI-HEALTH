@@ -408,12 +408,14 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     customer_company_name: "Company Name (signature block)",
     customer_name:         "Full Name",
     customer_position:     "Position / Title",
-    customer_location:     "City / Location of Signing",
     customer_date:         "Date of Signing",
   };
-  const fieldLabel = (name) =>
-    FIELD_LABELS[name] ||
-    name.replace(/_es_.*$/, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  // Strip Acrobat's _es_:* suffix before label lookup so customer_date_es_:date → "Date of Signing"
+  const fieldLabel = (name) => {
+    const base = name.replace(/_es_.*$/, "");
+    return FIELD_LABELS[name] || FIELD_LABELS[base] ||
+      base.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  };
 
   const handleGenerate = async () => {
     setGenerating(true);
