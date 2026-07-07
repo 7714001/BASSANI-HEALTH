@@ -15,7 +15,7 @@ from services.email_service import (
     send_onboarding_submitted, send_onboarding_approved,
     send_onboarding_rejected,
 )
-from services.r2_client import r2_put, r2_delete, r2_presign
+from services.r2_client import r2_put, r2_delete, r2_presign, r2_get
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -795,6 +795,44 @@ async def get_application_documents(
             result.append({**d, "download_url": None})
 
     return {"documents": result}
+
+
+@router.get("/{app_id}/documents/{doc_type}/download")
+async def download_application_document(
+    app_id:   str,
+    doc_type: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Proxy an R2 document download through the backend so the browser
+    can fetch bytes without hitting R2 directly (avoids CORS issues
+    with presigned URLs when used in fetch() + arrayBuffer()).
+    Used by the CountersignModal to load the customer-signed PDF.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    perms = current_user.get("permissions", {})
+    if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    docs = app.get("documents") or []
+    doc  = next((d for d in docs if d.get("doc_type") == doc_type), None)
+    if not doc or not doc.get("r2_key"):
+        raise HTTPException(status_code=404, detail=f"Document '{doc_type}' not found")
+
+    try:
+        data = await r2_get(doc["r2_key"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not retrieve document from storage")
+
+    import io
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{doc_type}.pdf"'},
+    )
 
 
 @router.get("/{app_id}")

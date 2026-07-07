@@ -127,16 +127,14 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
     const load = async () => {
       try {
         const [pdfRes, templateRes, sigRes] = await Promise.allSettled([
-          fetch(doc.download_url).then(r => {
-            if (!r.ok) throw new Error("PDF fetch failed");
-            return r.arrayBuffer();
-          }),
+          // Proxy through backend to avoid CORS on R2 presigned URLs
+          api.get(`/api/onboarding/${appId}/documents/${docType}/download`, { responseType: "arraybuffer" }),
           api.get(`/api/public/templates/download/${filename}`, { responseType: "arraybuffer" }),
           api.get("/api/signing-authority/signature", { responseType: "arraybuffer" }),
         ]);
 
         if (pdfRes.status === "fulfilled") {
-          setCustomerPdfBytes(new Uint8Array(pdfRes.value));
+          setCustomerPdfBytes(new Uint8Array(pdfRes.value.data));
         } else {
           setLoadError("Could not load the customer-signed document.");
           return;
@@ -157,7 +155,7 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
       }
     };
     load();
-  }, [doc.download_url, filename]);
+  }, [appId, docType, filename]);
 
   const getPos = useCallback((e, canvas) => {
     const rect = canvas.getBoundingClientRect();
