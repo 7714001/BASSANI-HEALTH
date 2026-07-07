@@ -138,10 +138,13 @@ async function detectFields(pdfBytes) {
   return form.getFields().map(field => {
     const name    = field.getName();
     const rawType = field.constructor.name.replace("PDF", "").replace("Field", "");
-    const type    = FIELD_TYPE_LABELS[rawType] || rawType;
+    // Fall back to name-based detection: Acrobat's _es_:signer:signature tag and
+    // plain "signature" names are text fields (/Tx) in the PDF but we treat them
+    // as signature slots so images are drawn rather than setText() being called.
+    const isSigByName = name.toLowerCase().includes("signature");
+    const type    = isSigByName ? "Signature" : (FIELD_TYPE_LABELS[rawType] || rawType);
     const widgets = field.acroField.getWidgets();
     const widget  = widgets[0];
-    // widget.P() returns the PDFRef of the containing page — the correct source.
     const pageRef = widget?.P?.();
     const pageIdx = pageRef?.objectNumber != null
       ? (pageRefToIdx.get(pageRef.objectNumber) ?? 0)
@@ -184,15 +187,27 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
   }
 
   for (const field of form.getFields()) {
-    const name    = field.getName();
-    const rawType = field.constructor.name.replace("PDF", "").replace("Field", "");
+    const name       = field.getName();
+    const rawType    = field.constructor.name.replace("PDF", "").replace("Field", "");
+    // Treat any field whose name contains "signature" as a signature slot — covers
+    // both true /Sig fields and Acrobat's _es_:signer:signature text-tag convention.
+    const isSigField = rawType === "Signature" || name.toLowerCase().includes("signature");
 
-    if (rawType === "Text") {
-      try { field.setText(textValues[name] ?? ""); field.enableReadOnly(); } catch {}
+    if (!isSigField) {
+      let val = "";
+      const n = name.toLowerCase();
+      // Bassani / date fields are auto-filled from the signing authority profile —
+      // they never appear in the customer form and are not in textValues.
+      if (name.startsWith("bassani_") || name.startsWith("effective_date")) {
+        if (n.includes("location")) val = sigProfile?.location || "";
+        else if (n.includes("position")) val = sigProfile?.title || "";
+        else val = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+      } else {
+        val = textValues[name] ?? "";
+      }
+      try { field.setText(val); field.enableReadOnly(); } catch {}
       continue;
     }
-
-    if (rawType !== "Signature") continue;
 
     const isMike = name === mikeFieldName;
     const image  = isMike ? mikeImage : customerImage;
@@ -323,21 +338,21 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       setSigProfile(authRes?.data || null);
       const detected = await detectFields(bytes);
       setFields(detected);
+      // Only initialise customer-facing fields — bassani_* and effective_date* are
+      // auto-filled from the signing authority profile and never shown in the form.
+      const isAutoFilled = (name) =>
+        name.startsWith("bassani_") || name.startsWith("effective_date");
       const init = {};
-      detected.filter(f => f.type === "Text").forEach(f => {
+      detected.filter(f => f.type === "Text" && !isAutoFilled(f.name)).forEach(f => {
         const n = f.name.toLowerCase();
-        if (n.includes("date") || n.includes(" on") || n.includes("effective"))
-          init[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
-        else if (n.includes("location") || n.includes("signed at") || n.includes("place") || n.includes("city"))
-          init[f.name] = "Johannesburg";
-        else if (n.includes("company") || n.includes("trading") || n.includes("party"))
-          init[f.name] = "Test Company (Pty) Ltd";
-        else if (n.includes("position") || n.includes("title") || n.includes("role"))
-          init[f.name] = "Director";
-        else if (n.includes("name") && !n.includes("company"))
-          init[f.name] = "Test Customer";
-        else
-          init[f.name] = "";
+        if (n.includes("address"))                          init[f.name] = "123 Main Road, Johannesburg, Gauteng, 2000";
+        else if (n.includes("reg"))                         init[f.name] = "2024/123456/07";
+        else if (n.includes("company") || n.includes("trading")) init[f.name] = "Test Company (Pty) Ltd";
+        else if (n.includes("position") || n.includes("title")) init[f.name] = "Director";
+        else if (n.includes("name"))                        init[f.name] = "Test Customer";
+        else if (n.includes("location"))                    init[f.name] = "Johannesburg";
+        else if (n.includes("date"))                        init[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+        else                                                init[f.name] = "";
       });
       setTextValues(init);
     }).catch(() => setError("Failed to load document"))
@@ -374,15 +389,29 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     hasMark.current = false;
   };
 
-  // Mike's signature field = highest y-coordinate signature field on the last page
-  const sigFields    = fields.filter(f => f.type === "Signature");
-  const lastPageNum  = fields.length ? Math.max(...fields.map(f => f.page)) : 1;
-  const sigsLastPage = sigFields.filter(f => f.page === lastPageNum);
-  const mikeFieldName = sigsLastPage.length > 1
-    ? sigsLastPage.reduce((a, b) => ((a.rect?.y ?? 0) > (b.rect?.y ?? 0) ? a : b)).name
-    : null;
+  // Mike's field is reliably identified by the bassani_ prefix — no y-coord guessing.
+  const sigFields     = fields.filter(f => f.type === "Signature");
+  const mikeFieldName = sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null;
 
-  const textFields = fields.filter(f => f.type === "Text");
+  // Customer-facing text fields only (bassani_* and effective_date* are auto-filled).
+  const isAutoFilled   = (name) => name.startsWith("bassani_") || name.startsWith("effective_date");
+  const companyFields  = fields.filter(f => f.type === "Text" && !isAutoFilled(f.name) && f.name.startsWith("company_"));
+  const customerFields = fields.filter(f => f.type === "Text" && !isAutoFilled(f.name) && f.name.startsWith("customer_"));
+
+  // Friendly labels for the form inputs
+  const FIELD_LABELS = {
+    company_name_1:        "Company Name",
+    company_address:       "Company Address",
+    company_reg_number:    "Registration Number",
+    customer_company_name: "Company Name (signature block)",
+    customer_name:         "Full Name",
+    customer_position:     "Position / Title",
+    customer_location:     "City / Location of Signing",
+    customer_date:         "Date of Signing",
+  };
+  const fieldLabel = (name) =>
+    FIELD_LABELS[name] ||
+    name.replace(/_es_.*$/, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -448,36 +477,50 @@ function TestSigningModal({ docType, docLabel, onClose }) {
           <div className="w-80 shrink-0 border-l border-gray-200 bg-white flex flex-col">
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-              {/* Bassani auto-fill section */}
+              {/* Bassani auto-fill preview */}
               <div>
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
                 {sigProfile ? (
                   <div className="bg-green-50 border border-green-100 rounded-xl p-3 space-y-0.5">
                     <p className="text-xs font-semibold text-green-800">{sigProfile.name}</p>
-                    <p className="text-xs text-green-600">{sigProfile.title}</p>
-                    <p className="text-[10px] text-green-500 mt-1">Signature and date embedded automatically at signing time</p>
+                    <p className="text-xs text-green-600">{sigProfile.title}{sigProfile.location ? ` · ${sigProfile.location}` : ""}</p>
+                    <p className="text-[10px] text-green-500 mt-1">Signature, position and today's date embedded automatically</p>
                   </div>
                 ) : (
                   <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                    <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a fully realistic test.</p>
+                    <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a realistic test.</p>
                   </div>
                 )}
               </div>
 
-              {/* Customer text fields */}
-              {textFields.length > 0 && (
+              {/* Company details — mimics wizard step 1 */}
+              {companyFields.length > 0 && (
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Your details</p>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Company details</p>
                   <div className="space-y-3">
-                    {textFields.map(f => (
+                    {companyFields.map(f => (
                       <div key={f.name}>
-                        <label className="block text-xs text-gray-600 mb-1">{cleanLabel(f.name)}</label>
-                        <input
-                          type="text"
-                          value={textValues[f.name] ?? ""}
+                        <label className="block text-xs text-gray-600 mb-1">{fieldLabel(f.name)}</label>
+                        <input type="text" value={textValues[f.name] ?? ""}
                           onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500"
-                        />
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Contact / signing details — mimics wizard step 2 */}
+              {customerFields.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Contact details</p>
+                  <div className="space-y-3">
+                    {customerFields.map(f => (
+                      <div key={f.name}>
+                        <label className="block text-xs text-gray-600 mb-1">{fieldLabel(f.name)}</label>
+                        <input type="text" value={textValues[f.name] ?? ""}
+                          onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500" />
                       </div>
                     ))}
                   </div>
@@ -491,16 +534,12 @@ function TestSigningModal({ docType, docLabel, onClose }) {
                   <button onClick={clearCanvas} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1">Clear</button>
                 </div>
                 <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden bg-gray-50">
-                  <canvas
-                    ref={canvasRef}
-                    width={300} height={120}
-                    className="w-full touch-none cursor-crosshair"
-                    style={{ display: "block" }}
+                  <canvas ref={canvasRef} width={300} height={120}
+                    className="w-full touch-none cursor-crosshair" style={{ display: "block" }}
                     onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
-                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
-                  />
+                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1.5">Draw your signature above — it will be embedded in the test PDF</p>
+                <p className="text-[10px] text-gray-400 mt-1.5">Draw your signature above — embedded in the PDF at download</p>
               </div>
 
             </div>
