@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 6 July 2026
+**Last Updated:** 7 July 2026
 
 ---
 
@@ -1011,17 +1011,44 @@ Click any customer to open their full profile. You will see:
 **Credit Hold:** If a customer appears with a red "Credit Hold" badge, they are over their Odoo credit limit. Orders for this customer will produce a warning at quote stage and a hard block at confirmation stage (unless you override).
 
 **Customer Documents:**
-The **Documents** section on a customer's profile shows all compliance documents associated with that customer:
-- **Onboarding documents** — the signed agreements and CIPC certificate submitted by the reseller during the customer's onboarding application. These carry an "Onboarding" badge and cannot be deleted from this view (they are permanently attached to the approved application).
-- **Admin-uploaded documents** — any additional documents uploaded directly by an admin. These carry an "Admin Upload" badge and can be deleted from this view.
+The **Documents** section on a customer's profile shows all compliance documents associated with that customer, with a progress counter in the section header (e.g. "Documents (3 / 5 onboarding)"):
+- **Onboarding documents** — the signed agreements and CIPC certificate submitted through the onboarding process. These carry an "Onboarding" badge and cannot be deleted from this view.
+- **Admin-uploaded documents** — any additional documents uploaded directly by an admin. These carry an "Admin Upload" badge and can be deleted.
+- **Customer-uploaded documents** — files submitted by the customer via a secure upload link (see below). These carry a "Customer Upload" badge.
+- **Inbox documents** — files saved from an email thread. These carry an "Inbox" badge.
 
-To upload a document to a customer profile:
+**Uploading a document directly (admin has the file on hand):**
 1. Open the customer's profile
 2. Scroll to the **Documents** section
-3. Click **Upload document**
-4. Enter a label (e.g. "Updated NDA 2026")
-5. Select the file — the upload begins automatically on file selection
-6. A green confirmation appears when the upload is complete
+3. For a named onboarding document type (e.g. Signed NDA), click **Upload** next to that row
+4. To add any other document, click **Upload additional document**, enter a label, and select the file
+5. The upload begins automatically on file selection
+
+**Requesting documents from the customer (admin does not have the file):**
+
+If you need documents from the customer but do not have them on hand, you can send them a secure upload link by email.
+
+1. Open the customer's profile
+2. Scroll to the **Documents** section
+3. Click **Request docs** in the section header
+4. A modal shows the available recipient emails — the company's own email address plus any contacts listed on the account. Select the correct recipient.
+5. Click **Send upload link**
+
+The customer receives an email with a button linking to a secure upload page. The link expires after 7 days. From that page, the customer can drag and drop or browse for files and submit them directly. No portal account is required.
+
+**Upload request status banner:**
+Once a request has been sent, a status strip appears at the top of the Documents section so any admin viewing the profile can see what happened:
+
+| Status | Meaning |
+|---|---|
+| Amber — "Awaiting response" | Link sent, not yet opened |
+| Blue — "Link opened, awaiting upload" | Customer clicked the link but has not uploaded yet |
+| Green — "Documents received" | Files have been uploaded and are now on the profile |
+| Gray — "Link expired — not used" | 7 days elapsed without any upload |
+
+If the link expires without being used, or if the customer needs a new link for any reason, click **Send new link** / **Resend** in the banner to send a fresh link. The new request replaces the displayed status.
+
+When documents are received, the onboarding team receives a notification email listing the files uploaded.
 
 All documents are stored in Cloudflare R2 and served via secure, time-limited download links. Click **Download** next to any document to access it.
 
@@ -1485,6 +1512,8 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Reject customer onboarding application | Admin with `customers.reject_onboarding` |
 | Download application documents | Admin with `customers.approve_onboarding` |
 | Upload document to customer profile | Admin with `customers.manage` |
+| Send a secure document upload link to a customer | Admin with `customers.manage` |
+| View document upload request status on customer profile | Admin with `customers.manage` |
 | Link existing customer to reseller | Admin only |
 | Unlink customer from reseller | Admin only |
 | Record invoice payment | Admin with `invoices.record_payment` |
@@ -1500,6 +1529,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 6 July 2026
+**Last Updated:** 7 July 2026
 
 *This manual covers the system as built through Phase 12 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2, Mail } from "lucide-react";
+import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2, Mail, Link2, Clock, CheckCircle } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -49,19 +49,84 @@ function docProvenance(doc) {
   if (!doc) return "";
   const when = doc.uploaded_at ? fmtDate(doc.uploaded_at) : "";
   const by   = doc.uploaded_by ? ` · ${doc.uploaded_by}` : "";
-  const src  = doc.source === "inbox"       ? "Via inbox"
-             : doc.source === "onboarding"  ? "Onboarding application"
+  const src  = doc.source === "inbox"            ? "Via inbox"
+             : doc.source === "onboarding"       ? "Onboarding application"
+             : doc.source === "customer_upload"  ? "Customer upload"
              : "Admin upload";
   return `${src}${by} · ${when}`;
 }
 
 const SOURCE_BADGE = {
-  inbox:      { label: "Inbox",        cls: "bg-blue-50 text-blue-700"      },
-  admin:      { label: "Admin Upload", cls: "bg-purple-50 text-purple-700"  },
-  onboarding: { label: "Onboarding",   cls: "bg-bassani-50 text-bassani-700"},
+  inbox:           { label: "Inbox",           cls: "bg-blue-50 text-blue-700"      },
+  admin:           { label: "Admin Upload",     cls: "bg-purple-50 text-purple-700"  },
+  onboarding:      { label: "Onboarding",       cls: "bg-bassani-50 text-bassani-700"},
+  customer_upload: { label: "Customer Upload",  cls: "bg-amber-50 text-amber-700"   },
 };
 
-function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docsSentInfo, canSendDocs }) {
+function UploadRequestBanner({ uploadRequest, onSendNewLink, canManage }) {
+  if (!uploadRequest) return null;
+  const { status, sent_to_email, sent_to_name, sent_by_name, created_at, expires_at, completed_at, files } = uploadRequest;
+
+  const cfg = {
+    uploaded: {
+      icon: CheckCircle,
+      iconCls: "text-green-500",
+      bg: "bg-green-50 border-green-100",
+      label: "Documents received",
+      detail: `${files?.length || 0} file${(files?.length || 0) !== 1 ? "s" : ""} uploaded${completed_at ? ` on ${fmtDate(completed_at)}` : ""}`,
+    },
+    accessed: {
+      icon: Clock,
+      iconCls: "text-blue-500",
+      bg: "bg-blue-50 border-blue-100",
+      label: "Link opened — awaiting upload",
+      detail: `Sent to ${sent_to_email}`,
+    },
+    pending: {
+      icon: Mail,
+      iconCls: "text-amber-500",
+      bg: "bg-amber-50 border-amber-100",
+      label: "Upload link sent — awaiting response",
+      detail: `Sent to ${sent_to_email}`,
+    },
+    expired: {
+      icon: AlertCircle,
+      iconCls: "text-gray-400",
+      bg: "bg-gray-50 border-gray-100",
+      label: status === "uploaded" ? "Documents received" : "Link expired — not used",
+      detail: `Sent to ${sent_to_email}`,
+    },
+  };
+
+  const c = cfg[status] || cfg.pending;
+  const Icon = c.icon;
+
+  return (
+    <div className={`mx-5 mt-4 mb-1 rounded-xl border px-4 py-3 ${c.bg}`}>
+      <div className="flex items-start gap-3">
+        <Icon size={15} className={`${c.iconCls} mt-0.5 shrink-0`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-gray-800">{c.label}</p>
+          <p className="text-[11px] text-gray-500 mt-0.5">{c.detail}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            Requested by {sent_by_name || "admin"}{created_at ? ` · ${fmtDate(created_at)}` : ""}
+            {expires_at && status !== "uploaded" ? ` · Expires ${fmtDate(expires_at)}` : ""}
+          </p>
+        </div>
+        {canManage && status !== "uploaded" && (
+          <button
+            onClick={onSendNewLink}
+            className="shrink-0 text-[11px] font-semibold text-bassani-600 hover:text-bassani-700 transition-colors whitespace-nowrap"
+          >
+            {status === "expired" ? "Send new link" : "Resend"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docsSentInfo, canSendDocs, uploadRequest, onOpenRequestModal }) {
   const [docs,             setDocs            ] = useState([]);
   const [docsLoading,      setDocsLoading     ] = useState(true);
   const [uploading,        setUploading       ] = useState(null); // doc_type key or "custom"
@@ -152,24 +217,33 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
   const uploadedCount = ONBOARDING_DOC_TYPES.filter(dt => docByType[dt.key]).length;
 
   const allOnboardingComplete = uploadedCount === ONBOARDING_DOC_TYPES.length;
-  const sendDocsAction = canSendDocs && !allOnboardingComplete ? (
+  const sectionActions = (
     <div className="flex items-center gap-2">
-      {docsSentInfo?.sent && (
-        <span className="text-[11px] text-gray-400 whitespace-nowrap hidden sm:block">
-          Sent {fmtDate(docsSentInfo.sent_at)}
-        </span>
+      {canSendDocs && !allOnboardingComplete && (
+        <>
+          {docsSentInfo?.sent && (
+            <span className="text-[11px] text-gray-400 whitespace-nowrap hidden sm:block">
+              Sent {fmtDate(docsSentInfo.sent_at)}
+            </span>
+          )}
+          <BtnSecondary size="sm" onClick={onSendDocs} disabled={sendingDocs}>
+            {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+            Send Onboarding Docs
+          </BtnSecondary>
+        </>
       )}
-      <BtnSecondary size="sm" onClick={onSendDocs} disabled={sendingDocs}>
-        {sendingDocs ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-        Send Onboarding Docs
-      </BtnSecondary>
+      {onOpenRequestModal && (
+        <BtnSecondary size="sm" onClick={onOpenRequestModal}>
+          <Link2 size={13} />Request docs
+        </BtnSecondary>
+      )}
     </div>
-  ) : null;
+  );
 
   return (
     <Section
       title={`Documents (${uploadedCount} / ${ONBOARDING_DOC_TYPES.length} onboarding${otherDocs.length ? ` + ${otherDocs.length} other` : ""})`}
-      actions={sendDocsAction}
+      actions={sectionActions}
     >
       {/* Hidden file input — triggered programmatically for structured doc types */}
       <input
@@ -178,6 +252,12 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
         className="hidden"
         onChange={e => { if (e.target.files[0]) handleStructuredUpload(e.target.files[0]); }}
+      />
+
+      <UploadRequestBanner
+        uploadRequest={uploadRequest}
+        onSendNewLink={onOpenRequestModal}
+        canManage={!!onOpenRequestModal}
       />
 
       {docsLoading ? (
@@ -353,6 +433,13 @@ export default function CustomerProfile() {
   const [sendingDocs,  setSendingDocs ] = useState(false);
   const [docsSentInfo, setDocsSentInfo] = useState(null); // { sent, sent_at, sent_by, to_email }
 
+  // ── Upload request ─────────────────────────────────────────────────────────
+  const [uploadRequest,        setUploadRequest       ] = useState(null);
+  const [reqModalOpen,         setReqModalOpen        ] = useState(false);
+  const [reqSelectedEmail,     setReqSelectedEmail    ] = useState("");
+  const [reqSelectedName,      setReqSelectedName     ] = useState("");
+  const [reqSubmitting,        setReqSubmitting       ] = useState(false);
+
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
       .then(r => setData(r.data))
@@ -364,6 +451,13 @@ export default function CustomerProfile() {
     if (!can("onboarding.inbox")) return;
     api.get(`/api/customers/${id}/docs-sent-history`)
       .then(r => setDocsSentInfo(r.data))
+      .catch(() => {});
+  }, [id]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!can("customers.manage")) return;
+    api.get(`/api/upload-requests/customer/${id}`)
+      .then(r => setUploadRequest(r.data.request))
       .catch(() => {});
   }, [id]); // eslint-disable-line
 
@@ -417,6 +511,35 @@ export default function CustomerProfile() {
       toast.error(e.response?.data?.detail || "Failed to save address");
     } finally {
       setAddrSaving(false);
+    }
+  };
+
+  const openReqModal = () => {
+    // Pre-select the company email if available
+    const email = data?.customer?.email || "";
+    const name  = data?.customer?.name  || "";
+    setReqSelectedEmail(email);
+    setReqSelectedName(name);
+    setReqModalOpen(true);
+  };
+
+  const submitUploadRequest = async () => {
+    if (!reqSelectedEmail) return toast.error("Select a recipient");
+    setReqSubmitting(true);
+    try {
+      await api.post("/api/upload-requests/", {
+        partner_id:    parseInt(id),
+        send_to_email: reqSelectedEmail,
+        send_to_name:  reqSelectedName || reqSelectedEmail,
+      });
+      toast.success(`Upload link sent to ${reqSelectedEmail}`);
+      setReqModalOpen(false);
+      const r = await api.get(`/api/upload-requests/customer/${id}`);
+      setUploadRequest(r.data.request);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send upload link");
+    } finally {
+      setReqSubmitting(false);
     }
   };
 
@@ -676,6 +799,8 @@ export default function CustomerProfile() {
             sendingDocs={sendingDocs}
             docsSentInfo={docsSentInfo}
             canSendDocs={can("onboarding.inbox") && !!c.email}
+            uploadRequest={uploadRequest}
+            onOpenRequestModal={can("customers.manage") ? openReqModal : null}
           />
 
           {/* Recent orders */}
@@ -855,6 +980,64 @@ export default function CustomerProfile() {
 
         </div>
       </main>
+
+      {reqModalOpen && (() => {
+        // Build list of available email options: company email + contact emails
+        const emailOptions = [];
+        if (c.email) emailOptions.push({ email: c.email, name: c.name, label: `${c.name} (company)` });
+        (contacts || []).forEach(ct => {
+          if (ct.email) emailOptions.push({ email: ct.email, name: ct.name, label: `${ct.name}${ct.function ? ` — ${ct.function}` : ""}` });
+        });
+        return (
+          <Modal title="Request documents" onClose={() => setReqModalOpen(false)}>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                A secure upload link will be emailed to the selected recipient. The link expires in 7 days.
+              </p>
+              <FormGroup label="Send to" required>
+                {emailOptions.length > 0 ? (
+                  <div className="space-y-2">
+                    {emailOptions.map(opt => (
+                      <label key={opt.email}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-colors ${
+                          reqSelectedEmail === opt.email
+                            ? "border-bassani-500 bg-bassani-50"
+                            : "border-gray-100 hover:border-gray-200"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="req-email"
+                          value={opt.email}
+                          checked={reqSelectedEmail === opt.email}
+                          onChange={() => { setReqSelectedEmail(opt.email); setReqSelectedName(opt.name); }}
+                          className="accent-bassani-600"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{opt.label}</p>
+                          <p className="text-xs text-gray-400 truncate">{opt.email}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-amber-600">No email address on file for this customer. Add a contact email first.</p>
+                )}
+              </FormGroup>
+              <div className="flex justify-end gap-2 pt-2">
+                <BtnSecondary onClick={() => setReqModalOpen(false)}>Cancel</BtnSecondary>
+                <BtnPrimary
+                  onClick={submitUploadRequest}
+                  disabled={!reqSelectedEmail || reqSubmitting || emailOptions.length === 0}
+                >
+                  {reqSubmitting ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                  Send upload link
+                </BtnPrimary>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {addrModal && (
         <Modal title={addrTarget ? "Edit Address" : "Add Address"} onClose={() => setAddrModal(false)}>

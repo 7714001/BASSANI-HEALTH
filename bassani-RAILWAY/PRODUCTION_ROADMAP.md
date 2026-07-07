@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-06  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06  
+**Last Updated:** 2026-07-07  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06  
 
 ---
 
@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–14 (8.1–8.15 code complete) — 2026-07-06 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1146,6 +1146,74 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - **`order_id` in packing board is the Odoo integer as string** — `int(entry["order_id"])` is the safe conversion. This was confirmed by reading `adopt_order()` which sets `order_id = str(body.order_id)` where `body.order_id` is the Odoo integer.
 - **`action_set_quantities_to_reservation()` before validate** — avoids the Odoo "Immediate Transfer" wizard that would otherwise prompt for `qty_done` on every move line. Since QA and RP have already signed off, we want to validate exactly what was reserved.
 
+#### 8.22 — Customer Document Upload Request — Added 2026-07-07
+
+**Goal:** Admins can request outstanding onboarding documents from an existing customer by generating a secure, time-limited upload link. The link is emailed to the customer (or a contact on their account) and allows unauthenticated file upload directly to R2. The customer profile shows the request status so other admins know a request was sent and can see whether it was acted on.
+
+- [x] `POST /api/upload-requests/` — admin creates an upload request for a given Odoo partner; generates a `secrets.token_urlsafe(32)` token; stores in `doc_upload_requests` collection with partner details, sent-to email, sent-by user, created_at, expires_at (+7 days), status `pending`; fires `send_doc_upload_request` email via BackgroundTask; audit-logged
+- [x] `GET /api/upload-requests/customer/{partner_id}` — returns the most recent upload request for a customer (for the profile status banner); gated on `customers.manage`
+- [x] `GET /api/upload-requests/{token}` — public (unauthenticated); validates token; returns expired/not_found or `{ valid, partner_name, already_uploaded }`; marks `first_accessed_at` and advances status to `accessed` on first visit
+- [x] `POST /api/upload-requests/{token}/files` — public; accepts multipart file upload (multiple files); stores each in R2 under `customers/{partner_id}/uploads/`; mirrors into `customer_documents` collection so files appear on the admin profile immediately with `source: "customer_upload"`; advances status to `uploaded`; fires `send_doc_upload_notification` to onboarding inbox via BackgroundTask
+- [x] `send_doc_upload_request` email template — warm language, amber info box with account/expiry details, CTA button, `footer_note` invites reply
+- [x] `send_doc_upload_notification` email template — sent to onboarding inbox; lists files received, uploaded-by email, timestamp
+- [x] `PublicDocUpload.js` — standalone branded public page at `/upload-docs/:token`; no portal auth required; states: loading, valid (drag-drop upload), expired, not_found, done; multi-file drag-and-drop with remove control; submit button disabled until files selected
+- [x] `UploadRequestBanner` component inside CustomerProfile.js Documents section — colour-coded by status: amber (pending), blue (accessed/awaiting upload), green (uploaded with file count), gray (expired/not used); shows sent-to email, sent-by name, created date, expiry date; "Send new link" / "Resend" button for non-uploaded states
+- [x] "Request docs" button added to Documents section header — opens a modal listing available recipient emails (company email + all contact emails as radio options); admin selects recipient, submits; banner refreshes on success
+- [x] `SOURCE_BADGE` + `docProvenance` in CustomerProfile.js updated to handle `customer_upload` source (amber "Customer Upload" badge)
+
+**Status tracking states:**
+- `pending` — link sent, link not yet opened
+- `accessed` — link was opened, no files uploaded yet
+- `uploaded` — files received (terminal state, banner turns green)
+- `expired` — derived at read time when `expires_at < now` and status is not `uploaded`
+
+#### 8.21 — Sentry Noise Fixes — Added 2026-07-07
+
+**Goal:** Four Sentry events were generating error-level alerts for conditions that are expected or user-caused, not server failures.
+
+- [x] **Graph 404 in inbox:** Microsoft Graph webhook fires on message delivery; if the message is deleted (spam filter, ZAP rule) before the portal fetches it, Graph returns 404. Reclassified from `logger.error` to `logger.info` in `_ingest_message` with descriptive message `inbox_message_not_found`. `httpx.HTTPStatusError` caught explicitly before the catch-all.
+- [x] **IMAP EOF on idle connections:** `imaplib.IMAP4.abort` is raised on socket-level connection drops (idle timeout). Reclassified from `logger.error` to `logger.warning` in the IMAP poll loop in `server.py`. `isinstance(exc, imaplib.IMAP4.abort)` check added before the generic error branch.
+- [x] **Mailbox test Graph 401:** When an admin tests Microsoft 365 credentials that are wrong/expired, Microsoft returns 401. Previously wrapped as `HTTPException(502)` — a server error. Now caught with `_httpx.HTTPStatusError` specifically: if `status_code == 401`, raises `HTTPException(422)` with a plain-English message about checking Client ID/Secret/Tenant ID. Other `HTTPStatusError` codes still raise 502. Generic exceptions still raise 502.
+- [x] **Mailbox test IMAP AUTHENTICATIONFAILED:** When an admin tests IMAP credentials for a mailbox that doesn't exist or has a wrong password, the IMAP server returns `[AUTHENTICATIONFAILED]`. Previously wrapped as `HTTPException(502)`. Now detected by string match in the exception message and raised as `HTTPException(422)` with a clear credentials message.
+
+#### 8.20 — Ticket Reassignment — Added 2026-07-07
+
+**Goal:** Admins can reassign any open ticket to a different internal staff member from within the ticket detail view.
+
+- [x] `PUT /api/tickets/{ticket_id}/reassign` — `require_admin`-gated; validates new assignee exists and is not a reseller; updates `assigned_to`, `assigned_to_name`, `assigned_to_email`; pushes a stage_history entry "Reassigned from X to Y by Z"; audit-logs before/after; background tasks: `notify_ticket_assigned` push notification + `send_ticket_assigned` email to new assignee
+- [x] `SalesTickets.js` — assignee display in sidebar replaced with editable block; Pencil/Reassign button (visible to `isAdmin` on open tickets); inline dropdown with staff search typeahead (fetches `/api/users/`, filters out resellers, caches in `staffList`); current assignee highlighted in list; `submitReassign()` handler calls the new endpoint and refreshes detail
+
+#### 8.19 — Ticket Customer Context — Added 2026-07-07
+
+**Goal:** Surface the customer's email address and company link in the ticket detail sidebar, and back-fill this data on existing tickets lazily.
+
+- [x] `create_ticket`: fetches `["name", "email", "parent_id"]` from Odoo when creating tickets; stores `customer_email`, `customer_company_id`, `customer_company_name` on the ticket document
+- [x] `create_ticket_from_inbox` (inbox routes): stores `customer_email` from the `from_email` of the root inbox document
+- [x] `get_ticket` lazy backfill: on ticket GET, if `customer_company_id` or `customer_email` is missing, fetches from Odoo and writes back to MongoDB (one-time per ticket; silent on failure)
+- [x] `SalesTickets.js` sidebar: shows `customer_email` as a `mailto:` link; if `customer_company_id` set, shows "Contact at [Company]" with a navigate button to the company profile; if standalone contact, shows "View customer profile" link and (for `customers.manage`) a "Link to company" inline modal; ticket list "Customer" column appends `(customer_company_name)` when set
+
+#### 8.18 — Partner Directory — Added 2026-07-07
+
+**Goal:** Surface all Odoo `res.partner` records (not just those with `customer_rank > 0`) so admins can find standalone contacts like Stuart Oakes who exist in Odoo but are not visible in the Customers list, and link them to their correct company.
+
+- [x] `partner_routes.py` — `GET /api/partners/counts`, `GET /api/partners/?filter=all|company|linked|unlinked&search=&limit=&offset=` with Odoo domain per filter; `PATCH /api/partners/{partner_id}/link-company` — validates partner is not a company, target is a company, writes `parent_id` + `type="contact"` to Odoo; audit-logged
+- [x] `PartnerDirectory.js` — filter pills: All Partners / Companies / Linked Contacts / Unlinked Contacts (amber badge count); SearchBar; DataTable with Name/Email (avatar icon), Type badge, "Linked to" column (amber "Not linked" for unlinked), Roles badges, Actions (Link/Relink/Profile); "Link to company" modal with company search typeahead; pagination 50/page
+- [x] Added to `ADMIN_NAV` in `UI.js` under "Admin" section, gated on `customers.manage`; route `/partners` added as `adminOnly` in `App.js`
+
+#### 8.17 — Contact Link to Company — Added 2026-07-07
+
+**Goal:** Allow admins to set `parent_id` on a standalone Odoo contact, linking them to a company, directly from the portal. Previously required opening Odoo.
+
+- [x] `PATCH /api/customers/{partner_id}/link-company` — validates the partner is not already a company; validates the target `company_id` is a valid `is_company=True` record; writes `parent_id` + `type="contact"` to Odoo via XML-RPC; audit-logged
+- [x] Exposed via the Partner Directory "Link to company" modal and the ticket sidebar "Link to company" action
+
+#### 8.16 — Customer Profile Contacts Section — Added 2026-07-07
+
+**Goal:** Show all Odoo child contacts (sub-partners with `parent_id = customer_id`) on the customer's 360 profile, so admins can see who is associated with the account without opening Odoo.
+
+- [x] `GET /api/customers/{id}/profile` — contacts fetch updated: removed `["type", "=", "contact"]` filter that was excluding contacts with non-standard Odoo types (e.g. Stuart Oakes, who had no type set); now fetches all active partners with `parent_id = customer_id`
+- [x] `CustomerProfile.js` — Contacts section added between Addresses and Documents; renders Name, Job Title, Email, Phone, Mobile in a table; hidden when `contacts.length === 0`; destructure updated to `contacts = []` default
+
 #### 8.15 — Link Existing Order to Ticket — Added 2026-07-06
 
 **Goal:** When a ticket is created from an inbox inquiry about an existing order (e.g. "can we collect our order?"), the sales rep can link the existing Odoo sale order to the ticket instead of building a new quote. Previously the only path from an open ticket was "Build Quote," which is wrong for follow-up inquiries.
@@ -1171,6 +1239,12 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role — **pending: accounts not yet created (operational, no code required)**
 
 ### Notes
+> **Sub-deploy 17 (2026-07-07):** 8.22 Customer Document Upload Request. New `upload_request_routes.py` router with 4 endpoints: admin create (POST, `customers.manage`, generates `secrets.token_urlsafe(32)` token, stores in `doc_upload_requests` collection, fires `send_doc_upload_request` email); admin status fetch (GET `/customer/{partner_id}`, returns most recent request); public validate (GET `/{token}`, marks `first_accessed_at` on first visit, returns valid/expired/not_found); public upload (POST `/{token}/files`, multipart, stores in R2, mirrors to `customer_documents` with `source: "customer_upload"`, fires `send_doc_upload_notification` to onboarding routing emails). Two new email templates in `email_service.py`: `send_doc_upload_request` (amber info box, CTA button, reply-inviting footer) and `send_doc_upload_notification` (file list table, sent to onboarding inbox). `PublicDocUpload.js` — standalone branded public page (no auth); drag-drop multi-file upload; states: loading / valid / expired / not_found / done. `CustomerProfile.js`: `UploadRequestBanner` component (colour-coded amber/blue/green/gray by status); "Request docs" button in Documents section header; recipient modal (company email + contact emails as radio options); `customer_upload` source badge + provenance text added. Route `/upload-docs/:token` added as public in `App.js`.
+
+> **Sub-deploy 16 (2026-07-07):** 8.21 Sentry noise fixes (4 issues). (1) Graph 404 in inbox — `httpx.HTTPStatusError` caught before catch-all in `_ingest_message`; 404 → `logger.info`, other HTTP errors → `logger.error`. (2) IMAP EOF — `isinstance(exc, imaplib.IMAP4.abort)` added to IMAP poll loop in `server.py`; `abort` → `logger.warning`. (3) Mailbox test Graph 401 — `_httpx.HTTPStatusError` caught before generic `Exception` in `_test_mailbox`; 401 → `HTTPException(422)` with credentials message, other HTTP errors → 502. (4) Mailbox test IMAP AUTHENTICATIONFAILED — `"AUTHENTICATIONFAILED"` string matched in exception message; raises `HTTPException(422)` with credentials message instead of 502.
+
+> **Sub-deploy 15 (2026-07-07):** 8.16–8.20 Customer profile + partner management + ticket improvements. 8.16: `contacts` fetch in `GET /api/customers/{id}/profile` — removed `type=contact` filter that excluded non-standard Odoo contact types; `CustomerProfile.js` Contacts section added between Addresses and Documents. 8.17: `PATCH /api/customers/{partner_id}/link-company` endpoint — writes `parent_id + type=contact` to Odoo, audit-logged. 8.18: `partner_routes.py` new router — `GET /counts`, `GET /` with filter=all|company|linked|unlinked, `PATCH /{partner_id}/link-company`; `PartnerDirectory.js` new page with filter pills (amber unlinked badge), DataTable, link-company typeahead modal; nav item added to `ADMIN_NAV`; route `/partners` in `App.js`. 8.19: Ticket customer context — `create_ticket` stores `customer_email/company_id/company_name`; `get_ticket` lazy-backfills from Odoo if fields missing; `SalesTickets.js` sidebar shows email (mailto link), company navigate button, and link-to-company modal for standalone contacts. 8.20: `PUT /api/tickets/{id}/reassign` — `require_admin`, updates assignee, stage_history entry, audit log, push + email notification; `SalesTickets.js` — assignee row replaced with editable inline dropdown with staff search.
+
 > **Sub-deploy 14 (2026-07-06):** 8.15 Link Existing Order to Ticket. New `POST /api/tickets/{ticket_id}/link-order` endpoint in `ticket_routes.py` — validates the ticket has no existing order, fetches the Odoo `sale.order`, rejects cancelled orders and duplicate-linked tickets, maps Odoo state to portal stage (draft/sent → quote, sale/done → sale_order), advances stage only forward, writes timeline entry, audit log, and WebSocket broadcast. `SalesTickets.js` — `Search`, `Loader2`, `Link2` added to lucide imports; link-order state block (`linkOrderOpen/Query/Results/Searching/Selected/Submitting`); debounced search `useEffect`; `openLinkOrderModal()` and `linkOrder()` handlers; "Link Existing Order" button added to both the empty-state panel (alongside "Build Quote") and the Actions sidebar (above "Not Interested"); modal with typeahead order search showing ref, customer name, state label, and amount, plus a confirmation card before submit.
 
 > **Sub-deploy 13 (2026-07-05):** Reseller onboarding inbox gap — three-tier hardening. **Tier 1 (backend):** `onboarding_routes.py::email_templates()` now stamps `reseller_id`, `reseller_name`, `application_id`, and `status: "application_linked"` on the outbound thread when the caller is a reseller. `approve_application()` accepts optional `ApproveBody(company_name)`, allows `awaiting_docs` status for inbox-sourced apps (skips 5-docs check), and after creating the Odoo partner stamps `customer_id` across the linked inbox thread documents — enabling "Save Documents" immediately after approval. **Tier 2 (auto-application):** A draft `customer_onboarding` document (`status: "awaiting_docs"`, `source: "inbox"`, `inbox_thread_id`) is created the moment a reseller sends onboarding docs via `OnboardingDocs.js`, preserving the reseller link for the entire approval lifecycle. `TemplateEmailBody` extended with optional `customer_name`. Response now returns `application_id`. **Tier 3 (gate):** `OnboardingInbox.js` — if `detail.application_id` exists, "Create Customer" button is replaced with "Review Application" (navigates to `/applications/{id}`); direct customer creation is blocked for reseller-originated threads. **Frontend:** `OnboardingDocs.js` rewritten — adds `customer_name` field; success banner with "View application" link after send (only shown if `application_id` in response). `OnboardingInbox.js` — restored `application_linked` tab; added `awaiting_docs` to `STATUS_META`; "Application linked" badge in thread header is now a clickable link to the application. `CustomerApplicationDetail.js` — `awaiting_docs` added to `STATUS_CFG`; `ActionsCard` handles `awaiting_docs`: shows company name input (required before approve), inbox thread link, passes `company_name` in approve body; page header falls back to `contact_name` when `company_name` blank; "View inbox thread" button in header when `inbox_thread_id` present. `CustomerProfile.js` — "Send Onboarding Docs" button moved from TopBar into Documents section header; hidden when all 5 onboarding docs are already uploaded. `OnboardingInbox.js` — "Save Documents" button only shown when `customer_id` is present; "Create Customer" flow no longer stages docs to R2 at Step 1 (was orphaning files on cancel) — all R2 writes deferred to the final Create click via `save-documents`; overwrite warning added when saving to an existing customer who already has a doc type on file (inline amber row warning + explicit confirmation step listing old→new filenames before saving).

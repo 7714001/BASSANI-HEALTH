@@ -740,6 +740,94 @@ def send_onboarding_templates(to_email: str, reseller_name: str, reply_to: str =
 
 # Packing floor emails
 
+def send_doc_upload_request(
+    to_email: str,
+    to_name: str,
+    company_name: str,
+    upload_url: str,
+    expiry_days: int = 7,
+) -> None:
+    """Sent to a customer contact when an admin requests outstanding documents."""
+    if not to_email:
+        return
+    body = (
+        _h1("Action required: please upload your documents")
+        + _p(f"Hi {to_name or company_name},")
+        + _p(
+            f"Our team requires outstanding documentation for {company_name}. "
+            "Please use the secure link below to upload your documents at your convenience."
+        )
+        + _info_box([
+            ("Account",      company_name),
+            ("Recipient",    "Bassani Health onboarding team"),
+            ("Link expires", f"In {expiry_days} days"),
+        ], tint="#fffbeb", border="#fcd34d")
+        + _button("Upload your documents", upload_url)
+        + _divider()
+        + _p(
+            f"This link is unique to your account and expires after {expiry_days} days. "
+            "You may upload multiple files in a single session. "
+            "If you have any questions, please reply to this email.",
+            muted=True,
+        )
+    )
+    _send(
+        to_email,
+        f"Documents required: {company_name}",
+        _wrap(
+            body,
+            footer_note=(
+                "This message was sent on behalf of Bassani Health. "
+                "Reply to this email if you need assistance."
+            ),
+        ),
+    )
+
+
+def send_doc_upload_notification(
+    to_emails: list,
+    company_name: str,
+    uploaded_by_email: str,
+    file_list: list,
+    uploaded_at: str,
+) -> None:
+    """Sent to the onboarding team when a customer uploads documents via a secure link."""
+    if not to_emails:
+        return
+    file_rows = "".join(
+        f'<tr><td style="padding:5px 0;font-size:13px;color:#0f172a;">'
+        f'{i + 1}. {name}</td></tr>'
+        for i, name in enumerate(file_list)
+    )
+    file_table = (
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="background:#f0fdf9;border:1px solid #bbf7d0;border-radius:8px;'
+        'margin:16px 0;padding:4px 20px;">'
+        '<tr><td><table width="100%" cellpadding="0" cellspacing="0" border="0">'
+        f'{file_rows}'
+        '</table></td></tr></table>'
+    )
+    body = (
+        _h1("Documents uploaded")
+        + _p(f"Documents have been submitted for <strong>{company_name}</strong>.")
+        + _info_box([
+            ("Account",     company_name),
+            ("Uploaded by", uploaded_by_email or "Not provided"),
+            ("Date",        uploaded_at),
+            ("Files",       str(len(file_list))),
+        ])
+        + _p(f"<strong>Files received ({len(file_list)}):</strong>")
+        + file_table
+        + _divider()
+        + _p("These files are now available on the customer profile.", muted=True)
+    )
+    _send(
+        to_emails,
+        f"Documents uploaded: {company_name}",
+        _wrap(body),
+    )
+
+
 def send_order_ready_for_collection(
     order_ref: str,
     customer_name: str,

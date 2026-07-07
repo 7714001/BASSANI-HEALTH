@@ -499,6 +499,7 @@ from routes.settings_routes           import router as settings_router
 from routes.stock_report_routes       import router as stock_report_router
 from routes.public_routes             import router as public_router
 from routes.partner_routes            import router as partner_router
+from routes.upload_request_routes     import router as upload_request_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -509,7 +510,7 @@ for router in [
     script_router, onboarding_router, packing_board_router, target_router,
     warehouse_router, ticket_router, inbox_router, onboarding_inbox_router,
     reseller_catalog_router, supplier_router, settings_router,
-    stock_report_router, public_router, partner_router,
+    stock_report_router, public_router, partner_router, upload_request_router,
 ]:
     app.include_router(router)
 

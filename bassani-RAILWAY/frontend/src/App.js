@@ -48,6 +48,7 @@ import ResetPassword         from "./views/ResetPassword";
 import StockReport           from "./views/StockReport";
 import PublicRegister        from "./views/PublicRegister";
 import PartnerDirectory      from "./views/PartnerDirectory";
+import PublicDocUpload       from "./views/PublicDocUpload";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -150,8 +151,9 @@ export default function App() {
             ? <Navigate to={user.must_change_password ? "/change-password" : "/"} replace />
             : <Login />
         } />
-        <Route path="/register" element={<HcpRegister />} />
-        <Route path="/apply"    element={<PublicRegister />} />
+        <Route path="/register"     element={<HcpRegister />} />
+        <Route path="/apply"        element={<PublicRegister />} />
+        <Route path="/upload-docs/:token" element={<PublicDocUpload />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />
         <Route path="/change-password" element={<AuthRequired><ChangePassword /></AuthRequired>} />
