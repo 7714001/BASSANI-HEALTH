@@ -92,7 +92,7 @@ async def create_upload_request(
         "partner_name":      partner_name,
         "sent_to_email":     body.send_to_email,
         "sent_to_name":      body.send_to_name,
-        "sent_by_user_id":   str(current_user["_id"]),
+        "sent_by_user_id":   str(current_user.get("_id") or current_user.get("username", "unknown")),
         "sent_by_name":      current_user.get("name") or current_user.get("username"),
         "created_at":        now,
         "expires_at":        expires,
