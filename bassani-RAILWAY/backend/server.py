@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import logging
+import imaplib
 from pymongo.errors import OperationFailure as _MongoOpFail
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request
@@ -402,7 +403,16 @@ async def _run_inbox_startup(
                     except Exception as exc:
                         logger.error("%s_imap_ingest_error error=%s", label, exc)
             except Exception as exc:
-                logger.error("%s_imap_poll_loop_error error=%s", label, exc)
+                # imaplib.IMAP4.abort is raised on socket-level drops (EOF,
+                # BYE, connection reset). These are transient — the next cycle
+                # reconnects. Log as warning so Sentry stays quiet.
+                if isinstance(exc, imaplib.IMAP4.abort):
+                    logger.warning(
+                        "%s_imap_poll_connection_dropped error=%s (will retry in 60s)",
+                        label, exc,
+                    )
+                else:
+                    logger.error("%s_imap_poll_loop_error error=%s", label, exc)
             finally:
                 _poll_running[0] = False
 
