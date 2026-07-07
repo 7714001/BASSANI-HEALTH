@@ -54,6 +54,8 @@ async def get_signing_authority(current_user: dict = Depends(get_current_user)):
             "has_signature":  doc.get("has_signature", False),
             "updated_at":     doc["updated_at"].isoformat() if doc.get("updated_at") else None,
             "updated_by":     doc.get("updated_by_name", ""),
+            "holder_user_id": doc.get("holder_user_id", ""),
+            "holder_name":    doc.get("holder_name", ""),
         },
     }
 
@@ -65,6 +67,8 @@ async def save_signing_authority(
     name:             str           = Form(...),
     title:            str           = Form(...),
     location:         str           = Form(...),
+    holder_user_id:   Optional[str] = Form(None),   # portal user ID of the countersigning authority
+    holder_name:      Optional[str] = Form(None),   # display name of that user
     signature_file:   Optional[UploadFile] = File(None),
     signature_drawn:  Optional[str] = Form(None),   # base64 data-URL from canvas
     current_user: dict = Depends(get_current_user),
@@ -123,6 +127,8 @@ async def save_signing_authority(
         "updated_at":      now,
         "updated_by_id":   str(current_user.get("_id") or current_user.get("username", "")),
         "updated_by_name": current_user.get("name") or current_user.get("username", ""),
+        "holder_user_id":  holder_user_id.strip() if holder_user_id else None,
+        "holder_name":     holder_name.strip()    if holder_name    else None,
     }
 
     await col("signing_authority").replace_one({"id": _DOC_ID}, profile, upsert=True)
@@ -150,14 +156,22 @@ async def save_signing_authority(
 async def am_i_holder(current_user: dict = Depends(get_current_user)):
     """
     Returns whether the current user is the configured signing authority holder.
-    Used to gate the Countersign button in the application review UI.
+    Super admins always return True. For other admins, the user must match the
+    explicit holder_user_id saved on the signing authority profile.
     Any authenticated admin may call this.
     """
+    # Super admins can always countersign
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return {"is_holder": True}
+
     doc = await col("signing_authority").find_one({"id": _DOC_ID})
     if not doc:
         return {"is_holder": False}
+
     current_uid = str(current_user.get("_id") or current_user.get("username", ""))
-    return {"is_holder": doc.get("updated_by_id") == current_uid}
+    # Check explicit holder_user_id first, fall back to updated_by_id for legacy records
+    holder_uid = doc.get("holder_user_id") or doc.get("updated_by_id")
+    return {"is_holder": holder_uid == current_uid}
 
 
 # ── Serve signature image (for preview and PDF embedding) ─────────────────────

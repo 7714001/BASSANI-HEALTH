@@ -302,7 +302,7 @@ function UploadTab({ onCapture }) {
 }
 
 // ── Signature preview card ─────────────────────────────────────────────────────
-function SignaturePreviewCard({ sigSrc, name, title, location, onReplace }) {
+function SignaturePreviewCard({ sigSrc, name, title, location, holderName, onReplace }) {
   return (
     <div className="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm space-y-4">
       <div className="flex items-center justify-between">
@@ -315,10 +315,10 @@ function SignaturePreviewCard({ sigSrc, name, title, location, onReplace }) {
         </BtnSecondary>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="bg-gray-50 rounded-xl px-3 py-2">
           <p className="text-[10px] text-gray-400 mb-0.5 flex items-center gap-1">
-            <User size={9} /> Name
+            <User size={9} /> Name on documents
           </p>
           <p className="text-xs font-medium text-gray-700">{name || "—"}</p>
         </div>
@@ -330,9 +330,15 @@ function SignaturePreviewCard({ sigSrc, name, title, location, onReplace }) {
         </div>
         <div className="bg-gray-50 rounded-xl px-3 py-2">
           <p className="text-[10px] text-gray-400 mb-0.5 flex items-center gap-1">
-            <MapPin size={9} /> Location
+            <MapPin size={9} /> Signing location
           </p>
           <p className="text-xs font-medium text-gray-700">{location || "—"}</p>
+        </div>
+        <div className="bg-gray-50 rounded-xl px-3 py-2">
+          <p className="text-[10px] text-gray-400 mb-0.5 flex items-center gap-1">
+            <User size={9} /> Portal countersigning user
+          </p>
+          <p className="text-xs font-medium text-gray-700">{holderName || <span className="text-amber-600">Not set (super admins only)</span>}</p>
         </div>
       </div>
 
@@ -357,9 +363,7 @@ function SignaturePreviewCard({ sigSrc, name, title, location, onReplace }) {
 
       <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
         <p className="text-xs text-blue-700">
-          This signature and profile are automatically applied to Bassani's signing block on all
-          co-signed onboarding documents. The date is set to the day each customer signs.
-          No action is required from you per document.
+          Bassani's name and title are auto-filled on the customer's copy when they sign. The countersigning user completes the Bassani signature block when approving the application in the portal.
         </p>
       </div>
     </div>
@@ -368,12 +372,24 @@ function SignaturePreviewCard({ sigSrc, name, title, location, onReplace }) {
 
 // ── Setup / Replace modal ──────────────────────────────────────────────────────
 function SetupModal({ existing, onClose, onSaved }) {
-  const [tab,      setTab     ] = useState("upload");
-  const [captured, setCaptured] = useState(null);  // data-URL from draw or upload tab
-  const [name,     setName    ] = useState(existing?.name     || "");
-  const [title,    setTitle   ] = useState(existing?.title    || "");
-  const [location, setLocation] = useState(existing?.location || "");
-  const [saving,   setSaving  ] = useState(false);
+  const [tab,          setTab        ] = useState("upload");
+  const [captured,     setCaptured   ] = useState(null);  // data-URL from draw or upload tab
+  const [name,         setName       ] = useState(existing?.name          || "");
+  const [title,        setTitle      ] = useState(existing?.title         || "");
+  const [location,     setLocation   ] = useState(existing?.location      || "");
+  const [holderUserId, setHolderUserId] = useState(existing?.holder_user_id || "");
+  const [holderName,   setHolderName  ] = useState(existing?.holder_name   || "");
+  const [users,        setUsers       ] = useState([]);
+  const [saving,       setSaving      ] = useState(false);
+
+  useEffect(() => {
+    api.get("/api/users/")
+      .then(r => {
+        const STAFF_ROLES = new Set(["super_admin", "admin", "sales", "finance", "orders_clerk", "qa_manager", "responsible_pharmacist"]);
+        setUsers((r.data.users || []).filter(u => STAFF_ROLES.has(u.role)));
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSave = async () => {
     if (!name.trim())     return toast.error("Full name is required");
@@ -387,6 +403,10 @@ function SetupModal({ existing, onClose, onSaved }) {
       fd.append("name",     name.trim());
       fd.append("title",    title.trim());
       fd.append("location", location.trim());
+      if (holderUserId) {
+        fd.append("holder_user_id", holderUserId);
+        fd.append("holder_name",    holderName);
+      }
 
       if (captured) {
         // Convert data URL to blob
@@ -443,6 +463,30 @@ function SetupModal({ existing, onClose, onSaved }) {
             />
           </FormGroup>
         </div>
+
+        {/* Portal countersigning user */}
+        <FormGroup label="Portal countersigning user">
+          <select
+            value={holderUserId}
+            onChange={e => {
+              const uid = e.target.value;
+              setHolderUserId(uid);
+              const u = users.find(u => u.id === uid);
+              setHolderName(u ? (u.name || u.username || "") : "");
+            }}
+            className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-bassani-500 bg-white"
+          >
+            <option value="">— Select the user who will countersign applications —</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.name || u.username} ({u.role})
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-1">
+            This is the portal login that will see the Countersign button on application reviews. Super admins always have access regardless of this setting.
+          </p>
+        </FormGroup>
 
         {/* Signature section */}
         <div>
@@ -605,6 +649,7 @@ export function SigningAuthoritySection() {
           name={profile.name}
           title={profile.title}
           location={profile.location}
+          holderName={profile.holder_name}
           onReplace={() => setModalOpen(true)}
         />
       ) : (
