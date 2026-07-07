@@ -33,6 +33,7 @@ import EmailSettings                 from "./views/EmailSettings";
 import MailboxSettings               from "./views/MailboxSettings";
 import OnboardingMailboxSettings     from "./views/OnboardingMailboxSettings";
 import ConnectedMailboxes            from "./views/ConnectedMailboxes";
+import DocumentTemplates            from "./views/DocumentTemplates";
 import ResellerProfile       from "./views/ResellerProfile";
 import Suppliers             from "./views/Suppliers";
 import SupplierProfile       from "./views/SupplierProfile";
@@ -251,6 +252,10 @@ export default function App() {
         } />
         <Route path="/catalogue/uom" element={
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
+        } />
+
+        <Route path="/doc-templates" element={
+          <ProtectedRoute adminOnly><AppLayout><DocumentTemplates /></AppLayout></ProtectedRoute>
         } />
 
         <Route path="/settings/email-routing" element={

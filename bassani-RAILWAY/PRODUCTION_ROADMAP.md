@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-07  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07  
 
 ---
 
@@ -28,6 +28,7 @@
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
+| 17 | Document Template Management | 🟢 Complete | 17.0–17.3 complete — 2026-07-07 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -2737,3 +2738,105 @@ DocuSign requires a separate service decision and API credentials. The current d
 - [x] Admin notification email updated to distinguish self-service from reseller submissions
 - [x] Reseller referral link shown in CustomerOnboarding wizard step 0 (reseller role only)
 - [x] Approval of self-service app creates Odoo customer and reseller link (handled by existing approve endpoint, unchanged)
+
+---
+
+## Phase 17 — Document Template Management
+
+**Status:** 🟢 Complete — 2026-07-07
+
+**Goal:** Super admin can upload, version, and activate the four Bassani-issued onboarding template PDFs (Store Onboarding Agreement, Customer Information Form, NDA, TQA) directly from the portal. Once uploaded, the managed version is served immediately to customers and resellers downloading the templates — no redeployment required. Previous versions are archived and can be rolled back at any time. This is the prerequisite for in-portal e-signing.
+
+### Motivation
+
+The four Bassani-issued onboarding documents were previously static files baked into the Docker image. Updating them required a code change and redeployment. This created three problems:
+
+1. Bassani's legal team could not update agreements without developer involvement.
+2. Signed copies referenced a particular document version, but there was no way to prove which version a customer signed against.
+3. Any future in-portal e-signing feature requires knowing where in the PDF the signature fields sit — this must be stored in the PDF itself (AcroForm fields), which means the portal needs to manage the PDF, not just serve a static file.
+
+### What Was Built
+
+**Backend — `backend/routes/doc_template_routes.py` (new)**
+
+Four doc types are managed: `store_onboarding_agreement`, `customer_information_form`, `nda`, `tqa`.
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `GET /api/doc-templates/` | admin | List all four doc types with active version summary |
+| `GET /api/doc-templates/{doc_type}/history` | admin | All versions for a doc type, newest first |
+| `POST /api/doc-templates/{doc_type}/upload` | super_admin | Upload new version (auto-increments version number, deactivates previous, stores in R2 at `doc-templates/{doc_type}/v{n}/{filename}`) |
+| `POST /api/doc-templates/{doc_type}/activate/{version_id}` | super_admin | Roll back to a specific archived version |
+| `GET /api/doc-templates/{doc_type}/download` | admin | Download the current active version |
+| `GET /api/doc-templates/{doc_type}/download/{version_id}` | admin | Download a specific archived version |
+
+Shared helper `get_active_template_bytes(doc_type)` checks the `doc_templates` MongoDB collection for the active version and fetches it from R2. Returns `None` if no managed version exists.
+
+**Backward-compatible download migration**
+
+`FILENAME_TO_DOC_TYPE` reverse map allows the existing public endpoints (`/api/public/templates/download/nda.pdf` and `/api/onboarding/templates/download/nda.pdf`) to resolve the doc type, check R2, and fall back to the static file. No frontend changes needed for callers that already used the filename-based endpoints.
+
+**MongoDB collection — `doc_templates`**
+
+Fields: `doc_type`, `version`, `label`, `filename`, `r2_key`, `file_size`, `uploaded_at`, `uploaded_by_id`, `uploaded_by_name`, `is_active`, `notes`.
+
+Versions are never deleted. Only the `is_active` flag changes on upload or rollback.
+
+**Frontend — `frontend/src/views/DocumentTemplates.js` (new)**
+
+- Four doc type cards, one per managed PDF
+- Each card shows: active version badge, uploaded-by, date, file size, optional release note
+- Amber warning when no managed version has been uploaded yet (static file still in use)
+- Expandable version history table per card (all archived versions with activate/download per row)
+- Upload modal: PDF file picker + optional release notes field; new version is live immediately on submit
+- Rollback: "Activate" button on any non-active row in version history — replaces current version with archived one; audit logged
+- `superAdminOnly: true` gates the nav item — all admins can view and download, only super_admin can upload or activate
+
+**Audit trail**
+
+Every upload (`doc_template.uploaded`) and activation (`doc_template.activated`) writes an audit log entry with actor, version number, file size, and release notes.
+
+**E-signing preparation note**
+
+The blue info panel in the view instructs super_admin to embed AcroForm fields (signature, name, date, company) in PDFs using Adobe Acrobat or LibreOffice before enabling e-signing. Because field positions are stored in the PDF itself, they update automatically when a new version is uploaded — no hardcoded coordinates in the portal code.
+
+### Sub-deploys
+
+#### 17.0 — Backend: doc_template_routes + R2 storage (complete 2026-07-07)
+
+- [x] `doc_template_routes.py` created with all six endpoints
+- [x] `get_active_template_bytes()` shared helper
+- [x] `FILENAME_TO_DOC_TYPE` reverse map
+- [x] Router registered in `server.py`
+- [x] All upload and activate actions audit logged
+
+#### 17.1 — Backward-compatible download migration (complete 2026-07-07)
+
+- [x] `public_routes.py` `download_public_template` checks R2 first, falls back to static file
+- [x] `onboarding_routes.py` `download_template` checks R2 first, falls back to static file
+- [x] No changes to existing callers required
+
+#### 17.2 — Frontend: DocumentTemplates view (complete 2026-07-07)
+
+- [x] `DocumentTemplates.js` created with 4 doc type cards
+- [x] Active version details (date, uploader, size, release note)
+- [x] Upload modal with PDF picker and release notes field
+- [x] Version history accordion per card
+- [x] Rollback button on each archived version row
+- [x] Super admin info panel: AcroForm preparation guidance for future e-signing
+
+#### 17.3 — App wiring (complete 2026-07-07)
+
+- [x] Route added to `App.js` at `/doc-templates`, `adminOnly`
+- [x] Nav item added to `ADMIN_NAV` in `UI.js`, `superAdminOnly: true`
+
+### Definition of Done — Phase 17
+
+- [x] Super admin can upload a new PDF version from the portal — no redeployment required
+- [x] Uploaded version is immediately served to any download endpoint (public and onboarding)
+- [x] Previous version is archived in R2 and can be downloaded or restored at any time
+- [x] Every upload and rollback is audit logged with actor, version, file size, and notes
+- [x] Existing filename-based download endpoints (`/api/public/templates/download/nda.pdf`) continue to work unchanged
+- [x] Static file fallback is in place — sites without any managed version still serve the baked-in file
+- [x] View is accessible to all admins for read/download; upload and rollback gated to super_admin only
+- [x] Version numbering is sequential and auto-incremented (v1, v2, v3…)

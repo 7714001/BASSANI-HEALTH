@@ -6,7 +6,7 @@ Callers are unauthenticated: potential Bassani customers or referred contacts.
 Session IDs are validated as UUIDs to prevent path traversal on R2 keys.
 """
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -111,6 +111,20 @@ async def list_public_templates():
 async def download_public_template(filename: str):
     if filename not in TEMPLATES:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    # Serve managed R2 version if one has been uploaded; fall back to static file
+    from routes.doc_template_routes import FILENAME_TO_DOC_TYPE, get_active_template_bytes
+    import io
+    doc_type = FILENAME_TO_DOC_TYPE.get(filename)
+    if doc_type:
+        data = await get_active_template_bytes(doc_type)
+        if data:
+            return StreamingResponse(
+                io.BytesIO(data),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
     fpath = os.path.join(_TEMPLATE_DIR, filename)
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Template file not yet available")

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+import io
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -149,6 +150,19 @@ async def download_template(filename: str, current_user: dict = Depends(get_curr
     """Stream a Bassani onboarding template PDF for download."""
     if filename not in TEMPLATES:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    # Serve managed R2 version if one has been uploaded; fall back to static file
+    from routes.doc_template_routes import FILENAME_TO_DOC_TYPE, get_active_template_bytes
+    doc_type = FILENAME_TO_DOC_TYPE.get(filename)
+    if doc_type:
+        data = await get_active_template_bytes(doc_type)
+        if data:
+            return StreamingResponse(
+                io.BytesIO(data),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
     fpath = os.path.join(_TEMPLATE_DIR, filename)
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Template file not yet available on this server")

@@ -239,6 +239,60 @@ These addresses are CC'd on every "Order Received" and "Order Confirmed" email s
 
 ---
 
+## Step 8b — Manage Onboarding Document Templates (Super Admin)
+
+The four Bassani-issued onboarding documents — Store Onboarding Agreement, Customer Information Form, NDA, and TQA — can be updated directly from the portal without any code change or redeployment. This means your legal or operations team can revise an agreement, upload the new version, and it is live for all future downloads immediately.
+
+Navigate to **Admin > Document Templates** in the left sidebar (visible to Super Admin only).
+
+### What You See
+
+Each of the four documents is shown as a card. The card displays:
+
+- **Active version badge** — the current version number (v1, v2, v3…) in green
+- **Uploaded by / date / file size** of the current active version
+- **Release note** — any notes the uploader added when publishing this version (e.g. "Updated indemnity clause, approved by legal 2026-07-07")
+- **Download current** — download the active version directly from here
+- **Upload new version** — publish a new version (super admin only)
+- **Version count** — click to expand the version history
+
+If no version has been uploaded yet, an amber warning appears. The document is still available for download, but it is serving the static file from the last deployment rather than a managed version.
+
+### Uploading a New Version
+
+1. Click **Upload new version** on the relevant document card
+2. Click the upload area to choose a PDF file from your computer
+3. Add an optional release note — this is shown on the card and in version history. Record what changed, for example "Updated POPIA clause, signed off by legal team 2026-07-07"
+4. Click **Upload and activate**
+
+The new version is live immediately. Any reseller or customer who downloads the document from this point on receives the new version.
+
+### Version History and Rollback
+
+Click the version count at the bottom-right of a card to expand the full version history. Each row shows the version number, upload date, uploader, file size, and release note.
+
+- **Download** any archived version to verify its content before restoring it
+- **Activate** any non-active row to roll back to that version — it becomes the active version immediately and the current version is archived
+
+Versions are never deleted. Every version uploaded is permanently stored and can be retrieved at any time.
+
+### Audit Trail
+
+Every upload and every activation is recorded in the portal's audit log. The entry captures who performed the action, which document and version were affected, and any release notes provided. This creates a full paper trail of document changes — important for compliance purposes.
+
+### Preparing Documents for Future E-Signing
+
+When Bassani is ready to enable in-portal e-signing, the documents must have signature fields embedded directly in the PDF. The portal reads the field positions from the PDF itself, which means:
+
+- Prepare the PDF in Adobe Acrobat or LibreOffice with AcroForm fields for: signature, full name, date, company name
+- Upload it via this page as a new version
+- The e-signing module will automatically detect and use the field positions in that PDF
+- Updating the PDF later (new version with revised field positions) works the same way — upload and activate
+
+The info panel at the top of the Document Templates page shows this guidance in the portal whenever you are logged in as super admin.
+
+---
+
 ## Automated Email Reference
 
 The table below documents every automated email the portal sends, when it fires, and who receives it.
@@ -1519,6 +1573,9 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Record invoice payment | Admin with `invoices.record_payment` |
 | Create/edit admin accounts | Super Admin only |
 | Configure email routing | Super Admin only |
+| View document templates and download any version | Any admin |
+| Upload new document template version | Super Admin only |
+| Activate / roll back document template version | Super Admin only |
 | Configure commission tiers | Admin with `commission.configure_tiers` |
 | View audit trail | Admin with `audit.view` |
 | Override order pipeline stage | Admin with `tickets.manage` |

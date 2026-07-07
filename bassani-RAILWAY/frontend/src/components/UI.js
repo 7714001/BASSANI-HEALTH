@@ -50,6 +50,7 @@ const NAV = [
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
   { label: "Email Routing", path: "/settings/email-routing", icon: Settings, section: "Admin", superAdminOnly: true              },
   { label: "Connected Mailboxes", path: "/settings/mailboxes", icon: Mail, section: "Admin", superAdminOnly: true },
+  { label: "Document Templates", path: "/doc-templates",      icon: FileText, section: "Admin", superAdminOnly: true },
 ];
 
 const RESELLER_NAV = [
