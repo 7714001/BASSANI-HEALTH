@@ -1,20 +1,44 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ArrowRight } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, DataTable, FilterPill, ChipRow, fmtDate } from "../components/UI";
 
+// ── Derived status ─────────────────────────────────────────────────────────────
+
+const BASSANI_SIG_TYPES = new Set(["nda", "tqa", "store_onboarding_agreement"]);
+
+function deriveStatus(app) {
+  const s = app.status;
+  if (s === "approved")      return "approved";
+  if (s === "rejected")      return "rejected";
+  if (s === "awaiting_docs") return "awaiting_docs";
+
+  // For pending apps, reflect countersign progress on portal-signed docs
+  const docs   = app.documents || [];
+  const bdocs  = docs.filter(d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type));
+  if (!bdocs.length) return "ready_to_approve";
+
+  const signed = bdocs.filter(d => d.countersigned_at).length;
+  if (signed === 0)            return "needs_countersigning";
+  if (signed < bdocs.length)   return "countersigning_in_progress";
+  return "ready_to_approve";
+}
+
 // ── Status badge ───────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  pending:  { label: "Pending",  cls: "bg-amber-50 text-amber-700",  icon: Clock },
-  approved: { label: "Approved", cls: "bg-green-50 text-green-700",  icon: CheckCircle },
-  rejected: { label: "Rejected", cls: "bg-red-50 text-red-700",      icon: XCircle },
+  awaiting_docs:              { label: "Awaiting Docs",    cls: "bg-amber-50 text-amber-700",   icon: Clock       },
+  needs_countersigning:       { label: "Needs Countersign",cls: "bg-blue-50 text-blue-700",     icon: PenLine     },
+  countersigning_in_progress: { label: "In Progress",      cls: "bg-purple-50 text-purple-700", icon: PenLine     },
+  ready_to_approve:           { label: "Ready to Approve", cls: "bg-teal-50 text-teal-700",     icon: FileCheck   },
+  approved:                   { label: "Approved",         cls: "bg-green-50 text-green-700",   icon: CheckCircle },
+  rejected:                   { label: "Rejected",         cls: "bg-red-50 text-red-700",       icon: XCircle     },
 };
 
-function StatusBadge({ status }) {
-  const cfg  = STATUS_CFG[status] || STATUS_CFG.pending;
+function StatusBadge({ derivedStatus }) {
+  const cfg  = STATUS_CFG[derivedStatus] || { label: derivedStatus, cls: "bg-gray-50 text-gray-700", icon: Clock };
   const Icon = cfg.icon;
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold ${cfg.cls}`}>
@@ -23,59 +47,78 @@ function StatusBadge({ status }) {
   );
 }
 
-// ── Main view ──────────────────────────────────────────────────────────────────
+// ── Filter definitions ─────────────────────────────────────────────────────────
 
 const FILTERS = [
-  { key: "pending",  label: "Pending" },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-  { key: "all",      label: "All" },
+  { key: "all",                        label: "All"              },
+  { key: "awaiting_docs",              label: "Awaiting Docs"    },
+  { key: "needs_countersigning",       label: "Needs Countersign"},
+  { key: "countersigning_in_progress", label: "In Progress"      },
+  { key: "ready_to_approve",           label: "Ready to Approve" },
+  { key: "approved",                   label: "Approved"         },
+  { key: "rejected",                   label: "Rejected"         },
 ];
+
+// ── Main view ──────────────────────────────────────────────────────────────────
 
 export default function CustomerApplications() {
   const navigate = useNavigate();
-  const [applications, setApplications] = useState([]);
-  const [total,        setTotal        ] = useState(0);
-  const [loading,      setLoading      ] = useState(true);
-  const [filter,       setFilter       ] = useState("pending");
-  const [pagination,   setPagination   ] = useState({ pageIndex: 0, pageSize: 25 });
+  const [allApps,    setAllApps   ] = useState([]);
+  const [loading,    setLoading   ] = useState(true);
+  const [filter,     setFilter    ] = useState("all");
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/api/onboarding/", {
-        params: {
-          limit:  pagination.pageSize,
-          offset: pagination.pageIndex * pagination.pageSize,
-          status: filter,
-        },
+        params: { limit: 200, offset: 0, status: "all" },
       });
-      setApplications(data.applications || []);
-      setTotal(data.total || 0);
+      setAllApps(data.applications || []);
     } catch {
       toast.error("Failed to load applications");
     } finally {
       setLoading(false);
     }
-  }, [filter, pagination]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const enriched = useMemo(() =>
+    allApps.map(a => ({ ...a, _derived: deriveStatus(a) })),
+    [allApps]
+  );
+
+  const filtered = useMemo(() =>
+    filter === "all" ? enriched : enriched.filter(a => a._derived === filter),
+    [enriched, filter]
+  );
+
+  const subtitle = useMemo(() => {
+    const n   = filtered.length;
+    const lbl = FILTERS.find(f => f.key === filter)?.label.toLowerCase() || "";
+    return filter === "all"
+      ? `${n} application${n !== 1 ? "s" : ""}`
+      : `${n} ${lbl} application${n !== 1 ? "s" : ""}`;
+  }, [filtered, filter]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Customer Applications"
-        subtitle={filter === "pending"
-          ? `${total} pending application${total !== 1 ? "s" : ""} awaiting review`
-          : `${total} application${total !== 1 ? "s" : ""}`}
+        subtitle={subtitle}
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4">
           <ChipRow>
             {FILTERS.map(f => (
-              <FilterPill key={f.key} label={f.label} active={filter === f.key}
-                onClick={() => { setFilter(f.key); setPagination(p => ({ ...p, pageIndex: 0 })); }} />
+              <FilterPill
+                key={f.key}
+                label={f.label}
+                active={filter === f.key}
+                onClick={() => { setFilter(f.key); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+              />
             ))}
           </ChipRow>
         </div>
@@ -94,7 +137,9 @@ export default function CustomerApplications() {
               )},
             { id: "reseller", header: "Submitted By", enableSorting: false,
               cell: ({ row: { original: a } }) =>
-                <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">{a.reseller_name}</span> },
+                <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
+                  {a.reseller_name}
+                </span> },
             { id: "type", header: "Type", enableSorting: false,
               cell: ({ row: { original: a } }) =>
                 <span className="text-xs text-gray-500">{a.business_type}</span> },
@@ -109,20 +154,21 @@ export default function CustomerApplications() {
               cell: ({ row: { original: a } }) =>
                 <span className="text-xs text-gray-400">{fmtDate(a.submitted_at)}</span> },
             { id: "status", header: "Status", enableSorting: false,
-              cell: ({ row: { original: a } }) => <StatusBadge status={a.status} /> },
+              cell: ({ row: { original: a } }) => <StatusBadge derivedStatus={a._derived} /> },
             { id: "actions", header: "", enableSorting: false,
               cell: ({ row: { original: a } }) => (
-                <button onClick={() => navigate(`/applications/${a.id}`)}
-                  className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-700 font-semibold hover:underline">
-                  {a.status === "pending" ? "Review" : "View"}
+                <button
+                  onClick={() => navigate(`/applications/${a.id}`)}
+                  className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-700 font-semibold hover:underline"
+                >
+                  {a._derived === "approved" || a._derived === "rejected" ? "View" : "Review"}
                   <ArrowRight size={11} />
                 </button>
               )},
           ]}
-          data={applications} loading={loading} total={total}
+          data={filtered} loading={loading} total={filtered.length}
           pagination={pagination} onPaginationChange={setPagination}
           onRowClick={a => navigate(`/applications/${a.id}`)}
-          manualPagination
         />
       </main>
     </div>
