@@ -144,7 +144,7 @@ const DOC_CONFIGS = {
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
   },
-  "customer-information-form": {
+  customer_information_form: {
     hasBassaniSig: false,
     sections: [
       { title: "Business details", fields: [
