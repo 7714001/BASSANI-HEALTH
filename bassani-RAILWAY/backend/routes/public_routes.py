@@ -96,13 +96,17 @@ async def validate_referral(referral_code: str):
 
 @router.get("/templates")
 async def list_public_templates():
+    from routes.doc_template_routes import FILENAME_TO_DOC_TYPE, get_active_template_bytes
     result = []
     for filename, label in TEMPLATES.items():
-        fpath = os.path.join(_TEMPLATE_DIR, filename)
+        doc_type  = FILENAME_TO_DOC_TYPE.get(filename)
+        r2_active = bool(doc_type and await get_active_template_bytes(doc_type))
+        fpath     = os.path.join(_TEMPLATE_DIR, filename)
         result.append({
-            "filename": filename,
-            "label":    label,
-            "available": os.path.exists(fpath),
+            "filename":  filename,
+            "label":     label,
+            "available": r2_active or os.path.exists(fpath),
+            "managed":   r2_active,
         })
     return {"templates": result}
 
