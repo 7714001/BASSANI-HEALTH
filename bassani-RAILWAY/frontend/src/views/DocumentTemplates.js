@@ -144,6 +144,40 @@ const DOC_CONFIGS = {
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
   },
+  store_onboarding_agreement: {
+    hasBassaniSig: true,
+    sections: [
+      { title: "Business details", fields: [
+        { name: "registered_business_name",    label: "Registered Business Name",   testDefault: "Test Company (Pty) Ltd" },
+        { name: "tradingin_name",              label: "Trading Name",               testDefault: "Test Trading Name" },
+        { name: "company_reg_number",          label: "Registration Number",        testDefault: "2024/123456/07" },
+        { name: "vat_reg_number",              label: "VAT Number",                 testDefault: "4560123456" },
+        { name: "registered_business_address", label: "Registered Business Address", testDefault: "123 Main Road, Sandton, Johannesburg, 2196" },
+        { name: "collection_point_address",    label: "Collection Point Address",   testDefault: "123 Main Road, Sandton, Johannesburg, 2196" },
+      ]},
+      { title: "Signatory details", fields: [
+        { name: "signatory_full_name",    label: "Full Name",        testDefault: "Test Customer" },
+        { name: "signatory_id_number",    label: "ID Number",        testDefault: "9001010000087" },
+        { name: "signatory_title",        label: "Title / Position", testDefault: "Director" },
+        { name: "primary_contact_number", label: "Phone Number",     testDefault: "+27 11 000 0000" },
+        { name: "primary_email_address",  label: "Email Address",    testDefault: "test@example.com" },
+      ]},
+      { title: "Signature block", fields: [
+        { name: "store_signed_at",   label: "City / Location of Signing",  testDefault: "Johannesburg" },
+        { name: "store_full_name",   label: "Full Name (signature block)", testDefault: "Test Customer" },
+        { name: "store_capacity",    label: "Capacity / Role",             testDefault: "Director" },
+        { name: "store_witness_name", label: "Witness Name",               testDefault: "Test Witness" },
+      ]},
+      { title: "Other", fields: [
+        { name: "assigned_reseller_code", label: "Reseller Code (if applicable)", testDefault: "" },
+      ]},
+    ],
+    isAutoFill: (name) => name.startsWith("bassani_") || name === "store_date_es_:signer:date",
+    getAutoFillValue: (name, profile) => {
+      if (name === "bassani_witness") return "";
+      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+    },
+  },
   tqa: {
     hasBassaniSig: true,
     sections: [
