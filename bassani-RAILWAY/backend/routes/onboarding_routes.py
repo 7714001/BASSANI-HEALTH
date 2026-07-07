@@ -1239,18 +1239,22 @@ async def approve_application(
         }},
     )
 
-    # For inbox-sourced applications, stamp the linked thread with the new
-    # customer_id so Save Documents becomes available immediately.
-    if is_inbox_source and app.get("inbox_thread_id"):
+    # Archive the linked inbox thread and stamp customer_id on it.
+    # Applies to all applications that have a thread (portal-submitted and inbox-sourced).
+    if app.get("inbox_thread_id"):
         from bson import ObjectId as _OID
         try:
             tid = app["inbox_thread_id"]
             await col("onboarding_inbox").update_many(
                 {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
-                {"$set": {"customer_id": partner_id, "customer_name": app.get("company_name", "")}},
+                {"$set": {
+                    "status":        "archived",
+                    "customer_id":   partner_id,
+                    "customer_name": app.get("company_name", ""),
+                }},
             )
         except Exception:
-            pass  # non-fatal — thread link can be set manually
+            pass  # non-fatal
 
     await audit_log("onboarding.approve", "customer_onboarding", app_id,
                     entity_label=app.get("company_name", ""), user=current_user,

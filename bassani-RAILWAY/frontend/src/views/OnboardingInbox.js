@@ -3,7 +3,7 @@ import { stripEmailQuote } from "../utils/stripEmailQuote";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Mail, AlertCircle, Paperclip, RefreshCw,
   ExternalLink, Send, Archive, Save,
@@ -298,8 +298,9 @@ function MessageBubble({ msg, showDateDivider, onSaveToProfile, onPreview }) {
 }
 
 export default function OnboardingInbox() {
-  const { can } = useAuth();
-  const navigate = useNavigate();
+  const { can }         = useAuth();
+  const navigate        = useNavigate();
+  const [searchParams]  = useSearchParams();
 
   const [tab,            setTab           ] = useState("open");
   const [q,              setQ             ] = useState("");
@@ -417,6 +418,22 @@ export default function OnboardingInbox() {
     }, 15000);
     return () => clearInterval(id);
   }, [selectedThreadId]); // eslint-disable-line
+
+  // Auto-select a thread when navigated here via ?thread= from an application detail page
+  useEffect(() => {
+    const threadId = searchParams.get("thread");
+    if (!threadId) return;
+    (async () => {
+      try {
+        const res  = await api.get(`${API}/${threadId}/thread`);
+        const msgs = res.data.thread || [];
+        if (msgs.length) {
+          setSelectedThread(msgs[0]);
+          setThreadMsgs(msgs);
+        }
+      } catch {}
+    })();
+  }, []); // eslint-disable-line
 
   async function loadThread(id, silent = false) {
     if (!silent) setDetailLoading(true);

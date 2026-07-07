@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, FilterPill, ChipRow, fmtDate } from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate } from "../components/UI";
 
 // ── Derived status ─────────────────────────────────────────────────────────────
 
@@ -66,6 +66,7 @@ export default function CustomerApplications() {
   const [allApps,    setAllApps   ] = useState([]);
   const [loading,    setLoading   ] = useState(true);
   const [filter,     setFilter    ] = useState("all");
+  const [search,     setSearch    ] = useState("");
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   const load = useCallback(async () => {
@@ -89,10 +90,19 @@ export default function CustomerApplications() {
     [allApps]
   );
 
-  const filtered = useMemo(() =>
-    filter === "all" ? enriched : enriched.filter(a => a._derived === filter),
-    [enriched, filter]
-  );
+  const filtered = useMemo(() => {
+    let apps = filter === "all" ? enriched : enriched.filter(a => a._derived === filter);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      apps = apps.filter(a =>
+        a.company_name?.toLowerCase().includes(q) ||
+        a.id?.toLowerCase().includes(q) ||
+        a.contact_email?.toLowerCase().includes(q) ||
+        a.contact_name?.toLowerCase().includes(q)
+      );
+    }
+    return apps;
+  }, [enriched, filter, search]);
 
   const subtitle = useMemo(() => {
     const n   = filtered.length;
@@ -110,7 +120,7 @@ export default function CustomerApplications() {
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="mb-4">
+        <div className="mb-4 flex items-center justify-between gap-4 flex-wrap">
           <ChipRow>
             {FILTERS.map(f => (
               <FilterPill
@@ -121,6 +131,11 @@ export default function CustomerApplications() {
               />
             ))}
           </ChipRow>
+          <SearchBar
+            value={search}
+            onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+            placeholder="Search by name, email or reference…"
+          />
         </div>
 
         <DataTable
