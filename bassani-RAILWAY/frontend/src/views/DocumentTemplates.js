@@ -401,6 +401,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     customer_company_name: "Company Name (signature block)",
     customer_name:         "Full Name",
     customer_position:     "Position / Title",
+    customer_location:     "City / Location of Signing",
     customer_date:         "Date of Signing",
   };
   // Strip Acrobat's _es_:* suffix before label lookup so customer_date_es_:date → "Date of Signing"
