@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { Upload, CheckCircle, XCircle, Loader2, FileText, X } from "lucide-react";
+import { Upload, CheckCircle, XCircle, Loader2, FileText, X, Download } from "lucide-react";
 import axios from "axios";
 
 const api = axios.create({ baseURL: "" });
@@ -11,6 +11,14 @@ const DOC_LABELS = {
   nda:                        "Signed NDA",
   tqa:                        "Signed TQA Document",
   cipc_certificate:           "CIPC Company Registration Certificate",
+};
+
+// Template files for the 4 Bassani-issued documents (cipc_certificate is the customer's own doc)
+const DOC_TEMPLATES = {
+  store_onboarding_agreement: { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
+  customer_information_form:  { filename: "customer-information-form.pdf",  label: "Customer Information Form"  },
+  nda:                        { filename: "nda.pdf",                        label: "NDA"                        },
+  tqa:                        { filename: "tqa.pdf",                        label: "TQA Document"               },
 };
 
 export default function PublicDocUpload() {
@@ -69,6 +77,20 @@ export default function PublicDocUpload() {
   };
 
   const filledCount = Object.keys(slots).length;
+
+  const downloadTemplate = async (docType) => {
+    const tpl = DOC_TEMPLATES[docType];
+    if (!tpl) return;
+    try {
+      const res = await api.get(`/api/public/templates/download/${tpl.filename}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a   = document.createElement("a");
+      a.href = url; a.download = tpl.label + ".pdf"; a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // fail silently — user can try again
+    }
+  };
 
   const handleSubmit = async () => {
     if (!filledCount) return;
@@ -190,11 +212,29 @@ export default function PublicDocUpload() {
                 {requestedDocTypes.map(docType => {
                   const label = DOC_LABELS[docType] || docType;
                   const file  = slots[docType];
+                  const hasTpl = !!DOC_TEMPLATES[docType];
                   return (
                     <div key={docType}
                       className="border border-gray-100 rounded-xl p-4 bg-gray-50"
                     >
-                      <p className="text-sm font-medium text-gray-700 mb-2">{label}</p>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <p className="text-sm font-medium text-gray-700">{label}</p>
+                        {hasTpl && (
+                          <button
+                            onClick={() => downloadTemplate(docType)}
+                            type="button"
+                            className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-700 font-medium whitespace-nowrap shrink-0"
+                          >
+                            <Download size={12} />
+                            Download template
+                          </button>
+                        )}
+                      </div>
+                      {hasTpl && !file && (
+                        <p className="text-xs text-gray-400 mb-2">
+                          Download, complete and sign, then upload below.
+                        </p>
+                      )}
                       {file ? (
                         <div className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-gray-100">
                           <FileText size={14} className="text-bassani-500 shrink-0" />
