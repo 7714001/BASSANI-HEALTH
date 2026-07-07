@@ -122,6 +122,63 @@ function VersionHistory({ docType, isSuperAdmin, onActivated }) {
 
 // ── Test Signing Modal ────────────────────────────────────────────────────────
 
+const DOC_CONFIGS = {
+  nda: {
+    hasBassaniSig: true,
+    sections: [
+      { title: "Company details", fields: [
+        { name: "company_name_1",        label: "Company Name",                   testDefault: "Test Company (Pty) Ltd" },
+        { name: "company_address",       label: "Company Address",                testDefault: "123 Main Road, Johannesburg, Gauteng, 2000" },
+        { name: "company_reg_number",    label: "Registration Number",            testDefault: "2024/123456/07" },
+      ]},
+      { title: "Contact details", fields: [
+        { name: "customer_company_name", label: "Company Name (signature block)", testDefault: "Test Company (Pty) Ltd" },
+        { name: "customer_name",         label: "Full Name",                      testDefault: "Test Customer" },
+        { name: "customer_position",     label: "Position / Title",               testDefault: "Director" },
+        { name: "customer_location",     label: "City / Location of Signing",     testDefault: "Johannesburg" },
+      ]},
+    ],
+    isAutoFill: (name) => name.startsWith("bassani_") || name.startsWith("effective_date"),
+    getAutoFillValue: (name, profile) => {
+      if (name.toLowerCase().includes("position")) return profile?.title || "";
+      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+    },
+  },
+  "customer-information-form": {
+    hasBassaniSig: false,
+    sections: [
+      { title: "Business details", fields: [
+        { name: "business_name",      label: "Trading / Business Name",  testDefault: "Test Trading Name" },
+        { name: "company_name",       label: "Registered Company Name",  testDefault: "Test Company (Pty) Ltd" },
+        { name: "company_reg_number", label: "Registration Number",      testDefault: "2024/123456/07" },
+        { name: "vat_number",         label: "VAT Number",               testDefault: "4560123456" },
+      ]},
+      { title: "Contact details", fields: [
+        { name: "full_name",     label: "Full Name",         testDefault: "Test Customer" },
+        { name: "position",      label: "Position / Title",  testDefault: "Director" },
+        { name: "phone_number",  label: "Phone Number",      testDefault: "+27 11 000 0000" },
+        { name: "email_address", label: "Email Address",     testDefault: "test@example.com" },
+        { name: "alt_phone",     label: "Alternative Phone", testDefault: "" },
+      ]},
+      { title: "Business address", fields: [
+        { name: "street_address", label: "Street Address", testDefault: "123 Main Road" },
+        { name: "suburb",         label: "Suburb",         testDefault: "Sandton" },
+        { name: "city",           label: "City",           testDefault: "Johannesburg" },
+        { name: "province",       label: "Province",       testDefault: "Gauteng" },
+        { name: "postal_code",    label: "Postal Code",    testDefault: "2196" },
+      ]},
+    ],
+    isAutoFill: (name) => name === "date_day" || name === "date_month" || name === "date_year",
+    getAutoFillValue: (name) => {
+      const now = new Date();
+      if (name === "date_day")   return String(now.getDate()).padStart(2, "0");
+      if (name === "date_month") return now.toLocaleString("en-ZA", { month: "long" });
+      if (name === "date_year")  return String(now.getFullYear());
+      return "";
+    },
+  },
+};
+
 async function detectFields(pdfBytes) {
   const { PDFDocument } = await import("pdf-lib");
   const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
@@ -149,9 +206,7 @@ async function detectFields(pdfBytes) {
   });
 }
 
-// mikeFieldName: name of the signature field belonging to Bassani (highest y on last page).
-// customerSigDataUrl: PNG data URL from the canvas — embedded as the customer's signature.
-async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldName, customerSigDataUrl) {
+async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldName, customerSigDataUrl, config) {
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const pdfDoc   = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const form     = pdfDoc.getForm();
@@ -188,13 +243,8 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
 
     if (!isSigField) {
       let val = "";
-      const n = name.toLowerCase();
-      // Bassani / date fields are auto-filled from the signing authority profile —
-      // they never appear in the customer form and are not in textValues.
-      if (name.startsWith("bassani_") || name.startsWith("effective_date")) {
-        if (n.includes("location")) val = signingProfile?.location || "";
-        else if (n.includes("position")) val = signingProfile?.title || "";
-        else val = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+      if (config?.isAutoFill?.(name)) {
+        val = config.getAutoFillValue(name, signingProfile) || "";
       } else {
         val = textValues[name] ?? "";
       }
@@ -336,25 +386,13 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       setPdfUrl(url);
       setSigProfile(authRes?.data || null);
       const detected = await detectFields(bytes);
-      console.log("detected fields:", detected.map(f => `${f.name} [${f.type}]`));
       setFields(detected);
-      // Only initialise customer-facing fields — bassani_* and effective_date* are
-      // auto-filled from the signing authority profile and never shown in the form.
-      const isAutoFilled = (name) =>
-        name.startsWith("bassani_") || name.startsWith("effective_date");
+      const cfg = DOC_CONFIGS[docType];
+      const detectedSet = new Set(detected.map(f => f.name));
       const init = {};
-      detected.filter(f => f.type !== "Signature" && !isAutoFilled(f.name)).forEach(f => {
-        const n = f.name.toLowerCase();
-        if (n.includes("address"))                          init[f.name] = "123 Main Road, Johannesburg, Gauteng, 2000";
-        else if (n.includes("reg"))                         init[f.name] = "2024/123456/07";
-        else if (n.includes("company") || n.includes("trading")) init[f.name] = "Test Company (Pty) Ltd";
-        else if (n.includes("position") || n.includes("title")) init[f.name] = "Director";
-        else if (n.includes("name"))                        init[f.name] = "Test Customer";
-        else if (n.includes("location"))                    init[f.name] = "Johannesburg";
-        else if (n.includes("date"))                        init[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
-        else                                                init[f.name] = "";
-      });
-      console.log("textValues init:", init);
+      (cfg?.sections || []).forEach(section =>
+        section.fields.forEach(f => { if (detectedSet.has(f.name)) init[f.name] = f.testDefault ?? ""; })
+      );
       setTextValues(init);
     }).catch((e) => { console.error("TestSigningModal load error:", e); setError("Failed to load document"); })
       .finally(() => setLoading(false));
@@ -390,32 +428,12 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     hasMark.current = false;
   };
 
-  // Mike's field is reliably identified by the bassani_ prefix — no y-coord guessing.
-  const sigFields     = fields.filter(f => f.type === "Signature");
-  const mikeFieldName = sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null;
-
-  // Customer-facing text fields only (bassani_* and effective_date* are auto-filled).
-  const isAutoFilled   = (name) => name.startsWith("bassani_") || name.startsWith("effective_date");
-  const companyFields  = fields.filter(f => f.type !== "Signature" && !isAutoFilled(f.name) && f.name.startsWith("company_"));
-  const customerFields = fields.filter(f => f.type !== "Signature" && !isAutoFilled(f.name) && f.name.startsWith("customer_"));
-
-  // Friendly labels for the form inputs
-  const FIELD_LABELS = {
-    company_name_1:        "Company Name",
-    company_address:       "Company Address",
-    company_reg_number:    "Registration Number",
-    customer_company_name: "Company Name (signature block)",
-    customer_name:         "Full Name",
-    customer_position:     "Position / Title",
-    customer_location:     "City / Location of Signing",
-    customer_date:         "Date of Signing",
-  };
-  // Strip Acrobat's _es_:* suffix before label lookup so customer_date_es_:date → "Date of Signing"
-  const fieldLabel = (name) => {
-    const base = name.replace(/_es_.*$/, "");
-    return FIELD_LABELS[name] || FIELD_LABELS[base] ||
-      base.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-  };
+  const config      = DOC_CONFIGS[docType];
+  const sigFields   = fields.filter(f => f.type === "Signature");
+  const mikeFieldName = config?.hasBassaniSig
+    ? (sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null)
+    : null;
+  const detectedNames = new Set(fields.map(f => f.name));
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -423,7 +441,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
       let customerSigDataUrl = null;
       const canvas = canvasRef.current;
       if (canvas && hasMark.current) customerSigDataUrl = canvas.toDataURL("image/png");
-      const result = await generateTestPdf(pdfBytes, textValues, sigProfile, mikeFieldName, customerSigDataUrl);
+      const result = await generateTestPdf(pdfBytes, textValues, sigProfile, mikeFieldName, customerSigDataUrl, config);
       const blob = new Blob([result], { type: "application/pdf" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
@@ -433,10 +451,6 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     } catch (err) { console.error("generateTestPdf error:", err); toast.error("Failed to generate test PDF"); }
     finally { setGenerating(false); }
   };
-
-  const cleanLabel = (name) =>
-    name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2")
-        .replace(/\b\w/g, c => c.toUpperCase()).substring(0, 36);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
@@ -481,55 +495,44 @@ function TestSigningModal({ docType, docLabel, onClose }) {
           <div className="w-80 shrink-0 border-l border-gray-200 bg-white flex flex-col">
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-              {/* Bassani auto-fill preview */}
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
-                {sigProfile ? (
-                  <div className="bg-green-50 border border-green-100 rounded-xl p-3 space-y-0.5">
-                    <p className="text-xs font-semibold text-green-800">{sigProfile.name}</p>
-                    <p className="text-xs text-green-600">{sigProfile.title}{sigProfile.location ? ` · ${sigProfile.location}` : ""}</p>
-                    <p className="text-[10px] text-green-500 mt-1">Signature, position and today's date embedded automatically</p>
-                  </div>
-                ) : (
-                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                    <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a realistic test.</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Company details — mimics wizard step 1 */}
-              {companyFields.length > 0 && (
+              {/* Bassani auto-fill card — only for co-signed documents */}
+              {config?.hasBassaniSig && (
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Company details</p>
-                  <div className="space-y-3">
-                    {companyFields.map(f => (
-                      <div key={f.name}>
-                        <label className="block text-xs text-gray-600 mb-1">{fieldLabel(f.name)}</label>
-                        <input type="text" value={textValues[f.name] ?? ""}
-                          onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500" />
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
+                  {sigProfile ? (
+                    <div className="bg-green-50 border border-green-100 rounded-xl p-3 space-y-0.5">
+                      <p className="text-xs font-semibold text-green-800">{sigProfile.name}</p>
+                      <p className="text-xs text-green-600">{sigProfile.title}{sigProfile.location ? ` · ${sigProfile.location}` : ""}</p>
+                      <p className="text-[10px] text-green-500 mt-1">Signature, position and today's date embedded automatically</p>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                      <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a realistic test.</p>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Contact / signing details — mimics wizard step 2 */}
-              {customerFields.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Contact details</p>
-                  <div className="space-y-3">
-                    {customerFields.map(f => (
-                      <div key={f.name}>
-                        <label className="block text-xs text-gray-600 mb-1">{fieldLabel(f.name)}</label>
-                        <input type="text" value={textValues[f.name] ?? ""}
-                          onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500" />
-                      </div>
-                    ))}
+              {/* Form sections driven by DOC_CONFIGS */}
+              {(config?.sections || []).map(section => {
+                const visible = section.fields.filter(f => detectedNames.has(f.name));
+                if (!visible.length) return null;
+                return (
+                  <div key={section.title}>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">{section.title}</p>
+                    <div className="space-y-3">
+                      {visible.map(f => (
+                        <div key={f.name}>
+                          <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
+                          <input type="text" value={textValues[f.name] ?? ""}
+                            onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500" />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })}
 
               {/* Customer signature canvas */}
               <div>
