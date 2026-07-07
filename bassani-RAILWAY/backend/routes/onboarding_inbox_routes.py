@@ -254,7 +254,18 @@ async def list_inbox(
     if not _onboarding_configured():
         return {"items": [], "total": 0, "configured": False}
 
-    match: dict = {"is_outgoing": {"$ne": True}}
+    # Include inbound messages + outgoing thread roots that are linked to
+    # an application (portal confirmation emails, admin-initiated contacts).
+    # Outgoing replies are still excluded — they belong inside the thread view.
+    # Thread roots are identified by thread_root_id == str(_id) (self-referential).
+    match: dict = {"$or": [
+        {"is_outgoing": {"$ne": True}},
+        {
+            "is_outgoing":  True,
+            "application_id": {"$exists": True, "$ne": None},
+            "$expr": {"$eq": ["$thread_root_id", {"$toString": "$_id"}]},
+        },
+    ]}
     addr = _active_onboarding_mailbox_address()
     if addr:
         match["mailbox_address"] = addr
