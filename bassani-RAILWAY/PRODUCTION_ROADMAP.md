@@ -28,7 +28,8 @@
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
-| 17 | Document Template Management | 🟢 Complete | 17.0–17.3 complete — 2026-07-07 |
+| 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07 |
+| 18 | In-Portal Customer Document Signing | 🔵 Scoped | Not started |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -2867,3 +2868,182 @@ The Document Templates page gained a second tab: **Signing Authority**. Super ad
 - [x] Replace flow available at any time — existing signed copies in storage are unaffected
 - [x] Every save is audit logged with actor and change summary
 - [x] Embedded in Document Templates page as second tab — no additional nav item
+
+#### 17.5 — Test Signing Flow (complete 2026-07-07)
+
+Super admin can preview the exact signing experience a customer will see for any document, directly from the Document Templates page. A **Test signing flow** button appears on each document card (super admin only, requires an active version to be uploaded).
+
+Clicking the button opens a full-screen modal with:
+- **Left panel** — live PDF preview of the document
+- **Right panel** — pre-filled form with realistic dummy data and a signature canvas
+
+The form is grouped by section and pre-populated with test defaults matching the document's field layout:
+
+| Document | Sections |
+|---|---|
+| NDA | Company details, Contact details |
+| Customer Information Form | Business details, Contact details, Business address |
+| TQA | Company details, Contact details |
+| Store Onboarding Agreement | Business details, Signatory details, Signature block, Other |
+
+For co-signed documents (NDA, TQA, Store Onboarding Agreement), the Bassani signing block is auto-filled from the configured Signing Authority profile — name, title/position, and both dates embedded automatically. The admin can draw a test customer signature on the canvas.
+
+Clicking **Download signed test PDF** runs the full pdf-lib generation pipeline client-side: all form fields are filled, signature images are embedded in the correct field positions (aspect-ratio-preserving, centred), the form is flattened, and a "TEST DOCUMENT - NOT FOR USE" watermark is applied. The result is a real PDF that looks exactly like what the customer will receive.
+
+**Technical notes:**
+- All field type detection is name-based (not constructor-name-based) because pdf-lib class names are minified in production builds
+- Per-document config (`DOC_CONFIGS` in `DocumentTemplates.js`) declares sections, field labels, test defaults, auto-fill rules, and whether a Bassani co-signer is required — making the modal fully data-driven and reusable for all four documents
+- Signature image drawn to field bounds using `Math.min(scaleX, scaleY)` to preserve aspect ratio
+
+- [x] Test signing flow button on each document card (super admin, active version required)
+- [x] Full-screen modal: PDF preview left, grouped form right
+- [x] Form pre-populated with per-document test defaults
+- [x] Bassani auto-fill card: shows signing authority name/title; amber warning if not configured
+- [x] Customer signature canvas with mouse and touch support
+- [x] Generated PDF matches the real customer output exactly
+- [x] All four documents configured with correct field mappings and section groupings
+
+---
+
+## Phase 18 — In-Portal Customer Document Signing
+
+**Status:** 🟡 In Progress (18.4 pending)
+
+**Goal:** Replace the current "download, print, sign, scan, upload" step in the customer self-service apply flow with an in-portal signing experience. The customer fills in their business and contact details in the wizard, the portal pre-fills all four onboarding documents with their data, the customer draws their signature once per document, and completed signed PDFs are generated and stored against their application automatically — ready for admin review without any manual document handling.
+
+### Motivation
+
+The current Step 5 of the `/apply` wizard asks the customer to:
+1. Download each of the four blank template PDFs
+2. Print, sign by hand, scan or photograph
+3. Upload each signed copy back to the portal
+
+This process creates friction, causes drop-off, and produces inconsistent document quality (hand-filled forms, photo scans, missing fields). All the data needed to fill the documents is already captured in Steps 1–4 of the wizard. Phase 18 closes the loop: that data pre-fills the PDFs, the customer just draws their signature and clicks confirm.
+
+Phase 17 (document template management, test signing flow, signing authority) is the complete prerequisite for this phase. The PDF field maps and generation pipeline already exist.
+
+### Field Mapping — Wizard Data to PDF Fields
+
+All wizard fields are in the `PublicRegistration` model (`backend/routes/public_routes.py`).
+
+**NDA**
+
+| PDF field | Wizard field |
+|---|---|
+| `company_name_1` | `company_name` |
+| `company_address` | `street + suburb + city + province + postal_code` |
+| `company_reg_number` | `registration_number` |
+| `customer_company_name` | `company_name` |
+| `customer_name` | `contact_name` |
+| `customer_position` | `contact_position` |
+| `customer_location` | `city` |
+| `effective_date_es_:date`, `customer_date_es_:date`, `bassani_date_es_:signer:date` | Today's date (auto) |
+| `bassani_position` | Signing authority title (auto) |
+
+**Customer Information Form**
+
+| PDF field | Wizard field |
+|---|---|
+| `business_name` | `trading_name` (fall back to `company_name`) |
+| `company_name` | `company_name` |
+| `company_reg_number` | `registration_number` |
+| `vat_number` | `vat_number` |
+| `full_name` | `contact_name` |
+| `position` | `contact_position` |
+| `phone_number` | `contact_phone` |
+| `email_address` | `contact_email` |
+| `alt_phone` | `contact_alt_phone` |
+| `street_address` | `street` |
+| `suburb` | `suburb` |
+| `city` | `city` |
+| `province` | `province` |
+| `postal_code` | `postal_code` |
+| `date_day/month/year` | Today's date split (auto) |
+
+**TQA**
+
+| PDF field | Wizard field |
+|---|---|
+| `company_name` | `company_name` |
+| `company_reg_number` | `registration_number` |
+| `customer_name` | `contact_name` |
+| `customer_designation` | `contact_position` |
+| `bassani_name` | Signing authority name (auto) |
+| `bassani_date_es_:date`, `customer_date_es_:date` | Today's date (auto) |
+
+**Store Onboarding Agreement**
+
+| PDF field | Wizard field |
+|---|---|
+| `registered_business_name` | `company_name` |
+| `tradingin_name` | `trading_name` |
+| `company_reg_number` | `registration_number` |
+| `vat_reg_number` | `vat_number` |
+| `registered_business_address` | `street + suburb + city + province + postal_code` |
+| `collection_point_address` | `street + suburb + city + province + postal_code` (editable, defaults to registered address) |
+| `signatory_full_name` | `contact_name` |
+| `signatory_id_number` | `signatory_id_number` (**new field — see 18.0**) |
+| `signatory_title` | `contact_position` |
+| `primary_contact_number` | `contact_phone` |
+| `primary_email_address` | `contact_email` |
+| `store_signed_at` | `city` |
+| `store_full_name` | `contact_name` |
+| `store_capacity` | `contact_position` |
+| `store_witness_name` | Customer-entered at signing time |
+| `assigned_reseller_code` | Blank — admin fills on approval |
+| `bassani_date_es_:signer:date`, `store_date_es_:signer:date` | Today's date (auto) |
+
+### Sub-deploys
+
+#### 18.0 — Add `signatory_id_number` to wizard (Complete)
+
+The Store Onboarding Agreement requires the signatory's SA ID number. Added to:
+- `PublicRegistration` model in `public_routes.py` as `signatory_id_number: Optional[str] = ""`
+- Step 1 (Primary Contact) of the `/apply` wizard in `PublicRegister.js` — field sits between Full Name and Position
+- `BLANK` form state initialised to `""`
+
+#### 18.1 — In-portal signing component (Complete)
+
+`DOC_CONFIGS`, `detectFields`, and `generateTestPdf` extracted from `DocumentTemplates.js` to a shared module `frontend/src/utils/pdfSigning.js`. New exports added:
+- `buildPrefill(docType, form)` — maps wizard form state to PDF AcroForm field names for all four documents
+- `generateSignedPdf(pdfBytes, options)` — refactored generator; accepts `mikeImageBytes` explicitly rather than fetching internally; `addWatermark` flag controls test vs real output
+
+`CustomerSigningModal` built in `PublicRegister.js`:
+- Loads PDF from `/api/public/templates/download/{filename}` (no auth)
+- Detects fields via `detectFields`
+- Pre-fills form from `buildPrefill` — customer only edits genuinely unknown fields (e.g. `store_witness_name`)
+- Fetches `GET /api/public/signing-authority-meta` for Bassani name/title auto-fill; signature image not embedded (countersigned on approval — see 18.4)
+- Same split-panel layout as `TestSigningModal` (PDF preview left, form + canvas right); right panel goes full-width on mobile
+
+New public endpoint `GET /api/public/signing-authority-meta` returns `{ name, title }` only — intentionally omits the signature image which remains authenticated-only.
+
+#### 18.2 — Replace document-first step of the apply wizard (Complete)
+
+Wizard step order rewritten from `Documents → Business → Contact → Address → Info` to `Business Details → Primary Contact → Business Address → Additional Info → Sign Documents`. Data collection is front-loaded so documents can be pre-filled from it.
+
+New Step 4 (Sign Documents):
+- Four in-portal signing cards — one per document; each opens `CustomerSigningModal` on click
+- CIPC certificate kept as a traditional file upload (government document, cannot be pre-filled)
+- Submit button disabled until all four documents signed and CIPC uploaded
+
+#### 18.3 — Upload signed PDFs to R2 (Complete)
+
+Each `CustomerSigningModal` generates the signed PDF client-side via `generateSignedPdf` and immediately uploads it to R2 via `POST /api/public/documents/upload?session_id={id}&doc_type={type}`. The response `{ doc_type, r2_key, filename, … }` is stored in the parent's `uploads` state and submitted as `documents[]` on application submission. No backend changes required — the existing `REQUIRED_DOC_TYPES` map already covers all four signed documents.
+
+#### 18.4 — Admin review: "Signed in portal" badge (Pending)
+
+On the customer onboarding application review page, signed PDFs generated in-portal should display a "Signed in portal" badge to distinguish them from manually uploaded scans. The existing PDF viewer component handles preview — no new viewer needed.
+
+This sub-deploy will also be the natural point to add Bassani countersigning — admin can embed the Bassani signature block when approving the application, producing the fully countersigned set of documents.
+
+### Definition of Done
+
+- [x] `signatory_id_number` captured in wizard and stored in application
+- [x] `CustomerSigningModal` component built for all four documents
+- [x] PDF generation pipeline extracted to `pdfSigning.js` shared between admin test and customer flow
+- [x] `/apply` wizard reordered — data collection first, signing last (Step 4)
+- [x] Pre-fill logic maps wizard data to PDF fields with no manual entry required for known fields
+- [x] Bassani name and title auto-filled from public signing meta endpoint; signature pending countersign on approval (18.4)
+- [x] Signed PDFs uploaded to R2 and attached to the application
+- [ ] Admin review queue shows "Signed in portal" badge on in-portal signed documents (18.4)
+- [x] All four documents can be signed in a single session before submission

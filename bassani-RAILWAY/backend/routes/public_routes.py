@@ -49,11 +49,12 @@ class PublicRegistration(BaseModel):
     business_type:       str = "Pharmacy"
 
     # Step 2 — Primary contact
-    contact_name:      str
-    contact_position:  Optional[str] = ""
-    contact_email:     str
-    contact_phone:     str
-    contact_alt_phone: Optional[str] = ""
+    contact_name:        str
+    contact_position:    Optional[str] = ""
+    contact_email:       str
+    contact_phone:       str
+    contact_alt_phone:   Optional[str] = ""
+    signatory_id_number: Optional[str] = ""
 
     # Step 3 — Business address
     street:      str
@@ -74,6 +75,18 @@ def _validate_session(session_id: str) -> None:
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session ID")
+
+
+@router.get("/signing-authority-meta")
+async def get_public_signing_meta():
+    """
+    Returns Bassani signing authority name and title for public document pre-fill.
+    Intentionally omits the signature image — that is only available to authenticated admins.
+    """
+    doc = await col("signing_authority").find_one({}, NO_ID)
+    if not doc:
+        return {"name": "", "title": ""}
+    return {"name": doc.get("name", ""), "title": doc.get("title", "")}
 
 
 @router.get("/referral/{referral_code}")

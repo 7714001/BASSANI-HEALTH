@@ -280,16 +280,21 @@ Versions are never deleted. Every version uploaded is permanently stored and can
 
 Every upload and every activation is recorded in the portal's audit log. The entry captures who performed the action, which document and version were affected, and any release notes provided. This creates a full paper trail of document changes — important for compliance purposes.
 
-### Preparing Documents for Future E-Signing
+### Testing the Signing Flow (Super Admin)
 
-When Bassani is ready to enable in-portal e-signing, the documents must have signature fields embedded directly in the PDF. The portal reads the field positions from the PDF itself, which means:
+Once a document has active AcroForm fields and an active version uploaded, you can preview the exact experience a customer will have when signing — with realistic dummy data pre-filled and Bassani's block completed automatically.
 
-- Prepare the PDF in Adobe Acrobat or LibreOffice with AcroForm fields for: signature, full name, date, company name
-- Upload it via this page as a new version
-- The e-signing module will automatically detect and use the field positions in that PDF
-- Updating the PDF later (new version with revised field positions) works the same way — upload and activate
+Click the **Test signing flow** button on any document card (visible to super admin only, requires an active version).
 
-The info panel at the top of the Documents tab shows this guidance whenever you are logged in as super admin.
+A full-screen panel opens:
+- **Left side** — live PDF preview of the current document
+- **Right side** — a pre-filled form grouped by section, plus a signature canvas at the bottom
+
+The form arrives pre-filled with realistic test data (company name, registration number, contact details, address). For co-signed documents, the **Bassani Health** card at the top shows the signing authority profile that will be auto-embedded — name, title, and today's date. If the signing authority has not been configured, an amber warning appears.
+
+Edit any form field if you want to test with specific data. Draw a test signature on the canvas. Click **Download signed test PDF** to generate the completed document — this runs the same PDF generation pipeline the customer will use: fields filled, signature embedded in the correct position, Bassani's block completed, document flattened, and a "TEST DOCUMENT - NOT FOR USE" watermark applied.
+
+The downloaded PDF is the exact output the customer will receive. Use this to verify that all fields line up correctly, the signature fits the allocated space, and the document reads as intended before enabling the customer signing flow.
 
 ---
 
@@ -1343,21 +1348,33 @@ Customers can register directly without contacting Bassani staff or going throug
 
 **For a customer registering directly:**
 1. Navigate to `portal.bassanihealth.com/apply`
-2. Download each of the four Bassani Health document templates, complete and sign them
-3. Upload all five signed documents (four Bassani templates plus the CIPC Company Registration Certificate)
-4. Complete the five-step form: Business Details, Contact, Address, Additional Information
-5. Submit — you receive a confirmation email with a reference number immediately
+2. Complete the four data-collection steps: Business Details, Primary Contact, Business Address, Additional Information
+3. On the final step (Sign Documents), each of the four Bassani Health documents opens pre-filled with the details already entered — the customer reviews the data, draws their signature on the canvas, and clicks Sign
+4. Upload the CIPC Company Registration Certificate (the one document that cannot be pre-filled)
+5. Click Submit — a confirmation email with a reference number is sent immediately
 6. Bassani staff review the application and will be in touch within 2 to 3 business days
 
 **For a customer referred by a reseller:**
 1. The reseller shares their personal referral link (see below)
 2. The customer opens the link — a "Referred by [Reseller Name]" banner confirms the association
-3. The customer completes the same registration process
+3. The customer completes the same five-step process
 4. On approval, the customer account is automatically linked to the referring reseller — no manual linking required
+
+### In-portal document signing
+
+On the final step of the wizard (Sign Documents) the customer signs all four onboarding documents without leaving the browser. Each document:
+
+- Opens in a full-screen panel with the original PDF visible on the left and a pre-filled form on the right
+- All fields populated from the customer's own answers — company name, registration number, contact details, address, signatory ID number — appear already filled in. The customer can correct any field before signing
+- Bassani Health's name, title, and today's date are auto-embedded in Bassani's text fields. The Bassani signature block is completed by a Bassani representative on application approval
+- The customer draws their signature on the canvas and clicks Sign Document
+- The signed PDF is generated in the browser and uploaded automatically — no download or email required
+
+A green tick appears on the document card once each document is signed. The customer can re-sign any document before submitting if they need to correct information. The Submit button is locked until all four documents are signed and the CIPC certificate is uploaded.
 
 ### Reseller referral links
 
-Resellers have a personal referral link inside the customer onboarding wizard (Step 1, Documents tab). The link looks like: `portal.bassanihealth.com/apply?ref=RESELLER_CODE`
+Resellers have a personal referral link available from inside the portal. The link looks like: `portal.bassanihealth.com/apply?ref=RESELLER_CODE`
 
 Resellers can copy this link and share it with prospective customers by email, WhatsApp, or any other channel. The link is permanent and does not expire.
 

@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CheckCircle, Building2, User, MapPin, ClipboardList,
-  FileText, Download, Upload, X, Loader2, AlertCircle,
+  FileText, Upload, X, Loader2, AlertCircle, PenLine,
 } from "lucide-react";
+import { DOC_CONFIGS, detectFields, generateSignedPdf, buildPrefill } from "../utils/pdfSigning";
 import api from "../api";
 import toast from "react-hot-toast";
 
@@ -27,33 +28,26 @@ const ORDER_VOLUMES = [
 ];
 
 const STEPS = [
-  { label: "Documents",        icon: FileText    },
-  { label: "Business Details", icon: Building2   },
-  { label: "Primary Contact",  icon: User        },
-  { label: "Business Address", icon: MapPin      },
+  { label: "Business Details", icon: Building2    },
+  { label: "Primary Contact",  icon: User         },
+  { label: "Business Address", icon: MapPin       },
   { label: "Additional Info",  icon: ClipboardList },
+  { label: "Sign Documents",   icon: PenLine      },
 ];
 
-const TEMPLATES = [
-  { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
-  { filename: "customer-information-form.pdf",  label: "Customer Information Form"  },
-  { filename: "nda.pdf",                        label: "NDA"                        },
-  { filename: "tqa.pdf",                        label: "TQA Document"               },
-];
-
-const REQUIRED_DOCS = [
-  { type: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
-  { type: "customer_information_form",  label: "Signed Customer Information Form"  },
-  { type: "nda",                        label: "Signed NDA"                        },
-  { type: "tqa",                        label: "Signed TQA Document"               },
-  { type: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
+// Documents that require in-portal signing
+const SIGN_DOCS = [
+  { type: "nda",                        label: "Non-Disclosure Agreement",   filename: "nda.pdf"                        },
+  { type: "customer_information_form",  label: "Customer Information Form",  filename: "customer-information-form.pdf"  },
+  { type: "tqa",                        label: "Trading Quality Agreement",  filename: "tqa.pdf"                        },
+  { type: "store_onboarding_agreement", label: "Store Onboarding Agreement", filename: "store-onboarding-agreement.pdf" },
 ];
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
   vat_number: "", business_type: "Pharmacy",
   contact_name: "", contact_position: "", contact_email: "",
-  contact_phone: "", contact_alt_phone: "",
+  contact_phone: "", contact_alt_phone: "", signatory_id_number: "",
   street: "", suburb: "", city: "", province: "",
   postal_code: "", country: "South Africa",
   ordering_volume: "", referral_source: "", notes: "",
@@ -105,61 +99,298 @@ function TextArea({ value, onChange, placeholder, rows = 3 }) {
   );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Customer Signing Modal ─────────────────────────────────────────────────────
 
-export default function PublicRegister() {
-  const [searchParams] = useSearchParams();
-  const refCode        = searchParams.get("ref") || null;
+function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, sessionId, onSigned, onClose }) {
+  const [loading,    setLoading   ] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error,      setError     ] = useState(null);
+  const [pdfUrl,     setPdfUrl    ] = useState(null);
+  const [pdfBytes,   setPdfBytes  ] = useState(null);
+  const [fields,     setFields    ] = useState([]);
+  const [textValues, setTextValues] = useState({});
+  const [sigMeta,    setSigMeta   ] = useState(null);
+  const canvasRef = useRef(null);
+  const isDrawing = useRef(false);
+  const lastPos   = useRef({ x: 0, y: 0 });
+  const hasMark   = useRef(false);
 
-  const [sessionId]            = useState(() => crypto.randomUUID());
-  const [step,        setStep] = useState(0);
-  const [form,        setForm] = useState(BLANK);
-  const [submitting,  setSubmitting] = useState(false);
-  const [reference,   setReference] = useState(null);
-
-  const [referrerName, setReferrerName] = useState(null);
-
-  const [uploads,      setUploads]      = useState({});
-  const [uploadingDoc, setUploadingDoc] = useState(null);
-  const [removingDoc,  setRemovingDoc]  = useState(null);
-  const fileInputRefs = useRef({});
-
-  const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
-
-  // Validate referral code on mount
   useEffect(() => {
-    if (!refCode) return;
-    api.get(`/api/public/referral/${refCode}`)
-      .then(r => setReferrerName(r.data.reseller_name))
-      .catch(() => { /* silently ignore invalid refs */ });
-  }, [refCode]);
+    let url;
+    Promise.all([
+      api.get(`/api/public/templates/download/${filename}`, { responseType: "arraybuffer" }),
+      api.get("/api/public/signing-authority-meta").catch(() => null),
+    ]).then(async ([pdfRes, metaRes]) => {
+      const bytes = new Uint8Array(pdfRes.data);
+      setPdfBytes(bytes);
+      url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      setPdfUrl(url);
+      setSigMeta(metaRes?.data || null);
 
-  // ── Document helpers ────────────────────────────────────────────────────────
+      const detected = await detectFields(bytes);
+      setFields(detected);
 
-  const downloadTemplate = async (filename, label) => {
-    try {
-      const res = await api.get(`/api/public/templates/download/${filename}`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      const a   = document.createElement("a");
-      a.href = url; a.download = label + ".pdf"; a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Download failed — the file may not be available yet");
-    }
+      const cfg      = DOC_CONFIGS[docType];
+      const prefill  = buildPrefill(docType, wizardForm);
+      const detected_ = new Set(detected.map(f => f.name));
+      const init = {};
+      (cfg?.sections || []).forEach(section =>
+        section.fields.forEach(f => {
+          if (detected_.has(f.name) && !cfg.isAutoFill(f.name)) {
+            init[f.name] = prefill[f.name] ?? "";
+          }
+        })
+      );
+      setTextValues(init);
+    }).catch(() => setError("Failed to load document. Please try again."))
+      .finally(() => setLoading(false));
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [docType, filename]); // eslint-disable-line
+
+  const getCanvasPos = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const r   = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - r.left) * (canvas.width / r.width),
+      y: (src.clientY - r.top)  * (canvas.height / r.height),
+    };
+  };
+  const startDraw = (e) => { e.preventDefault(); isDrawing.current = true; lastPos.current = getCanvasPos(e); };
+  const draw = (e) => {
+    e.preventDefault();
+    if (!isDrawing.current) return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const pos = getCanvasPos(e);
+    ctx.strokeStyle = "#111827"; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
+    lastPos.current = pos; hasMark.current = true;
+  };
+  const endDraw = () => { isDrawing.current = false; };
+  const clearCanvas = () => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    hasMark.current = false;
   };
 
-  const uploadDoc = async (docType, file) => {
-    setUploadingDoc(docType);
+  const config      = DOC_CONFIGS[docType];
+  const sigFields   = fields.filter(f => f.type === "Signature");
+  const mikeFieldName = config?.hasBassaniSig
+    ? (sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null)
+    : null;
+  const detectedNames = new Set(fields.map(f => f.name));
+
+  const handleSign = async () => {
+    setGenerating(true);
     try {
-      const fd = new FormData();
+      const customerSigDataUrl = (canvasRef.current && hasMark.current)
+        ? canvasRef.current.toDataURL("image/png")
+        : null;
+
+      const pdfResult = await generateSignedPdf(pdfBytes, {
+        textValues,
+        signingProfile: sigMeta,
+        mikeFieldName,
+        mikeImageBytes: null,   // Bassani countersigns on approval — not embedded client-side
+        customerSigDataUrl,
+        config,
+        addWatermark: false,
+      });
+
+      const blob = new Blob([pdfResult], { type: "application/pdf" });
+      const file = new File([blob], `${docType}-signed.pdf`, { type: "application/pdf" });
+      const fd   = new FormData();
       fd.append("file", file);
       const { data } = await api.post(
         `/api/public/documents/upload?session_id=${sessionId}&doc_type=${docType}`,
         fd,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      setUploads(prev => ({ ...prev, [docType]: data }));
-      toast.success("Document uploaded");
+      onSigned(data);
+      toast.success(`${docLabel} signed`);
+      onClose();
+    } catch (err) {
+      console.error("CustomerSigningModal sign error:", err);
+      toast.error("Failed to sign document. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <PenLine size={16} className="text-bassani-600" />
+          <span className="text-sm font-semibold text-gray-800">{docLabel}</span>
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+          <X size={18} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 size={24} className="animate-spin text-bassani-500" />
+            <p className="text-sm text-gray-500">Loading document…</p>
+          </div>
+        </div>
+      ) : error ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <AlertCircle size={24} className="text-amber-400 mx-auto mb-2" />
+            <p className="text-sm text-gray-700">{error}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex">
+
+          {/* Left: document preview */}
+          <div className="flex-1 p-4 min-w-0 hidden md:block">
+            {pdfUrl && (
+              <iframe src={pdfUrl} title={docLabel}
+                className="w-full h-full rounded-xl border border-gray-200 bg-white" />
+            )}
+          </div>
+
+          {/* Right: signing form */}
+          <div className="w-full md:w-80 shrink-0 md:border-l border-gray-200 bg-white flex flex-col">
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+              {/* Bassani auto-fill card */}
+              {config?.hasBassaniSig && (
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-0.5">
+                    {sigMeta?.name ? (
+                      <>
+                        <p className="text-xs font-semibold text-blue-800">{sigMeta.name}</p>
+                        <p className="text-xs text-blue-600">{sigMeta.title}</p>
+                      </>
+                    ) : (
+                      <p className="text-xs font-semibold text-blue-800">Bassani Health (Pty) Ltd</p>
+                    )}
+                    <p className="text-[10px] text-blue-500 mt-1">Name, title, and today's date auto-filled. Countersignature completed on approval.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Pre-filled form fields */}
+              {(config?.sections || []).map(section => {
+                const visible = section.fields.filter(f =>
+                  detectedNames.has(f.name) && !config.isAutoFill(f.name)
+                );
+                if (!visible.length) return null;
+                return (
+                  <div key={section.title}>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">{section.title}</p>
+                    <div className="space-y-3">
+                      {visible.map(f => (
+                        <div key={f.name}>
+                          <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
+                          <input
+                            type="text"
+                            value={textValues[f.name] ?? ""}
+                            onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Signature canvas */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Your signature</p>
+                  <button onClick={clearCanvas} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1">Clear</button>
+                </div>
+                <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+                  <canvas
+                    ref={canvasRef} width={300} height={120}
+                    className="w-full touch-none cursor-crosshair" style={{ display: "block" }}
+                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">Draw your signature above — embedded in the signed document</p>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-100 shrink-0">
+              <button
+                onClick={handleSign}
+                disabled={generating}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600
+                  hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl
+                  transition-colors"
+              >
+                {generating
+                  ? <><Loader2 size={13} className="animate-spin" /> Signing…</>
+                  : <><PenLine size={13} /> Sign document</>
+                }
+              </button>
+            </div>
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
+export default function PublicRegister() {
+  const [searchParams] = useSearchParams();
+  const refCode        = searchParams.get("ref") || null;
+
+  const [sessionId]           = useState(() => crypto.randomUUID());
+  const [step,       setStep] = useState(0);
+  const [form,       setForm] = useState(BLANK);
+  const [submitting, setSubmitting] = useState(false);
+  const [reference,  setReference] = useState(null);
+
+  const [referrerName, setReferrerName] = useState(null);
+
+  // uploads holds both portal-signed PDFs and the CIPC manual upload
+  const [uploads,      setUploads]      = useState({});
+  const [uploadingDoc, setUploadingDoc] = useState(null);
+  const [removingDoc,  setRemovingDoc]  = useState(null);
+  const [signingDoc,   setSigningDoc]   = useState(null); // doc type currently open in CustomerSigningModal
+  const cipcFileRef = useRef(null);
+
+  const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+
+  useEffect(() => {
+    if (!refCode) return;
+    api.get(`/api/public/referral/${refCode}`)
+      .then(r => setReferrerName(r.data.reseller_name))
+      .catch(() => {});
+  }, [refCode]);
+
+  // ── Document helpers ────────────────────────────────────────────────────────
+
+  const uploadCipc = async (file) => {
+    setUploadingDoc("cipc_certificate");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post(
+        `/api/public/documents/upload?session_id=${sessionId}&doc_type=cipc_certificate`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      setUploads(prev => ({ ...prev, cipc_certificate: data }));
+      toast.success("CIPC certificate uploaded");
     } catch {
       toast.error("Upload failed — please try again");
     } finally {
@@ -183,23 +414,27 @@ export default function PublicRegister() {
 
   const validateStep = () => {
     if (step === 0) {
-      const missing = REQUIRED_DOCS.filter(d => !uploads[d.type]);
-      if (missing.length) {
-        toast.error(`Upload all 5 required documents (${missing.length} remaining)`);
-        return false;
-      }
-    }
-    if (step === 1) {
       if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
     }
-    if (step === 2) {
+    if (step === 1) {
       if (!form.contact_name.trim())  { toast.error("Contact name is required"); return false; }
       if (!form.contact_email.trim()) { toast.error("Contact email is required"); return false; }
       if (!form.contact_phone.trim()) { toast.error("Contact phone is required"); return false; }
     }
-    if (step === 3) {
+    if (step === 2) {
       if (!form.street.trim()) { toast.error("Street address is required"); return false; }
       if (!form.city.trim())   { toast.error("City is required"); return false; }
+    }
+    if (step === 4) {
+      const missingSigned = SIGN_DOCS.filter(d => !uploads[d.type]);
+      if (missingSigned.length) {
+        toast.error(`Sign all 4 documents before submitting (${missingSigned.length} remaining)`);
+        return false;
+      }
+      if (!uploads.cipc_certificate) {
+        toast.error("Upload your CIPC Company Registration Certificate before submitting");
+        return false;
+      }
     }
     return true;
   };
@@ -253,141 +488,157 @@ export default function PublicRegister() {
     );
   }
 
-  // ── Step 0 — Documents ──────────────────────────────────────────────────────
+  // ── Step 4 — Sign Documents ─────────────────────────────────────────────────
 
-  const uploadedCount = Object.keys(uploads).length;
-  const allUploaded   = uploadedCount === REQUIRED_DOCS.length;
+  const signedCount = SIGN_DOCS.filter(d => uploads[d.type]).length;
+  const allSigned   = signedCount === SIGN_DOCS.length;
+  const hasCipc     = !!uploads.cipc_certificate;
+  const readyToSubmit = allSigned && hasCipc;
 
-  const step0Content = (
+  const step4Content = (
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-        <p className="text-xs font-semibold text-blue-800 mb-1">Before you begin</p>
+        <p className="text-xs font-semibold text-blue-800 mb-1">Sign your onboarding documents</p>
         <p className="text-xs text-blue-700 leading-relaxed">
-          Download each document below, complete and sign it, then upload the signed version.
-          All five documents are required before you can submit your application.
+          Your details have been pre-filled from the information you provided. Review each document,
+          draw your signature, and click Sign. All four documents must be signed before you can submit.
         </p>
       </div>
 
-      {/* Download templates */}
-      <div>
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-          Step A — Download and complete
-        </p>
-        <div className="space-y-2">
-          {TEMPLATES.map(t => (
-            <div key={t.filename}
-              className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText size={13} className="text-bassani-600 shrink-0" />
-                <span className="text-xs font-medium text-gray-700 truncate">{t.label}</span>
-              </div>
-              <button
-                onClick={() => downloadTemplate(t.filename, t.label)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600
-                  hover:text-bassani-700 shrink-0 ml-3 transition-colors">
-                <Download size={12} />
-                Download
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Upload signed docs */}
+      {/* In-portal signing cards */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Step B — Upload signed documents
-          </p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Onboarding documents</p>
           <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-            allUploaded ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+            allSigned ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
           }`}>
-            {uploadedCount} / {REQUIRED_DOCS.length}
+            {signedCount} / {SIGN_DOCS.length} signed
           </span>
         </div>
-
         <div className="space-y-2">
-          {REQUIRED_DOCS.map(doc => {
-            const uploaded = uploads[doc.type];
-            const loading  = uploadingDoc === doc.type;
-            const removing = removingDoc  === doc.type;
+          {SIGN_DOCS.map(doc => {
+            const signed = !!uploads[doc.type];
             return (
-              <div key={doc.type}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
-                  uploaded ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
-                }`}>
+              <div
+                key={doc.type}
+                className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
+                  signed ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+                }`}
+              >
                 <div className="shrink-0">
-                  {loading ? (
-                    <Loader2 size={14} className="text-bassani-500 animate-spin" />
-                  ) : uploaded ? (
-                    <CheckCircle size={14} className="text-green-600" />
-                  ) : (
-                    <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300" />
-                  )}
+                  {signed
+                    ? <CheckCircle size={15} className="text-green-600" />
+                    : <FileText    size={15} className="text-gray-400"  />
+                  }
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-xs font-semibold truncate ${uploaded ? "text-green-800" : "text-gray-700"}`}>
+                  <p className={`text-xs font-semibold truncate ${signed ? "text-green-800" : "text-gray-700"}`}>
                     {doc.label}
                   </p>
-                  {uploaded && (
-                    <p className="text-[10px] text-green-600 truncate mt-0.5">{uploaded.filename}</p>
+                  {signed && (
+                    <p className="text-[10px] text-green-600 mt-0.5">Signed and saved</p>
                   )}
                 </div>
-                {uploaded ? (
+                {signed ? (
                   <button
-                    onClick={() => removeDoc(doc.type)}
+                    onClick={() => { removeDoc(doc.type); }}
                     disabled={!!removingDoc}
-                    title="Remove and re-upload"
-                    className="shrink-0 p-1 rounded hover:bg-green-100 text-green-600
-                      hover:text-red-500 transition-colors disabled:opacity-50">
-                    {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                    title="Remove and re-sign"
+                    className="shrink-0 p-1 rounded hover:bg-green-100 text-green-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    {removingDoc === doc.type ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
                   </button>
                 ) : (
-                  <>
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                      className="hidden"
-                      ref={el => { fileInputRefs.current[doc.type] = el; }}
-                      onChange={e => {
-                        if (e.target.files[0]) uploadDoc(doc.type, e.target.files[0]);
-                        e.target.value = "";
-                      }}
-                    />
-                    <button
-                      onClick={() => fileInputRefs.current[doc.type]?.click()}
-                      disabled={loading || !!uploadingDoc}
-                      className="shrink-0 flex items-center gap-1 text-xs font-semibold
-                        text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors">
-                      <Upload size={11} />
-                      Upload
-                    </button>
-                  </>
+                  <button
+                    onClick={() => setSigningDoc(doc)}
+                    className="shrink-0 flex items-center gap-1.5 text-xs font-semibold
+                      text-bassani-600 hover:text-bassani-700 border border-bassani-200 hover:border-bassani-300
+                      bg-white hover:bg-bassani-50 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    <PenLine size={11} />
+                    Sign
+                  </button>
                 )}
               </div>
             );
           })}
         </div>
-
-        {!allUploaded && (
-          <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
-            <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700">
-              All 5 documents must be uploaded before you can continue.
-            </p>
-          </div>
-        )}
       </div>
+
+      {/* CIPC certificate upload */}
+      <div>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Company registration</p>
+        <div className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
+          hasCipc ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+        }`}>
+          <div className="shrink-0">
+            {uploadingDoc === "cipc_certificate"
+              ? <Loader2 size={15} className="text-bassani-500 animate-spin" />
+              : hasCipc
+                ? <CheckCircle size={15} className="text-green-600" />
+                : <FileText    size={15} className="text-gray-400"  />
+            }
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`text-xs font-semibold truncate ${hasCipc ? "text-green-800" : "text-gray-700"}`}>
+              CIPC Company Registration Certificate
+            </p>
+            {hasCipc
+              ? <p className="text-[10px] text-green-600 mt-0.5">{uploads.cipc_certificate?.filename}</p>
+              : <p className="text-[10px] text-gray-400 mt-0.5">Upload your official CIPC certificate (PDF, JPG, or PNG)</p>
+            }
+          </div>
+          {hasCipc ? (
+            <button
+              onClick={() => removeDoc("cipc_certificate")}
+              disabled={!!removingDoc}
+              title="Remove and re-upload"
+              className="shrink-0 p-1 rounded hover:bg-green-100 text-green-500 hover:text-red-400 transition-colors disabled:opacity-50"
+            >
+              {removingDoc === "cipc_certificate" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+            </button>
+          ) : (
+            <>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                className="hidden"
+                ref={cipcFileRef}
+                onChange={e => {
+                  if (e.target.files[0]) uploadCipc(e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                onClick={() => cipcFileRef.current?.click()}
+                disabled={!!uploadingDoc}
+                className="shrink-0 flex items-center gap-1 text-xs font-semibold
+                  text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors"
+              >
+                <Upload size={11} />
+                Upload
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {!readyToSubmit && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700">
+            Sign all 4 documents and upload your CIPC certificate to submit your application.
+          </p>
+        </div>
+      )}
     </div>
   );
 
   // ── Step content ────────────────────────────────────────────────────────────
 
   const stepContent = [
-    step0Content,
-
-    // Step 1 — Business Details
-    <div key="1" className="space-y-4">
+    // Step 0 — Business Details
+    <div key="0" className="space-y-4">
       <Field label="Registered Company Name" required>
         <TextInput value={form.company_name} onChange={upd("company_name")} placeholder="e.g. Wellness Pharma (Pty) Ltd" autoFocus />
       </Field>
@@ -409,10 +660,10 @@ export default function PublicRegister() {
       </Field>
     </div>,
 
-    // Step 2 — Primary Contact
-    <div key="2" className="space-y-4">
+    // Step 1 — Primary Contact
+    <div key="1" className="space-y-4">
       <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
-        Please provide details for the person who will be responsible for placing orders.
+        Please provide details for the person signing the onboarding documents.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Full Name" required>
@@ -422,6 +673,9 @@ export default function PublicRegister() {
           <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" />
         </Field>
       </div>
+      <Field label="ID Number">
+        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="9001010000087" />
+      </Field>
       <Field label="Email Address" required>
         <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" />
       </Field>
@@ -435,8 +689,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 3 — Business Address
-    <div key="3" className="space-y-4">
+    // Step 2 — Business Address
+    <div key="2" className="space-y-4">
       <Field label="Street Address" required>
         <TextInput value={form.street} onChange={upd("street")} placeholder="123 Health Street" autoFocus />
       </Field>
@@ -464,8 +718,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 4 — Additional Information
-    <div key="4" className="space-y-4">
+    // Step 3 — Additional Information
+    <div key="3" className="space-y-4">
       <Field label="Expected Monthly Order Volume">
         <SelectInput value={form.ordering_volume} onChange={upd("ordering_volume")}>
           <option value="">— Select range —</option>
@@ -487,6 +741,9 @@ export default function PublicRegister() {
           placeholder="Any special requirements, delivery preferences, or other information…" rows={4} />
       </Field>
     </div>,
+
+    // Step 4 — Sign Documents
+    step4Content,
   ];
 
   // ── Page layout ─────────────────────────────────────────────────────────────
@@ -586,36 +843,45 @@ export default function PublicRegister() {
             {step < STEPS.length - 1 ? (
               <button
                 onClick={next}
-                disabled={step === 0 && !allUploaded}
-                title={step === 0 && !allUploaded ? "Upload all 5 documents to continue" : undefined}
-                className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-40
-                  disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors">
+                className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-sm
+                  font-semibold rounded-lg transition-colors">
                 Continue
               </button>
             ) : (
-              <button onClick={submit} disabled={submitting}
-                className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 text-white text-sm
-                  font-semibold rounded-lg transition-colors disabled:opacity-50">
-                {submitting ? <span className="flex items-center gap-2"><Loader2 size={13} className="animate-spin" />Submitting…</span> : "Submit Application"}
+              <button
+                onClick={submit}
+                disabled={submitting || !readyToSubmit}
+                title={!readyToSubmit ? "Sign all documents and upload CIPC certificate to submit" : undefined}
+                className="px-5 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-40
+                  disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                {submitting
+                  ? <span className="flex items-center gap-2"><Loader2 size={13} className="animate-spin" />Submitting…</span>
+                  : "Submit Application"
+                }
               </button>
             )}
           </div>
         </div>
 
-        {/* Summary sidebar (shown after step 1) */}
-        {step > 1 && (
+        {/* Summary sidebar (shown after step 0) */}
+        {step > 0 && (
           <div className="bg-white rounded-xl border border-gray-100 px-5 py-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Application Summary</p>
             <div className="space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Documents</span>
-                <span className="font-medium text-green-700">{uploadedCount} / {REQUIRED_DOCS.length} uploaded</span>
-              </div>
               {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
               {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}
-              {step > 2 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
-              {step > 2 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
-              {step > 3 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
+              {step > 1 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
+              {step > 1 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
+              {step > 2 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
+              {step >= 4 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Documents</span>
+                  <span className={`font-medium ${allSigned && hasCipc ? "text-green-700" : "text-amber-600"}`}>
+                    {signedCount}/4 signed{hasCipc ? " + CIPC" : ""}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -625,6 +891,19 @@ export default function PublicRegister() {
           Bassani Health (Pty) Ltd &nbsp;&middot;&nbsp; Licensed medicinal cannabis distributor &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami
         </p>
       </div>
+
+      {/* Customer signing modal */}
+      {signingDoc && (
+        <CustomerSigningModal
+          docType={signingDoc.type}
+          docLabel={signingDoc.label}
+          filename={signingDoc.filename}
+          form={form}
+          sessionId={sessionId}
+          onSigned={(data) => setUploads(prev => ({ ...prev, [signingDoc.type]: data }))}
+          onClose={() => setSigningDoc(null)}
+        />
+      )}
     </div>
   );
 }
