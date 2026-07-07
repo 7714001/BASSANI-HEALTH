@@ -2830,7 +2830,23 @@ The blue info panel in the view instructs super_admin to embed AcroForm fields (
 - [x] Route added to `App.js` at `/doc-templates`, `adminOnly`
 - [x] Nav item added to `ADMIN_NAV` in `UI.js`, `superAdminOnly: true`
 
-### Definition of Done — Phase 17
+#### 17.4 — Signing Authority (complete 2026-07-07)
+
+The Document Templates page gained a second tab: **Signing Authority**. Super admin configures the CEO signatory profile once — name, title, signing location, and a signature image. This profile is automatically embedded into Bassani's signing block on every co-signed onboarding document when a customer signs, so the CEO never has to actively participate per document. The date on both signing blocks is set to the day the customer signs.
+
+**Two capture methods for the signature image:**
+- **Upload photo/scan** — sign on paper with a pen, photograph or scan it, upload the image. A client-side background removal pass (luminance threshold, adjustable sensitivity slider) strips the white background so the signature sits cleanly on documents without a white box. Works best with good contrast.
+- **Draw in app** — HTML5 canvas with mouse/touch support. Functional on desktop and mobile. The upload method produces a higher quality result.
+
+**Preview before saving:** A document mockup shows exactly how the signature, name, title, location, and date will appear embedded in a signed document, before committing.
+
+**Backend — `signing_authority_routes.py`:**
+- `GET /api/signing-authority/` — returns current profile metadata
+- `POST /api/signing-authority/` — save/replace (form fields + optional file or base64 drawn PNG); signature stored in R2 at `signing-authority/signature.png`
+- `GET /api/signing-authority/signature` — stream signature image for preview and PDF embedding
+- Every save is audit logged
+
+**Frontend:** Embedded as the second tab of the Document Templates page. No separate nav item.
 
 - [x] Super admin can upload a new PDF version from the portal — no redeployment required
 - [x] Uploaded version is immediately served to any download endpoint (public and onboarding)
@@ -2840,3 +2856,14 @@ The blue info panel in the view instructs super_admin to embed AcroForm fields (
 - [x] Static file fallback is in place — sites without any managed version still serve the baked-in file
 - [x] View is accessible to all admins for read/download; upload and rollback gated to super_admin only
 - [x] Version numbering is sequential and auto-incremented (v1, v2, v3…)
+
+### Signing Authority Definition of Done
+
+- [x] Super admin can set name, title, and signing location
+- [x] Signature captured via photo upload or in-app canvas draw
+- [x] White background removal with adjustable sensitivity for uploaded photos
+- [x] Live document preview before saving
+- [x] Signature stored securely in R2; no other staff can view or retrieve it
+- [x] Replace flow available at any time — existing signed copies in storage are unaffected
+- [x] Every save is audit logged with actor and change summary
+- [x] Embedded in Document Templates page as second tab — no additional nav item

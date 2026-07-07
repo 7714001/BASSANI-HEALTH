@@ -289,7 +289,47 @@ When Bassani is ready to enable in-portal e-signing, the documents must have sig
 - The e-signing module will automatically detect and use the field positions in that PDF
 - Updating the PDF later (new version with revised field positions) works the same way — upload and activate
 
-The info panel at the top of the Document Templates page shows this guidance in the portal whenever you are logged in as super admin.
+The info panel at the top of the Documents tab shows this guidance whenever you are logged in as super admin.
+
+---
+
+### Step 8c — Set Up the Signing Authority (Super Admin)
+
+The **Signing Authority** is the profile used to automatically complete Bassani's signing block on every co-signed onboarding document. Once configured, you never need to actively sign each document — the portal embeds your name, title, location, and signature image automatically when a customer signs.
+
+Go to **Admin > Document Templates** in the left sidebar, then click the **Signing Authority** tab.
+
+#### Setting up your signature
+
+You have two options:
+
+**Option 1 — Upload a photo or scan (recommended)**
+
+Sign your name on plain white paper with a dark pen. Take a clear photograph or scan it, then upload the image file (PNG, JPG, or WebP, up to 5 MB).
+
+After uploading, toggle **Remove white background** on to strip the paper colour — the signature will appear as clean dark ink on document pages. Use the **Sensitivity** slider to adjust the threshold if the removal is too aggressive (thin strokes disappearing) or not aggressive enough (a grey halo remaining). Click **Re-apply** to preview each setting before saving. A photographed pen signature will always look more professional on documents than a drawn one.
+
+**Option 2 — Draw in the app**
+
+Switch to the **Draw in app** tab and use your mouse or finger to draw your signature on the canvas. Click **Clear** to start again. This works on any device including mobile but produces a lower quality result than a scanned signature.
+
+#### Profile fields
+
+Along with your signature, fill in:
+
+- **Full name** — your name as it should appear on the signature block
+- **Title / Position** — e.g. Chief Executive Officer
+- **Signing location** — the city where Bassani signs, e.g. Cape Town
+
+#### Preview before saving
+
+Before you click **Save**, a document mockup appears showing exactly how your signature, name, title, location, and date will look embedded in a signed document. If the result looks wrong, replace the signature image or adjust the background removal before saving.
+
+#### Replacing your signature
+
+Click **Replace** on the Signing Authority tab at any time. Upload a new image or draw a new one. All future documents use the new signature immediately. Already-signed copies stored in the system are unaffected.
+
+> **Security note:** Your signature image is stored in secure cloud storage. No staff member other than you can view or retrieve it through the portal.
 
 ---
 
