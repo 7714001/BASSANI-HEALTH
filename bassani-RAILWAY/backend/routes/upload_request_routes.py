@@ -13,7 +13,7 @@ import secrets
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from typing import List
 from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 from auth import get_current_user, require_permission
 from database import col
@@ -38,7 +38,7 @@ def _derive_status(doc: dict) -> str:
     raw = doc.get("status", "pending")
     if raw == "uploaded":
         return "uploaded"
-    if doc.get("expires_at") and datetime.now(timezone.utc) > doc["expires_at"]:
+    if doc.get("expires_at") and datetime.utcnow() > doc["expires_at"]:
         return "expired"
     return raw
 
@@ -82,7 +82,7 @@ async def create_upload_request(
         raise HTTPException(status_code=404, detail="Partner not found")
 
     partner_name = partners[0]["name"]
-    now      = datetime.now(timezone.utc)
+    now      = datetime.utcnow()
     expires  = now + timedelta(days=EXPIRY_DAYS)
     token    = secrets.token_urlsafe(32)
 
@@ -145,7 +145,7 @@ async def get_upload_request_public(token: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Link not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     if doc.get("expires_at") and now > doc["expires_at"]:
         return {
             "valid": False,
@@ -178,7 +178,7 @@ async def upload_files_public(
     if not doc:
         raise HTTPException(status_code=404, detail="Link not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     if doc.get("expires_at") and now > doc["expires_at"]:
         raise HTTPException(status_code=410, detail="This upload link has expired.")
 
