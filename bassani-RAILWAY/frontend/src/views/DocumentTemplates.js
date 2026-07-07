@@ -144,6 +144,24 @@ const DOC_CONFIGS = {
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
   },
+  tqa: {
+    hasBassaniSig: true,
+    sections: [
+      { title: "Company details", fields: [
+        { name: "company_name",       label: "Company Name",        testDefault: "Test Company (Pty) Ltd" },
+        { name: "company_reg_number", label: "Registration Number", testDefault: "2024/123456/07" },
+      ]},
+      { title: "Contact details", fields: [
+        { name: "customer_name",        label: "Full Name",           testDefault: "Test Customer" },
+        { name: "customer_designation", label: "Designation / Title", testDefault: "Director" },
+      ]},
+    ],
+    isAutoFill: (name) => name.startsWith("bassani_") || name === "customer_date_es_:date",
+    getAutoFillValue: (name, profile) => {
+      if (name === "bassani_name") return profile?.name || "";
+      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+    },
+  },
   customer_information_form: {
     hasBassaniSig: false,
     sections: [
