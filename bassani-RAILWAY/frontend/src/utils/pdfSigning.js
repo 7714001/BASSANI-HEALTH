@@ -308,3 +308,53 @@ export async function generateSignedPdf(pdfBytes, {
 
   return pdfDoc.save();
 }
+
+/**
+ * Overlay the Bassani signing authority signature onto an already-flattened
+ * customer-signed PDF.  The Bassani signature field coordinates are detected
+ * from the blank template (which still has AcroForm fields) and then drawn
+ * at those exact coordinates on the flat customer PDF.
+ *
+ * @param {Uint8Array}   customerPdfBytes     - Flattened, customer-signed PDF
+ * @param {Uint8Array}   blankTemplateBytes   - Original template (has AcroForm fields)
+ * @param {string}       docType              - Key into DOC_CONFIGS
+ * @param {Uint8Array}   sigBytes             - PNG bytes of the admin signature
+ * @returns {Promise<Uint8Array>}
+ */
+export async function countersignPdf(customerPdfBytes, blankTemplateBytes, docType, sigBytes) {
+  const { PDFDocument } = await import("pdf-lib");
+  const config = DOC_CONFIGS[docType];
+  if (!config?.hasBassaniSig) return customerPdfBytes;
+
+  // Locate Bassani's signature field in the blank template
+  const fields = await detectFields(blankTemplateBytes);
+  const bassaniField = fields.find(
+    f => f.type === "Signature" && config.isAutoFill(f.name)
+  );
+  if (!bassaniField?.rect) return customerPdfBytes;
+
+  const pdfDoc = await PDFDocument.load(customerPdfBytes, { ignoreEncryption: true });
+  const pages  = pdfDoc.getPages();
+  const page   = pages[bassaniField.page - 1]; // detectFields returns 1-indexed page
+  if (!page) return customerPdfBytes;
+
+  const sigImage = await pdfDoc.embedPng(sigBytes);
+  const { width: imgW, height: imgH } = sigImage.scale(1);
+
+  const rect   = bassaniField.rect;
+  const pad    = 4;
+  const fieldW = rect.width  - pad * 2;
+  const fieldH = rect.height - pad * 2;
+  const scale  = Math.min(fieldW / imgW, fieldH / imgH);
+  const drawW  = imgW * scale;
+  const drawH  = imgH * scale;
+
+  page.drawImage(sigImage, {
+    x:      rect.x + pad + (fieldW - drawW) / 2,
+    y:      rect.y + pad + (fieldH - drawH) / 2,
+    width:  drawW,
+    height: drawH,
+  });
+
+  return pdfDoc.save();
+}

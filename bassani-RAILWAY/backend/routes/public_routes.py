@@ -150,11 +150,16 @@ async def download_public_template(filename: str):
 
 @router.post("/documents/upload")
 async def upload_document_public(
-    session_id: str,
-    doc_type:   str,
+    session_id:       str,
+    doc_type:         str,
+    signed_in_portal: bool = False,
     file: UploadFile = File(...),
 ):
-    """Upload a signed document to R2 for a self-service registration session."""
+    """Upload a signed document to R2 for a self-service registration session.
+
+    signed_in_portal=true is set by the in-browser CustomerSigningModal so that
+    the admin review page can identify which documents require countersigning.
+    """
     _validate_session(session_id)
     if doc_type not in REQUIRED_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
@@ -167,7 +172,7 @@ async def upload_document_public(
     key = f"onboarding/sessions/{session_id}/{doc_type}{ext}"
     await r2_put(key, contents, file.content_type or "application/octet-stream")
 
-    return {
+    result = {
         "doc_type":    doc_type,
         "label":       REQUIRED_DOC_TYPES[doc_type],
         "r2_key":      key,
@@ -175,6 +180,9 @@ async def upload_document_public(
         "size":        len(contents),
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
+    if signed_in_portal:
+        result["signed_in_portal"] = True
+    return result
 
 
 @router.delete("/documents/{session_id}/{doc_type}")

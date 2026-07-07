@@ -204,7 +204,7 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
       const fd   = new FormData();
       fd.append("file", file);
       const { data } = await api.post(
-        `/api/public/documents/upload?session_id=${sessionId}&doc_type=${docType}`,
+        `/api/public/documents/upload?session_id=${sessionId}&doc_type=${docType}&signed_in_portal=true`,
         fd,
         { headers: { "Content-Type": "multipart/form-data" } },
       );

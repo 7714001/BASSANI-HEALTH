@@ -2907,7 +2907,7 @@ Clicking **Download signed test PDF** runs the full pdf-lib generation pipeline 
 
 ## Phase 18 — In-Portal Customer Document Signing
 
-**Status:** 🟡 In Progress (18.4 pending)
+**Status:** 🟢 Complete
 
 **Goal:** Replace the current "download, print, sign, scan, upload" step in the customer self-service apply flow with an in-portal signing experience. The customer fills in their business and contact details in the wizard, the portal pre-fills all four onboarding documents with their data, the customer draws their signature once per document, and completed signed PDFs are generated and stored against their application automatically — ready for admin review without any manual document handling.
 
@@ -3030,11 +3030,27 @@ New Step 4 (Sign Documents):
 
 Each `CustomerSigningModal` generates the signed PDF client-side via `generateSignedPdf` and immediately uploads it to R2 via `POST /api/public/documents/upload?session_id={id}&doc_type={type}`. The response `{ doc_type, r2_key, filename, … }` is stored in the parent's `uploads` state and submitted as `documents[]` on application submission. No backend changes required — the existing `REQUIRED_DOC_TYPES` map already covers all four signed documents.
 
-#### 18.4 — Admin review: "Signed in portal" badge (Pending)
+#### 18.4 — Application countersigning and approval gate (Complete)
 
-On the customer onboarding application review page, signed PDFs generated in-portal should display a "Signed in portal" badge to distinguish them from manually uploaded scans. The existing PDF viewer component handles preview — no new viewer needed.
+When a customer signs documents in-portal, the three documents that have a Bassani signature field (NDA, TQA, Store Onboarding Agreement) must be countersigned by the designated signing authority holder before the application can be approved.
 
-This sub-deploy will also be the natural point to add Bassani countersigning — admin can embed the Bassani signature block when approving the application, producing the fully countersigned set of documents.
+**What was built:**
+
+- `signed_in_portal: true` flag added to public upload endpoint (`POST /api/public/documents/upload?signed_in_portal=true`) and stored per-document in MongoDB.
+- `BASSANI_SIG_DOC_TYPES = {"nda", "tqa", "store_onboarding_agreement"}` constant added to `onboarding_routes.py` — these are the three docs with a Bassani sig field. `customer_information_form` has no Bassani field and does not require countersigning.
+- `POST /api/onboarding/{app_id}/countersign/{doc_type}` — accepts the countersigned PDF blob, stores it at `onboarding/sessions/{session_id}/{doc_type}-countersigned.pdf` in R2, and writes `countersigned_at`, `countersigned_by`, `countersigned_r2_key` to the document record. Requires `customers.approve_onboarding` permission. Audit-logged.
+- `PUT /api/onboarding/{app_id}/approve` — hardened with a pre-flight check: if any `signed_in_portal` document in `BASSANI_SIG_DOC_TYPES` is missing `countersigned_at`, approval is blocked with a 400 listing the missing documents. Inbox-sourced applications (manual upload path) bypass this gate.
+- `GET /api/signing-authority/am-i-holder` — lightweight endpoint any admin can call; returns `{"is_holder": bool}` by comparing the current user's ID to `updated_by_id` in the signing authority record. Used to gate the Countersign button.
+- `GET /api/signing-authority/signature` — relaxed from super_admin-only to super_admin OR holder, so the signing authority can fetch their own image for the countersign flow.
+- `countersignPdf(customerPdfBytes, blankTemplateBytes, docType, sigBytes)` added to `frontend/src/utils/pdfSigning.js`. Detects Bassani's signature field rect from the blank template (AcroForm intact), then draws the sig image at those coordinates on the already-flattened customer PDF using pdf-lib. No server-side PDF stack required.
+- `CustomerApplicationDetail.js` fully updated:
+  - Docs state lifted from `DocumentsCard` to the parent and passed to both `DocumentsCard` and `ActionsCard`.
+  - `GET /api/signing-authority/am-i-holder` fetched on mount.
+  - `DocumentsCard` shows per-document badges: "Signed in portal" (blue), "Countersigned by [name]" (green), or "Awaiting countersignature" (amber). The "Countersign" action button is shown only when `isHolder && signed_in_portal && !countersigned_at`.
+  - `CountersignModal` — split-panel layout matching the customer signing flow: customer-signed PDF in an iframe (left), signature panel (right). Loads customer PDF bytes, blank template, and stored signature in parallel. Supports stored signature or drawn-on-canvas new signature. Calls `countersignPdf` client-side and uploads the result.
+  - `ActionsCard` "Approve and Create Customer" button is disabled when any portal-signed Bassani-sig doc is uncountersigned, with an explanatory amber warning.
+
+**Legacy applications:** any application whose documents do not have `signed_in_portal: true` (manually uploaded or inbox-sourced) bypasses the countersign gate entirely — approve works as before.
 
 ### Definition of Done
 
@@ -3043,7 +3059,9 @@ This sub-deploy will also be the natural point to add Bassani countersigning —
 - [x] PDF generation pipeline extracted to `pdfSigning.js` shared between admin test and customer flow
 - [x] `/apply` wizard reordered — data collection first, signing last (Step 4)
 - [x] Pre-fill logic maps wizard data to PDF fields with no manual entry required for known fields
-- [x] Bassani name and title auto-filled from public signing meta endpoint; signature pending countersign on approval (18.4)
+- [x] Bassani name and title auto-filled from public signing meta endpoint; signature countersigned on approval
 - [x] Signed PDFs uploaded to R2 and attached to the application
-- [ ] Admin review queue shows "Signed in portal" badge on in-portal signed documents (18.4)
+- [x] Admin review queue shows "Signed in portal" badge and "Awaiting countersignature" status per document
+- [x] Signing authority holder can countersign all three Bassani-sig documents in-browser via CountersignModal
+- [x] Approve gate blocks until all portal-signed Bassani-sig docs are countersigned
 - [x] All four documents can be signed in a single session before submission

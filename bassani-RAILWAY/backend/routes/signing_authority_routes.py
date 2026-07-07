@@ -144,15 +144,36 @@ async def save_signing_authority(
     return {"success": True, "signature_replaced": sig_bytes is not None}
 
 
+# ── Holder check — any admin can call this ────────────────────────────────────
+
+@router.get("/am-i-holder", dependencies=[Depends(require_admin)])
+async def am_i_holder(current_user: dict = Depends(get_current_user)):
+    """
+    Returns whether the current user is the configured signing authority holder.
+    Used to gate the Countersign button in the application review UI.
+    Any authenticated admin may call this.
+    """
+    doc = await col("signing_authority").find_one({"id": _DOC_ID})
+    if not doc:
+        return {"is_holder": False}
+    current_uid = str(current_user.get("_id") or current_user.get("username", ""))
+    return {"is_holder": doc.get("updated_by_id") == current_uid}
+
+
 # ── Serve signature image (for preview and PDF embedding) ─────────────────────
 
 @router.get("/signature", dependencies=[Depends(require_admin)])
 async def get_signature_image(current_user: dict = Depends(get_current_user)):
-    _require_super_admin(current_user)
-
     doc = await col("signing_authority").find_one({"id": _DOC_ID})
     if not doc or not doc.get("has_signature"):
         raise HTTPException(status_code=404, detail="No signature configured")
+
+    # Super admins and the signing authority holder can fetch the signature image.
+    current_uid = str(current_user.get("_id") or current_user.get("username", ""))
+    is_super    = current_user.get("is_super_admin") or current_user.get("role") == "super_admin"
+    is_holder   = doc.get("updated_by_id") == current_uid
+    if not is_super and not is_holder:
+        raise HTTPException(status_code=403, detail="Super admin or signing authority holder access required")
 
     try:
         data = await r2_get(R2_KEY)

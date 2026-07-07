@@ -300,7 +300,7 @@ The downloaded PDF is the exact output the customer will receive. Use this to ve
 
 ### Step 8c — Set Up the Signing Authority (Super Admin)
 
-The **Signing Authority** is the profile used to automatically complete Bassani's signing block on every co-signed onboarding document. Once configured, you never need to actively sign each document — the portal embeds your name, title, location, and signature image automatically when a customer signs.
+The **Signing Authority** is the profile that identifies who can countersign onboarding documents on behalf of Bassani Health. Your name, title, and signature image are stored here and used when you countersign a customer's application. The portal embeds your name and title as text on the customer's side of the agreement automatically; your signature image is added when you perform the countersign step on the application review page.
 
 Go to **Admin > Document Templates** in the left sidebar, then click the **Signing Authority** tab.
 
@@ -1382,7 +1382,32 @@ Resellers can copy this link and share it with prospective customers by email, W
 
 Self-service applications appear in the existing Customer Applications review queue alongside reseller-submitted and inbox-sourced applications. They are labelled "Direct (self-service)" in the Submitted By column so staff can distinguish them. All five documents are always attached (unlike inbox-sourced applications which may have documents arriving separately).
 
-The approval workflow is identical regardless of source: review documents, approve, and the Odoo customer record is created automatically.
+For applications signed in-portal, the documents section of the review page shows additional status badges on each document:
+
+- **Signed in portal** (blue) — the PDF was signed in the browser, not manually uploaded.
+- **Awaiting countersignature** (amber) — Bassani's signature block has not yet been completed.
+- **Countersigned by [name]** (green) — the signing authority has countersigned this document.
+
+The **Approve and Create Customer** button is locked until all three documents that carry a Bassani signature field (NDA, Trading Quality Agreement, and Store Onboarding Agreement) are countersigned. The Customer Information Form has no Bassani signature field and does not need to be countersigned.
+
+### Countersigning applications (Signing Authority)
+
+Only the person designated as the Signing Authority can countersign. If you are not the Signing Authority holder, the Countersign button is not shown.
+
+To countersign a document:
+
+1. Open the application from Customer Applications
+2. In the Supporting Documents section, find a document showing "Awaiting countersignature"
+3. Click **Countersign** next to that document
+4. A split-panel window opens: the customer's signed PDF is shown on the left; the signature panel is on the right
+5. Choose **Use stored** to embed your configured signature, or **Draw new** to sign on the canvas
+6. Click **Countersign Document** — the portal generates the final co-signed PDF in your browser, uploads it automatically, and marks the document as countersigned
+7. Repeat for each remaining document
+8. Once all three documents are countersigned the Approve button unlocks
+
+> **Note:** Manually uploaded documents (applications that arrived by email or were uploaded by a reseller) do not require countersigning and the Approve button is never blocked for those applications.
+
+The countersigned PDFs are stored in secure cloud storage and are visible from the document list alongside the customer-signed originals.
 
 ---
 

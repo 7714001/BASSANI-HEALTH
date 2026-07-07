@@ -43,6 +43,10 @@ REQUIRED_DOC_TYPES: dict[str, str] = {
     "cipc_certificate":           "CIPC Company Registration Certificate",
 }
 
+# Subset of REQUIRED_DOC_TYPES that have a Bassani signature field and therefore
+# require countersigning by the signing authority holder before approval.
+BASSANI_SIG_DOC_TYPES: frozenset[str] = frozenset({"nda", "tqa", "store_onboarding_agreement"})
+
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
@@ -965,6 +969,84 @@ async def replace_application_document(
     return new_doc
 
 
+@router.post("/{app_id}/countersign/{doc_type}")
+async def countersign_document(
+    app_id:   str,
+    doc_type: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Upload a countersigned PDF for a portal-signed onboarding document.
+
+    Only documents in BASSANI_SIG_DOC_TYPES can be countersigned.  The file is
+    stored alongside the original under the same session prefix with a
+    '-countersigned' suffix.  The document record in MongoDB is updated with
+    countersign metadata so the approve gate can verify completion.
+    """
+    if doc_type not in BASSANI_SIG_DOC_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document type '{doc_type}' does not require countersigning",
+        )
+
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    docs = app.get("documents") or []
+    target = next((d for d in docs if d.get("doc_type") == doc_type), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Document '{doc_type}' not found on this application")
+    if not target.get("signed_in_portal"):
+        raise HTTPException(status_code=400, detail="This document was not signed in portal and does not require countersigning")
+
+    contents = await file.read()
+    if len(contents) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (20 MB maximum)")
+
+    session_id = app.get("document_session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Application has no document session ID")
+
+    key = f"onboarding/sessions/{session_id}/{doc_type}-countersigned.pdf"
+    await r2_put(key, contents, "application/pdf")
+
+    now = datetime.now(timezone.utc)
+    actor_name = current_user.get("name") or current_user.get("username", "")
+    countersign_meta = {
+        "countersigned_at":     now.isoformat(),
+        "countersigned_by":     actor_name,
+        "countersigned_by_id":  str(current_user.get("_id") or current_user.get("username", "")),
+        "countersigned_r2_key": key,
+    }
+
+    updated_docs = [
+        {**d, **countersign_meta} if d.get("doc_type") == doc_type else d
+        for d in docs
+    ]
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"documents": updated_docs, "updated_at": now}},
+    )
+
+    await audit_log(
+        user=current_user,
+        action="onboarding.countersign_document",
+        entity_type="customer_onboarding",
+        entity_id=app_id,
+        entity_label=app.get("company_name", ""),
+        after={"doc_type": doc_type, "countersigned_r2_key": key},
+    )
+
+    return {
+        "doc_type":          doc_type,
+        "countersigned_at":  now.isoformat(),
+        "countersigned_by":  actor_name,
+        "countersigned_r2_key": key,
+    }
+
+
 @router.put("/{app_id}/approve")
 async def approve_application(
     app_id: str,
@@ -998,6 +1080,21 @@ async def approve_application(
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot approve — missing required documents: {', '.join(missing)}",
+            )
+
+        # Portal-signed docs with a Bassani signature field must be countersigned
+        # before approval.  Manually-uploaded docs skip this gate.
+        uncountersigned = [
+            d for d in (app.get("documents") or [])
+            if d.get("signed_in_portal")
+            and d.get("doc_type") in BASSANI_SIG_DOC_TYPES
+            and not d.get("countersigned_at")
+        ]
+        if uncountersigned:
+            labels = ", ".join(d.get("label", d["doc_type"]) for d in uncountersigned)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve — the following documents require countersigning first: {labels}",
             )
 
     # For inbox-sourced apps the admin supplies company_name at approval time
