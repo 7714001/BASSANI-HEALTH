@@ -10,8 +10,8 @@ Collection: doc_upload_requests
 import os
 import uuid
 import secrets
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
-from typing import List
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
@@ -27,11 +27,21 @@ router = APIRouter(prefix="/api/upload-requests", tags=["upload-requests"])
 
 EXPIRY_DAYS = 7
 
+DOC_LABELS = {
+    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
+    "customer_information_form":  "Signed Customer Information Form",
+    "nda":                        "Signed NDA",
+    "tqa":                        "Signed TQA Document",
+    "cipc_certificate":           "CIPC Company Registration Certificate",
+}
+ALL_DOC_TYPES = list(DOC_LABELS.keys())
+
 
 class CreateUploadRequestBody(BaseModel):
     partner_id: int
     send_to_email: str
     send_to_name: str
+    requested_doc_types: Optional[List[str]] = None
 
 
 def _derive_status(doc: dict) -> str:
@@ -47,19 +57,20 @@ def _serialize(doc: dict) -> dict:
     if doc is None:
         return None
     return {
-        "id":                str(doc["_id"]),
-        "partner_id":        doc.get("partner_id"),
-        "partner_name":      doc.get("partner_name"),
-        "sent_to_email":     doc.get("sent_to_email"),
-        "sent_to_name":      doc.get("sent_to_name"),
-        "sent_by_user_id":   doc.get("sent_by_user_id"),
-        "sent_by_name":      doc.get("sent_by_name"),
-        "created_at":        doc["created_at"].isoformat() if doc.get("created_at") else None,
-        "expires_at":        doc["expires_at"].isoformat() if doc.get("expires_at") else None,
-        "first_accessed_at": doc["first_accessed_at"].isoformat() if doc.get("first_accessed_at") else None,
-        "completed_at":      doc["completed_at"].isoformat() if doc.get("completed_at") else None,
-        "status":            _derive_status(doc),
-        "files":             doc.get("files", []),
+        "id":                   str(doc["_id"]),
+        "partner_id":           doc.get("partner_id"),
+        "partner_name":         doc.get("partner_name"),
+        "sent_to_email":        doc.get("sent_to_email"),
+        "sent_to_name":         doc.get("sent_to_name"),
+        "sent_by_user_id":      doc.get("sent_by_user_id"),
+        "sent_by_name":         doc.get("sent_by_name"),
+        "created_at":           doc["created_at"].isoformat() if doc.get("created_at") else None,
+        "expires_at":           doc["expires_at"].isoformat() if doc.get("expires_at") else None,
+        "first_accessed_at":    doc["first_accessed_at"].isoformat() if doc.get("first_accessed_at") else None,
+        "completed_at":         doc["completed_at"].isoformat() if doc.get("completed_at") else None,
+        "status":               _derive_status(doc),
+        "files":                doc.get("files", []),
+        "requested_doc_types":  doc.get("requested_doc_types", ALL_DOC_TYPES),
     }
 
 
@@ -82,24 +93,47 @@ async def create_upload_request(
         raise HTTPException(status_code=404, detail="Partner not found")
 
     partner_name = partners[0]["name"]
+
+    # Verify onboarding mailbox is configured before creating the request
+    from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
+    from services.graph_client import graph_configured
+    from services.email_service import _wrap as _email_wrap, _h1, _p, _divider, _info_box, _button
+
+    onboarding_graph_address = get_graph_mailbox_address("onboarding")
+    imap_cfg = _imap_cfg("onboarding")
+    use_graph = graph_configured() and bool(onboarding_graph_address)
+
+    if not use_graph and not imap_cfg:
+        raise HTTPException(
+            status_code=503,
+            detail="Onboarding mailbox not configured. Set up the mailbox in Settings before sending document upload links.",
+        )
+
+    from_address = onboarding_graph_address if use_graph else (
+        imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
+    )
+
     now      = datetime.utcnow()
     expires  = now + timedelta(days=EXPIRY_DAYS)
     token    = secrets.token_urlsafe(32)
 
+    req_types = [t for t in (body.requested_doc_types or []) if t in DOC_LABELS] or ALL_DOC_TYPES
+
     doc = {
-        "token":             token,
-        "partner_id":        body.partner_id,
-        "partner_name":      partner_name,
-        "sent_to_email":     body.send_to_email,
-        "sent_to_name":      body.send_to_name,
-        "sent_by_user_id":   str(current_user.get("_id") or current_user.get("username", "unknown")),
-        "sent_by_name":      current_user.get("name") or current_user.get("username"),
-        "created_at":        now,
-        "expires_at":        expires,
-        "first_accessed_at": None,
-        "completed_at":      None,
-        "status":            "pending",
-        "files":             [],
+        "token":                token,
+        "partner_id":           body.partner_id,
+        "partner_name":         partner_name,
+        "sent_to_email":        body.send_to_email,
+        "sent_to_name":         body.send_to_name,
+        "sent_by_user_id":      str(current_user.get("_id") or current_user.get("username", "unknown")),
+        "sent_by_name":         current_user.get("name") or current_user.get("username"),
+        "created_at":           now,
+        "expires_at":           expires,
+        "first_accessed_at":    None,
+        "completed_at":         None,
+        "status":               "pending",
+        "files":                [],
+        "requested_doc_types":  req_types,
     }
     result = await col("doc_upload_requests").insert_one(doc)
 
@@ -113,16 +147,84 @@ async def create_upload_request(
     )
 
     upload_url = f"{settings.portal_url}/upload-docs/{token}"
-    from services.email_service import send_doc_upload_request
-    background_tasks.add_task(
-        send_doc_upload_request,
-        to_email=body.send_to_email,
-        to_name=body.send_to_name,
-        company_name=partner_name,
-        upload_url=upload_url,
-        expiry_days=EXPIRY_DAYS,
+
+    greeting = f"Hi {body.send_to_name}," if body.send_to_name else "Hi,"
+    subject  = f"Documents required: {partner_name}"
+    body_html = _email_wrap(
+        _h1("Action required: please upload your documents")
+        + _p(greeting)
+        + _p(
+            f"Our team requires outstanding documentation for {partner_name}. "
+            "Please use the secure link below to upload your documents at your convenience."
+        )
+        + _info_box([
+            ("Account",      partner_name),
+            ("Link expires", f"In {EXPIRY_DAYS} days"),
+        ], tint="#fffbeb", border="#fcd34d")
+        + _button("Upload your documents", upload_url)
+        + _divider()
+        + _p(
+            f"This link is unique to your account and expires after {EXPIRY_DAYS} days. "
+            "If you have any questions, please reply to this email.",
+            muted=True,
+        ),
+        footer_note="This message was sent on behalf of Bassani Health. Reply to this email if you need assistance.",
     )
 
+    thread_doc = {
+        "mailbox_address": from_address,
+        "from_email":      from_address,
+        "from_name":       "Bassani Health",
+        "to_email":        body.send_to_email,
+        "subject":         subject,
+        "body_html":       body_html,
+        "body_preview":    f"Document upload link sent to {body.send_to_email}",
+        "is_outgoing":     True,
+        "status":          "sent",
+        "received_at":     now,
+        "has_attachments": False,
+        "attachments":     [],
+        "thread_root_id":  None,
+        "is_read":         True,
+        "created_at":      now,
+        "sent_by":         current_user.get("username"),
+    }
+    inbox_result = await col("onboarding_inbox").insert_one(thread_doc)
+    inbox_id_str = str(inbox_result.inserted_id)
+    await col("onboarding_inbox").update_one(
+        {"_id": inbox_result.inserted_id},
+        {"$set": {"thread_root_id": inbox_id_str}},
+    )
+
+    async def _do_send():
+        try:
+            if use_graph:
+                from services.graph_client import send_mail as graph_send_mail
+                await graph_send_mail(
+                    to_email=body.send_to_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox_address=onboarding_graph_address,
+                )
+            else:
+                from services.imap_client import send_new_email as imap_send_new
+                message_id = await imap_send_new(
+                    to_email=body.send_to_email,
+                    subject=subject,
+                    body_html=body_html,
+                    mailbox="onboarding",
+                )
+                await col("onboarding_inbox").update_one(
+                    {"_id": inbox_result.inserted_id},
+                    {"$set": {"imap_message_id": message_id}},
+                )
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "doc_upload_request.send_failed to=%s error=%s", body.send_to_email, exc
+            )
+
+    background_tasks.add_task(_do_send)
     return {"success": True, "id": str(result.inserted_id)}
 
 
@@ -160,9 +262,10 @@ async def get_upload_request_public(token: str):
         )
 
     return {
-        "valid":            True,
-        "partner_name":     doc.get("partner_name"),
-        "already_uploaded": len(doc.get("files", [])) > 0,
+        "valid":                True,
+        "partner_name":         doc.get("partner_name"),
+        "already_uploaded":     len(doc.get("files", [])) > 0,
+        "requested_doc_types":  doc.get("requested_doc_types", ALL_DOC_TYPES),
     }
 
 
@@ -173,6 +276,7 @@ async def upload_files_public(
     token: str,
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
+    doc_types: List[str]    = Form(...),
 ):
     doc = await col("doc_upload_requests").find_one({"token": token})
     if not doc:
@@ -185,8 +289,15 @@ async def upload_files_public(
     if not files:
         raise HTTPException(status_code=422, detail="No files provided.")
 
+    if len(files) != len(doc_types):
+        raise HTTPException(status_code=422, detail="files and doc_types counts must match.")
+
+    invalid = [t for t in doc_types if t not in DOC_LABELS]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Unknown document type(s): {invalid}")
+
     uploaded = []
-    for file in files:
+    for file, doc_type in zip(files, doc_types):
         contents = await file.read()
         if not contents:
             continue
@@ -198,6 +309,7 @@ async def upload_files_public(
             "file_id":     file_id,
             "filename":    file.filename or f"document{ext}",
             "r2_key":      key,
+            "doc_type":    doc_type,
             "uploaded_at": now.isoformat(),
         })
 
@@ -212,19 +324,24 @@ async def upload_files_public(
         },
     )
 
-    # Mirror into customer_documents so files appear on the admin profile immediately
+    # Mirror into customer_documents — upsert by (partner_id, doc_type) to overwrite existing
     for f in uploaded:
-        await col("customer_documents").insert_one({
-            "id":              f["file_id"],
-            "odoo_partner_id": doc["partner_id"],
-            "label":           f["filename"],
-            "doc_type":        "customer_upload",
-            "filename":        f["filename"],
-            "r2_key":          f["r2_key"],
-            "source":          "customer_upload",
-            "uploaded_at":     now.isoformat(),
-            "uploaded_by":     doc.get("sent_to_email"),
-        })
+        label = DOC_LABELS.get(f["doc_type"], f["filename"])
+        await col("customer_documents").update_one(
+            {"odoo_partner_id": doc["partner_id"], "doc_type": f["doc_type"]},
+            {"$set": {
+                "id":              f["file_id"],
+                "odoo_partner_id": doc["partner_id"],
+                "label":           label,
+                "doc_type":        f["doc_type"],
+                "filename":        f["filename"],
+                "r2_key":          f["r2_key"],
+                "source":          "customer_upload",
+                "uploaded_at":     now.isoformat(),
+                "uploaded_by":     doc.get("sent_to_email"),
+            }},
+            upsert=True,
+        )
 
     # Notify the onboarding inbox
     from services.email_service import send_doc_upload_notification

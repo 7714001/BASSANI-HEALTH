@@ -233,7 +233,7 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
         </>
       )}
       {onOpenRequestModal && (
-        <BtnSecondary size="sm" onClick={onOpenRequestModal}>
+        <BtnSecondary size="sm" onClick={() => onOpenRequestModal(docs.map(d => d.doc_type))}>
           <Link2 size={13} />Request docs
         </BtnSecondary>
       )}
@@ -438,6 +438,7 @@ export default function CustomerProfile() {
   const [reqModalOpen,         setReqModalOpen        ] = useState(false);
   const [reqSelectedEmail,     setReqSelectedEmail    ] = useState("");
   const [reqSelectedName,      setReqSelectedName     ] = useState("");
+  const [reqSelectedDocTypes,  setReqSelectedDocTypes ] = useState([]);
   const [reqSubmitting,        setReqSubmitting       ] = useState(false);
 
   useEffect(() => {
@@ -514,12 +515,21 @@ export default function CustomerProfile() {
     }
   };
 
-  const openReqModal = () => {
-    // Pre-select the company email if available
+  const ALL_ONBOARDING_DOC_TYPES = [
+    "store_onboarding_agreement",
+    "customer_information_form",
+    "nda",
+    "tqa",
+    "cipc_certificate",
+  ];
+
+  const openReqModal = (existingDocTypes = []) => {
     const email = data?.customer?.email || "";
     const name  = data?.customer?.name  || "";
     setReqSelectedEmail(email);
     setReqSelectedName(name);
+    const missing = ALL_ONBOARDING_DOC_TYPES.filter(t => !existingDocTypes.includes(t));
+    setReqSelectedDocTypes(missing.length > 0 ? missing : ALL_ONBOARDING_DOC_TYPES);
     setReqModalOpen(true);
   };
 
@@ -528,9 +538,10 @@ export default function CustomerProfile() {
     setReqSubmitting(true);
     try {
       await api.post("/api/upload-requests/", {
-        partner_id:    parseInt(id),
-        send_to_email: reqSelectedEmail,
-        send_to_name:  reqSelectedName || reqSelectedEmail,
+        partner_id:           parseInt(id),
+        send_to_email:        reqSelectedEmail,
+        send_to_name:         reqSelectedName || reqSelectedEmail,
+        requested_doc_types:  reqSelectedDocTypes,
       });
       toast.success(`Upload link sent to ${reqSelectedEmail}`);
       setReqModalOpen(false);
@@ -994,6 +1005,33 @@ export default function CustomerProfile() {
               <p className="text-sm text-gray-500">
                 A secure upload link will be emailed to the selected recipient. The link expires in 7 days.
               </p>
+              <FormGroup label="Documents to request" required>
+                <div className="space-y-1.5">
+                  {ONBOARDING_DOC_TYPES.map(dt => {
+                    const checked = reqSelectedDocTypes.includes(dt.key);
+                    return (
+                      <label key={dt.key}
+                        className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border cursor-pointer transition-colors ${
+                          checked ? "border-bassani-400 bg-bassani-50" : "border-gray-100 hover:border-gray-200"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setReqSelectedDocTypes(prev =>
+                            checked ? prev.filter(t => t !== dt.key) : [...prev, dt.key]
+                          )}
+                          className="accent-bassani-600"
+                        />
+                        <span className="text-sm text-gray-800">{dt.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {reqSelectedDocTypes.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1">Select at least one document.</p>
+                )}
+              </FormGroup>
               <FormGroup label="Send to" required>
                 {emailOptions.length > 0 ? (
                   <div className="space-y-2">
@@ -1028,7 +1066,7 @@ export default function CustomerProfile() {
                 <BtnSecondary onClick={() => setReqModalOpen(false)}>Cancel</BtnSecondary>
                 <BtnPrimary
                   onClick={submitUploadRequest}
-                  disabled={!reqSelectedEmail || reqSubmitting || emailOptions.length === 0}
+                  disabled={!reqSelectedEmail || reqSubmitting || emailOptions.length === 0 || reqSelectedDocTypes.length === 0}
                 >
                   {reqSubmitting ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
                   Send upload link

@@ -5,22 +5,34 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: "" });
 
+const DOC_LABELS = {
+  store_onboarding_agreement: "Signed Store Onboarding Agreement",
+  customer_information_form:  "Signed Customer Information Form",
+  nda:                        "Signed NDA",
+  tqa:                        "Signed TQA Document",
+  cipc_certificate:           "CIPC Company Registration Certificate",
+};
+
 export default function PublicDocUpload() {
   const { token } = useParams();
 
-  const [state,       setState      ] = useState("loading"); // loading | valid | expired | not_found | done | error
-  const [partnerName, setPartnerName] = useState("");
-  const [files,       setFiles      ] = useState([]);
-  const [uploading,   setUploading  ] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [dragOver,    setDragOver   ] = useState(false);
-  const inputRef = useRef(null);
+  const [state,             setState            ] = useState("loading");
+  const [partnerName,       setPartnerName      ] = useState("");
+  const [requestedDocTypes, setRequestedDocTypes] = useState([]);
+  const [slots,             setSlots            ] = useState({});   // { [docType]: File }
+  const [uploading,         setUploading        ] = useState(false);
+  const [uploadError,       setUploadError      ] = useState("");
+
+  const fileInputRef = useRef(null);
+  const pendingSlot  = useRef(null);
 
   useEffect(() => {
     api.get(`/api/upload-requests/${token}`)
       .then(r => {
         if (r.data.valid) {
           setPartnerName(r.data.partner_name || "");
+          const types = r.data.requested_doc_types || Object.keys(DOC_LABELS);
+          setRequestedDocTypes(types);
           setState("valid");
         } else {
           setPartnerName(r.data.partner_name || "");
@@ -32,32 +44,42 @@ export default function PublicDocUpload() {
       });
   }, [token]);
 
-  const addFiles = (incoming) => {
-    const arr = Array.from(incoming).filter(f =>
-      /\.(pdf|doc|docx|jpg|jpeg|png)$/i.test(f.name)
-    );
-    if (!arr.length) return;
-    setFiles(prev => {
-      const names = new Set(prev.map(f => f.name));
-      return [...prev, ...arr.filter(f => !names.has(f.name))];
+  const triggerSlot = (docType) => {
+    pendingSlot.current = docType;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChosen = (e) => {
+    const file = e.target.files?.[0];
+    const dt   = pendingSlot.current;
+    if (!file || !dt) return;
+    setSlots(prev => ({ ...prev, [dt]: file }));
+    pendingSlot.current = null;
+  };
+
+  const clearSlot = (docType) => {
+    setSlots(prev => {
+      const next = { ...prev };
+      delete next[docType];
+      return next;
     });
   };
 
-  const removeFile = (name) => setFiles(prev => prev.filter(f => f.name !== name));
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    addFiles(e.dataTransfer.files);
-  };
+  const filledCount = Object.keys(slots).length;
 
   const handleSubmit = async () => {
-    if (!files.length) return;
+    if (!filledCount) return;
     setUploading(true);
     setUploadError("");
     try {
       const fd = new FormData();
-      files.forEach(f => fd.append("files", f));
+      Object.entries(slots).forEach(([docType, file]) => {
+        fd.append("files", file);
+        fd.append("doc_types", docType);
+      });
       await api.post(`/api/upload-requests/${token}/files`, fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -75,11 +97,7 @@ export default function PublicDocUpload() {
 
         {/* Header card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-4">
-          <img
-            src="/logo.png"
-            alt="Bassani Health"
-            className="w-full block"
-          />
+          <img src="/logo.png" alt="Bassani Health" className="w-full block" />
         </div>
 
         {/* Content card */}
@@ -154,57 +172,58 @@ export default function PublicDocUpload() {
                   <p className="text-sm text-gray-500">Account: <strong>{partnerName}</strong></p>
                 )}
                 <p className="text-sm text-gray-400 mt-1">
-                  Accepted formats: PDF, Word, JPG, PNG. You can select multiple files at once.
+                  Select a file for each document below. Accepted formats: PDF, Word, JPG, PNG.
                 </p>
               </div>
 
-              {/* Drop zone */}
-              <div
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                onClick={() => inputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors mb-4 ${
-                  dragOver
-                    ? "border-bassani-500 bg-bassani-50"
-                    : "border-gray-200 hover:border-bassani-300 hover:bg-gray-50"
-                }`}
-              >
-                <Upload size={24} className="text-gray-300 mx-auto mb-2" />
-                <p className="text-sm font-medium text-gray-600">
-                  Drag files here or <span className="text-bassani-600">browse</span>
-                </p>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                  className="hidden"
-                  onChange={e => { if (e.target.files) addFiles(e.target.files); }}
-                />
-              </div>
+              {/* Hidden shared file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                className="hidden"
+                onChange={handleFileChosen}
+              />
 
-              {/* Selected files */}
-              {files.length > 0 && (
-                <div className="space-y-2 mb-5">
-                  {files.map(f => (
-                    <div key={f.name}
-                      className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-2.5">
-                      <FileText size={15} className="text-gray-400 shrink-0" />
-                      <span className="flex-1 text-sm text-gray-700 truncate">{f.name}</span>
-                      <span className="text-xs text-gray-400 shrink-0">
-                        {(f.size / 1024).toFixed(0)} KB
-                      </span>
-                      <button
-                        onClick={() => removeFile(f.name)}
-                        className="text-gray-300 hover:text-red-400 transition-colors shrink-0"
-                      >
-                        <X size={14} />
-                      </button>
+              {/* Per-document slots */}
+              <div className="space-y-3 mb-6">
+                {requestedDocTypes.map(docType => {
+                  const label = DOC_LABELS[docType] || docType;
+                  const file  = slots[docType];
+                  return (
+                    <div key={docType}
+                      className="border border-gray-100 rounded-xl p-4 bg-gray-50"
+                    >
+                      <p className="text-sm font-medium text-gray-700 mb-2">{label}</p>
+                      {file ? (
+                        <div className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-gray-100">
+                          <FileText size={14} className="text-bassani-500 shrink-0" />
+                          <span className="flex-1 text-sm text-gray-700 truncate">{file.name}</span>
+                          <span className="text-xs text-gray-400 shrink-0">
+                            {(file.size / 1024).toFixed(0)} KB
+                          </span>
+                          <button
+                            onClick={() => clearSlot(docType)}
+                            className="text-gray-300 hover:text-red-400 transition-colors shrink-0"
+                            type="button"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => triggerSlot(docType)}
+                          type="button"
+                          className="flex items-center gap-2 text-sm text-bassani-600 hover:text-bassani-700 font-medium"
+                        >
+                          <Upload size={14} />
+                          Browse…
+                        </button>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
 
               {uploadError && (
                 <p className="text-sm text-red-500 mb-4">{uploadError}</p>
@@ -212,15 +231,22 @@ export default function PublicDocUpload() {
 
               <button
                 onClick={handleSubmit}
-                disabled={!files.length || uploading}
+                disabled={!filledCount || uploading}
                 className="w-full py-3 rounded-xl bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+                type="button"
               >
                 {uploading ? (
                   <><Loader2 size={15} className="animate-spin" /> Uploading…</>
                 ) : (
-                  <><Upload size={15} /> Submit {files.length > 0 ? `${files.length} file${files.length > 1 ? "s" : ""}` : "documents"}</>
+                  <><Upload size={15} /> Submit {filledCount > 0 ? `${filledCount} document${filledCount > 1 ? "s" : ""}` : "documents"}</>
                 )}
               </button>
+
+              {filledCount < requestedDocTypes.length && (
+                <p className="text-xs text-gray-400 text-center mt-3">
+                  {requestedDocTypes.length - filledCount} document{requestedDocTypes.length - filledCount > 1 ? "s" : ""} still needed. You can submit what you have and send the rest later.
+                </p>
+              )}
             </>
           )}
 
