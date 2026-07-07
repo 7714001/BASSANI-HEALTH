@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
   MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle,
-  Eye, X, Mail, PenLine, RotateCcw,
+  Eye, X, Mail, PenLine, RotateCcw, FileCheck,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -14,14 +14,34 @@ import { DOC_CONFIGS, detectFields, countersignPdf } from "../utils/pdfSigning";
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  pending:       { label: "Pending Review",  cls: "bg-amber-50 text-amber-700 border-amber-200",  dot: "bg-amber-400",  icon: Clock },
-  awaiting_docs: { label: "Awaiting Docs",   cls: "bg-amber-50 text-amber-700 border-amber-200",  dot: "bg-amber-400",  icon: Clock },
-  approved:      { label: "Approved",        cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
-  rejected:      { label: "Rejected",        cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle },
+  awaiting_docs:              { label: "Awaiting Docs",    cls: "bg-amber-50  text-amber-700  border-amber-200",  dot: "bg-amber-400",  icon: Clock       },
+  needs_countersigning:       { label: "Needs Countersign",cls: "bg-blue-50   text-blue-700   border-blue-200",   dot: "bg-blue-400",   icon: PenLine     },
+  countersigning_in_progress: { label: "In Progress",      cls: "bg-purple-50 text-purple-700 border-purple-200", dot: "bg-purple-400", icon: PenLine     },
+  ready_to_approve:           { label: "Ready to Approve", cls: "bg-teal-50   text-teal-700   border-teal-200",   dot: "bg-teal-400",   icon: FileCheck   },
+  approved:                   { label: "Approved",         cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
+  rejected:                   { label: "Rejected",         cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle     },
 };
 
+const _BASSANI_SIG_TYPES = new Set(["nda", "tqa", "store_onboarding_agreement"]);
+
+function deriveStatus(app, docs) {
+  const s = app?.status;
+  if (s === "approved")      return "approved";
+  if (s === "rejected")      return "rejected";
+  if (s === "awaiting_docs") return "awaiting_docs";
+  if (!docs)                 return "awaiting_docs"; // still loading
+
+  const bdocs  = docs.filter(d => d.signed_in_portal && _BASSANI_SIG_TYPES.has(d.doc_type));
+  if (!bdocs.length) return "ready_to_approve";
+
+  const signed = bdocs.filter(d => d.countersigned_at).length;
+  if (signed === 0)           return "needs_countersigning";
+  if (signed < bdocs.length)  return "countersigning_in_progress";
+  return "ready_to_approve";
+}
+
 function StatusBadge({ status, size = "md" }) {
-  const cfg  = STATUS_CFG[status] || STATUS_CFG.pending;
+  const cfg  = STATUS_CFG[status] || STATUS_CFG.awaiting_docs;
   const Icon = cfg.icon;
   const cls  = size === "lg"
     ? "text-sm px-3 py-1.5 gap-1.5"
@@ -522,7 +542,7 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
   if (!isActionable) {
     return (
       <Card title="Decision">
-        <MetaRow label="Outcome"     value={STATUS_CFG[app.status]?.label} />
+        <MetaRow label="Outcome"     value={STATUS_CFG[deriveStatus(app, docs)]?.label} />
         <MetaRow label="Reviewed by" value={app.reviewed_by} />
         <MetaRow label="Reviewed on" value={app.reviewed_at ? fmtDate(app.reviewed_at) : null} />
         {app.rejection_reason && (
@@ -829,7 +849,7 @@ export default function CustomerApplicationDetail() {
               <span className="font-mono text-xs text-bassani-700 font-semibold bg-bassani-50 px-2 py-0.5 rounded-md">
                 {app.id}
               </span>
-              <StatusBadge status={app.status} size="md" />
+              <StatusBadge status={deriveStatus(app, docs)} size="md" />
               {app.reseller_name && (
                 <span className="text-xs text-gray-400">
                   Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> · {fmtDate(app.submitted_at)}
