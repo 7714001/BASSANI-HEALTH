@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Upload, Download, Clock, CheckCircle, ChevronDown, ChevronUp,
   Loader2, FileText, RotateCcw, PenLine, FlaskConical, AlertTriangle,
-  Info, Eye, X,
+  Eye, X,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal, FormGroup } from "../components/UI";
@@ -151,25 +151,36 @@ async function detectFields(pdfBytes) {
   });
 }
 
-async function generateTestPdf(pdfBytes, textValues, signingProfile) {
+// mikeFieldName: name of the signature field belonging to Bassani (highest y on last page).
+// customerSigDataUrl: PNG data URL from the canvas — embedded as the customer's signature.
+async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldName, customerSigDataUrl) {
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
-  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-  const form   = pdfDoc.getForm();
-  const pages  = pdfDoc.getPages();
-  const font   = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const pdfDoc   = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const form     = pdfDoc.getForm();
+  const pages    = pdfDoc.getPages();
+  const fontReg  = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  // Map page object number → page index (same fix as detectFields)
   const pageRefToIdx = new Map();
   pages.forEach((page, idx) => pageRefToIdx.set(page.ref.objectNumber, idx));
 
-  // Embed Mike's signature image if signing authority is configured
+  // Pre-load Mike's signature PNG from the signing authority profile
   let mikeImage = null;
-  if (signingProfile) {
+  if (signingProfile && mikeFieldName) {
     try {
-      const res  = await api.get("/api/signing-authority/signature", { responseType: "arraybuffer" });
-      mikeImage  = await pdfDoc.embedPng(res.data);
-    } catch { /* not configured */ }
+      const res = await api.get("/api/signing-authority/signature", { responseType: "arraybuffer" });
+      mikeImage = await pdfDoc.embedPng(res.data);
+    } catch {}
+  }
+
+  // Embed the drawn customer signature
+  let customerImage = null;
+  if (customerSigDataUrl) {
+    try {
+      const b64   = customerSigDataUrl.replace(/^data:image\/png;base64,/, "");
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      customerImage = await pdfDoc.embedPng(bytes);
+    } catch {}
   }
 
   for (const field of form.getFields()) {
@@ -177,75 +188,48 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile) {
     const rawType = field.constructor.name.replace("PDF", "").replace("Field", "");
 
     if (rawType === "Text") {
-      try {
-        field.setText(textValues[name] ?? "");
-        field.enableReadOnly();
-      } catch {}
+      try { field.setText(textValues[name] ?? ""); field.enableReadOnly(); } catch {}
       continue;
     }
 
-    // Signature field — draw overlay at widget position
-    const widgets = field.acroField.getWidgets();
-    for (const widget of widgets) {
+    if (rawType !== "Signature") continue;
+
+    const isMike = name === mikeFieldName;
+    const image  = isMike ? mikeImage : customerImage;
+
+    for (const widget of field.acroField.getWidgets()) {
       const rect    = widget.getRectangle?.();
       if (!rect) continue;
       const pageRef = widget.P?.();
-      const pageIdx = pageRef?.objectNumber != null
-        ? (pageRefToIdx.get(pageRef.objectNumber) ?? 0)
-        : 0;
+      const pageIdx = pageRef?.objectNumber != null ? (pageRefToIdx.get(pageRef.objectNumber) ?? 0) : 0;
       const page    = pages[pageIdx];
       if (!page) continue;
 
-      // Is this a Mike field or customer field?
-      const isMike = signingProfile && (
-        textValues[name]?.includes(signingProfile.name) ||
-        name.toLowerCase().includes("signed at") ||
-        name.toLowerCase().includes("bassani")
-      );
-
-      if (isMike && mikeImage) {
-        // Embed real signature with padding
+      if (image) {
         const pad = 4;
-        page.drawImage(mikeImage, {
+        page.drawImage(image, {
           x: rect.x + pad, y: rect.y + pad,
           width: rect.width - pad * 2, height: rect.height - pad * 2,
         });
       } else {
-        // Draw labelled placeholder
-        const label    = isMike ? "[ CEO Signature ]" : "[ Customer Signature ]";
-        const boxColor = isMike ? rgb(0.88, 0.94, 1) : rgb(0.92, 1, 0.92);
-        const penColor = isMike ? rgb(0.2, 0.4, 0.8) : rgb(0.1, 0.5, 0.2);
-        page.drawRectangle({
-          x: rect.x, y: rect.y,
-          width: rect.width, height: rect.height,
-          color: boxColor,
-          borderColor: penColor,
-          borderWidth: 1.5,
-          opacity: 0.8,
-        });
+        // Fallback labelled placeholder when no image is available
+        const boxColor = isMike ? rgb(0.88, 0.94, 1) : rgb(0.95, 0.95, 0.95);
+        const penColor = isMike ? rgb(0.2, 0.4, 0.8) : rgb(0.5, 0.5, 0.5);
+        const label    = isMike ? "[ CEO Signature — not configured ]" : "[ No signature drawn ]";
+        page.drawRectangle({ x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+          color: boxColor, borderColor: penColor, borderWidth: 1.5, opacity: 0.8 });
         const fontSize = Math.min(10, rect.height * 0.35);
-        page.drawText(label, {
-          x: rect.x + 4,
-          y: rect.y + (rect.height - fontSize) / 2,
-          size: fontSize,
-          font,
-          color: penColor,
-          maxWidth: rect.width - 8,
-        });
+        page.drawText(label, { x: rect.x + 4, y: rect.y + (rect.height - fontSize) / 2,
+          size: fontSize, font: fontBold, color: penColor, maxWidth: rect.width - 8 });
       }
     }
   }
 
-  // Flatten — bakes in everything
   try { form.flatten(); } catch {}
 
-  // Stamp TEST watermark on first page
-  const firstPage = pages[0];
-  firstPage.drawText("TEST DOCUMENT — NOT FOR USE", {
-    x: 40, y: firstPage.getHeight() - 30,
-    size: 9, font: fontReg,
-    color: rgb(0.8, 0.2, 0.2),
-    opacity: 0.7,
+  pages[0].drawText("TEST DOCUMENT — NOT FOR USE", {
+    x: 40, y: pages[0].getHeight() - 30,
+    size: 9, font: fontReg, color: rgb(0.8, 0.2, 0.2), opacity: 0.7,
   });
 
   return pdfDoc.save();
@@ -313,206 +297,228 @@ function PdfViewerModal({ docType, docLabel, onClose }) {
 }
 
 function TestSigningModal({ docType, docLabel, onClose }) {
-  const [step,           setStep          ] = useState("loading"); // loading | ready | generating
-  const [fields,         setFields        ] = useState([]);
-  const [testValues,     setTestValues    ] = useState({});
-  const [signingProfile, setSigningProfile] = useState(null);
-  const [error,          setError         ] = useState(null);
+  const [loading,    setLoading   ] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error,      setError     ] = useState(null);
+  const [pdfUrl,     setPdfUrl    ] = useState(null);
+  const [pdfBytes,   setPdfBytes  ] = useState(null);
+  const [fields,     setFields    ] = useState([]);
+  const [textValues, setTextValues] = useState({});
+  const [sigProfile, setSigProfile] = useState(null);
+  const canvasRef = useRef(null);
+  const isDrawing = useRef(false);
+  const lastPos   = useRef({ x: 0, y: 0 });
+  const hasMark   = useRef(false);
 
-  const load = useCallback(async () => {
-    setStep("loading");
-    try {
-      // Fetch PDF bytes and signing authority in parallel
-      const [pdfRes, authRes] = await Promise.all([
-        api.get(`/api/doc-templates/${docType}/download`, { responseType: "arraybuffer" }),
-        api.get("/api/signing-authority/").catch(() => ({ data: { configured: false } })),
-      ]);
-
-      const detected = await detectFields(pdfRes.data);
+  useEffect(() => {
+    let url;
+    Promise.all([
+      api.get(`/api/doc-templates/${docType}/download`, { responseType: "arraybuffer" }),
+      api.get("/api/signing-authority/").catch(() => null),
+    ]).then(async ([pdfRes, authRes]) => {
+      const bytes = new Uint8Array(pdfRes.data);
+      setPdfBytes(bytes);
+      url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      setPdfUrl(url);
+      setSigProfile(authRes?.data || null);
+      const detected = await detectFields(bytes);
       setFields(detected);
-
-      const profile = authRes.data.configured ? authRes.data.profile : null;
-      setSigningProfile(profile);
-
-      // Pre-populate text fields with sensible test defaults
-      const defaults = {};
-      for (const f of detected) {
-        if (f.type !== "Text") continue;
+      const init = {};
+      detected.filter(f => f.type === "Text").forEach(f => {
         const n = f.name.toLowerCase();
-        if (n.includes("name") && !n.includes("company")) defaults[f.name] = profile?.name || "Test Customer Name";
-        else if (n.includes("company") || n.includes("trading")) defaults[f.name] = "Test Company (Pty) Ltd";
-        else if (n.includes("position") || n.includes("title") || n.includes("authoris")) defaults[f.name] = profile ? profile.title : "Director";
-        else if (n.includes("date") || n.includes("this") || n.includes(" on")) defaults[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
-        else if (n.includes("bassani") || n.includes("location") || n.includes("signed at")) defaults[f.name] = profile?.location || "Cape Town";
-        else defaults[f.name] = `[${f.name}]`;
-      }
-      setTestValues(defaults);
-      setStep("ready");
-    } catch (e) {
-      setError(e.message || "Failed to load document");
-      setStep("error");
-    }
+        if (n.includes("date") || n.includes(" on") || n.includes("effective"))
+          init[f.name] = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+        else if (n.includes("location") || n.includes("signed at") || n.includes("place") || n.includes("city"))
+          init[f.name] = "Johannesburg";
+        else if (n.includes("company") || n.includes("trading") || n.includes("party"))
+          init[f.name] = "Test Company (Pty) Ltd";
+        else if (n.includes("position") || n.includes("title") || n.includes("role"))
+          init[f.name] = "Director";
+        else if (n.includes("name") && !n.includes("company"))
+          init[f.name] = "Test Customer";
+        else
+          init[f.name] = "";
+      });
+      setTextValues(init);
+    }).catch(() => setError("Failed to load document"))
+      .finally(() => setLoading(false));
+    return () => { if (url) URL.revokeObjectURL(url); };
   }, [docType]);
 
-  useEffect(() => { load(); }, [load]);
-
-  const handleGenerate = async () => {
-    setStep("generating");
-    try {
-      const pdfRes  = await api.get(`/api/doc-templates/${docType}/download`, { responseType: "arraybuffer" });
-      const bytes   = await generateTestPdf(pdfRes.data, testValues, signingProfile);
-      const blob    = new Blob([bytes], { type: "application/pdf" });
-      const url     = URL.createObjectURL(blob);
-      const a       = document.createElement("a");
-      a.href        = url;
-      a.download    = `${docType}-TEST-${new Date().toISOString().slice(0, 10)}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success("Test PDF downloaded — open it to verify field positions");
-      setStep("ready");
-    } catch (e) {
-      toast.error("Failed to generate test PDF");
-      setStep("ready");
-    }
+  // ── Canvas drawing ──────────────────────────────────────────────────────────
+  const getCanvasPos = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const r = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - r.left) * (canvas.width / r.width),
+      y: (src.clientY - r.top)  * (canvas.height / r.height),
+    };
+  };
+  const startDraw = (e) => { e.preventDefault(); isDrawing.current = true; lastPos.current = getCanvasPos(e); };
+  const draw = (e) => {
+    e.preventDefault();
+    if (!isDrawing.current) return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const pos = getCanvasPos(e);
+    ctx.strokeStyle = "#111827"; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
+    lastPos.current = pos; hasMark.current = true;
+  };
+  const endDraw = () => { isDrawing.current = false; };
+  const clearCanvas = () => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    hasMark.current = false;
   };
 
-  const sigFields  = fields.filter(f => f.type === "Signature");
+  // Mike's signature field = highest y-coordinate signature field on the last page
+  const sigFields    = fields.filter(f => f.type === "Signature");
+  const lastPageNum  = fields.length ? Math.max(...fields.map(f => f.page)) : 1;
+  const sigsLastPage = sigFields.filter(f => f.page === lastPageNum);
+  const mikeFieldName = sigsLastPage.length > 1
+    ? sigsLastPage.reduce((a, b) => ((a.rect?.y ?? 0) > (b.rect?.y ?? 0) ? a : b)).name
+    : null;
+
   const textFields = fields.filter(f => f.type === "Text");
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      let customerSigDataUrl = null;
+      const canvas = canvasRef.current;
+      if (canvas && hasMark.current) customerSigDataUrl = canvas.toDataURL("image/png");
+      const result = await generateTestPdf(pdfBytes, textValues, sigProfile, mikeFieldName, customerSigDataUrl);
+      const blob = new Blob([result], { type: "application/pdf" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `${docType}-test-signed-${new Date().toISOString().slice(0, 10)}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Test PDF downloaded");
+    } catch { toast.error("Failed to generate test PDF"); }
+    finally { setGenerating(false); }
+  };
+
+  const cleanLabel = (name) =>
+    name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/\b\w/g, c => c.toUpperCase()).substring(0, 36);
+
   return (
-    <Modal title={`Test signing flow — ${docLabel}`} onClose={onClose} width="max-w-2xl">
-      {step === "loading" && (
-        <div className="flex flex-col items-center gap-3 py-10">
-          <Loader2 size={22} className="animate-spin text-bassani-600" />
-          <p className="text-sm text-gray-500">Reading document fields…</p>
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <FlaskConical size={16} className="text-bassani-600" />
+          <span className="text-sm font-semibold text-gray-800">{docLabel}</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">signing flow preview</span>
         </div>
-      )}
+        <button onClick={onClose} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+          <X size={18} />
+        </button>
+      </div>
 
-      {step === "error" && (
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
-          <AlertTriangle size={24} className="text-amber-500" />
-          <p className="text-sm text-gray-700 font-medium">Could not load document</p>
-          <p className="text-xs text-gray-400">{error}</p>
-          <BtnSecondary onClick={load}>Retry</BtnSecondary>
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 size={24} className="animate-spin text-bassani-500" />
+            <p className="text-sm text-gray-500">Loading document…</p>
+          </div>
         </div>
-      )}
+      ) : error ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <AlertTriangle size={24} className="text-amber-400 mx-auto mb-2" />
+            <p className="text-sm text-gray-700">{error}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex">
 
-      {(step === "ready" || step === "generating") && (
-        <div className="space-y-5">
-
-          {/* Signing authority status */}
-          {signingProfile ? (
-            <div className="flex items-start gap-2 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-              <CheckCircle size={14} className="text-green-500 mt-0.5 shrink-0" />
-              <p className="text-xs text-green-700">
-                Signing authority configured — <strong>{signingProfile.name}</strong> ({signingProfile.title}, {signingProfile.location}).
-                Mike's signature will be embedded in the test PDF.
-              </p>
-            </div>
-          ) : (
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-              <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-              <p className="text-xs text-amber-700">
-                No signing authority configured. Signature fields will render as labelled placeholder boxes in the test PDF.
-                Set up the Signing Authority tab first for a fully realistic test.
-              </p>
-            </div>
-          )}
-
-          {/* Field summary */}
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-              Detected fields ({fields.length})
-            </p>
-            <div className="border border-gray-100 rounded-xl overflow-hidden text-xs">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-50 text-left">
-                    <th className="px-3 py-2 text-gray-500 font-medium">Field name</th>
-                    <th className="px-3 py-2 text-gray-500 font-medium">Type</th>
-                    <th className="px-3 py-2 text-gray-500 font-medium">Page</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {fields.map((f, i) => (
-                    <tr key={i}>
-                      <td className="px-3 py-2 font-mono text-gray-700">{f.name}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${
-                          f.type === "Signature"
-                            ? "bg-purple-50 text-purple-700"
-                            : "bg-blue-50 text-blue-700"
-                        }`}>
-                          {f.type}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-gray-400">p.{f.page}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {sigFields.length > 0 && (
-              <p className="text-[11px] text-gray-400 mt-1.5 flex items-center gap-1">
-                <Info size={11} />
-                Signature fields will appear as coloured placeholder boxes in the test PDF.
-                {signingProfile && " Mike's box will contain his real signature image."}
-              </p>
+          {/* Left: live PDF preview */}
+          <div className="flex-1 p-4 min-w-0">
+            {pdfUrl && (
+              <iframe src={pdfUrl} title={docLabel}
+                className="w-full h-full rounded-xl border border-gray-200 bg-white" />
             )}
           </div>
 
-          {/* Editable test values for text fields */}
-          {textFields.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-                Test values — text fields
-              </p>
-              <p className="text-xs text-gray-400 mb-3">
-                Edit any value to test how it fits. These are only used in the downloaded test PDF.
-              </p>
-              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                {textFields.map((f, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <label className="text-xs text-gray-500 w-44 shrink-0 truncate" title={f.name}>
-                      {f.name}
-                      <span className="text-gray-300 ml-1">(p.{f.page})</span>
-                    </label>
-                    <input
-                      value={testValues[f.name] ?? ""}
-                      onChange={e => setTestValues(v => ({ ...v, [f.name]: e.target.value }))}
-                      className="flex-1 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500"
-                    />
+          {/* Right: signing panel */}
+          <div className="w-80 shrink-0 border-l border-gray-200 bg-white flex flex-col">
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+              {/* Bassani auto-fill section */}
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
+                {sigProfile ? (
+                  <div className="bg-green-50 border border-green-100 rounded-xl p-3 space-y-0.5">
+                    <p className="text-xs font-semibold text-green-800">{sigProfile.name}</p>
+                    <p className="text-xs text-green-600">{sigProfile.title}</p>
+                    <p className="text-[10px] text-green-500 mt-1">Signature and date embedded automatically at signing time</p>
                   </div>
-                ))}
+                ) : (
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                    <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a fully realistic test.</p>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
 
-          {fields.length === 0 && (
-            <div className="text-center py-6">
-              <AlertTriangle size={20} className="text-amber-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-600 font-medium">No AcroForm fields detected</p>
-              <p className="text-xs text-gray-400 mt-1">
-                The PDF does not contain embedded form fields. Add interactive fields in Adobe Acrobat
-                or LibreOffice before uploading this version.
-              </p>
-            </div>
-          )}
+              {/* Customer text fields */}
+              {textFields.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Your details</p>
+                  <div className="space-y-3">
+                    {textFields.map(f => (
+                      <div key={f.name}>
+                        <label className="block text-xs text-gray-600 mb-1">{cleanLabel(f.name)}</label>
+                        <input
+                          type="text"
+                          value={textValues[f.name] ?? ""}
+                          onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
-            <BtnSecondary onClick={onClose}>Close</BtnSecondary>
-            {fields.length > 0 && (
-              <BtnPrimary onClick={handleGenerate} disabled={step === "generating"}>
-                {step === "generating"
+              {/* Customer signature canvas */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Your signature</p>
+                  <button onClick={clearCanvas} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1">Clear</button>
+                </div>
+                <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+                  <canvas
+                    ref={canvasRef}
+                    width={300} height={120}
+                    className="w-full touch-none cursor-crosshair"
+                    style={{ display: "block" }}
+                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">Draw your signature above — it will be embedded in the test PDF</p>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-100 shrink-0">
+              <BtnPrimary onClick={handleGenerate} disabled={generating} className="w-full justify-center">
+                {generating
                   ? <><Loader2 size={13} className="animate-spin" /> Generating…</>
-                  : <><Download size={13} /> Download test PDF</>
+                  : <><Download size={13} /> Download signed test PDF</>
                 }
               </BtnPrimary>
-            )}
+            </div>
           </div>
+
         </div>
       )}
-    </Modal>
+    </div>
   );
 }
 
