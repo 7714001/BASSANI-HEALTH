@@ -1017,10 +1017,10 @@ async def countersign_document(
     """
     Upload a countersigned PDF for a portal-signed onboarding document.
 
-    Only documents in BASSANI_SIG_DOC_TYPES can be countersigned.  The file is
-    stored alongside the original under the same session prefix with a
-    '-countersigned' suffix.  The document record in MongoDB is updated with
-    countersign metadata so the approve gate can verify completion.
+    Only documents in BASSANI_SIG_DOC_TYPES can be countersigned.  The
+    countersigned file overwrites the original at the same R2 key so there is
+    always exactly one copy per document.  The MongoDB record is updated with
+    countersign metadata (who, when) which serves as the audit trail.
     """
     if doc_type not in BASSANI_SIG_DOC_TYPES:
         raise HTTPException(
@@ -1043,20 +1043,15 @@ async def countersign_document(
     if len(contents) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (20 MB maximum)")
 
-    session_id = app.get("document_session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Application has no document session ID")
-
-    key = f"onboarding/sessions/{session_id}/{doc_type}-countersigned.pdf"
+    key = target["r2_key"]
     await r2_put(key, contents, "application/pdf")
 
     now = datetime.now(timezone.utc)
     actor_name = current_user.get("name") or current_user.get("username", "")
     countersign_meta = {
-        "countersigned_at":     now.isoformat(),
-        "countersigned_by":     actor_name,
-        "countersigned_by_id":  str(current_user.get("_id") or current_user.get("username", "")),
-        "countersigned_r2_key": key,
+        "countersigned_at":    now.isoformat(),
+        "countersigned_by":    actor_name,
+        "countersigned_by_id": str(current_user.get("_id") or current_user.get("username", "")),
     }
 
     updated_docs = [
@@ -1074,14 +1069,13 @@ async def countersign_document(
         entity_type="customer_onboarding",
         entity_id=app_id,
         entity_label=app.get("company_name", ""),
-        after={"doc_type": doc_type, "countersigned_r2_key": key},
+        after={"doc_type": doc_type, "r2_key": key},
     )
 
     return {
-        "doc_type":          doc_type,
-        "countersigned_at":  now.isoformat(),
-        "countersigned_by":  actor_name,
-        "countersigned_r2_key": key,
+        "doc_type":         doc_type,
+        "countersigned_at": now.isoformat(),
+        "countersigned_by": actor_name,
     }
 
 

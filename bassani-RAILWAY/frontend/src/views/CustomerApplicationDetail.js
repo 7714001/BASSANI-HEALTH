@@ -737,12 +737,14 @@ export default function CustomerApplicationDetail() {
       .finally(() => setLoading(false));
   }, [id, navigate]);
 
-  useEffect(() => {
+  const fetchDocs = useCallback(() => {
     api.get(`/api/onboarding/${id}/documents`)
       .then(r => setDocs(r.data.documents || []))
       .catch(() => setDocs([]))
       .finally(() => setDocsLoading(false));
   }, [id]);
+
+  useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
   useEffect(() => {
     api.get("/api/signing-authority/am-i-holder")
@@ -780,9 +782,12 @@ export default function CustomerApplicationDetail() {
   const updateApp = (fields) => setApp(prev => ({ ...prev, ...fields }));
 
   const handleDocUpdate = (docType, meta) => {
+    // Optimistic local update so badges appear immediately
     setDocs(prev => (prev || []).map(d =>
       d.doc_type === docType ? { ...d, ...meta } : d
     ));
+    // Re-fetch to get a fresh presigned URL for the overwritten R2 object
+    fetchDocs();
   };
 
   if (loading) return (
