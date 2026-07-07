@@ -214,10 +214,16 @@ async function generateTestPdf(pdfBytes, textValues, signingProfile, mikeFieldNa
       if (!page) continue;
 
       if (image) {
-        const pad = 4;
+        const pad    = 4;
+        const fieldW = rect.width  - pad * 2;
+        const fieldH = rect.height - pad * 2;
+        const scale  = Math.min(fieldW / image.width, fieldH / image.height);
+        const drawW  = image.width  * scale;
+        const drawH  = image.height * scale;
         page.drawImage(image, {
-          x: rect.x + pad, y: rect.y + pad,
-          width: rect.width - pad * 2, height: rect.height - pad * 2,
+          x: rect.x + pad + (fieldW - drawW) / 2,
+          y: rect.y + pad + (fieldH - drawH) / 2,
+          width: drawW, height: drawH,
         });
       } else {
         // Fallback labelled placeholder when no image is available
