@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { Upload, Download, Clock, CheckCircle, ChevronDown, ChevronUp, Loader2, FileText, RotateCcw } from "lucide-react";
+import { Upload, Download, Clock, CheckCircle, ChevronDown, ChevronUp, Loader2, FileText, RotateCcw, PenLine } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal, FormGroup } from "../components/UI";
+import { SigningAuthoritySection } from "./SigningAuthority";
 import api from "../api";
 import toast from "react-hot-toast";
 
@@ -395,6 +396,25 @@ export default function DocumentTemplates() {
             <li>Roll back to any previous version using the Activate button in the version history.</li>
           </ul>
         </div>
+
+        {isSuperAdmin && (
+          <>
+            <div className="mt-10 mb-6 flex items-center gap-3 max-w-4xl">
+              <div className="flex-1 border-t border-gray-200" />
+              <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <PenLine size={13} className="text-bassani-500" />
+                Signing Authority
+              </div>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            <p className="text-sm text-gray-500 max-w-2xl mb-5">
+              Configure the signatory profile used to automatically complete Bassani's signing block
+              on all co-signed onboarding documents. Once set up, no action is required per document —
+              the name, title, location, and signature are applied automatically when a customer signs.
+            </p>
+            <SigningAuthoritySection />
+          </>
+        )}
       </main>
     </div>
   );
