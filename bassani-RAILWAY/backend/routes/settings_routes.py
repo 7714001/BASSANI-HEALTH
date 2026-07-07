@@ -210,6 +210,13 @@ async def _test_mailbox(body: MailboxConfig, settings_id: str = "mailbox_config"
                 })
                 r.raise_for_status()
             return {"success": True, "message": "Microsoft 365 connection successful. OAuth token acquired."}
+        except _httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Microsoft 365 authentication failed. Check your Tenant ID, Client ID, and Client Secret — one or more values are incorrect or the secret may have expired.",
+                )
+            raise HTTPException(status_code=502, detail=f"Microsoft 365 connection failed: {exc}")
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Microsoft 365 connection failed: {exc}")
     else:
@@ -234,6 +241,12 @@ async def _test_mailbox(body: MailboxConfig, settings_id: str = "mailbox_config"
             await test_connection(cfg)
             return {"success": True, "message": "Connection successful. Mailbox is reachable."}
         except Exception as exc:
+            err = str(exc)
+            if "AUTHENTICATIONFAILED" in err or "Authentication failed" in err:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Authentication failed. Check the username and password, and confirm the mailbox exists on this server.",
+                )
             raise HTTPException(status_code=502, detail=f"Connection failed: {exc}")
 
 
