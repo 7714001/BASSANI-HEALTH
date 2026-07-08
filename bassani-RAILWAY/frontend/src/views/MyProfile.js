@@ -52,28 +52,25 @@ export default function MyProfile() {
 
   // ── Canvas handlers ───────────────────────────────────────────────────────────
 
-  // Size canvas to its actual rendered dimensions so coordinates match exactly.
-  // Called on mount and on window resize so it stays correct if the layout shifts.
+  // Size the canvas backing store to its rendered CSS size × device pixel ratio.
+  // ctx.scale(dpr, dpr) means all subsequent draw calls use CSS pixel coordinates.
   const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dpr  = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width  = rect.width  * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = canvas.offsetWidth  * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    canvas.getContext("2d").scale(dpr, dpr);
   }, []);
 
-  // Map a pointer/touch event to canvas-space coordinates, accounting for scale.
+  // Returns cursor position in CSS pixels — matches the ctx coordinate space
+  // established by ctx.scale(dpr, dpr) in initCanvas.
   const getPos = useCallback((e, canvas) => {
-    const rect   = canvas.getBoundingClientRect();
-    const src    = e.touches ? e.touches[0] : e;
-    const scaleX = canvas.width  / rect.width  / (window.devicePixelRatio || 1);
-    const scaleY = canvas.height / rect.height / (window.devicePixelRatio || 1);
+    const rect = canvas.getBoundingClientRect();
+    const src  = e.touches ? e.touches[0] : e;
     return {
-      x: (src.clientX - rect.left) * scaleX,
-      y: (src.clientY - rect.top)  * scaleY,
+      x: src.clientX - rect.left,
+      y: src.clientY - rect.top,
     };
   }, []);
 
