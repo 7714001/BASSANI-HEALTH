@@ -213,11 +213,15 @@ async def list_products(
 
 
 @router.get("/categories")
-async def list_categories(current_user: dict = Depends(get_current_user)):
+async def list_categories(
+    in_stock_only: bool         = Query(False),
+    warehouse_id:  Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
     """All product.category records from Odoo.
-    For resellers: filtered to only categories that have at least one catalog product,
-    so the category chips on their product page are scoped to what they can see.
-    For admins/staff: all categories (used for dropdowns and the Categories page)."""
+    For resellers: filtered to only categories that have at least one catalog product.
+    For admins/staff: all categories, or when in_stock_only=true only categories
+    that have at least one product with qty_available > 0 in the active warehouse."""
     odoo = get_odoo_client()
 
     if current_user.get("role") == "reseller":
@@ -247,6 +251,28 @@ async def list_categories(current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
     try:
+        if in_stock_only:
+            wh_id = warehouse_id or await resolve_warehouse_id(current_user)
+            company_id = get_company_id(odoo, wh_id)
+            products = odoo.search_read(
+                "product.product",
+                domain=[("type", "=", "consu"), ("active", "=", True), ("qty_available", ">", 0)],
+                fields=["categ_id"],
+                limit=2000,
+                context=odoo_context(wh_id, company_id),
+            )
+            cat_ids = list({p["categ_id"][0] for p in products if p.get("categ_id")})
+            if not cat_ids:
+                return {"categories": []}
+            categories = odoo.search_read(
+                "product.category",
+                domain=[("id", "in", cat_ids)],
+                fields=["id", "name", "complete_name", "parent_id"],
+                limit=500,
+                order="complete_name asc",
+            )
+            return {"categories": categories}
+
         categories = odoo.search_read(
             "product.category",
             domain=[],

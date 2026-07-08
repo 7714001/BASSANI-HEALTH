@@ -120,19 +120,21 @@ export function Products() {
   };
 
   useEffect(() => {
-    api.get("/api/products/categories")
-      .then(r => setCategories(r.data.categories || []))
-      .catch(() => {});
-    api.get("/api/products/uoms")
-      .then(r => setUoms(r.data.uoms || []))
-      .catch(() => {});
-    api.get("/api/products/taxes")
-      .then(r => setTaxes(r.data.taxes || []))
-      .catch(() => {});
+    api.get("/api/products/uoms").then(r => setUoms(r.data.uoms || [])).catch(() => {});
+    api.get("/api/products/taxes").then(r => setTaxes(r.data.taxes || [])).catch(() => {});
     api.get("/api/reseller-catalog/")
       .then(r => { setCatalog(new Set(r.data.product_ids || [])); setMoqMap(r.data.moq || {}); })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const params = stockFilter === "in_stock" ? { in_stock_only: true } : {};
+    api.get("/api/products/categories", { params })
+      .then(r => setCategories(r.data.categories || []))
+      .catch(() => {});
+    setCat("all");
+    setVariant("all");
+  }, [stockFilter, user?.active_warehouse_id]);
 
   const load = useCallback(async () => {
     setLoading(true);
