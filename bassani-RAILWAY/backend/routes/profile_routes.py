@@ -33,8 +33,8 @@ def _sig_key(user_id: str) -> str:
 
 @router.get("/")
 async def get_profile(current_user: dict = Depends(get_current_user)):
-    uid = str(current_user.get("_id") or current_user.get("id", ""))
-    doc = await col("users").find_one({"_id": current_user["_id"]})
+    uid = current_user.get("id", "")
+    doc = await col("users").find_one({"id": uid})
     return {
         "id":            uid,
         "username":      current_user.get("username", ""),
@@ -73,14 +73,15 @@ async def update_profile(
     if not updates:
         return {"success": True}
 
+    uid = current_user.get("id", "")
     updates["updated_at"] = datetime.utcnow()
-    await col("users").update_one({"_id": current_user["_id"]}, {"$set": updates})
+    await col("users").update_one({"id": uid}, {"$set": updates})
 
     await audit_log(
         user=current_user,
         action="profile.updated",
         entity_type="user",
-        entity_id=str(current_user.get("_id") or current_user.get("id", "")),
+        entity_id=uid,
         entity_label=f"Profile — {current_user.get('username', '')}",
         after=updates,
     )
@@ -96,7 +97,7 @@ async def upload_signature(
     current_user: dict = Depends(require_permission("signing_authority.sign")),
 ):
     """Upload or draw a personal signature for use when countersigning documents."""
-    uid = str(current_user.get("_id") or current_user.get("id", ""))
+    uid = current_user.get("id", "")
 
     sig_bytes: Optional[bytes] = None
 
@@ -125,7 +126,7 @@ async def upload_signature(
 
     now = datetime.utcnow()
     await col("users").update_one(
-        {"_id": current_user["_id"]},
+        {"id": uid},
         {"$set": {"has_signature": True, "signature_updated_at": now}},
     )
 
@@ -145,8 +146,8 @@ async def upload_signature(
 @router.get("/signature")
 async def get_signature(current_user: dict = Depends(require_permission("signing_authority.sign"))):
     """Serve the authenticated user's own signature image for preview or PDF embedding."""
-    uid = str(current_user.get("_id") or current_user.get("id", ""))
-    doc = await col("users").find_one({"_id": current_user["_id"]}, {"has_signature": 1})
+    uid = current_user.get("id", "")
+    doc = await col("users").find_one({"id": uid}, {"has_signature": 1})
     if not doc or not doc.get("has_signature"):
         raise HTTPException(status_code=404, detail="No signature configured — upload one in My Profile")
 
@@ -166,13 +167,13 @@ async def get_signature(current_user: dict = Depends(require_permission("signing
 
 @router.delete("/signature")
 async def delete_signature(current_user: dict = Depends(require_permission("signing_authority.sign"))):
-    uid = str(current_user.get("_id") or current_user.get("id", ""))
+    uid = current_user.get("id", "")
     try:
         await r2_delete(_sig_key(uid))
     except Exception:
         pass
     await col("users").update_one(
-        {"_id": current_user["_id"]},
+        {"id": uid},
         {"$set": {"has_signature": False}, "$unset": {"signature_updated_at": ""}},
     )
     await audit_log(
