@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -273,9 +273,7 @@ function WarehouseSwitcher() {
 
 export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooConnected = true, showWarehouseSwitcher = false }) {
   const { toggle } = useContext(SidebarContext);
-  const { user }   = useAuth();
   const navigate   = useNavigate();
-  const initial    = (user?.name || user?.username || "?")[0].toUpperCase();
   return (
     <header className="bg-white border-b border-gray-100 px-4 sm:px-6 py-3.5 flex items-center justify-between flex-shrink-0 gap-3">
       <div className="flex items-center gap-2.5 min-w-0">
@@ -304,9 +302,9 @@ export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooCo
         <button
           onClick={() => navigate("/profile")}
           title="My Profile"
-          className="w-7 h-7 rounded-full bg-bassani-600 hover:bg-bassani-700 text-white text-xs font-bold flex items-center justify-center transition-colors flex-shrink-0"
+          className="text-gray-400 hover:text-bassani-600 transition-colors flex-shrink-0"
         >
-          {initial}
+          <UserCircle size={26} />
         </button>
       </div>
     </header>
