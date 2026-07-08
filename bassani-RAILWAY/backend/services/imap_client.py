@@ -36,6 +36,7 @@ _graph_addresses: dict[str, Optional[str]] = {}
 _SETTINGS_KEYS: dict[str, str] = {
     "sales":      "mailbox_config",
     "onboarding": "mailbox_config_onboarding",
+    "orders":     "mailbox_config_orders",
 }
 
 

@@ -245,6 +245,29 @@ async def initialise_users():
     if r.modified_count:
         logger.info("startup_migrated_inbox_other", extra={"count": r.modified_count})
 
+    # orders_inbox.view — grant True to roles that use the orders workflow.
+    _orders_inbox_roles = ["orders_clerk", "qa_manager", "responsible_pharmacist"]
+    r = await col("users").update_many(
+        {"role": {"$in": ["super_admin", "admin"]}, "permissions.orders_inbox": {"$exists": False}},
+        {"$set": {"permissions.orders_inbox": {"view": True}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_orders_inbox_admin", extra={"count": r.modified_count})
+
+    r = await col("users").update_many(
+        {"role": {"$in": _orders_inbox_roles}, "permissions.orders_inbox": {"$exists": False}},
+        {"$set": {"permissions.orders_inbox": {"view": True}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_orders_inbox_roles", extra={"count": r.modified_count})
+
+    r = await col("users").update_many(
+        {"permissions.orders_inbox": {"$exists": False}},
+        {"$set": {"permissions.orders_inbox": {"view": False}}},
+    )
+    if r.modified_count:
+        logger.info("startup_migrated_orders_inbox_other", extra={"count": r.modified_count})
+
 
 def _make_inbox_indexes(collection: str):
     """Return the standard index list for any inbox collection."""
@@ -432,6 +455,12 @@ async def initialise_onboarding_inbox():
     await _run_inbox_startup("onboarding", "onboarding_inbox", "onboarding_inbox")
 
 
+@app.on_event("startup")
+async def initialise_orders_inbox():
+    """Orders inbox — indexes, Graph subscription, and IMAP polling."""
+    await _run_inbox_startup("orders", "orders_inbox", "orders_inbox")
+
+
 @app.get("/health")
 async def health():
     from database import col
@@ -493,6 +522,7 @@ from routes.warehouse_routes          import router as warehouse_router
 from routes.ticket_routes             import router as ticket_router
 from routes.inbox_routes              import router as inbox_router
 from routes.onboarding_inbox_routes   import router as onboarding_inbox_router
+from routes.orders_inbox_routes       import router as orders_inbox_router
 from routes.reseller_catalog_routes   import router as reseller_catalog_router
 from routes.supplier_routes           import router as supplier_router
 from routes.settings_routes           import router as settings_router
@@ -511,7 +541,7 @@ for router in [
     aged_debtors_router, payment_router, audit_router, batch_router,
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
-    warehouse_router, ticket_router, inbox_router, onboarding_inbox_router,
+    warehouse_router, ticket_router, inbox_router, onboarding_inbox_router, orders_inbox_router,
     reseller_catalog_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,

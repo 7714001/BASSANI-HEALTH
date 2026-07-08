@@ -314,3 +314,41 @@ async def clear_onboarding_inbox(_: dict = Depends(require_permission("settings.
 @router.post("/onboarding-mailbox/test")
 async def test_onboarding_mailbox_connection(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
     return await _test_mailbox(body, _ONBOARDING_KEY)
+
+
+# ── Orders mailbox config ─────────────────────────────────────────────────────
+# Separate MongoDB doc for the orders inbox mailbox.
+
+_ORDERS_KEY = "mailbox_config_orders"
+
+
+@router.get("/orders-mailbox")
+async def get_orders_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
+    doc = await col("portal_settings").find_one({"_id": _ORDERS_KEY})
+    return _mailbox_response(doc) if doc else _blank_mailbox_response()
+
+
+@router.put("/orders-mailbox")
+async def save_orders_mailbox_config(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
+    await _save_mailbox_doc(_ORDERS_KEY, body, "orders")
+    return {"success": True}
+
+
+@router.delete("/orders-mailbox")
+async def clear_orders_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
+    await col("portal_settings").delete_one({"_id": _ORDERS_KEY})
+    from services.imap_client import load_config_from_db
+    await load_config_from_db("orders")
+    return {"success": True}
+
+
+@router.delete("/orders-mailbox/clear-inbox")
+async def clear_orders_inbox(_: dict = Depends(require_permission("settings.manage"))):
+    """Wipe all documents from orders_inbox. Use when swapping mailboxes during development."""
+    result = await col("orders_inbox").delete_many({})
+    return {"deleted": result.deleted_count}
+
+
+@router.post("/orders-mailbox/test")
+async def test_orders_mailbox_connection(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
+    return await _test_mailbox(body, _ORDERS_KEY)

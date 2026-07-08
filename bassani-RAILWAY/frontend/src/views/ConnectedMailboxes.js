@@ -32,6 +32,7 @@ const BLANK = {
 const TABS = [
   { key: "sales",      label: "Sales Mailbox",      apiBase: "/api/settings/mailbox",            inboxName: "Sales Inbox",      placeholder: "orders@bassanihealth.com" },
   { key: "onboarding", label: "Onboarding Mailbox", apiBase: "/api/settings/onboarding-mailbox", inboxName: "Onboarding Inbox", placeholder: "onboarding@bassanihealth.com" },
+  { key: "orders",     label: "Orders Mailbox",     apiBase: "/api/settings/orders-mailbox",     inboxName: "Orders Inbox",     placeholder: "orders-ops@bassanihealth.com" },
 ];
 
 function Field({ label, hint, children }) {

@@ -41,6 +41,7 @@ import SalesTickets          from "./views/SalesTickets";
 import OrdersTickets         from "./views/OrdersTickets";
 import SalesInbox            from "./views/SalesInbox";
 import OnboardingInbox       from "./views/OnboardingInbox";
+import OrdersInbox           from "./views/OrdersInbox";
 import ProductCategories     from "./views/ProductCategories";
 import ProductUOM            from "./views/ProductUOM";
 import ChangePassword        from "./views/ChangePassword";
@@ -242,6 +243,9 @@ export default function App() {
         } />
         <Route path="/onboarding-inbox" element={
           <ProtectedRoute><AppLayout><OnboardingInbox /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/orders-inbox" element={
+          <ProtectedRoute><AppLayout><OrdersInbox /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/sales" element={
           <ProtectedRoute><AppLayout><SalesTickets /></AppLayout></ProtectedRoute>
