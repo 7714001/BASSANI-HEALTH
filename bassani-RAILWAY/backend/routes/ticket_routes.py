@@ -21,7 +21,7 @@ from config import get_settings
 from auth import require_permission, require_any_permission, require_admin, get_user_by_username
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
-from database import col
+from database import col, NO_ID
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
 from services.email_service import send_ticket_assigned
@@ -330,16 +330,24 @@ async def get_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    # Sync Odoo order state on every detail fetch. Odoo is the financial source
-    # of truth — if the order is cancelled there, close the portal ticket immediately.
+    # Full sync with Odoo on every detail fetch. Odoo is the financial source of truth.
+    # Handles three cases: cancellation, and forward-advancement through the portal pipeline
+    # for orders that were processed directly in Odoo (skipping portal actions). Every sync
+    # step is stamped "System (Auto-sync)" in stage_history so users can distinguish it from
+    # deliberate portal actions.
     order_id = ticket.get("order_id")
     if order_id and not ticket.get("exit_status"):
         try:
             odoo = get_odoo_client()
-            rows = odoo.read("sale.order", [order_id], fields=["state"])
+            rows = odoo.read(
+                "sale.order", [order_id],
+                fields=["state", "invoice_ids", "picking_ids", "name", "partner_id", "warehouse_id", "note"],
+            )
             if rows:
-                live_state = rows[0]["state"]
-                now = datetime.now(timezone.utc)
+                row        = rows[0]
+                live_state = row["state"]
+                now        = datetime.now(timezone.utc)
+
                 if live_state == "cancel":
                     await col("tickets").update_one(
                         {"_id": oid},
@@ -353,15 +361,144 @@ async def get_ticket(
                         },
                     )
                     ticket["odoo_order_state"] = live_state
-                    ticket["exit_status"] = "cancelled"
+                    ticket["exit_status"]      = "cancelled"
                     rid = ticket.get("reseller_id")
                     await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
-                elif live_state != ticket.get("odoo_order_state"):
-                    await col("tickets").update_one(
-                        {"_id": oid},
-                        {"$set": {"odoo_order_state": live_state, "updated_at": now}},
-                    )
-                    ticket["odoo_order_state"] = live_state
+
+                else:
+                    set_fields: dict = {"updated_at": now}
+                    history:    list = []
+                    current_status = ticket.get("status", "open")
+                    current_idx    = STATUSES.index(current_status) if current_status in STATUSES else 0
+
+                    if live_state != ticket.get("odoo_order_state"):
+                        set_fields["odoo_order_state"] = live_state
+
+                    # ── Invoice resolution ────────────────────────────────
+                    # Only needed while ticket is still below confirmed_wip.
+                    live_invoice_id    = None
+                    live_invoice_name  = None
+                    live_payment_state = None
+                    invoice_ids_raw    = row.get("invoice_ids", [])
+
+                    if (
+                        live_state in ("sale", "done")
+                        and invoice_ids_raw
+                        and current_idx < STATUSES.index("confirmed_wip")
+                    ):
+                        inv_rows = odoo.read(
+                            "account.move", invoice_ids_raw,
+                            fields=["name", "payment_state", "move_type", "state"],
+                        )
+                        for inv in (inv_rows or []):
+                            if inv.get("move_type") == "out_invoice" and inv.get("state") == "posted":
+                                live_invoice_id    = inv["id"]
+                                live_invoice_name  = inv.get("name")
+                                live_payment_state = inv.get("payment_state")
+                                break
+
+                    if live_invoice_id and not ticket.get("invoice_id"):
+                        set_fields["invoice_id"] = live_invoice_id
+                        ticket["invoice_id"]     = live_invoice_id
+
+                    # ── Determine target portal status ─────────────────────
+                    _s2s = {"draft": "quote", "sent": "quote", "sale": "sale_order", "done": "sale_order"}
+                    target_status = _s2s.get(live_state, current_status)
+
+                    if live_invoice_id and STATUSES.index("invoice") > STATUSES.index(target_status):
+                        target_status = "invoice"
+
+                    deposit_ok = live_payment_state in ("in_payment", "paid", "partial")
+                    if deposit_ok and STATUSES.index("confirmed_wip") > STATUSES.index(target_status):
+                        target_status = "confirmed_wip"
+
+                    target_idx = STATUSES.index(target_status) if target_status in STATUSES else 0
+
+                    # ── Advance (never go backward) ────────────────────────
+                    if target_idx > current_idx:
+                        _notes = {
+                            "sale_order":    f"Auto-sync: Odoo order confirmed (state: {live_state})",
+                            "invoice":       f"Auto-sync: Invoice {live_invoice_name or ''} found in Odoo",
+                            "confirmed_wip": f"Auto-sync: Deposit confirmed in Odoo (payment state: {live_payment_state})",
+                        }
+                        for stage in STATUSES[current_idx + 1 : target_idx + 1]:
+                            history.append({
+                                "status": stage, "exit_status": None,
+                                "actor_id": "system", "actor_name": "System (Auto-sync)",
+                                "at": now,
+                                "note": _notes.get(stage, f"Auto-sync: Odoo state {live_state}"),
+                            })
+                        set_fields["status"] = target_status
+                        ticket["status"]     = target_status
+
+                    # ── Packing board — create entry if deposit is confirmed
+                    # but the order was never pushed through the portal confirm flow.
+                    if deposit_ok and live_invoice_id and not ticket.get("orders_ticket_ref"):
+                        try:
+                            items       = []
+                            dn_num      = ""
+                            picking_ids = row.get("picking_ids", [])
+                            if picking_ids:
+                                pkgs = odoo.read("stock.picking", [picking_ids[0]], fields=["name", "move_ids"])
+                                if pkgs:
+                                    dn_num = pkgs[0].get("name", "")
+                                    if pkgs[0].get("move_ids"):
+                                        moves = odoo.read(
+                                            "stock.move", pkgs[0]["move_ids"],
+                                            fields=["product_id", "product_uom_qty"],
+                                        )
+                                        for m in moves:
+                                            pname = m["product_id"][1] if m.get("product_id") else "Unknown"
+                                            prods = (
+                                                odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
+                                                if m.get("product_id") else []
+                                            )
+                                            sku = (prods[0].get("default_code") or str(m["product_id"][0])) if prods else ""
+                                            items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+
+                            comm_data = await col("order_commissions").find_one(
+                                {"odoo_order_id": str(order_id)}, NO_ID
+                            )
+                            pb_doc = {
+                                "order_id":       str(order_id),
+                                "warehouse_id":   row["warehouse_id"][0]  if row.get("warehouse_id") else None,
+                                "warehouse_name": row["warehouse_id"][1]  if row.get("warehouse_id") else None,
+                                "customer_name":  row["partner_id"][1]    if row.get("partner_id")   else "",
+                                "customer_city":  "",
+                                "items":          items,
+                                "total_units":    int(sum(i["qty"] for i in items)),
+                                "inv_num":        live_invoice_name or "",
+                                "dn_num":         dn_num,
+                                "ps_num":         row.get("name", ""),
+                                "notes":          row.get("note") or "",
+                                "is_reseller":    bool(comm_data),
+                                "reseller_name":  comm_data.get("reseller_name") if comm_data else None,
+                                "packer_name": None, "status": "queued", "queued_at": now,
+                                "packed_at": None, "ready_at": None, "collected_at": None,
+                                "cancelled_at": None, "incomplete_at": None, "completed_at": None,
+                                "incomplete_reason": None,
+                                "qa_approved_by": None, "qa_approved_at": None,
+                                "rp_approved_by": None, "rp_approved_at": None,
+                                "item_ticks": {i["sku"]: False for i in items},
+                            }
+                            await col("packing_board").replace_one(
+                                {"order_id": str(order_id)}, pb_doc, upsert=True
+                            )
+                            set_fields["orders_ticket_ref"] = str(order_id)
+                            ticket["orders_ticket_ref"]     = str(order_id)
+                        except Exception as _pb_err:
+                            print(f"⚠️  Auto-sync packing board failed: {_pb_err}")
+
+                    # ── Commit ────────────────────────────────────────────
+                    if set(set_fields) - {"updated_at"} or history:
+                        mongo_op: dict = {"$set": set_fields}
+                        if history:
+                            mongo_op["$push"] = {"stage_history": {"$each": history}}
+                        await col("tickets").update_one({"_id": oid}, mongo_op)
+                        if history:
+                            rid = ticket.get("reseller_id")
+                            await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+
         except Exception:
             pass  # Non-fatal — stale display is better than a broken detail page
 
