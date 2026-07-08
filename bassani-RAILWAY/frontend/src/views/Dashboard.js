@@ -39,10 +39,12 @@ export default function Dashboard() {
 
             {/* Reseller KPI row — admins skip this and go straight to Channel Performance */}
             {isReseller && (
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className={`grid grid-cols-2 gap-4 ${user?.commission_eligible !== false ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
                 <StatCard label="Orders This Month" value={data.orders.this_month} sub={fmtR(data.orders.month_revenue)} />
                 <StatCard label="All-Time Orders" value={data.orders.total} />
-                <StatCard label="Commission This Month" value={fmtR(data.commission.due_this_month)} accent="text-bassani-700" />
+                {user?.commission_eligible !== false && (
+                  <StatCard label="Commission This Month" value={fmtR(data.commission.due_this_month)} accent="text-bassani-700" />
+                )}
                 <StatCard
                   label="Outstanding Invoices"
                   value={data.invoices.unpaid}

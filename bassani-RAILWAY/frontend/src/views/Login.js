@@ -144,11 +144,11 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Username</label>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Username or email</label>
               <input
                 value={form.username}
                 onChange={(e) => setForm({ ...form, username: e.target.value })}
-                placeholder="Enter username"
+                placeholder="Enter username or email"
                 autoComplete="username"
                 className={inputCls}
               />

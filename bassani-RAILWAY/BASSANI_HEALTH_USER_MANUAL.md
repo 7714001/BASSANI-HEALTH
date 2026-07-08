@@ -152,38 +152,39 @@ Set these bands to match your actual reseller agreement. Changes to tiers are re
 
 ---
 
-## Step 6 — Create Your Reseller Accounts
+## Step 6 — Create Your Sales Agent Accounts
 
-Resellers are external business partners who place orders on behalf of their customers. Each reseller needs:
-- A portal login (username + password)
-- An Odoo partner link (mandatory — explained below)
-- An assigned warehouse (their orders draw from this vault)
-- A commission tier assignment (if they participate in the commission programme)
+Sales agents are the people who place orders on behalf of customers through the portal. There are two kinds:
 
-**Why the Odoo partner link is mandatory**
+- **External agents** — reseller partners who earn commission on their turnover. These require an Odoo vendor partner link so a vendor bill can be raised when a commission statement is paid.
+- **Internal agents** — Bassani staff who manage a portfolio of customers through the portal but do not participate in the commission programme. These do not require an Odoo partner and are excluded from commission statements automatically.
 
-When a commission statement is marked as paid, the system creates a vendor bill (creditor invoice) in Odoo against the reseller's partner record. This is how the payment flows into your accounts — Odoo cannot create the bill without knowing which partner to bill to. A reseller cannot be saved without this link.
+The distinction is controlled by the **Applicable for commission** checkbox in the wizard. It defaults to on (ticked). Untick it for internal staff accounts.
 
-The partner does not need to be set up as a supplier in Odoo — a customer-only partner works just as well. Odoo allows any partner to receive a vendor bill regardless of their rank. If the reseller is both a customer and a supplier (e.g. they also purchase direct), both badges will show in the search results.
+To add a sales agent — go to **Sales Agents** in the sidebar and click **Add Sales Agent**. The wizard has 4 steps:
 
-To add a reseller — the wizard has 4 steps:
+**Step 1 — Commission Eligibility, Odoo Partner, and Documents**
 
-**Step 1 — Odoo Partner and Documents**
-1. Go to **Resellers** in the sidebar and click **Add Reseller**
-2. Type to search Odoo partners by name — results show whether each partner is a Customer, Supplier, or both
-3. Select the correct partner. Their business details will pre-fill on the next step
-4. If the partner does not yet have onboarding documents on file, a document upload section appears. Upload all 5 required documents. If documents are already on file, a confirmation banner replaces the upload section
+The first control on this step is the **Applicable for commission** checkbox. Make your decision here before proceeding:
+
+- **For external (commission-eligible) agents:** Leave the checkbox ticked. An Odoo partner search and document upload section appear below. Search Odoo partners by name — results show whether each partner is a Customer, Supplier, or both. Select the correct partner (their business details will pre-fill on Step 2). If the partner does not yet have onboarding documents on file, upload all 5 required documents. If documents are already on file, a confirmation banner replaces the upload section.
+
+  **Why the Odoo partner link is required for commission agents:** When a commission statement is paid, the system creates a vendor bill in Odoo against the agent's partner record. Without this link, Odoo cannot raise the bill. The partner does not need to be set up as a supplier in Odoo — a customer-only partner works just as well.
+
+- **For internal (non-commission) agents:** Untick the checkbox. The Odoo partner search and document upload section are hidden — neither is required for internal staff.
 
 **Step 2 — Business Details**
-Review and adjust the pre-filled name, email, phone, and seller code. The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
+Review and adjust the name, email, phone, and seller code. For commission-eligible agents, these pre-fill from the selected Odoo partner. The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
 
 **Step 3 — Login Credentials**
-Set the portal username and password. The reseller will be required to change their password on first login.
+Set the portal username and password. The agent will be required to change their password on first login.
 
 **Step 4 — Financials**
 Enter company registration number, VAT details, and banking information. These are used for commission statement records.
 
-Click **Create Reseller** on the final step. A welcome email is sent automatically to the reseller's email address.
+Click **Create Sales Agent** on the final step. A welcome email is sent automatically to the agent's email address.
+
+> **For non-commission internal agents,** the banking section on Step 4 is still visible but optional — fill it in only if relevant.
 
 ---
 
@@ -298,43 +299,58 @@ The downloaded PDF is the exact output the customer will receive. Use this to ve
 
 ---
 
-### Step 8c — Set Up the Signing Authority (Super Admin)
+### Step 8c — Set Up Signing Authorities (My Profile)
 
-The **Signing Authority** is the profile that identifies who can countersign onboarding documents on behalf of Bassani Health. Your name, title, and signature image are stored here and used when you countersign a customer's application. The portal embeds your name and title as text on the customer's side of the agreement automatically; your signature image is added when you perform the countersign step on the application review page.
+The portal uses a **per-user signing model**. Every person who needs to countersign onboarding documents on behalf of Bassani Health configures their own personal signature on their own profile page. Multiple people can hold signing authority simultaneously — they work independently, on different applications, without any conflict.
 
-Go to **Admin > Document Templates** in the left sidebar, then click the **Signing Authority** tab.
+The `signing_authority.sign` permission controls who can configure a signature and countersign applications. By default it is on for the `qa_manager` and `responsible_pharmacist` roles. It can be toggled on or off for individual admin accounts from the Users permission panel.
 
-#### Setting up your signature
+#### Who needs to complete this setup
 
-You have two options:
+Every person who holds the `signing_authority.sign` permission must complete their own profile setup before they can countersign an application. The checklist has three items:
 
-**Option 1 — Upload a photo or scan (recommended)**
+1. **Signing name** — their full name as it should appear on the signature block
+2. **Signing title / position** — e.g. Responsible Pharmacist, QA Manager, Chief Executive Officer
+3. **Signature image** — a drawing or upload of their personal signature
 
-Sign your name on plain white paper with a dark pen. Take a clear photograph or scan it, then upload the image file (PNG, JPG, or WebP, up to 5 MB).
+The profile page shows a **Signature Status** badge that reads "Configured" only when all three are in place. The Countersign button on an application will not work without all three.
 
-After uploading, toggle **Remove white background** on to strip the paper colour — the signature will appear as clean dark ink on document pages. Use the **Sensitivity** slider to adjust the threshold if the removal is too aggressive (thin strokes disappearing) or not aggressive enough (a grey halo remaining). Click **Re-apply** to preview each setting before saving. A photographed pen signature will always look more professional on documents than a drawn one.
+#### How each person sets up their signature
 
-**Option 2 — Draw in the app**
+1. Click the **person icon** in the top right of any page, or navigate to `/profile` directly
+2. On the profile page, scroll to the **Signing Authority** card (visible only to users with the `signing_authority.sign` permission)
+3. Fill in:
+   - **Signing Name** — full name as it should appear on documents
+   - **Title / Position** — their role title (e.g. Responsible Pharmacist)
+4. Choose how to provide their signature:
 
-Switch to the **Draw in app** tab and use your mouse or finger to draw your signature on the canvas. Click **Clear** to start again. This works on any device including mobile but produces a lower quality result than a scanned signature.
+   **Option A — Upload a photo or scan (recommended)**
+   
+   Sign your name on plain white paper with a dark pen. Take a clear photograph or scan it. Upload the image file (PNG, JPG, or WebP).
+   
+   After uploading, toggle **Remove white background** on to strip the paper colour — the signature will appear as clean dark ink on document pages. Use the **Sensitivity** slider to adjust how aggressively the background is removed. Click **Re-apply** to preview before saving. A scanned pen signature always looks more professional on documents than a drawn one.
 
-#### Profile fields
+   **Option B — Draw in the app**
+   
+   Switch to **Draw** and use a mouse, trackpad, or finger to draw your signature on the canvas. Click **Clear** to start again. This works on any device but produces a lower quality result than a scanned signature.
 
-Along with your signature, fill in:
+5. Click **Save Changes** — this saves the signing name, title, and signature image in one step. The Signature Status badge on the left updates to "Configured" when all three fields are present.
 
-- **Full name** — your name as it should appear on the signature block
-- **Title / Position** — e.g. Chief Executive Officer
-- **Signing location** — the city where Bassani signs, e.g. Cape Town
+#### Replacing a signature
 
-#### Preview before saving
+Return to **My Profile** at any time and repeat the upload or draw step, then click **Save Changes**. All future countersignatures use the new image. Already-completed signed documents stored in the system are not affected.
 
-Before you click **Save**, a document mockup appears showing exactly how your signature, name, title, location, and date will look embedded in a signed document. If the result looks wrong, replace the signature image or adjust the background removal before saving.
+> **Security note:** Signature images are stored in secure cloud storage (Cloudflare R2), keyed per user. No other staff member can view or download another person's signature image through the portal.
 
-#### Replacing your signature
+#### What the "Configured" status means
 
-Click **Replace** on the Signing Authority tab at any time. Upload a new image or draw a new one. All future documents use the new signature immediately. Already-signed copies stored in the system are unaffected.
+The Signature Status badge on the My Profile sidebar shows:
+- **Configured** (green) — signing name, signing title, and signature image are all present. Ready to countersign.
+- **Incomplete** (amber) — one or more fields are missing, with the missing items listed. The countersign button on applications will not work until all three are set.
 
-> **Security note:** Your signature image is stored in secure cloud storage. No staff member other than you can view or retrieve it through the portal.
+#### Granting or revoking signing authority
+
+Go to **Users**, open the user's permissions panel, and toggle **signing_authority → sign** on or off. The change takes effect immediately — the user's profile page will show or hide the Signing Authority card on their next page load.
 
 ---
 
@@ -1229,38 +1245,38 @@ This means the customer already exists in Odoo — possibly created directly in 
 
 ---
 
-### Resellers
+### Sales Agents
 
 *Requires `resellers.view` permission*
 
-Go to **Resellers** to manage your reseller network.
+Go to **Sales Agents** to manage your sales agent network.
 
-Each reseller's profile shows:
+Each agent's profile shows:
 - Their contact details and assigned warehouse
 - Their order history and total revenue
 - Their linked customers with the ability to link or unlink accounts
 - Their activity feed — every significant action recorded in the audit trail (orders placed, customers linked, applications submitted, etc.)
 
-**Linking an existing customer to a reseller:**
-Customers created through the onboarding wizard are automatically linked to the submitting reseller. However, an admin can also manually link any existing Odoo customer to a reseller — for example, if a customer was created directly in Odoo before the portal existed, or if account management responsibility is being transferred.
+**Linking an existing customer to a sales agent:**
+Customers created through the onboarding wizard are automatically linked to the submitting agent. However, an admin can also manually link any existing Odoo customer to an agent — for example, if a customer was created directly in Odoo before the portal existed, or if account management responsibility is being transferred.
 
-1. Open the reseller's profile
+1. Open the agent's profile
 2. In the **Customers** section, click **Link Customer** (top-right of the section, or the link at the bottom of the list)
 3. A search modal opens — type at least 2 characters to search Odoo customers by name or email
 4. Click **Link** next to the correct customer
-5. The customer is added to the reseller's account immediately and appears in the list
+5. The customer is added to the agent's account immediately and appears in the list
 
-> If the customer is already linked to a different reseller, the link will be blocked with a clear error message showing which reseller currently owns that account.
+> If the customer is already linked to a different agent, the link will be blocked with a clear error message showing which agent currently owns that account.
 
-**Unlinking a customer from a reseller:**
-1. Open the reseller's profile
+**Unlinking a customer from a sales agent:**
+1. Open the agent's profile
 2. In the **Customers** section, click **Unlink** on the customer row
 3. A confirmation dialog appears — confirm the action
-4. The customer is removed from the reseller's account
+4. The customer is removed from the agent's account
 
-> Unlinking does not delete the customer from Odoo — it only removes the ownership association. The customer's orders, invoices, and history remain intact. The reseller will no longer be able to place orders for this customer or see them in their customer list.
+> Unlinking does not delete the customer from Odoo — it only removes the ownership association. The customer's orders, invoices, and history remain intact. The agent will no longer be able to place orders for this customer or see them in their customer list.
 
-Both link and unlink actions are recorded in the audit trail and appear in the reseller's Activity section.
+Both link and unlink actions are recorded in the audit trail and appear in the agent's Activity section.
 
 ### Commission
 
@@ -1278,10 +1294,12 @@ At the end of each month, you generate a commission statement for each reseller.
 **Generating statements** *(requires `commission.generate_statements`)*:
 1. Click **Generate Statements**
 2. Select the month and year
-3. Select a specific reseller or all resellers
+3. Select a specific sales agent or all agents
 4. Click Generate
 
-Cancelled orders are automatically excluded. The reseller receives an email with their statement summary.
+Cancelled orders are automatically excluded. Sales agents with **Applicable for commission** unticked are automatically excluded from bulk "all agents" runs — only commission-eligible agents receive statements. The agent receives an email with their statement summary.
+
+> If you need to generate a statement for a specific agent regardless of their commission eligibility (e.g. for a correction run), select that agent individually from the dropdown rather than using "all agents".
 
 **Marking statements paid** *(requires `commission.mark_paid`)*:
 1. Open the statement
@@ -1392,9 +1410,21 @@ The **Approve and Create Customer** button is locked until all three documents t
 
 ### Countersigning applications (Signing Authority)
 
-Only the person designated as the Signing Authority can countersign. If you are not the Signing Authority holder, the Countersign button is not shown.
+Any staff member with the `signing_authority.sign` permission can countersign. If you do not hold this permission, the Countersign button is not shown. Multiple people can hold this permission and countersign different applications at the same time.
 
-To countersign a document:
+**Before you can countersign,** your profile must be fully configured — signing name, signing title, and signature image must all be set (see My Profile below). The Countersign button will not work until your Signature Status shows "Configured".
+
+**Claiming an application (optional but recommended)**
+
+To prevent two signing authorities from countersigning the same application at the same time, use the claim mechanism:
+
+1. Open the application from Customer Applications
+2. In the right sidebar, click **Claim** — the application now shows as assigned to you
+3. If another signing authority has already claimed it, a confirmation prompt appears before you can take over
+
+To release a claim (if you can no longer complete it), click **Release**. Another signing authority can then claim it.
+
+**To countersign a document:**
 
 1. Open the application from Customer Applications
 2. In the Supporting Documents section, find a document showing "Awaiting countersignature"
@@ -1411,12 +1441,12 @@ The countersigned PDFs are stored in secure cloud storage and are visible from t
 
 ---
 
-## Resellers
+## Sales Agents
 
 **Role in system:** `reseller`  
-**Access:** Products (catalog view), Orders, Customers (own), Commission, Invoices (own), Sales Tickets, Onboarding Docs
+**Access:** Products (catalog view), Orders, Customers (own), Commission (commission-eligible agents only), Invoices (own), Sales Tickets, Onboarding Docs
 
-Resellers are external business partners who sell Bassani Health products to their customers (pharmacies, clinics, dispensaries, etc.).
+Sales agents are the people who sell Bassani Health products to customers on behalf of Bassani. Some agents are external business partners who earn commission; others are internal Bassani staff who manage a portfolio of clients. The Commission section and menu item are only visible to agents where commission has been enabled on their account.
 
 ### Product Catalog
 
@@ -1563,6 +1593,45 @@ If your order is being delivered in multiple shipments (backorder), you will see
 
 ---
 
+## My Profile
+
+**Access:** All authenticated users (all roles)
+
+Every user has a personal profile page accessible at any time. Click the **person icon** in the top-right corner of any page to open it.
+
+### Personal Information
+
+- **Display name** — your name as it appears in the portal (audit log entries, ticket ownership, etc.). Update it and click **Save Changes**.
+- **Email address** — read-only. Contact the super admin to change your registered email.
+- **Username** — read-only. Usernames are permanent.
+
+### Change Password
+
+Enter your current password, then your new password twice, and click **Change Password**. The new password takes effect immediately. The system logs out any other active sessions for your account when a password change completes.
+
+### Signing Authority (staff with `signing_authority.sign` permission only)
+
+The Signing Authority card is visible only to staff who have been granted the `signing_authority.sign` permission. It shows a **Signature Status** badge in the left sidebar:
+
+- **Configured** (green) — all three required fields are present. You are ready to countersign documents.
+- **Incomplete** (amber) — one or more fields are missing. The badge lists which items are outstanding. You cannot countersign until all three are set.
+
+**To set up or update your signing identity:**
+
+1. Fill in **Signing Name** — your name exactly as it should appear on the signature block in signed documents
+2. Fill in **Title / Position** — e.g. Responsible Pharmacist, QA Manager
+3. Choose how to provide your signature image:
+
+   **Upload (recommended):** Click **Upload image**, select a photo or scan of your handwritten signature (PNG, JPG, or WebP). After uploading, toggle **Remove white background** to clean up the paper colour. Adjust the **Sensitivity** slider if fine strokes are disappearing (lower sensitivity) or a grey halo remains (higher sensitivity). Click **Re-apply** to preview before saving.
+
+   **Draw:** Click **Draw** and use your mouse, trackpad, or finger on the canvas. Click **Clear** to start again.
+
+4. Click **Save Changes** — saves your name, title, and signature image together. The Signature Status badge updates immediately.
+
+> Click **Remove** to delete your stored signature image (this will change your status back to Incomplete and prevent countersigning until you re-upload or re-draw).
+
+---
+
 ## Common Questions
 
 **Q: An order is stuck — how do I move it forward?**  
@@ -1650,14 +1719,18 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Upload document to customer profile | Admin with `customers.manage` |
 | Send a secure document upload link to a customer | Admin with `customers.manage` |
 | View document upload request status on customer profile | Admin with `customers.manage` |
-| Link existing customer to reseller | Admin only |
-| Unlink customer from reseller | Admin only |
+| Link existing customer to sales agent | Admin only |
+| Unlink customer from sales agent | Admin only |
 | Record invoice payment | Admin with `invoices.record_payment` |
 | Create/edit admin accounts | Super Admin only |
 | Configure email routing | Super Admin only |
 | View document templates and download any version | Any admin |
 | Upload new document template version | Super Admin only |
 | Activate / roll back document template version | Super Admin only |
+| Set up personal signing name, title, and signature | Any user with `signing_authority.sign` permission |
+| Grant or revoke signing authority permission | Super Admin only (via Users permissions panel) |
+| Claim / release an onboarding application for countersigning | User with `signing_authority.sign` |
+| Countersign a customer-signed onboarding document | User with `signing_authority.sign` and fully configured profile |
 | Configure commission tiers | Admin with `commission.configure_tiers` |
 | View audit trail | Admin with `audit.view` |
 | Override order pipeline stage | Admin with `tickets.manage` |
@@ -1668,6 +1741,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 7 July 2026
+**Last Updated:** 8 July 2026
 
-*This manual covers the system as built through Phase 12 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, reseller creation document step with conditional skip, and the approve-link flow for duplicate-blocked applications. For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+*This manual covers the system as built through Phase 20 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), and the Sales Agent commission_eligible flag with commission exclusion (Phase 20). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

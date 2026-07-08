@@ -3,7 +3,7 @@
 
 **Prepared by:** DynamicTech SA  
 **Date:** 8 July 2026  
-**Status:** Phases 1–9 + Phase 11 + Phase 15–19 live at portal.bassanihealth.com · Phase 12 (Barcode Integration) in progress · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
+**Status:** Phases 1–9 + Phase 11 + Phase 15–20 live at portal.bassanihealth.com · Phase 12 (Barcode Integration) in progress · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
 
 ---
 
@@ -105,7 +105,7 @@ To prevent two signing authorities from countersigning the same application in p
 
 The portal also includes a **test signing flow** for administrators. For each of the four onboarding documents, a single button opens a full-screen preview that shows exactly what the customer will see: a live PDF view on the left and a pre-filled signing form on the right. The form arrives populated with realistic dummy data, the Bassani signing block is completed automatically from the acting user's profile, and the administrator can draw a test signature and download the completed PDF. This allows the team to verify that field positions, signatures, and layout are correct before enabling the customer-facing signing flow — without involving a real customer.
 
-**My Profile** is now accessible to all users via a profile button in the top bar of every page. Staff can update their display name, change their password, and (if they hold the signing authority permission) manage their personal signature and document signing details. Resellers can do the same for their own account settings.
+**My Profile** is now accessible to all users via a profile icon in the top bar of every page. Staff can update their display name, change their password, and (if they hold the signing authority permission) manage their personal signature and document signing details. Sales agents can do the same for their own account settings.
 
 ---
 
@@ -278,7 +278,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 
 | Capability | Status |
 |---|---|
-| Reseller portal — product catalogue, order placement, commission | Live |
+| Sales Agent portal — product catalogue, order placement, commission (eligibility-gated per agent) | Live |
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
@@ -290,7 +290,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Stock Report — per-product lot/batch breakdown with movement history (traceability), warehouse-scoped | Live |
 | Self-service customer registration — public /apply page with referral link support; applications land in existing admin review queue | Live |
 | Document template management — version-controlled PDF uploads, rollback, audit trail; no redeployment required | Live |
-| Signing authority — CEO signature stored once; used for in-portal countersigning of every co-signed onboarding document | Live |
+| Multi-authority signing — every authorised staff member configures their own personal signature on their profile; multiple people can countersign simultaneously; application claim mechanism prevents accidental dual countersigning | Live |
 | Test signing flow — super admin previews the exact customer signing experience for any document with pre-filled dummy data | Live |
 | In-portal customer document signing — wizard data pre-fills all four documents; customer draws signature in-browser; signed PDFs stored automatically; no print/scan/upload | Live |
 | Application countersigning — signing authority reviews customer-signed PDFs and countersigns each Bassani signature block in-browser before approval; approve button gated on completion | Live |
@@ -300,6 +300,8 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Supplier visibility — vendor bills, purchase history, goods receipts | Live |
 | Product barcode — field exposed, scanning foundation in place | Live |
 | Custom domain (portal.bassanihealth.com), SSL, 2FA | Live |
+| Sales agent accounts — internal Bassani staff can hold sales agent accounts (managing customer portfolios) without appearing in commission statements; `commission_eligible` flag controls visibility and inclusion | Live |
+| My Profile — all users manage their display name, password, and (if authorised) personal signature from a single profile page accessible via the top bar | Live |
 | Phase 12: Barcode label printing, quote builder scan, vault scanner | In progress |
 | Phase 13: Production and cultivation module | Proposal stage |
 | Phase 14: External ecommerce API — WooCommerce product sync and order intake for third-party online stores | Concept stage |

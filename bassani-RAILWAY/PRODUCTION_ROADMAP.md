@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-08  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08  
 
 ---
 
@@ -31,6 +31,7 @@
 | 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07 |
 | 18 | In-Portal Customer Document Signing | 🟢 Complete | 18.0–18.4 complete — 2026-07-08 |
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
+| 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -3131,3 +3132,60 @@ Previously a single "signing authority" profile (name, title, signature image) w
 - [x] `qa_manager` and `responsible_pharmacist` roles have `signing_authority.sign = True` by default
 - [x] Profile avatar visible in the top bar on every page for all users
 - [x] All authenticated users (admin and reseller) can access `/profile` and change their password
+
+---
+
+## Phase 20 — Sales Agent Accounts & Commission Eligibility
+
+**Goal:** Rename "resellers" to "sales agents" throughout the portal UI and introduce a `commission_eligible` flag on agent accounts, so internal Bassani staff can hold sales agent accounts (managing a portfolio of customers) without appearing in commission statements or seeing the commission section.  
+**Status:** 🟢 Complete  
+**Completed:** 20.0–20.3 — 2026-07-08
+
+### Context
+
+Bassani plans to assign internal staff accounts with the `reseller` role so they can manage a defined portfolio of customers through the portal. These internal agents will not participate in the commission programme. Previously, all reseller-role accounts were assumed to be external, commission-earning agents. This phase:
+
+- Renames the UI label from "Resellers" to "Sales Agents" everywhere user-facing (nav, page titles, modals, toasts)
+- Introduces a boolean `commission_eligible` field (default `true`) on both the `resellers` collection document and the linked `users` document
+- Gates commission nav visibility, statement generation, and the `/commission` route on this flag
+
+No external-facing API breaking changes — existing resellers without the field default to `commission_eligible: true`.
+
+### 20.0 — Backend: Model and Data Changes
+
+- [x] `ResellerCreate` model: `commission_eligible: bool = True` added; `odoo_partner_id` changed from required `int` to `Optional[int] = None`
+- [x] `ResellerUpdate` model: `commission_eligible: Optional[bool] = None` added
+- [x] `create_reseller`: validates Odoo partner only when `commission_eligible=True`; uniqueness check for `odoo_partner_id` skipped when `None`; `commission_eligible` written to both `user_doc` and `reseller_doc`
+- [x] `update_reseller`: after updating resellers collection, syncs `commission_eligible` to the linked user document (`users` collection, matched by `reseller_id`) so JWT picks it up on next login
+- [x] `_user_payload` in `auth_routes.py`: `"commission_eligible": bool(user.get("commission_eligible", True))` added — exposed in JWT and `/me` response
+
+### 20.1 — Backend: Commission Statement Filtering
+
+- [x] `generate_statements` in `commission_routes.py`: when no specific `reseller_id` is targeted, fetches eligible IDs from the `resellers` collection (`commission_eligible != false` and `active != false`) and filters the aggregated rows before generating statements
+- [x] Agents with `commission_eligible: false` are silently excluded from bulk statement runs; targeted single-agent runs (for admin review / correction) are unaffected
+
+### 20.2 — Frontend: Nav and Sidebar
+
+- [x] `UI.js` NAV: "Resellers" entry renamed to "Sales Agents"
+- [x] `UI.js` RESELLER_NAV: Commission item marked `requiresCommission: true`
+- [x] Sidebar filter: items with `requiresCommission: true` are hidden when `user?.commission_eligible === false`
+
+### 20.3 — Frontend: Sales Agent CRUD and Commission Guard
+
+- [x] `Views.js` Resellers component: all user-facing text updated — page title "Sales Agents", add button "Add Sales Agent", modal titles "Add Sales Agent" / "Edit Sales Agent", toasts "Sales agent created" / "Sales agent updated"
+- [x] `BLANK_FORM` and `editForm` default state: `commission_eligible: true` added
+- [x] `openEdit`: populates `commission_eligible` from reseller data (`r.commission_eligible !== false`)
+- [x] Add wizard Step 1: commission_eligible checkbox added at top; Odoo partner search + onboarding docs sections hidden for non-eligible agents; Next button validation skips partner/docs checks when `commission_eligible` is false
+- [x] Edit modal: commission_eligible checkbox added; Odoo vendor profile section + banking section conditional on `editForm.commission_eligible`
+- [x] `rSellerDocsRequired` computation: gated on `form.commission_eligible` — non-eligible agents never require onboarding docs
+- [x] `ResellerCommissionView`: renders a "Commission not applicable" screen when `user?.commission_eligible === false`, replacing the data-loading flow
+
+### Definition of Done
+
+- [x] Internal staff accounts (reseller role, `commission_eligible: false`) can be created without an Odoo vendor partner
+- [x] Non-eligible agents do not appear in bulk commission statement generation
+- [x] Commission nav item hidden for non-eligible agents; navigating to `/commission` directly shows "not applicable" screen
+- [x] Odoo partner + onboarding docs steps in the Add wizard are hidden for non-eligible agents
+- [x] Banking details section in Edit modal hidden for non-eligible agents
+- [x] Existing resellers without the `commission_eligible` field default to `true` — no data migration required
+- [x] Admin-targeted single-agent commission statement generation is not affected by the eligibility filter

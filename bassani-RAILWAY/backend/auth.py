@@ -220,6 +220,12 @@ async def get_user_by_username(username: str) -> Optional[dict]:
 
 async def authenticate_user(username: str, password: str) -> Optional[dict]:
     user = await get_user_by_username(username)
+    if not user and "@" in username:
+        # Fall back to email lookup — allows login with either username or email address
+        doc = await col("users").find_one({"email": username.lower().strip()})
+        if doc:
+            doc["id"] = str(doc.pop("_id"))
+            user = doc
     if not user:
         return None
     if not verify_password(password, user["password"]):
