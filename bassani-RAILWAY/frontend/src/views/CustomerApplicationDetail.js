@@ -180,7 +180,10 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
   const getPos = useCallback((e, canvas) => {
     const rect = canvas.getBoundingClientRect();
     const src  = e.touches ? e.touches[0] : e;
-    return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+    return {
+      x: (src.clientX - rect.left) * (canvas.width  / rect.width),
+      y: (src.clientY - rect.top)  * (canvas.height / rect.height),
+    };
   }, []);
 
   const startDraw = useCallback((e) => {
