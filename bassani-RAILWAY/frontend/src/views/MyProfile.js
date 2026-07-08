@@ -52,10 +52,29 @@ export default function MyProfile() {
 
   // ── Canvas handlers ───────────────────────────────────────────────────────────
 
-  const getPos = useCallback((e, canvas) => {
+  // Size canvas to its actual rendered dimensions so coordinates match exactly.
+  // Called on mount and on window resize so it stays correct if the layout shifts.
+  const initCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr  = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    const src  = e.touches ? e.touches[0] : e;
-    return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+    canvas.width  = rect.width  * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+  }, []);
+
+  // Map a pointer/touch event to canvas-space coordinates, accounting for scale.
+  const getPos = useCallback((e, canvas) => {
+    const rect   = canvas.getBoundingClientRect();
+    const src    = e.touches ? e.touches[0] : e;
+    const scaleX = canvas.width  / rect.width  / (window.devicePixelRatio || 1);
+    const scaleY = canvas.height / rect.height / (window.devicePixelRatio || 1);
+    return {
+      x: (src.clientX - rect.left) * scaleX,
+      y: (src.clientY - rect.top)  * scaleY,
+    };
   }, []);
 
   const startDraw = useCallback((e) => {
@@ -79,6 +98,7 @@ export default function MyProfile() {
     ctx.strokeStyle = "#1e3a5f";
     ctx.lineWidth   = 2;
     ctx.lineCap     = "round";
+    ctx.lineJoin    = "round";
     ctx.stroke();
     hasMark.current = true;
     e.preventDefault();
@@ -86,12 +106,12 @@ export default function MyProfile() {
 
   const stopDraw = useCallback(() => { isDrawing.current = false; }, []);
 
-  const clearCanvas = () => {
+  const clearCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
     hasMark.current = false;
-  };
+  }, []);
 
   // ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -115,6 +135,14 @@ export default function MyProfile() {
   }, [canSign]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-init canvas whenever the draw tab is visible or the window resizes.
+  useEffect(() => {
+    if (sigMode !== "draw") return;
+    initCanvas();
+    window.addEventListener("resize", initCanvas);
+    return () => window.removeEventListener("resize", initCanvas);
+  }, [sigMode, initCanvas]);
 
   // ── Save handlers ─────────────────────────────────────────────────────────────
 
@@ -332,9 +360,8 @@ export default function MyProfile() {
                             <div className="space-y-2">
                               <canvas
                                 ref={canvasRef}
-                                width={480}
-                                height={120}
                                 className="w-full cursor-crosshair touch-none bg-white rounded-lg border border-gray-100"
+                                style={{ height: 120 }}
                                 onMouseDown={startDraw}
                                 onMouseMove={draw}
                                 onMouseUp={stopDraw}
