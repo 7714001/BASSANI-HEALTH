@@ -117,6 +117,13 @@ const PERMISSION_GROUPS = [
       { key: "manage",          label: "Override ticket stage manually (admin only)" },
     ],
   },
+  {
+    domain: "settings",
+    label: "Settings",
+    actions: [
+      { key: "manage", label: "Manage email routing, mailboxes, document templates & signing authority" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -164,6 +171,7 @@ const DEFAULT_ADMIN_PERMS = {
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
   tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+  settings:   { manage: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
