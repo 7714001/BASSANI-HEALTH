@@ -3,7 +3,7 @@ import { User, KeyRound, PenLine, RotateCcw, Upload, CheckCircle, Trash2 } from 
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, Spinner, BtnPrimary, BtnSecondary, BtnDanger, FormGroup, Input, Badge } from "../components/UI";
+import { TopBar, Spinner, BtnPrimary, BtnDanger, FormGroup, Input, Badge } from "../components/UI";
 
 const ROLE_LABELS = {
   super_admin:            "Super Admin",
@@ -18,12 +18,39 @@ const ROLE_LABELS = {
   reseller:               "Reseller",
 };
 
-// ── Signature pad (shared with SigningAuthority.js style) ─────────────────────
+export default function MyProfile() {
+  const { can } = useAuth();
+  const canSign = can("signing_authority.sign");
 
-function SignaturePad({ onCapture, onClear }) {
-  const canvasRef = useRef(null);
-  const drawing   = useRef(false);
-  const hasMark   = useRef(false);
+  const [profile,      setProfile    ] = useState(null);
+  const [loading,      setLoading    ] = useState(true);
+
+  // Personal info
+  const [name,         setName       ] = useState("");
+  const [infoSaving,   setInfoSaving ] = useState(false);
+
+  // Password
+  const [currentPw,   setCurrentPw  ] = useState("");
+  const [newPw,        setNewPw      ] = useState("");
+  const [confirmPw,    setConfirmPw  ] = useState("");
+  const [pwSaving,     setPwSaving   ] = useState(false);
+
+  // Signing authority
+  const [signingName,  setSigningName ] = useState("");
+  const [signingTitle, setSigningTitle] = useState("");
+  const [sigMode,      setSigMode     ] = useState("draw");
+  const [sigPreviewUrl,setSigPreviewUrl] = useState(null);
+  const [uploadFile,   setUploadFile  ] = useState(null);
+  const [sigSaving,    setSigSaving   ] = useState(false);
+  const [deletingSig,  setDeletingSig ] = useState(false);
+
+  // Canvas refs — captured at save time, no intermediate "pending" state
+  const canvasRef  = useRef(null);
+  const hasMark    = useRef(false);
+  const isDrawing  = useRef(false);
+  const fileRef    = useRef(null);
+
+  // ── Canvas handlers ───────────────────────────────────────────────────────────
 
   const getPos = useCallback((e, canvas) => {
     const rect = canvas.getBoundingClientRect();
@@ -34,7 +61,7 @@ function SignaturePad({ onCapture, onClear }) {
   const startDraw = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    drawing.current = true;
+    isDrawing.current = true;
     const ctx = canvas.getContext("2d");
     const pos = getPos(e, canvas);
     ctx.beginPath();
@@ -43,7 +70,7 @@ function SignaturePad({ onCapture, onClear }) {
   }, [getPos]);
 
   const draw = useCallback((e) => {
-    if (!drawing.current) return;
+    if (!isDrawing.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -57,82 +84,16 @@ function SignaturePad({ onCapture, onClear }) {
     e.preventDefault();
   }, [getPos]);
 
-  const stopDraw = useCallback(() => { drawing.current = false; }, []);
+  const stopDraw = useCallback(() => { isDrawing.current = false; }, []);
 
-  const clear = () => {
+  const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
     hasMark.current = false;
-    onClear?.();
   };
 
-  const capture = () => {
-    if (!hasMark.current) {
-      toast.error("Draw your signature first");
-      return;
-    }
-    const dataUrl = canvasRef.current.toDataURL("image/png");
-    onCapture(dataUrl);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <canvas
-          ref={canvasRef}
-          width={480}
-          height={140}
-          className="w-full cursor-crosshair touch-none"
-          onMouseDown={startDraw}
-          onMouseMove={draw}
-          onMouseUp={stopDraw}
-          onMouseLeave={stopDraw}
-          onTouchStart={startDraw}
-          onTouchMove={draw}
-          onTouchEnd={stopDraw}
-        />
-      </div>
-      <div className="flex gap-2">
-        <BtnSecondary size="sm" onClick={clear}>
-          <RotateCcw size={12} /> Clear
-        </BtnSecondary>
-        <BtnPrimary size="sm" onClick={capture}>
-          <CheckCircle size={12} /> Use this signature
-        </BtnPrimary>
-      </div>
-    </div>
-  );
-}
-
-// ── Main view ─────────────────────────────────────────────────────────────────
-
-export default function MyProfile() {
-  const { user: authUser, can } = useAuth();
-  const canSign = can("signing_authority.sign");
-
-  const [profile,       setProfile      ] = useState(null);
-  const [loading,       setLoading      ] = useState(true);
-  const [saving,        setSaving       ] = useState(false);
-
-  // Personal info
-  const [name,          setName         ] = useState("");
-  const [signingName,   setSigningName  ] = useState("");
-  const [signingTitle,  setSigningTitle ] = useState("");
-
-  // Password change
-  const [currentPw,    setCurrentPw    ] = useState("");
-  const [newPw,        setNewPw        ] = useState("");
-  const [confirmPw,    setConfirmPw    ] = useState("");
-  const [pwSaving,     setPwSaving     ] = useState(false);
-
-  // Signature
-  const [sigMode,      setSigMode      ] = useState("draw");
-  const [sigPreviewUrl,setSigPreviewUrl] = useState(null);
-  const [sigPending,   setSigPending   ] = useState(null); // base64 or File
-  const [sigSaving,    setSigSaving    ] = useState(false);
-  const [deletingSig,  setDeletingSig  ] = useState(false);
-  const fileRef = useRef(null);
+  // ── Data loading ──────────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,22 +116,24 @@ export default function MyProfile() {
 
   useEffect(() => { load(); }, [load]);
 
-  const saveProfile = async () => {
-    setSaving(true);
+  // ── Save handlers ─────────────────────────────────────────────────────────────
+
+  const saveInfo = async () => {
+    setInfoSaving(true);
     try {
-      await api.put("/api/profile/", { name, signing_name: signingName, signing_title: signingTitle });
-      toast.success("Profile updated");
+      await api.put("/api/profile/", { name });
+      toast.success("Name updated");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to save profile");
+      toast.error(e.response?.data?.detail || "Failed to save");
     } finally {
-      setSaving(false);
+      setInfoSaving(false);
     }
   };
 
   const changePassword = async () => {
-    if (!currentPw || !newPw) { toast.error("Fill in all password fields"); return; }
-    if (newPw !== confirmPw)  { toast.error("New passwords do not match"); return; }
-    if (newPw.length < 8)     { toast.error("Password must be at least 8 characters"); return; }
+    if (!currentPw || !newPw)   { toast.error("Fill in all password fields"); return; }
+    if (newPw !== confirmPw)     { toast.error("New passwords do not match"); return; }
+    if (newPw.length < 8)        { toast.error("Password must be at least 8 characters"); return; }
     setPwSaving(true);
     try {
       await api.post("/api/auth/change-password", { current_password: currentPw, new_password: newPw });
@@ -183,34 +146,37 @@ export default function MyProfile() {
     }
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSigPending(file);
-    setSigPreviewUrl(URL.createObjectURL(file));
-  };
-
-  const handleDrawCapture = (dataUrl) => {
-    setSigPending(dataUrl);
-    setSigPreviewUrl(dataUrl);
-  };
-
-  const saveSignature = async () => {
-    if (!sigPending) { toast.error("No signature to save"); return; }
+  // Single save for the whole signing authority section
+  const saveSigningAuthority = async () => {
     setSigSaving(true);
     try {
-      const fd = new FormData();
-      if (sigPending instanceof File) {
-        fd.append("signature_file", sigPending);
+      // Always persist the identity fields
+      await api.put("/api/profile/", { signing_name: signingName, signing_title: signingTitle });
+
+      // Upload new signature image if provided
+      if (sigMode === "draw" && hasMark.current) {
+        const dataUrl = canvasRef.current.toDataURL("image/png");
+        const fd = new FormData();
+        fd.append("signature_drawn", dataUrl);
+        await api.post("/api/profile/signature", fd, { headers: { "Content-Type": "multipart/form-data" } });
+        setSigPreviewUrl(dataUrl);
+        setProfile(p => ({ ...p, has_signature: true, signing_name: signingName, signing_title: signingTitle }));
+        clearCanvas();
+      } else if (sigMode === "upload" && uploadFile) {
+        const fd = new FormData();
+        fd.append("signature_file", uploadFile);
+        await api.post("/api/profile/signature", fd, { headers: { "Content-Type": "multipart/form-data" } });
+        setSigPreviewUrl(URL.createObjectURL(uploadFile));
+        setProfile(p => ({ ...p, has_signature: true, signing_name: signingName, signing_title: signingTitle }));
+        setUploadFile(null);
+        if (fileRef.current) fileRef.current.value = "";
       } else {
-        fd.append("signature_drawn", sigPending);
+        setProfile(p => ({ ...p, signing_name: signingName, signing_title: signingTitle }));
       }
-      await api.post("/api/profile/signature", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      toast.success("Signature saved");
-      setSigPending(null);
-      setProfile(p => ({ ...p, has_signature: true }));
+
+      toast.success("Signing authority updated");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to save signature");
+      toast.error(e.response?.data?.detail || "Failed to save");
     } finally {
       setSigSaving(false);
     }
@@ -223,7 +189,6 @@ export default function MyProfile() {
       await api.delete("/api/profile/signature");
       toast.success("Signature removed");
       setSigPreviewUrl(null);
-      setSigPending(null);
       setProfile(p => ({ ...p, has_signature: false }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to remove signature");
@@ -232,12 +197,21 @@ export default function MyProfile() {
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   if (loading) return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="My Profile" />
       <div className="flex items-center justify-center flex-1"><Spinner size="lg" /></div>
     </div>
   );
+
+  const fullyConfigured = profile?.has_signature && profile?.signing_name && profile?.signing_title;
+  const missing = [
+    !profile?.signing_name  && "signing name",
+    !profile?.signing_title && "signing title",
+    !profile?.has_signature && "signature image",
+  ].filter(Boolean);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -246,7 +220,7 @@ export default function MyProfile() {
         <div className="max-w-4xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            {/* Left column */}
+            {/* ── Left column ── */}
             <div className="lg:col-span-2 space-y-6">
 
               {/* Personal Information */}
@@ -266,8 +240,8 @@ export default function MyProfile() {
                     <Input value={profile?.email || ""} disabled className="bg-gray-50 text-gray-500" />
                   </FormGroup>
                   <div className="pt-1">
-                    <BtnPrimary onClick={saveProfile} disabled={saving}>
-                      {saving ? "Saving…" : "Save Changes"}
+                    <BtnPrimary onClick={saveInfo} disabled={infoSaving}>
+                      {infoSaving ? "Saving…" : "Save"}
                     </BtnPrimary>
                   </div>
                 </div>
@@ -297,98 +271,119 @@ export default function MyProfile() {
                 </div>
               </div>
 
-              {/* Signature — only for signing_authority.sign users */}
+              {/* Signing Authority — signing_authority.sign users only */}
               {canSign && (
                 <div className="bg-white rounded-2xl border border-gray-100 p-5">
                   <div className="flex items-center gap-2 mb-1">
                     <PenLine size={15} className="text-bassani-600" />
-                    <h2 className="text-sm font-semibold text-gray-900">My Signature</h2>
+                    <h2 className="text-sm font-semibold text-gray-900">Signing Authority</h2>
                   </div>
-                  <p className="text-xs text-gray-400 mb-4">
-                    All three fields below are required before you can countersign customer onboarding documents.
+                  <p className="text-xs text-gray-400 mb-5">
+                    Your name, title, and signature image are all required before you can countersign customer onboarding documents.
                   </p>
 
-                  {/* Signing identity */}
-                  <div className="space-y-3 pb-4 mb-4 border-b border-gray-100">
-                    <FormGroup label="Signing Name" hint="Name that appears on countersigned documents">
+                  <div className="space-y-4">
+
+                    {/* Identity fields */}
+                    <FormGroup label="Signing Name" hint="Appears on countersigned documents">
                       <Input value={signingName} onChange={e => setSigningName(e.target.value)} placeholder="e.g. Rookshanna Hussain" />
                     </FormGroup>
-                    <FormGroup label="Signing Title" hint="Job title that appears on countersigned documents">
+                    <FormGroup label="Signing Title" hint="Your job title on countersigned documents">
                       <Input value={signingTitle} onChange={e => setSigningTitle(e.target.value)} placeholder="e.g. Responsible Pharmacist" />
                     </FormGroup>
-                    <BtnPrimary size="sm" onClick={saveProfile} disabled={saving}>
-                      {saving ? "Saving…" : "Save"}
-                    </BtnPrimary>
-                  </div>
 
-                  {/* Current signature preview */}
-                  {sigPreviewUrl && (
-                    <div className="mb-4 border border-gray-100 rounded-xl p-3 bg-gray-50 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Current Signature</p>
-                        <img
-                          src={sigPreviewUrl}
-                          alt="Signature preview"
-                          className="max-h-16 max-w-xs object-contain"
-                        />
-                        {profile?.signature_updated_at && (
-                          <p className="text-[10px] text-gray-400 mt-1.5">
-                            Updated {new Date(profile.signature_updated_at).toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric" })}
-                          </p>
-                        )}
+                    {/* Signature image */}
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-2">Signature Image</p>
+
+                      {/* Existing signature preview */}
+                      {sigPreviewUrl && (
+                        <div className="mb-3 flex items-center justify-between gap-3 p-3 bg-gray-50 border border-gray-100 rounded-xl">
+                          <div className="min-w-0">
+                            <img src={sigPreviewUrl} alt="Current signature" className="max-h-10 max-w-[200px] object-contain" />
+                            {profile?.signature_updated_at && (
+                              <p className="text-[10px] text-gray-400 mt-1">
+                                Updated {new Date(profile.signature_updated_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
+                              </p>
+                            )}
+                          </div>
+                          <BtnDanger size="sm" onClick={deleteSignature} disabled={deletingSig}>
+                            <Trash2 size={12} /> {deletingSig ? "Removing…" : "Remove"}
+                          </BtnDanger>
+                        </div>
+                      )}
+
+                      {/* Draw / Upload tabs */}
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="flex border-b border-gray-100 bg-gray-50">
+                          {[["draw", "Draw"], ["upload", "Upload Image"]].map(([m, label]) => (
+                            <button
+                              key={m}
+                              onClick={() => { setSigMode(m); setUploadFile(null); clearCanvas(); if (fileRef.current) fileRef.current.value = ""; }}
+                              className={`flex-1 py-2 text-xs font-medium transition-colors ${sigMode === m ? "bg-white text-bassani-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="p-3">
+                          {sigMode === "draw" ? (
+                            <div className="space-y-2">
+                              <canvas
+                                ref={canvasRef}
+                                width={480}
+                                height={120}
+                                className="w-full cursor-crosshair touch-none bg-white rounded-lg border border-gray-100"
+                                onMouseDown={startDraw}
+                                onMouseMove={draw}
+                                onMouseUp={stopDraw}
+                                onMouseLeave={stopDraw}
+                                onTouchStart={startDraw}
+                                onTouchMove={draw}
+                                onTouchEnd={stopDraw}
+                              />
+                              <button
+                                onClick={clearCanvas}
+                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                              >
+                                <RotateCcw size={11} /> Clear
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <input
+                                type="file"
+                                ref={fileRef}
+                                accept="image/png,image/jpeg,image/webp"
+                                className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) setUploadFile(f); }}
+                              />
+                              <button
+                                onClick={() => fileRef.current?.click()}
+                                className="flex items-center gap-2 w-full py-5 border-2 border-dashed border-gray-200 rounded-lg text-xs text-gray-500 hover:border-bassani-300 hover:text-bassani-600 transition-colors justify-center"
+                              >
+                                <Upload size={13} />
+                                {uploadFile ? uploadFile.name : "Choose PNG, JPG, or WebP"}
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <BtnDanger size="sm" onClick={deleteSignature} disabled={deletingSig}>
-                        <Trash2 size={12} /> {deletingSig ? "Removing…" : "Remove"}
-                      </BtnDanger>
                     </div>
-                  )}
 
-                  {/* Mode selector */}
-                  <div className="flex gap-2 mb-3">
-                    {["draw", "upload"].map(m => (
-                      <button
-                        key={m}
-                        onClick={() => { setSigMode(m); setSigPending(null); if (!profile?.has_signature) setSigPreviewUrl(null); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${sigMode === m ? "bg-bassani-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-                      >
-                        {m === "draw" ? "Draw" : "Upload Image"}
-                      </button>
-                    ))}
-                  </div>
-
-                  {sigMode === "draw" ? (
-                    <SignaturePad onCapture={handleDrawCapture} onClear={() => { if (!profile?.has_signature) setSigPreviewUrl(null); }} />
-                  ) : (
-                    <div className="space-y-3">
-                      <input
-                        type="file"
-                        ref={fileRef}
-                        accept="image/png,image/jpeg,image/webp"
-                        className="hidden"
-                        onChange={handleFileSelect}
-                      />
-                      <button
-                        onClick={() => fileRef.current?.click()}
-                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-500 hover:border-bassani-300 hover:text-bassani-600 transition-colors w-full justify-center"
-                      >
-                        <Upload size={14} />
-                        {sigPending instanceof File ? sigPending.name : "Choose an image (PNG, JPG, WebP)"}
-                      </button>
-                    </div>
-                  )}
-
-                  {sigPending && (
-                    <div className="mt-3">
-                      <BtnPrimary onClick={saveSignature} disabled={sigSaving}>
-                        {sigSaving ? "Saving…" : "Save Signature"}
+                    {/* Single save button for the whole section */}
+                    <div className="pt-1">
+                      <BtnPrimary onClick={saveSigningAuthority} disabled={sigSaving}>
+                        {sigSaving ? "Saving…" : "Save Changes"}
                       </BtnPrimary>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Right column — account details */}
+            {/* ── Right column — account details ── */}
             <div className="space-y-4">
               <div className="bg-white rounded-2xl border border-gray-100 p-5">
                 <h2 className="text-sm font-semibold text-gray-900 mb-4">Account Details</h2>
@@ -399,26 +394,18 @@ export default function MyProfile() {
                       {profile?.is_super_admin ? "Super Admin" : (ROLE_LABELS[profile?.role] || profile?.role || "—")}
                     </Badge>
                   </div>
-                  {canSign && (() => {
-                    const fullyConfigured = profile?.has_signature && profile?.signing_name && profile?.signing_title;
-                    const missing = [
-                      !profile?.signing_name  && "signing name",
-                      !profile?.signing_title && "signing title",
-                      !profile?.has_signature && "signature image",
-                    ].filter(Boolean);
-                    return (
-                      <div>
-                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Signing Authority</p>
-                        {fullyConfigured
-                          ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full"><CheckCircle size={10} /> Ready to countersign</span>
-                          : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Incomplete</span>
-                        }
-                        {!fullyConfigured && (
-                          <p className="text-[10px] text-gray-400 mt-1.5">Missing: {missing.join(", ")}</p>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {canSign && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Signing Authority</p>
+                      {fullyConfigured
+                        ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full"><CheckCircle size={10} /> Ready to countersign</span>
+                        : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Incomplete</span>
+                      }
+                      {!fullyConfigured && (
+                        <p className="text-[10px] text-gray-400 mt-1.5">Missing: {missing.join(", ")}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
