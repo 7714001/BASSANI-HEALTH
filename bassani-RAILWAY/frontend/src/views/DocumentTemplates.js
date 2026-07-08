@@ -639,8 +639,8 @@ function TabBar({ active, onChange }) {
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 export default function DocumentTemplates() {
-  const { user } = useAuth();
-  const isSuperAdmin = user?.is_super_admin || user?.role === "super_admin";
+  const { can } = useAuth();
+  const isSuperAdmin = can("settings.manage");
 
   const [tab,       setTab      ] = useState("documents");
   const [templates, setTemplates] = useState([]);

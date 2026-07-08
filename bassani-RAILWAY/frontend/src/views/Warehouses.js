@@ -6,8 +6,8 @@ import { TopBar, DataTable, BtnSecondary, Badge } from "../components/UI";
 import { useAuth } from "../AuthContext";
 
 export default function Warehouses() {
-  const { user } = useAuth();
-  const isSuperAdmin = user?.is_super_admin;
+  const { can } = useAuth();
+  const isSuperAdmin = can("settings.manage");
 
   const [warehouses,        setWarehouses       ] = useState([]);
   const [tokens,            setTokens           ] = useState({});

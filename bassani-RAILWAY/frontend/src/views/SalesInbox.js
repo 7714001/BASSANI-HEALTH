@@ -539,7 +539,7 @@ export default function SalesInbox() {
               <Mail size={28} className="text-amber-400" />
             </div>
             <h2 className="text-base font-semibold text-gray-900 mb-2">Sales Inbox not connected</h2>
-            {user?.is_super_admin ? (
+            {can("settings.manage") ? (
               <>
                 <p className="text-sm text-gray-500 mb-5 leading-relaxed">
                   Connect an IMAP mailbox in Settings to activate the inbox for all staff.
