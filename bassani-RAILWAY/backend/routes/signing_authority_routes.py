@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from typing import Optional
 
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, require_permission
 from database import col
 from services.r2_client import r2_put, r2_get
 from middleware.audit import audit_log
@@ -30,16 +30,10 @@ R2_KEY = "signing-authority/signature.png"
 _DOC_ID = "current"
 
 
-def _require_super_admin(current_user: dict) -> None:
-    if not current_user.get("is_super_admin") and current_user.get("role") != "super_admin":
-        raise HTTPException(status_code=403, detail="Super admin access required")
-
-
 # ── GET current profile ────────────────────────────────────────────────────────
 
-@router.get("/", dependencies=[Depends(require_admin)])
-async def get_signing_authority(current_user: dict = Depends(get_current_user)):
-    _require_super_admin(current_user)
+@router.get("/")
+async def get_signing_authority(_: dict = Depends(require_permission("settings.manage"))):
 
     doc = await col("signing_authority").find_one({"id": _DOC_ID})
     if not doc:
@@ -62,7 +56,7 @@ async def get_signing_authority(current_user: dict = Depends(get_current_user)):
 
 # ── Save / replace profile ─────────────────────────────────────────────────────
 
-@router.post("/", dependencies=[Depends(require_admin)])
+@router.post("/")
 async def save_signing_authority(
     name:             str           = Form(...),
     title:            str           = Form(...),
@@ -71,7 +65,7 @@ async def save_signing_authority(
     holder_name:      Optional[str] = Form(None),   # display name of that user
     signature_file:   Optional[UploadFile] = File(None),
     signature_drawn:  Optional[str] = Form(None),   # base64 data-URL from canvas
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("settings.manage")),
 ):
     """
     Save or replace the signing authority profile.
@@ -80,7 +74,6 @@ async def save_signing_authority(
     (drawn in-app). At least one must be provided on first setup; subsequent
     calls without a signature field leave the existing R2 image in place.
     """
-    _require_super_admin(current_user)
 
     existing = await col("signing_authority").find_one({"id": _DOC_ID})
     has_existing_sig = bool(existing and existing.get("has_signature"))

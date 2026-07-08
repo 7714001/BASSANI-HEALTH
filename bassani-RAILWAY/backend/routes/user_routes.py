@@ -137,11 +137,24 @@ async def create_user(
         raise HTTPException(status_code=400, detail="Cannot create a super_admin account via the API")
 
     is_super = current_user.get("is_super_admin", False)
-    if body.role in SUPER_ADMIN_ONLY_ROLES and not is_super:
+    caller_perms = current_user.get("permissions") or {}
+    has_users_manage = caller_perms.get("users", {}).get("manage", False)
+
+    if body.role in SUPER_ADMIN_ONLY_ROLES and not is_super and not has_users_manage:
         raise HTTPException(
             status_code=403,
-            detail="Only the super admin can create admin accounts",
+            detail="Only the super admin or a user manager can create admin accounts",
         )
+
+    # Privilege escalation check: non-super-admins cannot grant permissions they don't hold
+    if body.permissions and not is_super:
+        for domain, actions in body.permissions.items():
+            for action, value in actions.items():
+                if value and not caller_perms.get(domain, {}).get(action, False):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You cannot grant '{domain}.{action}'",
+                    )
 
     if await col("users").find_one({"username": body.username}):
         raise HTTPException(status_code=400, detail=f"Username '{body.username}' is already taken")
@@ -207,6 +220,8 @@ async def update_user(
         raise HTTPException(status_code=403, detail="The super admin account cannot be edited here")
 
     is_super = current_user.get("is_super_admin", False)
+    caller_perms = current_user.get("permissions") or {}
+    has_users_manage = caller_perms.get("users", {}).get("manage", False)
 
     updates: dict = {}
 
@@ -224,16 +239,24 @@ async def update_user(
     if body.role is not None:
         if body.role not in ALL_ROLES or body.role == "super_admin":
             raise HTTPException(status_code=400, detail="Invalid role")
-        if body.role in SUPER_ADMIN_ONLY_ROLES and not is_super:
-            raise HTTPException(status_code=403, detail="Only the super admin can assign the admin role")
+        if body.role in SUPER_ADMIN_ONLY_ROLES and not is_super and not has_users_manage:
+            raise HTTPException(status_code=403, detail="Only the super admin or a user manager can assign the admin role")
         updates["role"] = body.role
 
     if body.permissions is not None:
-        if not is_super:
-            raise HTTPException(status_code=403, detail="Only the super admin can modify permissions")
-        # Prevent self-escalation
+        if not is_super and not has_users_manage:
+            raise HTTPException(status_code=403, detail="Only the super admin or a user manager can modify permissions")
         if user_id == current_user.get("id"):
             raise HTTPException(status_code=400, detail="You cannot modify your own permissions")
+        # Privilege escalation prevention: non-super-admins can only grant what they hold
+        if not is_super:
+            for domain, actions in body.permissions.items():
+                for action, value in actions.items():
+                    if value and not caller_perms.get(domain, {}).get(action, False):
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"You cannot grant '{domain}.{action}'",
+                        )
         updates["permissions"] = body.permissions
 
     if not updates:

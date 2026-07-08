@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from typing import Optional
 
-from auth import get_current_user, require_admin
+from auth import require_admin, require_permission
 from database import col
 from services.r2_client import r2_put, r2_get
 from middleware.audit import audit_log
@@ -63,11 +63,6 @@ async def get_active_template_bytes(doc_type: str) -> Optional[bytes]:
         return await r2_get(doc["r2_key"])
     except Exception:
         return None
-
-
-def _require_super_admin(current_user: dict):
-    if not current_user.get("is_super_admin") and current_user.get("role") != "super_admin":
-        raise HTTPException(status_code=403, detail="Super admin access required")
 
 
 def _serialize(doc: dict) -> dict:
@@ -121,15 +116,13 @@ async def get_version_history(doc_type: str):
 
 # ── Upload a new version ────────────────────────────────────────────────────────
 
-@router.post("/{doc_type}/upload", dependencies=[Depends(require_admin)])
+@router.post("/{doc_type}/upload")
 async def upload_template_version(
     doc_type: str,
     file:  UploadFile = File(...),
     notes: str        = Form(""),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("settings.manage")),
 ):
-    _require_super_admin(current_user)
-
     if doc_type not in DOC_TYPES:
         raise HTTPException(status_code=404, detail="Unknown document type")
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -187,14 +180,12 @@ async def upload_template_version(
 
 # ── Activate (rollback to) a specific version ──────────────────────────────────
 
-@router.post("/{doc_type}/activate/{version_id}", dependencies=[Depends(require_admin)])
+@router.post("/{doc_type}/activate/{version_id}")
 async def activate_template_version(
     doc_type:   str,
     version_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("settings.manage")),
 ):
-    _require_super_admin(current_user)
-
     if doc_type not in DOC_TYPES:
         raise HTTPException(status_code=404, detail="Unknown document type")
 

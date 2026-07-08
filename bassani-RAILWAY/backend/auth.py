@@ -43,6 +43,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "inbox":       {"view": False},
     "onboarding":  {"inbox": False},
     "suppliers":   {"view": True,  "manage": False},
+    "settings":    {"manage": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -62,6 +63,7 @@ FULL_PERMISSIONS: dict = {
     "inbox":       {"view": True},
     "onboarding":  {"inbox": True},
     "suppliers":   {"view": True,  "manage": True},
+    "settings":    {"manage": True},
 }
 
 # Full default permission sets for each staff role.
@@ -86,6 +88,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "inbox":      {"view": True},
         "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
+        "settings":   {"manage": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -103,6 +106,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "inbox":      {"view": False},
         "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
+        "settings":   {"manage": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -120,6 +124,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "inbox":      {"view": False},
         "onboarding": {"inbox": False},
         "suppliers":  {"view": True,  "manage": False},
+        "settings":   {"manage": False},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -137,6 +142,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "inbox":      {"view": False},
         "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
+        "settings":   {"manage": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -154,6 +160,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "inbox":      {"view": False},
         "onboarding": {"inbox": False},
         "suppliers":  {"view": False, "manage": False},
+        "settings":   {"manage": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias

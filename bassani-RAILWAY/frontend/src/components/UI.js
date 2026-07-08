@@ -48,9 +48,9 @@ const NAV = [
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
   { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
-  { label: "Email Routing", path: "/settings/email-routing", icon: Settings, section: "Admin", superAdminOnly: true              },
-  { label: "Connected Mailboxes", path: "/settings/mailboxes", icon: Mail, section: "Admin", superAdminOnly: true },
-  { label: "Document Templates",  path: "/doc-templates",                   icon: FileText, section: "Admin", superAdminOnly: true },
+  { label: "Email Routing",       path: "/settings/email-routing", icon: Settings, section: "Admin", permission: "settings.manage" },
+  { label: "Connected Mailboxes", path: "/settings/mailboxes",     icon: Mail,     section: "Admin", permission: "settings.manage" },
+  { label: "Document Templates",  path: "/doc-templates",          icon: FileText, section: "Admin", permission: "settings.manage" },
 ];
 
 const RESELLER_NAV = [
@@ -108,7 +108,6 @@ export function Sidebar() {
   const isReseller = user?.role === "reseller";
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
   const items      = rawItems.filter(i => {
-    if (i.superAdminOnly && !user?.is_super_admin) return false;
     if (i.adminOnly && !isAdmin) return false;
     if (i.children) return true; // NavGroup filters its own children
     // Permission-gated items apply to admin-tier AND ticketing-role accounts

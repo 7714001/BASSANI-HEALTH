@@ -8,7 +8,7 @@ back to the support_email env var default.
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from pydantic import BaseModel
-from auth import get_current_user
+from auth import require_permission
 from database import col
 from config import get_settings
 
@@ -38,21 +38,16 @@ async def get_email_routing() -> dict:
     }
 
 
-def _require_super_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    if not current_user.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Super admin access required")
-    return current_user
-
 
 @router.get("/email-routing")
-async def get_email_routing_config(_: dict = Depends(_require_super_admin)):
+async def get_email_routing_config(_: dict = Depends(require_permission("settings.manage"))):
     return await get_email_routing()
 
 
 @router.put("/email-routing")
 async def update_email_routing_config(
     body: EmailRoutingConfig,
-    _: dict = Depends(_require_super_admin),
+    _: dict = Depends(require_permission("settings.manage")),
 ):
     await col("portal_settings").update_one(
         {"_id": "email_routing"},
@@ -75,14 +70,14 @@ async def get_default_warehouse_id() -> Optional[int]:
 
 
 @router.get("/default-warehouse")
-async def get_default_warehouse(_: dict = Depends(_require_super_admin)):
+async def get_default_warehouse(_: dict = Depends(require_permission("settings.manage"))):
     return {"warehouse_id": await get_default_warehouse_id()}
 
 
 @router.put("/default-warehouse")
 async def set_default_warehouse(
     body: DefaultWarehouseConfig,
-    _: dict = Depends(_require_super_admin),
+    _: dict = Depends(require_permission("settings.manage")),
 ):
     await col("portal_settings").update_one(
         {"_id": "default_warehouse"},
@@ -251,19 +246,19 @@ async def _test_mailbox(body: MailboxConfig, settings_id: str = "mailbox_config"
 
 
 @router.get("/mailbox")
-async def get_mailbox_config(_: dict = Depends(_require_super_admin)):
+async def get_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
     doc = await col("portal_settings").find_one({"_id": "mailbox_config"})
     return _mailbox_response(doc) if doc else _blank_mailbox_response()
 
 
 @router.put("/mailbox")
-async def save_mailbox_config(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+async def save_mailbox_config(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
     await _save_mailbox_doc("mailbox_config", body, "sales")
     return {"success": True}
 
 
 @router.delete("/mailbox")
-async def clear_mailbox_config(_: dict = Depends(_require_super_admin)):
+async def clear_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
     await col("portal_settings").delete_one({"_id": "mailbox_config"})
     from services.imap_client import load_config_from_db
     await load_config_from_db()
@@ -271,14 +266,14 @@ async def clear_mailbox_config(_: dict = Depends(_require_super_admin)):
 
 
 @router.delete("/mailbox/clear-inbox")
-async def clear_sales_inbox(_: dict = Depends(_require_super_admin)):
+async def clear_sales_inbox(_: dict = Depends(require_permission("settings.manage"))):
     """Wipe all documents from sales_inbox. Use when swapping mailboxes during development."""
     result = await col("sales_inbox").delete_many({})
     return {"deleted": result.deleted_count}
 
 
 @router.post("/mailbox/test")
-async def test_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+async def test_mailbox_connection(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
     return await _test_mailbox(body, "mailbox_config")
 
 
@@ -290,19 +285,19 @@ _ONBOARDING_KEY = "mailbox_config_onboarding"
 
 
 @router.get("/onboarding-mailbox")
-async def get_onboarding_mailbox_config(_: dict = Depends(_require_super_admin)):
+async def get_onboarding_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
     doc = await col("portal_settings").find_one({"_id": _ONBOARDING_KEY})
     return _mailbox_response(doc) if doc else _blank_mailbox_response()
 
 
 @router.put("/onboarding-mailbox")
-async def save_onboarding_mailbox_config(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+async def save_onboarding_mailbox_config(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
     await _save_mailbox_doc(_ONBOARDING_KEY, body, "onboarding")
     return {"success": True}
 
 
 @router.delete("/onboarding-mailbox")
-async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin)):
+async def clear_onboarding_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
     await col("portal_settings").delete_one({"_id": _ONBOARDING_KEY})
     from services.imap_client import load_config_from_db
     await load_config_from_db("onboarding")
@@ -310,12 +305,12 @@ async def clear_onboarding_mailbox_config(_: dict = Depends(_require_super_admin
 
 
 @router.delete("/onboarding-mailbox/clear-inbox")
-async def clear_onboarding_inbox(_: dict = Depends(_require_super_admin)):
+async def clear_onboarding_inbox(_: dict = Depends(require_permission("settings.manage"))):
     """Wipe all documents from onboarding_inbox. Use when swapping mailboxes during development."""
     result = await col("onboarding_inbox").delete_many({})
     return {"deleted": result.deleted_count}
 
 
 @router.post("/onboarding-mailbox/test")
-async def test_onboarding_mailbox_connection(body: MailboxConfig, _: dict = Depends(_require_super_admin)):
+async def test_onboarding_mailbox_connection(body: MailboxConfig, _: dict = Depends(require_permission("settings.manage"))):
     return await _test_mailbox(body, _ONBOARDING_KEY)
