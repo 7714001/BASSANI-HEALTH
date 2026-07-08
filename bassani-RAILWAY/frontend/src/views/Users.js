@@ -118,6 +118,27 @@ const PERMISSION_GROUPS = [
     ],
   },
   {
+    domain: "inbox",
+    label: "Sales Inbox",
+    actions: [
+      { key: "view", label: "Access the Sales Inbox (shared sales mailbox)" },
+    ],
+  },
+  {
+    domain: "orders_inbox",
+    label: "Orders Inbox",
+    actions: [
+      { key: "view", label: "Access the Orders Inbox (shared orders mailbox)" },
+    ],
+  },
+  {
+    domain: "onboarding",
+    label: "Onboarding Inbox",
+    actions: [
+      { key: "inbox", label: "Access the Onboarding Inbox (customer document mailbox)" },
+    ],
+  },
+  {
     domain: "settings",
     label: "Settings",
     actions: [
@@ -178,6 +199,9 @@ const DEFAULT_ADMIN_PERMS = {
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
   tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+  inbox:             { view: false },
+  orders_inbox:      { view: false },
+  onboarding:        { inbox: false },
   settings:          { manage: false },
   signing_authority: { sign: false },
 };
@@ -199,6 +223,9 @@ const ROLE_DEFAULT_PERMS = {
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
     tickets:           { sales: true, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    inbox:             { view: true },
+    orders_inbox:      { view: false },
+    onboarding:        { inbox: false },
     signing_authority: { sign: false },
   },
   orders_clerk: {
@@ -214,6 +241,9 @@ const ROLE_DEFAULT_PERMS = {
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
     tickets:           { sales: false, orders: true, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    inbox:             { view: false },
+    orders_inbox:      { view: true },
+    onboarding:        { inbox: false },
     signing_authority: { sign: false },
   },
   finance: {
@@ -229,6 +259,9 @@ const ROLE_DEFAULT_PERMS = {
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
     tickets:           { sales: false, orders: false, finance_confirm: true, qa_approve: false, rp_approve: false, manage: false },
+    inbox:             { view: false },
+    orders_inbox:      { view: false },
+    onboarding:        { inbox: false },
     signing_authority: { sign: false },
   },
   qa_manager: {
@@ -244,6 +277,9 @@ const ROLE_DEFAULT_PERMS = {
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
     tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: true, rp_approve: false, manage: false },
+    inbox:             { view: false },
+    orders_inbox:      { view: true },
+    onboarding:        { inbox: false },
     signing_authority: { sign: true },
   },
   responsible_pharmacist: {
@@ -259,6 +295,9 @@ const ROLE_DEFAULT_PERMS = {
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
     tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: true, manage: false },
+    inbox:             { view: false },
+    orders_inbox:      { view: true },
+    onboarding:        { inbox: false },
     signing_authority: { sign: true },
   },
 };
