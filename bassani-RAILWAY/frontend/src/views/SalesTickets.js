@@ -18,6 +18,7 @@ import {
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, Badge, LoadingState, EmptyState, fmtDate,
+  SearchBar, ChipRow, FilterPill,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 
@@ -72,6 +73,15 @@ export default function SalesTickets() {
   const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listSearch,   setListSearch  ] = useState("");
+  const [statusFilter, setStatusFilter] = useState(new Set());
+
+  const toggleStatus = (key) =>
+    setStatusFilter(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const location = useLocation();
 
@@ -1791,6 +1801,23 @@ export default function SalesTickets() {
   }
 
 
+  // ── Filtered ticket list (client-side) ───────────────────────────────────
+  const filteredTickets = tickets.filter(t => {
+    if (statusFilter.size > 0) {
+      const key = t.exit_status ? `exit:${t.exit_status}` : t.status;
+      if (!statusFilter.has(key)) return false;
+    }
+    if (listSearch.trim()) {
+      const q = listSearch.trim().toLowerCase();
+      if (
+        !(t.customer_name         || "").toLowerCase().includes(q) &&
+        !(t.customer_company_name || "").toLowerCase().includes(q) &&
+        !String(t.order_id        || "").includes(q)
+      ) return false;
+    }
+    return true;
+  });
+
   // ── List + create modal ───────────────────────────────────────────────────
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -1811,11 +1838,54 @@ export default function SalesTickets() {
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
-        {loading ? <LoadingState /> : tickets.length === 0 ? (
-          <EmptyState message="No sales tickets yet." />
+        <div className="mb-4 flex flex-col gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <SearchBar
+              value={listSearch}
+              onChange={setListSearch}
+              placeholder="Search customer or SO number…"
+            />
+            {(listSearch || statusFilter.size > 0) && (
+              <button
+                onClick={() => { setListSearch(""); setStatusFilter(new Set()); }}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors shrink-0"
+              >
+                Clear filters
+              </button>
+            )}
+            {!loading && (
+              <span className="text-xs text-gray-400 ml-auto shrink-0">
+                {filteredTickets.length} of {tickets.length} ticket{tickets.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          {!loading && tickets.length > 0 && (
+            <ChipRow>
+              {FORWARD_STATUSES.map(s => (
+                <FilterPill
+                  key={s}
+                  label={STATUS_LABEL[s] || s}
+                  active={statusFilter.has(s)}
+                  onClick={() => toggleStatus(s)}
+                />
+              ))}
+              <span className="self-center text-gray-200 px-1 shrink-0 select-none">|</span>
+              {Object.entries(EXIT_LABEL).map(([k, label]) => (
+                <FilterPill
+                  key={`exit:${k}`}
+                  label={label}
+                  active={statusFilter.has(`exit:${k}`)}
+                  onClick={() => toggleStatus(`exit:${k}`)}
+                />
+              ))}
+            </ChipRow>
+          )}
+        </div>
+        {loading ? <LoadingState /> : filteredTickets.length === 0 ? (
+          <EmptyState message={tickets.length === 0 ? "No sales tickets yet." : "No tickets match your filters."} />
         ) : (
           <DataTable
-            data={tickets}
+            data={filteredTickets}
             onRowClick={openDetail}
             columns={[
               { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: t } }) => (
