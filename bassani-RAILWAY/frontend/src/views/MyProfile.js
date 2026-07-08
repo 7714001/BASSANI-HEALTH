@@ -44,33 +44,19 @@ export default function MyProfile() {
   const [sigSaving,    setSigSaving   ] = useState(false);
   const [deletingSig,  setDeletingSig ] = useState(false);
 
-  // Canvas refs — captured at save time, no intermediate "pending" state
-  const canvasRef  = useRef(null);
-  const hasMark    = useRef(false);
-  const isDrawing  = useRef(false);
-  const fileRef    = useRef(null);
+  const canvasRef = useRef(null);
+  const hasMark   = useRef(false);
+  const isDrawing = useRef(false);
+  const fileRef   = useRef(null);
 
   // ── Canvas handlers ───────────────────────────────────────────────────────────
 
-  // Size the canvas backing store to its rendered CSS size × device pixel ratio.
-  // ctx.scale(dpr, dpr) means all subsequent draw calls use CSS pixel coordinates.
-  const initCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = canvas.offsetWidth  * dpr;
-    canvas.height = canvas.offsetHeight * dpr;
-    canvas.getContext("2d").scale(dpr, dpr);
-  }, []);
-
-  // Returns cursor position in CSS pixels — matches the ctx coordinate space
-  // established by ctx.scale(dpr, dpr) in initCanvas.
   const getPos = useCallback((e, canvas) => {
     const rect = canvas.getBoundingClientRect();
     const src  = e.touches ? e.touches[0] : e;
     return {
-      x: src.clientX - rect.left,
-      y: src.clientY - rect.top,
+      x: (src.clientX - rect.left) * (canvas.width  / rect.width),
+      y: (src.clientY - rect.top)  * (canvas.height / rect.height),
     };
   }, []);
 
@@ -132,14 +118,6 @@ export default function MyProfile() {
   }, [canSign]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Re-init canvas whenever the draw tab is visible or the window resizes.
-  useEffect(() => {
-    if (sigMode !== "draw") return;
-    initCanvas();
-    window.addEventListener("resize", initCanvas);
-    return () => window.removeEventListener("resize", initCanvas);
-  }, [sigMode, initCanvas]);
 
   // ── Save handlers ─────────────────────────────────────────────────────────────
 
@@ -357,8 +335,9 @@ export default function MyProfile() {
                             <div className="space-y-2">
                               <canvas
                                 ref={canvasRef}
+                                width={480}
+                                height={120}
                                 className="w-full cursor-crosshair touch-none bg-white rounded-lg border border-gray-100"
-                                style={{ height: 120 }}
                                 onMouseDown={startDraw}
                                 onMouseMove={draw}
                                 onMouseUp={stopDraw}
