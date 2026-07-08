@@ -151,10 +151,9 @@ export default function CustomerApplications() {
                 </div>
               )},
             { id: "reseller", header: "Submitted By", enableSorting: false,
-              cell: ({ row: { original: a } }) =>
-                <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
-                  {a.reseller_name}
-                </span> },
+              cell: ({ row: { original: a } }) => a.reseller_name
+                ? <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">{a.reseller_name}</span>
+                : <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">Direct Application</span> },
             { id: "type", header: "Type", enableSorting: false,
               cell: ({ row: { original: a } }) =>
                 <span className="text-xs text-gray-500">{a.business_type}</span> },
