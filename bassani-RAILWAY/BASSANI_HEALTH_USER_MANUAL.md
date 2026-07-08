@@ -140,15 +140,31 @@ To customise an admin's permissions:
 
 Before any reseller can earn commissions, you need to configure the tier bands. Go to **Commission** → **Tier Settings**.
 
-Commission is calculated as a percentage of the reseller's monthly turnover (excluding cancelled orders). The tier bands define what percentage applies at each revenue level. Example setup:
+Commission is calculated as a percentage of the reseller's monthly turnover (excluding cancelled orders). You have full control over the tier structure — add as many tiers as needed, set the turnover brackets, and assign a rate to each.
 
-| Monthly Turnover | Commission Rate |
-|---|---|
-| R0 – R50,000 | 5% |
-| R50,001 – R150,000 | 7% |
-| R150,001 + | 10% |
+**How to configure tiers:**
 
-Set these bands to match your actual reseller agreement. Changes to tiers are recorded in the audit trail with the before/after values and who made the change.
+Each row in the tier table has four fields:
+- **Label** — a name shown to agents (e.g. "Tier 1", "Bronze", "Standard")
+- **From** — the minimum turnover for this tier (read-only, auto-derived from the previous tier's upper limit)
+- **Up To** — the upper turnover threshold. The last tier always shows "Unlimited" and cannot be changed
+- **Rate** — the commission percentage that applies to agents in this bracket
+
+**Adding a tier:** Click **Add Tier** at the bottom of the table. A new row is added with "Unlimited" as its upper limit. Set a maximum threshold on the tier above it to define where the new tier begins.
+
+**Removing a tier:** Click the delete icon on any row. The tier below it automatically inherits the removed tier's lower bound. You must have at least one tier at all times.
+
+Example setup matching a typical reseller agreement:
+
+| Label | From | Up To | Rate |
+|---|---|---|---|
+| Tier 1 | R0 | R300,000 | 2.5% |
+| Tier 2 | R300,000 | R500,000 | 5% |
+| Tier 3 | R500,000 | R750,000 | 7.5% |
+| Tier 4 | R750,000 | R1,000,000 | 10% |
+| Tier 5 | R1,000,000 | Unlimited | 12.5% |
+
+Click **Save Tiers** to apply. Every save is recorded in the audit trail with the full before and after structure and the name of the person who made the change. Click **Reset to Defaults** to revert to the five-tier structure above.
 
 ---
 
@@ -1313,8 +1329,8 @@ Cancelled orders are automatically excluded. Sales agents with **Applicable for 
 **Disputes:**
 A reseller may raise a dispute on any statement they believe is incorrect. Disputed statements appear with a red badge in the Statements list. Review the dispute, then click **Resolve** and enter your response notes. The reseller receives an email with your resolution.
 
-**Tier history:**
-The Tier Settings tab shows the full history of every tier rate change — who changed it, when, and what the before/after values were.
+**Tier settings** *(requires `commission.configure_tiers`)*:
+Go to **Commission** → **Tier Settings** to add, remove, or reconfigure tier brackets and rates. See Step 5 for full instructions. The Change History panel below the tier table shows every change made — who made it and when.
 
 ### Reports
 

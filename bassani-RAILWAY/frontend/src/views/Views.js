@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent } from "lucide-react";
 import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -2247,16 +2247,15 @@ function AdminCommissionView() {
   const [resolving,     setResolving    ] = useState(false);
   const [payOverride,       setPayOverride      ] = useState(false);
   const [payOverrideReason, setPayOverrideReason] = useState("");
-  // Tier settings — seeded with defaults so the table is always visible
-  const DEFAULT_TIERS = [
-    { tier: 1, label: "Tier 1", range: "R0 – <R300k",    rate: 2.5  },
-    { tier: 2, label: "Tier 2", range: "R300k – <R500k", rate: 5.0  },
-    { tier: 3, label: "Tier 3", range: "R500k – <R750k", rate: 7.5  },
-    { tier: 4, label: "Tier 4", range: "R750k – <R1m",   rate: 10.0 },
-    { tier: 5, label: "Tier 5", range: "R1m+",           rate: 12.5 },
+  // Tier settings — draft state: [{label, max, rate}], min derived from position
+  const DEFAULT_DRAFT = [
+    { label: "Tier 1", max: 300000,  rate: 2.5  },
+    { label: "Tier 2", max: 500000,  rate: 5.0  },
+    { label: "Tier 3", max: 750000,  rate: 7.5  },
+    { label: "Tier 4", max: 1000000, rate: 10.0 },
+    { label: "Tier 5", max: null,    rate: 12.5 },
   ];
-  const [tiers,              setTiers             ] = useState(DEFAULT_TIERS);
-  const [tierRates,          setTierRates         ] = useState(DEFAULT_TIERS.map(t => t.rate));
+  const [tierDraft,          setTierDraft         ] = useState(DEFAULT_DRAFT);
   const [tierSaving,         setTierSaving        ] = useState(false);
   const [tierHistory,        setTierHistory       ] = useState([]);
   const [tierHistoryLoading, setTierHistoryLoading] = useState(false);
@@ -2278,8 +2277,8 @@ function AdminCommissionView() {
 
   useEffect(() => {
     api.get("/api/commission/tiers").then(r => {
-      setTiers(r.data.tiers || []);
-      setTierRates((r.data.tiers || []).map(t => t.rate));
+      const t = r.data.tiers || [];
+      if (t.length) setTierDraft(t.map(t => ({ label: t.label, max: t.max ?? null, rate: t.rate })));
     }).catch(() => {});
   }, []);
 
@@ -2351,12 +2350,46 @@ function AdminCommissionView() {
     }
   };
 
+  const tierMin = (i) => i === 0 ? 0 : (tierDraft[i - 1].max ?? 0);
+
+  const fmtThreshold = (v) => {
+    if (v === null || v === undefined) return "Unlimited";
+    if (v >= 1_000_000 && v % 1_000_000 === 0) return `R${v / 1_000_000}m`;
+    if (v >= 1_000_000) return `R${(v / 1_000_000).toFixed(1)}m`;
+    if (v >= 1_000 && v % 1_000 === 0) return `R${v / 1_000}k`;
+    return `R${Number(v).toLocaleString()}`;
+  };
+
+  const updateTier = (i, field, value) =>
+    setTierDraft(prev => prev.map((t, j) => j === i ? { ...t, [field]: value } : t));
+
+  const addTier = () =>
+    setTierDraft(prev => [...prev, { label: `Tier ${prev.length + 1}`, max: null, rate: 0 }]);
+
+  const removeTier = (i) => {
+    if (tierDraft.length <= 1) return;
+    setTierDraft(prev => {
+      const next = prev.filter((_, j) => j !== i);
+      return next.map((t, j) => j === next.length - 1 ? { ...t, max: null } : t);
+    });
+  };
+
   const saveTiers = async () => {
+    for (let i = 0; i < tierDraft.length; i++) {
+      if (!tierDraft[i].label.trim()) { toast.error(`Tier ${i + 1} needs a label`); return; }
+      if (i < tierDraft.length - 1 && (tierDraft[i].max === null || tierDraft[i].max === "" || isNaN(tierDraft[i].max))) {
+        toast.error(`Tier ${i + 1} needs a maximum threshold`); return;
+      }
+      if (tierDraft[i].rate < 0 || tierDraft[i].rate > 100) {
+        toast.error(`Rate for tier ${i + 1} must be between 0 and 100`); return;
+      }
+    }
     setTierSaving(true);
     try {
-      const r = await api.put("/api/commission/tiers", { rates: tierRates });
-      setTiers(r.data.tiers);
-      toast.success("Tier rates saved");
+      const payload = tierDraft.map((t, i) => ({ label: t.label.trim(), min: tierMin(i), max: t.max, rate: t.rate }));
+      const r = await api.put("/api/commission/tiers", { tiers: payload });
+      setTierDraft(r.data.tiers.map(t => ({ label: t.label, max: t.max ?? null, rate: t.rate })));
+      toast.success("Commission tiers saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     finally { setTierSaving(false); }
   };
@@ -2365,9 +2398,8 @@ function AdminCommissionView() {
     setTierSaving(true);
     try {
       const r = await api.delete("/api/commission/tiers/reset");
-      setTiers(r.data.tiers);
-      setTierRates(r.data.tiers.map(t => t.rate));
-      toast.success("Tier rates reset to defaults");
+      setTierDraft(r.data.tiers.map(t => ({ label: t.label, max: t.max ?? null, rate: t.rate })));
+      toast.success("Commission tiers reset to defaults");
     } catch { toast.error("Reset failed"); }
     finally { setTierSaving(false); }
   };
@@ -2501,43 +2533,79 @@ function AdminCommissionView() {
       {activeTab === "tiers" && (
         <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50">
-            <h3 className="text-sm font-semibold text-gray-800">Commission Tier Rates</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Turnover thresholds are fixed. Adjust the commission rate for each tier.</p>
+            <h3 className="text-sm font-semibold text-gray-800">Commission Tier Configuration</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Define turnover brackets and commission rates. The last tier is always open-ended.</p>
           </div>
-          <div className="divide-y divide-gray-50">
-            {tiers.map((t, i) => (
-              <div key={t.tier} className="px-5 py-4 flex items-center gap-4">
-                <div className="w-16 shrink-0">
-                  <span className="text-xs font-bold text-bassani-700 bg-bassani-50 px-2 py-0.5 rounded-full">{t.label}</span>
-                </div>
-                <div className="flex-1 text-sm text-gray-500">{t.range}</div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number" min={0} max={100} step={0.5}
-                    value={tierRates[i] ?? t.rate}
-                    onChange={e => {
-                      const v = parseFloat(e.target.value);
-                      setTierRates(prev => prev.map((r, j) => j === i ? v : r));
-                    }}
-                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 w-20 text-right"
-                  />
-                  <span className="text-sm text-gray-400">%</span>
-                </div>
-              </div>
+          <div className="grid grid-cols-[1fr_110px_110px_88px_36px] gap-x-3 px-5 py-2 bg-gray-50 border-b border-gray-100">
+            {["Label","From","Up To","Rate",""].map(h => (
+              <span key={h} className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{h}</span>
             ))}
           </div>
+          <div className="divide-y divide-gray-50">
+            {tierDraft.map((t, i) => {
+              const isLast = i === tierDraft.length - 1;
+              return (
+                <div key={i} className="grid grid-cols-[1fr_110px_110px_88px_36px] gap-x-3 px-5 py-3 items-center">
+                  <input
+                    type="text" value={t.label}
+                    onChange={e => updateTier(i, "label", e.target.value)}
+                    readOnly={!can("commission.configure_tiers")}
+                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600"
+                    placeholder="Label"
+                  />
+                  <div className="border border-gray-100 rounded-lg px-3 py-1.5 text-sm text-gray-400 bg-gray-50 truncate">
+                    {fmtThreshold(tierMin(i))}
+                  </div>
+                  {isLast ? (
+                    <div className="border border-gray-100 rounded-lg px-3 py-1.5 text-sm text-gray-400 bg-gray-50 italic">Unlimited</div>
+                  ) : (
+                    <input
+                      type="number" min={0} value={t.max ?? ""}
+                      onChange={e => updateTier(i, "max", e.target.value === "" ? null : parseFloat(e.target.value))}
+                      readOnly={!can("commission.configure_tiers")}
+                      className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600"
+                      placeholder="e.g. 300000"
+                    />
+                  )}
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={0} max={100} step={0.5} value={t.rate}
+                      onChange={e => updateTier(i, "rate", parseFloat(e.target.value) || 0)}
+                      readOnly={!can("commission.configure_tiers")}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 focus:outline-none focus:border-bassani-600 w-14 text-right"
+                    />
+                    <span className="text-xs text-gray-400">%</span>
+                  </div>
+                  {can("commission.configure_tiers") ? (
+                    <button onClick={() => removeTier(i)} disabled={tierDraft.length <= 1}
+                      className="text-gray-300 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center">
+                      <Trash2 size={13} />
+                    </button>
+                  ) : <span />}
+                </div>
+              );
+            })}
+          </div>
+          {can("commission.configure_tiers") && (
+            <div className="px-5 py-3 border-t border-gray-50">
+              <button onClick={addTier}
+                className="flex items-center gap-1.5 text-xs text-bassani-600 hover:text-bassani-800 font-medium transition-colors">
+                <Plus size={13} /> Add Tier
+              </button>
+            </div>
+          )}
           {can("commission.configure_tiers") && (
             <div className="px-5 py-4 border-t border-gray-50 flex justify-between">
               <BtnSecondary onClick={resetTiers} disabled={tierSaving}>Reset to Defaults</BtnSecondary>
-              <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tier Rates</BtnPrimary>
+              <BtnPrimary onClick={saveTiers} loading={tierSaving}>Save Tiers</BtnPrimary>
             </div>
           )}
           <div className="px-5 py-4 border-t border-gray-50">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Rate Change History</p>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Change History</p>
             {tierHistoryLoading ? (
               <p className="text-xs text-gray-400">Loading…</p>
             ) : tierHistory.length === 0 ? (
-              <p className="text-xs text-gray-400">No rate changes recorded yet</p>
+              <p className="text-xs text-gray-400">No tier changes recorded yet</p>
             ) : (
               <div className="space-y-2">
                 {tierHistory.map((h, i) => (
@@ -2545,7 +2613,7 @@ function AdminCommissionView() {
                     <span className="text-gray-300 shrink-0 tabular-nums">{fmtDate(h.created_at)}</span>
                     <span className="text-gray-600">
                       <b>{h.actor_username}</b>
-                      {h.action === "commission.reset_tiers" ? " reset rates to system defaults" : " updated tier rates"}
+                      {h.action === "commission.reset_tiers" ? " reset tiers to system defaults" : " updated commission tiers"}
                     </span>
                   </div>
                 ))}

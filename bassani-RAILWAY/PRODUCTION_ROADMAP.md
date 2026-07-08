@@ -600,9 +600,13 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Mark excluded `order_commissions` records as `payout_status: "cancelled"`
 - [x] Document this logic clearly: commission is earned on confirmed and fulfilled orders only
 
-#### 4.3 Tier Rate Audit Trail
-> **Already satisfied by Phase 0.6** (2026-06-19) — `PUT /api/commission/tiers` and `DELETE /api/commission/tiers/reset` write `commission.configure_tiers` / `commission.reset_tiers` audit entries with actor, before, and after. Visible today via the Audit Trail page (`/audit`). Remaining task below is the only open item.
-- [x] Display tier change history inline in the admin Tier Settings tab — added `GET /api/commission/tiers/history` endpoint and "Rate Change History" section in the Tier Settings tab
+#### 4.3 Tier Configuration — Fully Configurable (upgraded 2026-07-08)
+> **Originally:** rate-only edits on 5 fixed brackets. **Upgraded:** full add/remove/edit of tiers — label, turnover bracket, and rate — all configurable. Backend validates contiguity and derives the display range string. Audit trail captures full before/after on every save. Reseller commission view is data-driven and required no changes.
+- [x] Display tier change history inline in the admin Tier Settings tab — added `GET /api/commission/tiers/history` endpoint and "Change History" section in the Tier Settings tab
+- [x] Full tier CRUD — add tiers, remove tiers, edit labels, brackets, and rates
+- [x] Backend validation: contiguous brackets, last tier must be Unlimited, all rates 0–100, labels required
+- [x] `_tier_range()` helper derives display string (e.g. "R300k – <R500k") from min/max on save
+- [x] `next_tier` lookup in `current-month` endpoint uses list position, not numeric tier index
 
 #### 4.4 Odoo Vendor Bill — Make Non-Optional
 - [x] Change `mark-paid` endpoint: if Odoo bill creation fails, return `400` error — do not silently continue

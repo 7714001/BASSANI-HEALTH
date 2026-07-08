@@ -13,7 +13,6 @@ router = APIRouter(prefix="/api/commission", tags=["commission"])
 
 
 # ── Default tier bands ────────────────────────────────────────────────────────
-# Turnover thresholds are fixed; rates are admin-configurable via /tiers PUT.
 
 DEFAULT_TIERS = [
     {"tier": 1, "min": 0,          "max": 300_000,   "rate": 2.5,  "label": "Tier 1", "range": "R0 – <R300k"},
@@ -22,6 +21,23 @@ DEFAULT_TIERS = [
     {"tier": 4, "min": 750_000,    "max": 1_000_000, "rate": 10.0, "label": "Tier 4", "range": "R750k – <R1m"},
     {"tier": 5, "min": 1_000_000,  "max": None,      "rate": 12.5, "label": "Tier 5", "range": "R1m+"},
 ]
+
+
+def _fmt_amount(v: float) -> str:
+    if v == 0:
+        return "R0"
+    if v >= 1_000_000 and v % 1_000_000 == 0:
+        return f"R{int(v // 1_000_000)}m"
+    if v >= 1_000_000:
+        return f"R{v / 1_000_000:.1f}m"
+    if v >= 1_000 and v % 1_000 == 0:
+        return f"R{int(v // 1_000)}k"
+    return f"R{v:,.0f}"
+
+
+def _tier_range(mn: float, mx) -> str:
+    lo = _fmt_amount(mn)
+    return f"{lo}+" if mx is None else f"{lo} – <{_fmt_amount(mx)}"
 
 
 async def get_tiers_config() -> list:
@@ -42,8 +58,14 @@ def apply_tier(tiers: list, turnover: float) -> dict:
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+class TierBand(BaseModel):
+    label: str
+    min:   float
+    max:   Optional[float] = None
+    rate:  float
+
 class TiersUpdate(BaseModel):
-    rates: List[float]   # Must be exactly 5 values, one per tier in ascending order
+    tiers: List[TierBand]
 
 class MarkPaidPayload(BaseModel):
     payment_reference: Optional[str] = ""
@@ -134,27 +156,44 @@ async def update_tiers(
     current_user: dict = Depends(require_permission("commission.configure_tiers")),
 ):
     """
-    Update commission rates for all 5 tiers.
-    Thresholds (turnover bands) remain fixed; only rates change.
+    Replace the full commission tier configuration. Accepts any number of tiers
+    with configurable turnover brackets and rates.
     """
-    if len(payload.rates) != 5:
-        raise HTTPException(status_code=400, detail="Exactly 5 rates required (one per tier)")
-    for r in payload.rates:
-        if not (0 <= r <= 100):
-            raise HTTPException(status_code=400, detail=f"Rate {r} is out of range — must be 0–100")
+    bands = payload.tiers
+    if len(bands) < 1:
+        raise HTTPException(status_code=400, detail="At least one tier is required")
+    for i, t in enumerate(bands):
+        if not t.label.strip():
+            raise HTTPException(status_code=400, detail=f"Tier {i + 1} must have a label")
+        if not (0 <= t.rate <= 100):
+            raise HTTPException(status_code=400, detail=f"Rate for tier {i + 1} must be 0–100")
+        if i < len(bands) - 1 and t.max is None:
+            raise HTTPException(status_code=400, detail=f"Tier {i + 1} must have a maximum threshold (only the last tier can be Unlimited)")
+        if i == len(bands) - 1 and t.max is not None:
+            raise HTTPException(status_code=400, detail="The last tier must have no maximum (Unlimited)")
+        expected_min = 0 if i == 0 else bands[i - 1].max
+        if t.min != expected_min:
+            raise HTTPException(status_code=400, detail=f"Tier {i + 1} minimum ({t.min}) must equal the previous tier's maximum ({expected_min})")
 
     before = await get_tiers_config()
 
     updated = [
-        {**DEFAULT_TIERS[i], "rate": round(payload.rates[i], 4)}
-        for i in range(5)
+        {
+            "tier":  i + 1,
+            "label": t.label.strip(),
+            "min":   t.min,
+            "max":   t.max,
+            "rate":  round(t.rate, 4),
+            "range": _tier_range(t.min, t.max),
+        }
+        for i, t in enumerate(bands)
     ]
 
     await col("settings").update_one(
         {"key": "commission_tiers"},
         {"$set": {
-            "key": "commission_tiers",
-            "value": updated,
+            "key":        "commission_tiers",
+            "value":      updated,
             "updated_at": datetime.now(timezone.utc),
             "updated_by": current_user.get("username", "admin"),
         }},
@@ -623,7 +662,8 @@ async def current_month_progress(
     tier  = apply_tier(tiers, turnover)
     commission_projected = round(turnover * (tier["rate"] / 100), 2)
 
-    next_tier = next((t for t in tiers if t["tier"] == tier["tier"] + 1), None)
+    current_idx = next((i for i, t in enumerate(tiers) if t["min"] == tier["min"]), None)
+    next_tier = tiers[current_idx + 1] if current_idx is not None and current_idx + 1 < len(tiers) else None
 
     return {
         "month_label":          f"{_cal.month_abbr[today.month]} {today.year}",
