@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Upload, Download, Clock, CheckCircle, ChevronDown, ChevronUp,
-  Loader2, FileText, RotateCcw, PenLine, FlaskConical, AlertTriangle,
+  Loader2, FileText, RotateCcw, FlaskConical, AlertTriangle,
   Eye, X,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal, FormGroup } from "../components/UI";
-import { SigningAuthoritySection } from "./SigningAuthority";
 import { DOC_CONFIGS, detectFields, generateSignedPdf } from "../utils/pdfSigning";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -343,7 +342,7 @@ function TestSigningModal({ docType, docLabel, onClose }) {
                     </div>
                   ) : (
                     <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                      <p className="text-xs text-amber-700">Signing authority not configured. Set up the Signing Authority tab for a realistic test.</p>
+                      <p className="text-xs text-amber-700">No signing identity configured. Set up your signing name, title, and signature in My Profile for a realistic test.</p>
                     </div>
                   )}
                 </div>
@@ -607,43 +606,11 @@ function DocTypeCard({ template, isSuperAdmin, onUploaded }) {
   );
 }
 
-// ── Tabs ───────────────────────────────────────────────────────────────────────
-const TABS = [
-  { id: "documents",  label: "Documents",        icon: FileText },
-  { id: "signing",    label: "Signing Authority", icon: PenLine  },
-];
-
-function TabBar({ active, onChange }) {
-  return (
-    <div className="flex border-b border-gray-200 mb-6">
-      {TABS.map(t => {
-        const Icon    = t.icon;
-        const isActive = active === t.id;
-        return (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              isActive
-                ? "border-bassani-600 text-bassani-700"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-          >
-            <Icon size={15} />
-            {t.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── Main view ─────────────────────────────────────────────────────────────────
 export default function DocumentTemplates() {
   const { can } = useAuth();
   const isSuperAdmin = can("settings.manage");
 
-  const [tab,       setTab      ] = useState("documents");
   const [templates, setTemplates] = useState([]);
   const [loading,   setLoading  ] = useState(true);
   const [listKey,   setListKey  ] = useState(0);
@@ -664,12 +631,7 @@ export default function DocumentTemplates() {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto w-full">
 
-          <TabBar active={tab} onChange={setTab} />
-
-          {/* ── Documents tab ─────────────────────────────────────────── */}
-          {tab === "documents" && (
-            <>
-              <div className="mb-6">
+          <div className="mb-6">
                 <p className="text-sm text-gray-500 max-w-2xl">
                   Manage the four Bassani-issued onboarding template PDFs. Uploading a new version
                   immediately replaces what customers download — no redeployment needed. Previous
@@ -714,24 +676,6 @@ export default function DocumentTemplates() {
                   <li>Roll back to any previous version using the Activate button in the version history.</li>
                 </ul>
               </div>
-            </>
-          )}
-
-          {/* ── Signing Authority tab ─────────────────────────────────── */}
-          {tab === "signing" && (
-            <>
-              <div className="mb-6">
-                <p className="text-sm text-gray-500 max-w-2xl">
-                  Configure the signatory profile used to automatically complete Bassani's signing
-                  block on all co-signed onboarding documents. Once set up, no action is required
-                  per document — the name, title, location, and signature are embedded automatically
-                  when a customer signs.
-                </p>
-              </div>
-              <SigningAuthoritySection />
-            </>
-          )}
-
         </div>
       </main>
     </div>
