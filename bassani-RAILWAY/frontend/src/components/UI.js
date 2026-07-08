@@ -34,7 +34,7 @@ const NAV = [
   { label: "Onboarding Inbox",path: "/onboarding-inbox", icon: Mail,           section: "Customers", permission: "onboarding.inbox", showOnboardingInboxBadge: true },
   { label: "Suppliers",    path: "/suppliers",   icon: Truck,           section: "Main",     permission: "suppliers.view"      },
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
-  { label: "Resellers",    path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
+  { label: "Sales Agents", path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
   { label: "Commission",   path: "/commission",  icon: Percent,         section: "Resellers",permission: "commission.view"     },
   { label: "Invoices",     path: "/invoices",    icon: FileText,        section: "Finance",  permission: "invoices.view"       },
   { label: "Targets",      path: "/targets",     icon: Target,          section: "Finance",  permission: "reports.view"        },
@@ -57,7 +57,7 @@ const RESELLER_NAV = [
   { label: "Dashboard",  path: "/",         icon: LayoutDashboard, section: "Main" },
   { label: "Products",   path: "/products", icon: Package,         section: "Main" },
   { label: "Orders",     path: "/orders",   icon: ShoppingCart,    section: "Main" },
-  { label: "Commission", path: "/commission", icon: Percent,       section: "Main" },
+  { label: "Commission", path: "/commission", icon: Percent,       section: "Main", requiresCommission: true },
   { label: "My Customers",    path: "/customers",        icon: Users,         section: "Customers" },
   { label: "My Applications", path: "/my-applications",  icon: ClipboardList, section: "Customers" },
   { label: "Onboarding Docs", path: "/onboarding-docs",  icon: FileText,      section: "Customers" },
@@ -109,6 +109,7 @@ export function Sidebar() {
   const rawItems   = isReseller ? RESELLER_NAV : NAV;
   const items      = rawItems.filter(i => {
     if (i.adminOnly && !isAdmin) return false;
+    if (i.requiresCommission && user?.commission_eligible === false) return false;
     if (i.children) return true; // NavGroup filters its own children
     // Permission-gated items apply to admin-tier AND ticketing-role accounts
     // (resellers never reach here — they use RESELLER_NAV, which has none).

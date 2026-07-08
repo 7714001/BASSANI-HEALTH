@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail } from "lucide-react";
+import { Plus, Edit2, Archive, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent } from "lucide-react";
 import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -1393,7 +1393,7 @@ export function Orders() {
 export function Resellers() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", odoo_partner_id:"", warehouse_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -1408,7 +1408,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,              setEditModal             ] = useState(false);
   const [editingId,              setEditingId             ] = useState(null);
-  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", odoo_partner_id:null, warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:null, warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
   const [editSelectedCustomer,   setEditSelectedCustomer  ] = useState(null);
   const [saving,                 setSaving                ] = useState(false);
   const [editSaving,             setEditSaving            ] = useState(false);
@@ -1431,7 +1431,7 @@ export function Resellers() {
   const load = async () => {
     setLoading(true);
     try { const r = await api.get("/api/resellers/"); setResellers(r.data.resellers); }
-    catch { toast.error("Failed to load resellers"); }
+    catch { toast.error("Failed to load sales agents"); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
@@ -1505,6 +1505,7 @@ export function Resellers() {
   const openEdit = (r) => {
     setEditForm({
       name: r.name, type: r.type, contact_person: r.contact_person||"", email: r.email||"", phone: r.phone||"",
+      commission_eligible: r.commission_eligible !== false,
       odoo_partner_id: r.odoo_partner_id || null,
       warehouse_id: r.warehouse_id || "",
       company_reg_number: r.company_reg_number || "",
@@ -1546,15 +1547,15 @@ export function Resellers() {
       payload.warehouse_id = payload.warehouse_id ? parseInt(payload.warehouse_id) : null;
       payload.odoo_partner_id = editForm.odoo_partner_id ? parseInt(editForm.odoo_partner_id) : null;
       await api.put(`/api/resellers/${editingId}`, payload);
-      toast.success("Reseller updated");
+      toast.success("Sales agent updated");
       setEditModal(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     finally { setEditSaving(false); }
   };
 
-  // true when null (still checking) — conservative: require docs until confirmed otherwise
-  const rSellerDocsRequired = !selectedCustomer || rSellerCustHasDocs !== true;
+  // Docs only required for commission-eligible agents without existing docs on file
+  const rSellerDocsRequired = form.commission_eligible && (!selectedCustomer || rSellerCustHasDocs !== true);
 
   const rSellerUploadDoc = async (docKey, docLabel, file) => {
     setRSellerUploadingDoc(docKey);
@@ -1600,7 +1601,7 @@ export function Resellers() {
       payload.document_session_id = rSellerSessionId;
       payload.documents = rSellerDocsRequired ? rSellerStagedDocs : [];
       await api.post("/api/resellers/", payload);
-      toast.success("Reseller created");
+      toast.success("Sales agent created");
       setModal(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
@@ -1609,8 +1610,8 @@ export function Resellers() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Resellers" subtitle="Distributors, agents and brokers" onRefresh={load}
-        actions={can("resellers.manage") && <BtnPrimary onClick={openModal}><Plus size={14}/>Add Reseller</BtnPrimary>} />
+      <TopBar title="Sales Agents" subtitle="Distributors, agents and brokers" onRefresh={load}
+        actions={can("resellers.manage") && <BtnPrimary onClick={openModal}><Plus size={14}/>Add Sales Agent</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
         <DataTable
           columns={[
@@ -1629,7 +1630,7 @@ export function Resellers() {
       </main>
 
       {modal && (
-        <Modal title="Add Reseller" onClose={()=>setModal(false)} width="max-w-xl">
+        <Modal title="Add Sales Agent" onClose={()=>setModal(false)} width="max-w-xl">
 
           {/* Step indicator */}
           {(() => {
@@ -1661,12 +1662,30 @@ export function Resellers() {
             );
           })()}
 
-          {/* ── Step 1: Odoo Partner Link + Documents ── */}
+          {/* ── Step 1: Commission Eligibility + Odoo Partner + Documents ── */}
           {rStep === 1 && (
             <div className="space-y-4">
+
+              {/* Commission eligibility toggle */}
+              <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input type="checkbox" checked={form.commission_eligible}
+                    onChange={e => {
+                      setForm(f => ({ ...f, commission_eligible: e.target.checked }));
+                      if (!e.target.checked) { setSelectedCustomer(null); setRSellerCustHasDocs(null); setCustDropdownOpen(false); }
+                    }}
+                    className="mt-0.5 w-4 h-4 accent-bassani-600 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">Applicable for commission</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Uncheck for internal Bassani staff accounts. Non-eligible agents are excluded from commission statements and will not see the Commission section in their portal.</p>
+                  </div>
+                </label>
+              </div>
+
+              {form.commission_eligible ? (<>
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Odoo Partner <span className="text-red-400 font-normal normal-case">* required</span></p>
-                <p className="text-xs text-gray-400 mb-2">Required for commission payouts — when a statement is paid, a vendor bill is raised against this partner in Odoo. Selecting a partner here will also pre-fill their business details on the next step.</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Odoo Partner <span className="text-red-400 font-normal normal-case">* required for commission</span></p>
+                <p className="text-xs text-gray-400 mb-2">Required for commission payouts — when a statement is paid, a vendor bill is raised against this partner. Selecting a partner here will also pre-fill their business details on the next step.</p>
                 <div className="relative">
                   {selectedCustomer ? (
                     <div className="flex items-center gap-3 border border-bassani-300 bg-bassani-50 rounded-xl px-4 py-2.5">
@@ -1764,13 +1783,20 @@ export function Resellers() {
                   </div>
                 )}
               </div>
+              </>) : (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                  <p className="text-xs text-gray-500">Internal staff accounts do not require an Odoo vendor profile or commission onboarding documents.</p>
+                </div>
+              )}
 
               <div className="flex justify-end">
                 <BtnPrimary onClick={() => {
-                  if (!selectedCustomer) return toast.error("An Odoo partner link is required. Search and select a partner above.");
-                  if (rSellerDocsRequired) {
-                    const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
-                    if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
+                  if (form.commission_eligible) {
+                    if (!selectedCustomer) return toast.error("An Odoo partner link is required for commission-eligible sales agents. Search and select a partner above.");
+                    if (rSellerDocsRequired) {
+                      const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
+                      if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
+                    }
                   }
                   setRStep(2);
                 }}>Next →</BtnPrimary>
@@ -1798,7 +1824,7 @@ export function Resellers() {
                     <option value="">— No warehouse assigned —</option>
                     {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
                   </Select>
-                  <p className="text-[11px] text-gray-400 mt-1">This reseller's orders will draw stock from the selected warehouse.</p>
+                  <p className="text-[11px] text-gray-400 mt-1">This agent's orders will draw stock from the selected warehouse.</p>
                 </FormGroup>
               </div>
               <div className="flex justify-between">
@@ -1815,7 +1841,7 @@ export function Resellers() {
           {/* ── Step 3: Login Credentials ── */}
           {rStep === 3 && (
             <div className="space-y-4">
-              <p className="text-sm text-gray-500">Set the portal login credentials for this reseller. They will be required to change their password on first login.</p>
+              <p className="text-sm text-gray-500">Set the portal login credentials for this sales agent. They will be required to change their password on first login.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormGroup label="Username" required>
                   <Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" autoFocus />
@@ -1869,7 +1895,7 @@ export function Resellers() {
               </div>
               <div className="flex justify-between">
                 <BtnSecondary onClick={()=>setRStep(3)} disabled={saving}>← Back</BtnSecondary>
-                <BtnPrimary onClick={save} loading={saving}>Create Reseller</BtnPrimary>
+                <BtnPrimary onClick={save} loading={saving}>Create Sales Agent</BtnPrimary>
               </div>
             </div>
           )}
@@ -1878,9 +1904,23 @@ export function Resellers() {
       )}
 
       {editModal && (
-        <Modal title="Edit Reseller" onClose={()=>setEditModal(false)} width="max-w-2xl">
+        <Modal title="Edit Sales Agent" onClose={()=>setEditModal(false)} width="max-w-2xl">
 
-          {/* Section 1 — Odoo vendor partner link */}
+          {/* Commission eligibility */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 mb-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={editForm.commission_eligible}
+                onChange={e => setEditForm(f => ({ ...f, commission_eligible: e.target.checked }))}
+                className="mt-0.5 w-4 h-4 accent-bassani-600 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Applicable for commission</p>
+                <p className="text-xs text-gray-400 mt-0.5">Uncheck for internal Bassani staff accounts. Non-eligible agents are excluded from commission statements and will not see the Commission section in their portal.</p>
+              </div>
+            </label>
+          </div>
+
+          {/* Section 1 — Odoo vendor partner link (commission only) */}
+          {editForm.commission_eligible && <>
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Odoo Vendor Profile <span className="text-gray-300 font-normal normal-case">(optional — used for commission billing)</span></p>
           <div className="relative mb-4">
             {editSelectedCustomer ? (
@@ -1925,6 +1965,7 @@ export function Resellers() {
               </div>
             )}
           </div>
+          </>}
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Business Details</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
@@ -1960,6 +2001,7 @@ export function Resellers() {
             </div>
           </div>
 
+          {editForm.commission_eligible && <>
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Banking Details <span className="text-gray-300 font-normal normal-case">(for EFT commission payouts)</span></p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Bank Name"><Input value={editForm.bank_name} onChange={e=>setEditForm({...editForm,bank_name:e.target.value})} placeholder="e.g. FNB" /></FormGroup>
@@ -1967,6 +2009,7 @@ export function Resellers() {
             <FormGroup label="Account Number"><Input value={editForm.bank_account_number} onChange={e=>setEditForm({...editForm,bank_account_number:e.target.value})} /></FormGroup>
             <FormGroup label="Branch Code"><Input value={editForm.bank_branch_code} onChange={e=>setEditForm({...editForm,bank_branch_code:e.target.value})} placeholder="e.g. 250655" /></FormGroup>
           </div>
+          </>}
 
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)} disabled={editSaving}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit} loading={editSaving}>Save Changes</BtnPrimary></div>
         </Modal>
@@ -1979,6 +2022,7 @@ export function Resellers() {
 // Reseller commission view — tier progress + statement history
 // ─────────────────────────────────────────────────────────────────────────────
 function ResellerCommissionView() {
+  const { user } = useAuth();
   const [progress,      setProgress     ] = useState(null);
   const [history,       setHistory      ] = useState([]);
   const [loading,       setLoading      ] = useState(true);
@@ -2021,6 +2065,16 @@ function ResellerCommissionView() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to submit dispute"); }
     finally { setDisputing(false); }
   };
+
+  if (user?.commission_eligible === false) {
+    return (
+      <div className="flex flex-col items-center justify-center flex-1 py-20 text-center px-6">
+        <Percent size={40} className="text-gray-200 mb-4" />
+        <p className="text-gray-500 font-medium mb-1">Commission not applicable</p>
+        <p className="text-sm text-gray-400 max-w-xs">This account is not enrolled in the commission programme.</p>
+      </div>
+    );
+  }
 
   if (loading) return <LoadingState />;
 

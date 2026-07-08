@@ -49,6 +49,7 @@ def _user_payload(user: dict) -> dict:
         "warehouse_id":        user.get("warehouse_id"),
         "active_warehouse_id": user.get("active_warehouse_id"),
         "must_change_password": bool(user.get("must_change_password", False)),
+        "commission_eligible": bool(user.get("commission_eligible", True)),
     }
 
 

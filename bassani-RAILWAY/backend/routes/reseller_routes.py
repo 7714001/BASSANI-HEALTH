@@ -23,9 +23,10 @@ class ResellerCreate(BaseModel):
     email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
-    odoo_partner_id: int                     # Odoo partner for commission billing — required; creates vendor bill on payout
-    warehouse_id: Optional[int] = None      # Odoo stock.warehouse this reseller's orders draw from
-    username: str                           # Login username for the reseller portal
+    commission_eligible: bool = True         # False = internal staff agent; excluded from commission statements
+    odoo_partner_id: Optional[int] = None   # Required only when commission_eligible; creates vendor bill on payout
+    warehouse_id: Optional[int] = None      # Odoo stock.warehouse this agent's orders draw from
+    username: str                           # Login username for the portal
     password: str                           # Hashed immediately — never stored plain
     company_reg_number: Optional[str] = ""
     vat_registered: bool = False
@@ -45,6 +46,7 @@ class ResellerUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     active: Optional[bool] = None
+    commission_eligible: Optional[bool] = None
     odoo_partner_id: Optional[int] = None     # nullable — set to link, omit to leave unchanged
     warehouse_id: Optional[int] = None
     company_reg_number: Optional[str] = None
@@ -131,25 +133,29 @@ async def create_reseller(
     """
     odoo = get_odoo_client()
 
-    # Validate Odoo partner exists — required for commission vendor bill creation
-    try:
-        partners = odoo.read(
-            "res.partner",
-            [reseller.odoo_partner_id],
-            fields=["id", "name", "email"],
-        )
-        if not partners:
-            raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
+    # Commission-eligible agents require an Odoo partner for vendor bill creation
+    if reseller.commission_eligible and not reseller.odoo_partner_id:
+        raise HTTPException(status_code=400, detail="Odoo partner ID is required for commission-eligible sales agents")
+
+    if reseller.odoo_partner_id:
+        try:
+            partners = odoo.read(
+                "res.partner",
+                [reseller.odoo_partner_id],
+                fields=["id", "name", "email"],
+            )
+            if not partners:
+                raise HTTPException(status_code=400, detail="Odoo partner not found — check the partner ID")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
 
     # Uniqueness checks before any writes
     if await col("resellers").find_one({"seller_code": reseller.seller_code.upper()}):
         raise HTTPException(status_code=400, detail=f"Seller code '{reseller.seller_code}' already exists")
-    if await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
-        raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a reseller")
+    if reseller.odoo_partner_id and await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
+        raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a sales agent")
     if await col("users").find_one({"username": reseller.username}):
         raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
 
@@ -163,6 +169,7 @@ async def create_reseller(
         "role": "reseller",
         "name": reseller.name,
         "reseller_id": reseller_id,
+        "commission_eligible": reseller.commission_eligible,
         "active": True,
         "created_at": now,
         "must_change_password": True,
@@ -183,6 +190,7 @@ async def create_reseller(
         "phone": reseller.phone,
         "address": reseller.address,
         "default_commission": COMMISSION_RATE,
+        "commission_eligible": reseller.commission_eligible,
         "odoo_partner_id": reseller.odoo_partner_id,
         "warehouse_id": reseller.warehouse_id,
         "user_id": user_id,
@@ -269,6 +277,13 @@ async def update_reseller(
 
     updates["updated_at"] = datetime.now(timezone.utc)
     await col("resellers").update_one({"id": reseller_id}, {"$set": updates})
+
+    # Keep commission_eligible in sync on the user doc so it flows into JWT via _user_payload
+    if reseller.commission_eligible is not None:
+        await col("users").update_one(
+            {"reseller_id": reseller_id},
+            {"$set": {"commission_eligible": reseller.commission_eligible}},
+        )
 
     before = {k: existing.get(k) for k in updates if k != "updated_at"}
     await audit_log("reseller.update", "reseller", reseller_id, entity_label=existing.get("name", ""),

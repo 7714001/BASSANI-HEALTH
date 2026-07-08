@@ -259,6 +259,14 @@ async def generate_statements(
     ]
     rows = await col("order_commissions").aggregate(pipeline).to_list(500)
 
+    # When generating for all resellers, exclude non-commission-eligible agents
+    if not payload.reseller_id:
+        eligible_ids = set(await col("resellers").distinct(
+            "id",
+            {"commission_eligible": {"$ne": False}, "active": {"$ne": False}},
+        ))
+        rows = [r for r in rows if r["_id"] in eligible_ids]
+
     generated, skipped = [], []
     for row in rows:
         rid = row["_id"]
