@@ -2,8 +2,8 @@
 ## Executive Overview
 
 **Prepared by:** DynamicTech SA  
-**Date:** 7 July 2026  
-**Status:** Phases 1–9 + Phase 11 + Phase 15–17 live at portal.bassanihealth.com · Phase 12 (Barcode Integration) in progress · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
+**Date:** 8 July 2026  
+**Status:** Phases 1–9 + Phase 11 + Phase 15–19 live at portal.bassanihealth.com · Phase 12 (Barcode Integration) in progress · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
 
 ---
 
@@ -99,11 +99,13 @@ The portal now includes a document template management module that gives Bassani
 - **Rollback in seconds** — if a version is uploaded in error, the previous version can be restored immediately from the version history panel.
 - **Audit trail** — every upload and every rollback is recorded in the system's audit log with the name of the person who performed the action.
 
-Alongside document versioning, the portal now includes a **Signing Authority** configuration. The CEO signs their name once — on paper, photographed, or drawn on screen — and the portal stores that signature securely. From that point on, every co-signed customer onboarding document has the CEO's block completed automatically: name, title, signing location, and signature image are embedded at the moment the customer signs, with the date set to the actual day of signing. The CEO never needs to be involved per document.
+Alongside document versioning, the portal now includes a **multi-authority signing model**. Rather than a single global "signing authority" account, every authorised staff member (QA Manager, Responsible Pharmacist, or any admin with the signing authority permission) configures their own personal signature on their profile page. Each person uploads or draws their signature once; from that point on, their own name, title, and signature image are used whenever they countersign a document. Multiple people can hold this permission simultaneously and countersign different applications at the same time.
 
-The portal also includes a **test signing flow** for the system administrator. For each of the four onboarding documents, a single button opens a full-screen preview that shows exactly what the customer will see: a live PDF view on the left and a pre-filled signing form on the right. The form arrives populated with realistic dummy data, the Bassani signing block is completed automatically from the signing authority profile, and the administrator can draw a test signature and download the completed PDF. This allows the team to verify that field positions, signatures, and layout are correct before enabling the customer-facing signing flow — without involving a real customer.
+To prevent two signing authorities from countersigning the same application in parallel, the system includes an **application claim mechanism**. Any signing authority can claim an application — it shows as assigned to them in the applications list and on the detail page. If a second person opens the same application, they see who has claimed it and must explicitly confirm before countersigning. Claims are released automatically when countersigning is complete, or manually if the original person is unavailable.
 
-**The next planned capability is in-portal customer document signing** (Phase 18). Currently, customers who apply through the portal's self-service registration page must download each of the four documents, print and sign them by hand, and re-upload scanned copies. Phase 18 replaces this with an end-to-end in-portal experience: the customer's business details, contact information, and address (entered earlier in the application wizard) are pre-filled directly into all four documents. The customer draws their signature once per document and clicks confirm. The portal generates a completed, signed PDF — with Bassani's block already embedded — and attaches it to the application. No printing, no scanning, no manual upload. All the data and infrastructure needed for Phase 18 is already in place: the field maps are defined, the PDF generation pipeline is built and tested, and the signing authority is configured.
+The portal also includes a **test signing flow** for administrators. For each of the four onboarding documents, a single button opens a full-screen preview that shows exactly what the customer will see: a live PDF view on the left and a pre-filled signing form on the right. The form arrives populated with realistic dummy data, the Bassani signing block is completed automatically from the acting user's profile, and the administrator can draw a test signature and download the completed PDF. This allows the team to verify that field positions, signatures, and layout are correct before enabling the customer-facing signing flow — without involving a real customer.
+
+**My Profile** is now accessible to all users via a profile button in the top bar of every page. Staff can update their display name, change their password, and (if they hold the signing authority permission) manage their personal signature and document signing details. Resellers can do the same for their own account settings.
 
 ---
 

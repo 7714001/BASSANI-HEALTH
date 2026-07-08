@@ -203,14 +203,15 @@ function TestSigningModal({ docType, docLabel, onClose }) {
     let url;
     Promise.all([
       api.get(`/api/doc-templates/${docType}/download`, { responseType: "arraybuffer" }),
-      api.get("/api/signing-authority/").catch(() => null),
-      api.get("/api/signing-authority/signature", { responseType: "arraybuffer" }).catch(() => null),
-    ]).then(async ([pdfRes, authRes, sigRes]) => {
+      api.get("/api/profile/").catch(() => null),
+      api.get("/api/profile/signature", { responseType: "arraybuffer" }).catch(() => null),
+    ]).then(async ([pdfRes, profileRes, sigRes]) => {
       const bytes = new Uint8Array(pdfRes.data);
       setPdfBytes(bytes);
       url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
       setPdfUrl(url);
-      setSigProfile(authRes?.data || null);
+      const p = profileRes?.data;
+      setSigProfile(p ? { name: p.signing_name || p.name || "", title: p.signing_title || "" } : null);
       setSigBytes(sigRes?.data || null);
       const detected = await detectFields(bytes);
       setFields(detected);

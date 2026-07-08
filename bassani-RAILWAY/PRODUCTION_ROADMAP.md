@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-07  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07  
+**Last Updated:** 2026-07-08  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08  
 
 ---
 
@@ -29,7 +29,8 @@
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
 | 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07 |
-| 18 | In-Portal Customer Document Signing | 🔵 Scoped | Not started |
+| 18 | In-Portal Customer Document Signing | 🟢 Complete | 18.0–18.4 complete — 2026-07-08 |
+| 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -3065,3 +3066,68 @@ When a customer signs documents in-portal, the three documents that have a Bassa
 - [x] Signing authority holder can countersign all three Bassani-sig documents in-browser via CountersignModal
 - [x] Approve gate blocks until all portal-signed Bassani-sig docs are countersigned
 - [x] All four documents can be signed in a single session before submission
+
+---
+
+## Phase 19 — My Profile & Multi-Authority Signing
+
+**Goal:** Move from a single global signing authority to per-user signatures. Any staff member with the `signing_authority.sign` permission can configure their own signature on their profile and countersign applications independently. Application self-assignment prevents dual countersigning.  
+**Status:** 🟢 Complete  
+**Completed:** 19.0–19.4 — 2026-07-08
+
+### Context
+
+Previously a single "signing authority" profile (name, title, signature image) was stored globally in MongoDB. Only one person was designated as the countersignatory at a time. As the business scales, multiple authorised people (e.g. QA Manager, Responsible Pharmacist) need to countersign without requiring admin reconfiguration.
+
+### 19.0 — Per-User Signature Storage
+
+- [x] New `signing_authority.sign` permission added to all permission dicts in `auth.py`; defaults `True` for `qa_manager` and `responsible_pharmacist`, `False` for all others
+- [x] Signature images now stored per user in R2 at `user-signatures/{user_id}.png`
+- [x] `signing_name` and `signing_title` fields added to user documents (optional; set from My Profile)
+- [x] `/api/signing-authority/signature` updated to serve the current user's own signature (falls back to legacy global image for backwards compatibility)
+- [x] `am_i_holder` endpoint updated — now checks `signing_authority.sign` permission directly, not a global holder_user_id
+
+### 19.1 — Profile Routes
+
+- [x] New `backend/routes/profile_routes.py` registered in `server.py`
+  - `GET /api/profile/` — current user's profile (name, email, role, signing fields, has_signature)
+  - `PUT /api/profile/` — update name, signing_name, signing_title
+  - `POST /api/profile/signature` — upload or draw signature (requires `signing_authority.sign`)
+  - `GET /api/profile/signature` — serve own signature image
+  - `DELETE /api/profile/signature` — remove own signature
+
+### 19.2 — My Profile Page
+
+- [x] New `/profile` route accessible to all authenticated users (admin and reseller)
+- [x] Profile avatar button (user initial) added to `TopBar` — visible on every page, navigates to `/profile`
+- [x] `MyProfile.js` view: personal info (name, email read-only, username read-only), password change, signature management section (only visible if `signing_authority.sign`)
+- [x] Signing name and signing title fields for signing authorities — these autofill the Bassani signatory block on PDFs
+
+### 19.3 — Application Assignment (Soft Claim)
+
+- [x] `PUT /api/onboarding/{app_id}/assign` — toggle claim for the current user
+  - Calling again when already claimed by self releases the claim
+  - Claiming when assigned to someone else transfers the claim (with a browser confirmation prompt)
+  - Only users with `signing_authority.sign` can assign
+- [x] `assigned_to: { user_id, name, assigned_at }` stored on the application document; cleared on countersign completion
+- [x] Assignment chip shown in the applications list (`CustomerApplications.js`) under the status badge
+- [x] Assignment card shown in the `CustomerApplicationDetail.js` sidebar for signing authority users — Claim / Release button
+
+### 19.4 — Permission & UI Wiring
+
+- [x] `signing_authority` group added to `PERMISSION_GROUPS` in `Users.js` — visible in the permissions editor
+- [x] `DEFAULT_ADMIN_PERMS` and `ROLE_DEFAULT_PERMS` updated to include `signing_authority.sign`
+- [x] `CustomerApplicationDetail.js` — `am_i_holder` API call removed; replaced with `can("signing_authority.sign")`
+- [x] Countersign flow now fetches signature from `/api/profile/signature` (own signature), not the global endpoint
+- [x] `DocumentTemplates.js` test-signing modal now fetches signing profile from `/api/profile/` and maps `signing_name`/`signing_title` to the `name`/`title` shape expected by `generateSignedPdf`
+- [x] `settings.manage` permission description updated — no longer covers signing authority (that is now `signing_authority.sign`)
+
+### Definition of Done
+
+- [x] Any user with `signing_authority.sign` can upload or draw their own signature on their profile
+- [x] Countersign flow uses the acting user's own signature, not a shared global one
+- [x] Multiple signing authorities can countersign different applications simultaneously
+- [x] Application claim/release prevents accidental dual countersigning with a soft-lock and browser confirmation
+- [x] `qa_manager` and `responsible_pharmacist` roles have `signing_authority.sign = True` by default
+- [x] Profile avatar visible in the top bar on every page for all users
+- [x] All authenticated users (admin and reseller) can access `/profile` and change their password

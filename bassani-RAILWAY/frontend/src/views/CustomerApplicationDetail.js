@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
   MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle,
-  Eye, X, Mail, PenLine, RotateCcw, FileCheck,
+  Eye, X, Mail, PenLine, RotateCcw, FileCheck, UserCheck, UserMinus,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -150,7 +150,7 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
           // Proxy through backend to avoid CORS on R2 presigned URLs
           api.get(`/api/onboarding/${appId}/documents/${docType}/download`, { responseType: "arraybuffer" }),
           api.get(`/api/public/templates/download/${filename}`, { responseType: "arraybuffer" }),
-          api.get("/api/signing-authority/signature", { responseType: "arraybuffer" }),
+          api.get("/api/profile/signature", { responseType: "arraybuffer" }),
         ]);
 
         if (pdfRes.status === "fulfilled") {
@@ -743,12 +743,13 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
 export default function CustomerApplicationDetail() {
   const { id }        = useParams();
   const navigate      = useNavigate();
-  const { can }       = useAuth();
+  const { can, user } = useAuth();
+  const isHolder      = can("signing_authority.sign");
   const [app,         setApp        ] = useState(null);
   const [loading,     setLoading    ] = useState(true);
   const [docs,        setDocs       ] = useState(null);
   const [docsLoading, setDocsLoading] = useState(true);
-  const [isHolder,    setIsHolder   ] = useState(false);
+  const [assigning,   setAssigning  ] = useState(false);
 
   useEffect(() => {
     api.get(`/api/onboarding/${id}`)
@@ -766,11 +767,18 @@ export default function CustomerApplicationDetail() {
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
-  useEffect(() => {
-    api.get("/api/signing-authority/am-i-holder")
-      .then(r => setIsHolder(r.data.is_holder || false))
-      .catch(() => setIsHolder(false));
-  }, []);
+  const handleAssign = async () => {
+    setAssigning(true);
+    try {
+      const { data } = await api.put(`/api/onboarding/${id}/assign`);
+      setApp(prev => ({ ...prev, assigned_to: data.assigned_to }));
+      toast.success(data.assigned_to ? "Application claimed" : "Claim released");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update assignment");
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   const approve = async (companyName) => {
     try {
@@ -929,6 +937,48 @@ export default function CustomerApplicationDetail() {
                 <MetaRow label="Submitted by"  value={app.reseller_name} />
                 <MetaRow label="Submitted on"  value={fmtDate(app.submitted_at)} />
               </Card>
+
+              {/* Countersign assignment — only shown to signing authority users */}
+              {isHolder && (
+                <Card title="Countersign Assignment">
+                  <div className="space-y-3">
+                    {app.assigned_to ? (
+                      <div className="flex items-center gap-2 text-xs">
+                        <UserCheck size={13} className="text-bassani-600 shrink-0" />
+                        <span className="text-gray-700">
+                          Claimed by <strong>{app.assigned_to.name}</strong>
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">Not claimed — any signing authority can countersign.</p>
+                    )}
+                    <button
+                      onClick={() => {
+                        const myId = user?.id;
+                        const assignedToMe = app.assigned_to?.user_id === myId;
+                        if (!assignedToMe && app.assigned_to) {
+                          if (!window.confirm(`This application is claimed by ${app.assigned_to.name}. Take over the claim?`)) return;
+                        }
+                        handleAssign();
+                      }}
+                      disabled={assigning}
+                      className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                        app.assigned_to?.user_id === user?.id
+                          ? "bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200"
+                          : "bg-bassani-50 hover:bg-bassani-100 text-bassani-700 border border-bassani-200"
+                      }`}
+                    >
+                      {assigning ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : app.assigned_to?.user_id === user?.id ? (
+                        <><UserMinus size={12} /> Release Claim</>
+                      ) : (
+                        <><UserCheck size={12} /> Claim Application</>
+                      )}
+                    </button>
+                  </div>
+                </Card>
+              )}
 
               <ActionsCard
                 app={app}

@@ -50,6 +50,7 @@ import StockReport           from "./views/StockReport";
 import PublicRegister        from "./views/PublicRegister";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
+import MyProfile            from "./views/MyProfile";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -158,6 +159,7 @@ export default function App() {
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />
         <Route path="/change-password" element={<AuthRequired><ChangePassword /></AuthRequired>} />
+        <Route path="/profile" element={<AuthRequired><AppLayout><MyProfile /></AppLayout></AuthRequired>} />
 
         <Route path="/" element={
           <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>

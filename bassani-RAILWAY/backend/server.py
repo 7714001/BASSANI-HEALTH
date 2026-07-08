@@ -502,6 +502,7 @@ from routes.partner_routes            import router as partner_router
 from routes.upload_request_routes     import router as upload_request_router
 from routes.doc_template_routes       import router as doc_template_router
 from routes.signing_authority_routes  import router as signing_authority_router
+from routes.profile_routes            import router as profile_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -513,7 +514,7 @@ for router in [
     warehouse_router, ticket_router, inbox_router, onboarding_inbox_router,
     reseller_catalog_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
-    doc_template_router, signing_authority_router,
+    doc_template_router, signing_authority_router, profile_router,
 ]:
     app.include_router(router)
 

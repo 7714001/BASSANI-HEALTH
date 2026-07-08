@@ -121,7 +121,14 @@ const PERMISSION_GROUPS = [
     domain: "settings",
     label: "Settings",
     actions: [
-      { key: "manage", label: "Manage email routing, mailboxes, document templates & signing authority" },
+      { key: "manage", label: "Manage email routing, mailboxes and document templates" },
+    ],
+  },
+  {
+    domain: "signing_authority",
+    label: "Signing Authority",
+    actions: [
+      { key: "sign", label: "Upload personal signature and countersign customer onboarding documents" },
     ],
   },
 ];
@@ -170,8 +177,9 @@ const DEFAULT_ADMIN_PERMS = {
   users:      { manage: false },
   warehouse:  { view: false, supervise: false },
   audit:      { view: false },
-  tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
-  settings:   { manage: false },
+  tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+  settings:          { manage: false },
+  signing_authority: { sign: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
@@ -190,7 +198,8 @@ const ROLE_DEFAULT_PERMS = {
     users:      { manage: false },
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
-    tickets:    { sales: true, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    tickets:           { sales: true, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    signing_authority: { sign: false },
   },
   orders_clerk: {
     products:   { manage: false },
@@ -204,7 +213,8 @@ const ROLE_DEFAULT_PERMS = {
     users:      { manage: false },
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
-    tickets:    { sales: false, orders: true, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    tickets:           { sales: false, orders: true, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    signing_authority: { sign: false },
   },
   finance: {
     products:   { manage: false },
@@ -218,7 +228,8 @@ const ROLE_DEFAULT_PERMS = {
     users:      { manage: false },
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
-    tickets:    { sales: false, orders: false, finance_confirm: true, qa_approve: false, rp_approve: false, manage: false },
+    tickets:           { sales: false, orders: false, finance_confirm: true, qa_approve: false, rp_approve: false, manage: false },
+    signing_authority: { sign: false },
   },
   qa_manager: {
     products:   { manage: false },
@@ -232,7 +243,8 @@ const ROLE_DEFAULT_PERMS = {
     users:      { manage: false },
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
-    tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: true, rp_approve: false, manage: false },
+    tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: true, rp_approve: false, manage: false },
+    signing_authority: { sign: true },
   },
   responsible_pharmacist: {
     products:   { manage: false },
@@ -246,7 +258,8 @@ const ROLE_DEFAULT_PERMS = {
     users:      { manage: false },
     warehouse:  { view: false, supervise: false },
     audit:      { view: false },
-    tickets:    { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: true, manage: false },
+    tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: true, manage: false },
+    signing_authority: { sign: true },
   },
 };
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck, UserCheck } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate } from "../components/UI";
@@ -168,7 +168,16 @@ export default function CustomerApplications() {
               cell: ({ row: { original: a } }) =>
                 <span className="text-xs text-gray-400">{fmtDate(a.submitted_at)}</span> },
             { id: "status", header: "Status", enableSorting: false,
-              cell: ({ row: { original: a } }) => <StatusBadge derivedStatus={a._derived} /> },
+              cell: ({ row: { original: a } }) => (
+                <div className="flex flex-col gap-1">
+                  <StatusBadge derivedStatus={a._derived} />
+                  {a.assigned_to && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-bassani-700 font-medium">
+                      <UserCheck size={9} /> {a.assigned_to.name}
+                    </span>
+                  )}
+                </div>
+              )},
             { id: "actions", header: "", enableSorting: false,
               cell: ({ row: { original: a } }) => (
                 <button

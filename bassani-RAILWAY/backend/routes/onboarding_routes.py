@@ -1370,6 +1370,52 @@ async def approve_application_link(
     return {"success": True, "odoo_partner_id": body.odoo_partner_id}
 
 
+@router.put("/{app_id}/assign")
+async def assign_application(
+    app_id: str,
+    current_user: dict = Depends(require_permission("signing_authority.sign")),
+):
+    """
+    Claim or release an application for countersigning.
+    If already assigned to the current user, calling this again releases the claim.
+    If assigned to someone else, the claim transfers to the current user.
+    Returns the updated assigned_to object (or None if released).
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    uid  = str(current_user.get("_id") or current_user.get("id", ""))
+    name = current_user.get("name") or current_user.get("username", "")
+
+    current_assignment = app.get("assigned_to")
+    already_mine = current_assignment and current_assignment.get("user_id") == uid
+
+    if already_mine:
+        # Release the claim
+        await col("customer_onboarding").update_one(
+            {"id": app_id}, {"$unset": {"assigned_to": ""}}
+        )
+        await audit_log(
+            user=current_user, action="onboarding.unassigned",
+            entity_type="customer_onboarding", entity_id=app_id,
+            entity_label=app.get("company_name", ""),
+        )
+        return {"assigned_to": None}
+    else:
+        assignment = {"user_id": uid, "name": name, "assigned_at": datetime.now(timezone.utc).isoformat()}
+        await col("customer_onboarding").update_one(
+            {"id": app_id}, {"$set": {"assigned_to": assignment}}
+        )
+        await audit_log(
+            user=current_user, action="onboarding.assigned",
+            entity_type="customer_onboarding", entity_id=app_id,
+            entity_label=app.get("company_name", ""),
+            after={"assigned_to": assignment},
+        )
+        return {"assigned_to": assignment}
+
+
 @router.put("/{app_id}/reject")
 async def reject_application(
     app_id: str,

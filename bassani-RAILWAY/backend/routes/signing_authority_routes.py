@@ -143,47 +143,50 @@ async def save_signing_authority(
     return {"success": True, "signature_replaced": sig_bytes is not None}
 
 
-# ── Holder check — any admin can call this ────────────────────────────────────
+# ── Holder check ──────────────────────────────────────────────────────────────
 
 @router.get("/am-i-holder", dependencies=[Depends(require_admin)])
 async def am_i_holder(current_user: dict = Depends(get_current_user)):
     """
-    Returns whether the current user is the configured signing authority holder.
-    Super admins always return True. For other admins, the user must match the
-    explicit holder_user_id saved on the signing authority profile.
-    Any authenticated admin may call this.
+    Returns whether the current user may countersign documents.
+    Super admins always return True. For others, checks signing_authority.sign permission.
     """
-    # Super admins can always countersign
     if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
         return {"is_holder": True}
-
-    doc = await col("signing_authority").find_one({"id": _DOC_ID})
-    if not doc:
-        return {"is_holder": False}
-
-    current_uid = str(current_user.get("_id") or current_user.get("username", ""))
-    # Check explicit holder_user_id first, fall back to updated_by_id for legacy records
-    holder_uid = doc.get("holder_user_id") or doc.get("updated_by_id")
-    return {"is_holder": holder_uid == current_uid}
+    perms = current_user.get("permissions") or {}
+    return {"is_holder": bool(perms.get("signing_authority", {}).get("sign", False))}
 
 
-# ── Serve signature image (for preview and PDF embedding) ─────────────────────
+# ── Serve signature image for the current user (for preview and PDF embedding) ─
 
 @router.get("/signature", dependencies=[Depends(require_admin)])
 async def get_signature_image(current_user: dict = Depends(get_current_user)):
-    doc = await col("signing_authority").find_one({"id": _DOC_ID})
-    if not doc or not doc.get("has_signature"):
-        raise HTTPException(status_code=404, detail="No signature configured")
+    """
+    Serves the authenticated user's own signature.
+    Kept at this URL for backwards compatibility with DocumentTemplates preview.
+    The countersigning flow in CustomerApplicationDetail now calls /api/profile/signature.
+    """
+    is_super = current_user.get("is_super_admin") or current_user.get("role") == "super_admin"
+    perms    = current_user.get("permissions") or {}
+    can_sign = bool(perms.get("signing_authority", {}).get("sign", False))
+    if not is_super and not can_sign:
+        raise HTTPException(status_code=403, detail="Signing authority access required")
 
-    # Super admins and the signing authority holder can fetch the signature image.
-    current_uid = str(current_user.get("_id") or current_user.get("username", ""))
-    is_super    = current_user.get("is_super_admin") or current_user.get("role") == "super_admin"
-    is_holder   = doc.get("updated_by_id") == current_uid
-    if not is_super and not is_holder:
-        raise HTTPException(status_code=403, detail="Super admin or signing authority holder access required")
+    uid = str(current_user.get("_id") or current_user.get("id", ""))
+    user_doc = await col("users").find_one({"_id": current_user["_id"]}, {"has_signature": 1})
+
+    # Try the user's own signature first; fall back to the legacy global signature.
+    if user_doc and user_doc.get("has_signature"):
+        r2_key = f"user-signatures/{uid}.png"
+    else:
+        # Legacy global signature fallback
+        sa_doc = await col("signing_authority").find_one({"id": _DOC_ID})
+        if not sa_doc or not sa_doc.get("has_signature"):
+            raise HTTPException(status_code=404, detail="No signature configured")
+        r2_key = R2_KEY
 
     try:
-        data = await r2_get(R2_KEY)
+        data = await r2_get(r2_key)
     except Exception:
         raise HTTPException(status_code=404, detail="Signature image not found in storage")
 
