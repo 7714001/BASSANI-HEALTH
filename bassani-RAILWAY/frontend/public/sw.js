@@ -1,22 +1,24 @@
 // Bassani Health · Service Worker
-// Caches the app shell for offline-first behaviour
-// Strategy: Network first for API calls, Cache first for static assets
+// Strategy:
+//   - Navigation requests (HTML)  → network-first so deploys are always picked up immediately
+//   - Hashed JS/CSS/image assets  → cache-first (filenames change on every build, safe to cache)
+//   - API / WebSocket calls       → bypass cache entirely
 
-const CACHE_NAME = 'bassani-v3';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/packing-board.html',
-  '/supervisor.html',
-];
+// Bump this whenever the cache structure changes to evict all old caches on activate.
+const CACHE_NAME = 'bassani-v4';
 
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', event => {
+  // Pre-cache only icons and manifest — never index.html (stale HTML causes
+  // the exact deploy-visibility bug this rewrite is fixing).
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll([
+        '/manifest.json',
+        '/icons/icon-192.png',
+        '/icons/icon-512.png',
+      ])
+    )
   );
   self.skipWaiting();
 });
@@ -37,27 +39,32 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // API calls — always network, never cache
+  // API / WebSocket — always network, never cache
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) {
-    return;   // fall through to network
+    return;
   }
 
-  // Static assets — cache first, network fallback
+  // Navigation (page loads) — network-first so a new deploy is seen immediately.
+  // Only fall back to cache when truly offline.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // Hashed static assets (JS/CSS bundles, images) — cache-first.
+  // CRA content-hashes all bundle filenames, so a new deploy produces new
+  // filenames; stale cached files are never served for new code.
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
       return fetch(event.request).then(response => {
-        // Cache successful GET responses for static assets
         if (response.ok && event.request.method === 'GET') {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => {
-        // Offline fallback for navigation requests
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
       });
     })
   );

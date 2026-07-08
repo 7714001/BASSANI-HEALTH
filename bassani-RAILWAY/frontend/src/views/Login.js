@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import { useNavigate, Link } from "react-router-dom";
-import toast from "react-hot-toast";
-import { Mail } from "lucide-react";
+import { Mail, AlertCircle } from "lucide-react";
 
 const LEFT_PANEL = (
   <div className="hidden md:flex md:w-72 bg-slate-900 flex-col justify-between p-8 flex-shrink-0">
@@ -35,27 +34,29 @@ export default function Login() {
   // Password step
   const [form, setForm]       = useState({ username: "", password: "" });
   const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
 
   // OTP step
   const [otpStep, setOtpStep]           = useState(false);
   const [otpSessionId, setOtpSessionId] = useState(null);
   const [otp, setOtp]                   = useState("");
   const [otpLoading, setOtpLoading]     = useState(false);
+  const [otpError, setOtpError]         = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError("");
     setLoading(true);
     try {
       const result = await login(form.username, form.password);
       if (result?.otp_required) {
         setOtpSessionId(result.otp_session_id);
         setOtpStep(true);
-        toast.success("A sign-in code has been sent to your email.");
       } else {
         navigate("/");
       }
     } catch {
-      toast.error("Incorrect username or password");
+      setError("Incorrect username or password.");
     } finally {
       setLoading(false);
     }
@@ -63,18 +64,21 @@ export default function Login() {
 
   const handleOtpSubmit = async (e) => {
     e.preventDefault();
+    setOtpError("");
     setOtpLoading(true);
     try {
       await verifyOtp(otpSessionId, otp);
       navigate("/");
     } catch (err) {
       const msg = err.response?.data?.detail || "Invalid code. Please try again.";
-      toast.error(msg);
-      // Session exhausted or expired — send them back to the password form
+      // Session exhausted or expired — return to login with an explanation
       if (msg.includes("sign in again") || msg.includes("expired") || msg.includes("all attempts")) {
         setOtpStep(false);
         setOtp("");
         setOtpSessionId(null);
+        setError("Your session expired. Please sign in again.");
+      } else {
+        setOtpError(msg);
       }
     } finally {
       setOtpLoading(false);
@@ -105,7 +109,7 @@ export default function Login() {
                 </label>
                 <input
                   value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  onChange={(e) => { setOtpError(""); setOtp(e.target.value.replace(/\D/g, "").slice(0, 6)); }}
                   placeholder="000000"
                   maxLength={6}
                   autoComplete="one-time-code"
@@ -120,9 +124,15 @@ export default function Login() {
               >
                 {otpLoading ? "Verifying…" : "Verify code"}
               </button>
+              {otpError && (
+                <div className="flex items-start gap-2.5 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                  <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                  {otpError}
+                </div>
+              )}
               <button
                 type="button"
-                onClick={() => { setOtpStep(false); setOtp(""); setOtpSessionId(null); }}
+                onClick={() => { setOtpStep(false); setOtp(""); setOtpSessionId(null); setOtpError(""); }}
                 className="w-full text-sm text-gray-400 hover:text-gray-600 transition-colors py-1"
               >
                 Back to sign in
@@ -147,7 +157,7 @@ export default function Login() {
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">Username or email</label>
               <input
                 value={form.username}
-                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                onChange={(e) => { setError(""); setForm({ ...form, username: e.target.value }); }}
                 placeholder="Enter username or email"
                 autoComplete="username"
                 className={inputCls}
@@ -158,7 +168,7 @@ export default function Login() {
               <input
                 type="password"
                 value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                onChange={(e) => { setError(""); setForm({ ...form, password: e.target.value }); }}
                 placeholder="Enter password"
                 autoComplete="current-password"
                 className={inputCls}
@@ -171,6 +181,12 @@ export default function Login() {
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
+            {error && (
+              <div className="flex items-start gap-2.5 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                {error}
+              </div>
+            )}
             <div className="text-center pt-1">
               <Link
                 to="/forgot-password"
