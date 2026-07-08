@@ -262,8 +262,9 @@ const ROLE_LOCKED_PERMS = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Users() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, can } = useAuth();
   const isSuperAdmin = currentUser?.is_super_admin;
+  const canManageUsers = isSuperAdmin || can("users.manage");
 
   const [users,        setUsers       ] = useState([]);
   const [loading,      setLoading     ] = useState(true);
@@ -324,7 +325,7 @@ export default function Users() {
   };
 
   const openCreate = () => {
-    const defaultRole = isSuperAdmin ? "admin" : "warehouse_supervisor";
+    const defaultRole = canManageUsers ? "admin" : "warehouse_supervisor";
     setCreateForm({ username: "", password: "", name: "", display_name: "", role: defaultRole, warehouse_id: "" });
     setCreatePerms(permsForRole(defaultRole));
     setCreateModal(true);
@@ -460,7 +461,7 @@ export default function Users() {
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  const availableRoles = ROLE_OPTIONS.filter(r => isSuperAdmin || !r.adminOnly);
+  const availableRoles = ROLE_OPTIONS.filter(r => canManageUsers || !r.adminOnly);
 
   const filtered = users.filter(u => {
     const q = search.toLowerCase();
@@ -623,7 +624,7 @@ export default function Users() {
               enableSorting: false,
               cell: ({ row: { original: u } }) => (
                 <div className="flex gap-1.5 flex-wrap">
-                  {isSuperAdmin && (u.role === "admin" || TICKET_ROLES.has(u.role)) && !u.is_super_admin && (
+                  {canManageUsers && (u.role === "admin" || TICKET_ROLES.has(u.role)) && !u.is_super_admin && (
                     <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
                       <ShieldCheck size={12} />
                     </BtnSecondary>
