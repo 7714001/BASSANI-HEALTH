@@ -123,7 +123,8 @@ async def list_products(
     offset:       int           = 0,
     sort_by:      str           = Query("name"),
     sort_dir:     str           = Query("asc"),
-    warehouse_id: Optional[int] = Query(None),   # explicit override — quote builder passes the quote's warehouse
+    warehouse_id:  Optional[int] = Query(None),   # explicit override — quote builder passes the quote's warehouse
+    in_stock_only: bool          = Query(False),   # filter to products with qty_available > 0
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -141,6 +142,9 @@ async def list_products(
     sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "asc"
     odoo = get_odoo_client()
     domain = [("type", "=", "consu"), ("active", "=", True)]
+
+    if in_stock_only:
+        domain.append(("qty_available", ">", 0))
 
     if search:
         domain += ["|", ("name", "ilike", search), ("default_code", "ilike", search)]

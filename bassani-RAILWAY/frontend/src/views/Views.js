@@ -42,9 +42,10 @@ export function Products() {
   const [products,   setProducts  ] = useState([]);
   const [total,      setTotal     ] = useState(0);
   const [loading,    setLoading   ] = useState(true);
-  const [search,     setSearch    ] = useState("");
-  const [cat,        setCat       ] = useState("all");
-  const [variant,    setVariant   ] = useState("all");
+  const [search,      setSearch     ] = useState("");
+  const [cat,         setCat        ] = useState("all");
+  const [variant,     setVariant    ] = useState("all");
+  const [stockFilter, setStockFilter] = useState("in_stock");
   const [categories, setCategories] = useState([]);
   const [catalog,    setCatalog   ] = useState(new Set());
   const [moq,        setMoqMap    ] = useState({});
@@ -141,11 +142,12 @@ export function Products() {
       if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search = search;
       if (cat !== "all") params.category = cat;
+      if (stockFilter === "in_stock") params.in_stock_only = true;
       const r = await api.get("/api/products/", { params });
       setProducts(r.data.products); setTotal(r.data.total);
     } catch { toast.error("Failed to load products"); }
     finally { setLoading(false); }
-  }, [search, cat, pagination, sorting, user?.active_warehouse_id]);
+  }, [search, cat, stockFilter, pagination, sorting, user?.active_warehouse_id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -221,6 +223,10 @@ export function Products() {
           <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
           <ChipRow>
             {["all",...categories.map(c=>c.name)].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }} />)}
+          </ChipRow>
+          <ChipRow>
+            <FilterPill label="On Hand" active={stockFilter === "in_stock"} onClick={() => { setStockFilter("in_stock"); setPagination(p => ({...p, pageIndex:0})); }} />
+            <FilterPill label="All Products" active={stockFilter === "all"} onClick={() => { setStockFilter("all"); setPagination(p => ({...p, pageIndex:0})); }} />
           </ChipRow>
           {(() => {
             const opts = cat === "all" ? [] : Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
