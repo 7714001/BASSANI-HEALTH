@@ -13,7 +13,7 @@ import {
   Plus, CreditCard, XCircle, CheckCircle2, Clock,
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
-  Search, Loader2, Link2, Pencil,
+  Search, Loader2, Link2, Pencil, Package,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -48,6 +48,15 @@ const ROLE_LABEL = {
 };
 const ORDER_STATE_COLOR = {
   draft: "gray", sent: "amber", sale: "blue", done: "green", cancel: "red",
+};
+
+const PACK_STATUS_LABEL = {
+  queued: "Queued", packing: "Packing", ready: "Ready for Inspection",
+  complete: "Complete", incomplete: "Incomplete", cancelled: "Cancelled",
+};
+const PACK_STATUS_COLOR = {
+  queued: "gray", packing: "amber", ready: "blue",
+  complete: "green", incomplete: "orange", cancelled: "red",
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -128,6 +137,9 @@ export default function SalesTickets() {
   const [showInboxPanel, setShowInboxPanel] = useState(true);
   const [deliveries,        setDeliveries       ] = useState([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [packingEntry,   setPackingEntry  ] = useState(null);
+  const [packingLoading, setPackingLoading] = useState(false);
+
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
   const [saving, setSaving]             = useState(false);
   const [confirming, setConfirming]     = useState(false);
@@ -262,6 +274,18 @@ export default function SalesTickets() {
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
   }, []); // eslint-disable-line
+
+  // ── Packing sub-status (read-only for sales) ──────────────────────────────
+  useEffect(() => {
+    if (!detail?.orders_ticket_ref) { setPackingEntry(null); return; }
+    let cancelled = false;
+    setPackingLoading(true);
+    api.get(`/api/packing/entry/${detail.orders_ticket_ref}`)
+      .then(r => { if (!cancelled) setPackingEntry(r.data); })
+      .catch(() => { if (!cancelled) setPackingEntry(null); })
+      .finally(() => { if (!cancelled) setPackingLoading(false); });
+    return () => { cancelled = true; };
+  }, [detail?.orders_ticket_ref]);
 
   useEffect(() => {
     if (!linkOrderOpen || linkOrderQuery.length < 2) { setLinkOrderResults([]); return; }
@@ -1082,6 +1106,49 @@ export default function SalesTickets() {
                       )}
                     </div>
                   </div>
+
+                  {/* Packing Status — read-only visibility for sales */}
+                  {detail.orders_ticket_ref && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                      <div className="flex items-center gap-1.5">
+                        <Package size={13} className="text-gray-400" />
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Packing Status</p>
+                      </div>
+                      {packingLoading ? (
+                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                          <Loader2 size={11} className="animate-spin" />Loading…
+                        </p>
+                      ) : packingEntry ? (
+                        <div className="space-y-2">
+                          <Badge color={PACK_STATUS_COLOR[packingEntry.status]}>{PACK_STATUS_LABEL[packingEntry.status] || packingEntry.status}</Badge>
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                              <UserPlus size={11} className="text-gray-400 shrink-0" />
+                              {packingEntry.packer_name
+                                ? packingEntry.packer_name
+                                : <span className="text-amber-600">Awaiting packer assignment</span>}
+                            </p>
+                            <p className="text-xs flex items-center gap-1.5">
+                              {packingEntry.qa_approved_at
+                                ? <><CheckCircle2 size={11} className="text-green-500 shrink-0" /><span className="text-gray-500">QA approved by {packingEntry.qa_approved_by} {fmtDate(packingEntry.qa_approved_at)}</span></>
+                                : <><Clock size={11} className="text-gray-400 shrink-0" /><span className="text-gray-400">QA approval pending</span></>}
+                            </p>
+                            <p className="text-xs flex items-center gap-1.5">
+                              {packingEntry.rp_approved_at
+                                ? <><CheckCircle2 size={11} className="text-green-500 shrink-0" /><span className="text-gray-500">RP approved by {packingEntry.rp_approved_by} {fmtDate(packingEntry.rp_approved_at)}</span></>
+                                : <><Clock size={11} className="text-gray-400 shrink-0" /><span className="text-gray-400">RP approval pending</span></>}
+                            </p>
+                            {packingEntry.queued_at && <p className="text-[10px] text-gray-400">Queued {fmtDate(packingEntry.queued_at)}</p>}
+                            {packingEntry.assigned_at && <p className="text-[10px] text-gray-400">Packing started {fmtDate(packingEntry.assigned_at)}</p>}
+                            {packingEntry.ready_at && <p className="text-[10px] text-green-600">Ready {fmtDate(packingEntry.ready_at)}</p>}
+                            {packingEntry.incomplete_reason && <p className="text-[10px] text-orange-600">Reason: {packingEntry.incomplete_reason}</p>}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400">Packing information unavailable.</p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Actions */}
                   {!detail.exit_status && (

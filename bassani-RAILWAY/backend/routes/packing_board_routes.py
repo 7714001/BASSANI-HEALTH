@@ -157,7 +157,7 @@ async def _verify_display_token(ws: WebSocket) -> Optional[int]:
 # though they don't hold a granular `warehouse.*` permission. Kept separate
 # from require_admin (coarse, all admins) and require_permission (granular,
 # tickets.* specific) since this is neither — just "can see the board".
-_BOARD_VIEW_ROLES = {"orders_clerk", "qa_manager", "responsible_pharmacist"}
+_BOARD_VIEW_ROLES = {"orders_clerk", "qa_manager", "responsible_pharmacist", "sales"}
 
 
 async def require_board_access(current_user: dict = Depends(get_current_user)) -> dict:
