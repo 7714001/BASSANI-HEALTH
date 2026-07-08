@@ -265,16 +265,6 @@ export default function MyProfile() {
                   <FormGroup label="Email">
                     <Input value={profile?.email || ""} disabled className="bg-gray-50 text-gray-500" />
                   </FormGroup>
-                  {canSign && (
-                    <>
-                      <FormGroup label="Signing Name" hint="Name that appears on countersigned documents">
-                        <Input value={signingName} onChange={e => setSigningName(e.target.value)} placeholder="e.g. Rookshanna Hussain" />
-                      </FormGroup>
-                      <FormGroup label="Signing Title" hint="Job title that appears on countersigned documents">
-                        <Input value={signingTitle} onChange={e => setSigningTitle(e.target.value)} placeholder="e.g. Responsible Pharmacist" />
-                      </FormGroup>
-                    </>
-                  )}
                   <div className="pt-1">
                     <BtnPrimary onClick={saveProfile} disabled={saving}>
                       {saving ? "Saving…" : "Save Changes"}
@@ -315,8 +305,21 @@ export default function MyProfile() {
                     <h2 className="text-sm font-semibold text-gray-900">My Signature</h2>
                   </div>
                   <p className="text-xs text-gray-400 mb-4">
-                    Your signature is used when you countersign customer onboarding documents. Upload a photo of your signature or draw one below.
+                    All three fields below are required before you can countersign customer onboarding documents.
                   </p>
+
+                  {/* Signing identity */}
+                  <div className="space-y-3 pb-4 mb-4 border-b border-gray-100">
+                    <FormGroup label="Signing Name" hint="Name that appears on countersigned documents">
+                      <Input value={signingName} onChange={e => setSigningName(e.target.value)} placeholder="e.g. Rookshanna Hussain" />
+                    </FormGroup>
+                    <FormGroup label="Signing Title" hint="Job title that appears on countersigned documents">
+                      <Input value={signingTitle} onChange={e => setSigningTitle(e.target.value)} placeholder="e.g. Responsible Pharmacist" />
+                    </FormGroup>
+                    <BtnPrimary size="sm" onClick={saveProfile} disabled={saving}>
+                      {saving ? "Saving…" : "Save"}
+                    </BtnPrimary>
+                  </div>
 
                   {/* Current signature preview */}
                   {sigPreviewUrl && (
@@ -396,15 +399,26 @@ export default function MyProfile() {
                       {profile?.is_super_admin ? "Super Admin" : (ROLE_LABELS[profile?.role] || profile?.role || "—")}
                     </Badge>
                   </div>
-                  {canSign && (
-                    <div>
-                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Signature Status</p>
-                      {profile?.has_signature
-                        ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full"><CheckCircle size={10} /> Configured</span>
-                        : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Not configured</span>
-                      }
-                    </div>
-                  )}
+                  {canSign && (() => {
+                    const fullyConfigured = profile?.has_signature && profile?.signing_name && profile?.signing_title;
+                    const missing = [
+                      !profile?.signing_name  && "signing name",
+                      !profile?.signing_title && "signing title",
+                      !profile?.has_signature && "signature image",
+                    ].filter(Boolean);
+                    return (
+                      <div>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Signing Authority</p>
+                        {fullyConfigured
+                          ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full"><CheckCircle size={10} /> Ready to countersign</span>
+                          : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Incomplete</span>
+                        }
+                        {!fullyConfigured && (
+                          <p className="text-[10px] text-gray-400 mt-1.5">Missing: {missing.join(", ")}</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
