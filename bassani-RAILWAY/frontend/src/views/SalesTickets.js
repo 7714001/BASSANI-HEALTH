@@ -21,6 +21,7 @@ import {
   SearchBar, ChipRow, FilterPill,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
+import ProductPickerDrawer from "../components/ProductPickerDrawer";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -586,6 +587,7 @@ export default function SalesTickets() {
   const [quoteCustomerSearch, setQuoteCustomerSearch]   = useState("");
   const [quoteCustomerResults, setQuoteCustomerResults] = useState([]);
   const [quoteCustomerEditing, setQuoteCustomerEditing] = useState(false);
+  const [pickerOpen,           setPickerOpen          ] = useState(false);
 
   useEffect(() => {
     if (quoteMode !== "edit" || quoteCustomerSearch.length < 2) { setQuoteCustomerResults([]); return; }
@@ -605,6 +607,29 @@ export default function SalesTickets() {
     price_unit: 0, _tax_rate: 0, _sku: "", _stock: 0,
   });
 
+  const handlePickerAdd = (product) => {
+    const label      = product.display_name || product.name;
+    const bracketIdx = label.indexOf(" (");
+    const baseName   = bracketIdx !== -1 ? label.slice(0, bracketIdx) : label;
+    const stock      = Math.max(0, Math.floor(product.virtual_available || 0));
+    const populated  = {
+      ...newLine(),
+      product_id:      product.id,
+      _product_label:  label,
+      name:            baseName,
+      price_unit:      product.list_price || 0,
+      _tax_rate:       product.tax_rate   || 0,
+      _sku:            product.default_code || "",
+      _stock:          stock,
+      product_uom_qty: 1,
+    };
+    setQuoteLines(prev => {
+      const last = prev[prev.length - 1];
+      // Replace the trailing empty line rather than stacking an empty + populated pair
+      if (last && !last.product_id) return [...prev.slice(0, -1), populated];
+      return [...prev, populated];
+    });
+  };
 
   const openQuoteBuilder = async (ticket) => {
     const firstLine = newLine();
@@ -2033,12 +2058,21 @@ export default function SalesTickets() {
                 <tfoot>
                   <tr className="border-t border-gray-50">
                     <td colSpan={7} className="p-2 pl-3">
-                      <button
-                        onClick={addLine}
-                        className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium px-2 py-1.5 rounded-lg hover:bg-bassani-50 transition-colors"
-                      >
-                        <Plus size={14} />Add a line
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={addLine}
+                          className="flex items-center gap-1.5 text-sm text-bassani-600 hover:text-bassani-700 font-medium px-2 py-1.5 rounded-lg hover:bg-bassani-50 transition-colors"
+                        >
+                          <Plus size={14} />Add a line
+                        </button>
+                        <span className="text-gray-200 select-none">|</span>
+                        <button
+                          onClick={() => setPickerOpen(true)}
+                          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-bassani-700 font-medium px-2 py-1.5 rounded-lg hover:bg-bassani-50 transition-colors"
+                        >
+                          <Search size={13} />Browse Products
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tfoot>
@@ -2084,6 +2118,13 @@ export default function SalesTickets() {
 
           </div>
         </main>
+
+        <ProductPickerDrawer
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          warehouseId={quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined}
+          onAdd={handlePickerAdd}
+        />
       </div>
     );
   }

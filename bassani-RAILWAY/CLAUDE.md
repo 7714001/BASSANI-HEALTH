@@ -77,13 +77,20 @@ No new external services without an explicit decision. Approved additions: Resen
 - `backend/middleware/audit.py` — single canonical `audit_log()` function
 - `backend/services/email_service.py` — all transactional email templates and send logic
 - `backend/services/warehouse_context.py` — `get_company_id()` and `company_context()` helpers
+- `backend/routes/order_routes.py` — order pipeline, stock-check endpoint (`invoice_policy_block` logic here)
+- `backend/routes/product_routes.py` — product list (`category_id` int param for picker drawer), categories endpoint
 - `frontend/src/AuthContext.js` — auth state, `can()` permission helper, `isAdmin` flag
-- `frontend/src/components/UI.js` — shared components: `TopBar`, `DataTable`, `SearchBar`, `FilterPill`, `Sidebar`, etc.
-- `frontend/src/App.js` — all routes; role-based route branching (e.g. reseller vs admin product view)
+- `frontend/src/components/UI.js` — shared components: `TopBar`, `DataTable`, `SearchBar`, `FilterPill`, `Sidebar`, `Modal`, `BtnDanger`, `BtnPrimary`, `BtnSecondary`, `fmtR`, etc.
+- `frontend/src/components/ProductLineRow.js` — shared product line row (quote builder + reseller cart). Uses `createPortal(dropdown, document.body)` with `getBoundingClientRect()` to escape the `overflow-x-auto` table ancestor — never add a containing ancestor that clips this dropdown.
+- `frontend/src/components/ProductPickerDrawer.js` — right-side drawer for quote builder (staff only). Categories from `/api/products/categories`, variants derived client-side from `display_name` pattern `"Name (Variant)"`, `category_id` int param to backend.
+- `frontend/src/views/SalesTickets.js` — the core ticket view: 3 sub-views in one file (list / detail / quote-builder). The quote builder has both "Add a line" (per-row inline search) and "Browse Products" (picker drawer) — both paths must stay working.
+- `frontend/src/views/ConnectedMailboxes.js` — tabbed mailbox config panel (Sales Inbox tab + Onboarding Mailbox tab). `MailboxConfigPanel` is an inner component — state and modals must be scoped to it.
+- `frontend/src/views/DocumentTemplates.js` — version-controlled onboarding template management (upload, activate, rollback, version history).
+- `frontend/src/App.js` — all routes; role-based route branching (e.g. reseller sees `ResellerCatalog`, admin sees `Products`)
 
 ---
 
-## Roadmap Status (as of 2026-07-02)
+## Roadmap Status (as of 2026-07-09)
 
 | Phase | Name | Status |
 |---|---|---|
@@ -95,12 +102,14 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress (staff account creation outstanding) |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. Staff account creation still outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
-| 11 | Microsoft 365 Mailbox Integration | Built, blocked on Azure credentials from M365 admin |
+| 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
 | 12 | Barcode Integration | In Progress |
 | 13 | Production and Cultivation Module | Concept — needs SAHPRA scoping |
+| 19 | Per-User Document Signing | Complete — `signing_authority.sign` permission, My Profile setup, countersignature flow |
+| 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag, internal agents excluded from bulk runs |
 
 See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all sub-deploy notes. That document is the authoritative phase tracker.
 
@@ -119,10 +128,15 @@ See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all su
 - Applications go to an admin review queue. Approval creates the customer in Odoo and links them to the reseller.
 - Onboarding documents are stored in R2. Admin can also upload documents directly to a customer profile.
 - Admins can link existing Odoo customers to a reseller or unlink them. Both actions are audit-logged.
+- **Self-service registration:** Public route `/apply` — customers register without staff involvement. Reseller referral links use `?ref=RESELLER_CODE`. In-portal PDF signing on the final step (all 4 documents signed in-browser, uploaded to R2 automatically).
+- **Document signing (per-user model):** `signing_authority.sign` permission controls who can countersign. Each signing authority configures their own signature image/name/title on My Profile. Claim/release mechanism prevents double-signing. Approval button is locked until all 3 Bassani-signature-bearing documents (NDA, TQA, Store Onboarding Agreement) are countersigned.
+- **Onboarding Inbox:** Separate mailbox from the Sales Inbox, gated by `onboarding.inbox` permission. Configured under Settings > Connected Mailboxes > Onboarding Mailbox tab. Tracks document progress per thread (N/5 docs pills). "Save to Application" maps email attachments to document slots on a reseller application.
 
 **Order pipeline:**
 - Reseller places order → Sales ticket created → Orders clerk confirms packing → QA approval → RP approval → Finance confirms payment → Complete.
 - Finance confirmation checks Odoo's real invoice payment_state — it is not a disconnected checkbox.
+- **Partial fulfilment / backorders:** `GET /api/orders/{order_id}/stock-check` returns `is_partial`, `lines` (ships now vs backordered), `invoice_policy_block`, and `invoice_policy_blocked_products`. The stock-check modal shows the split before the user confirms. `invoice_policy_block = true` when any product has `invoice_policy = 'order'` in Odoo — this blocks the "Confirm with Backorder" button. All Bassani products must have `invoice_policy = 'delivery'` set in Odoo (Tristan instructed 2026-07-09). Staff see the Odoo fix path; resellers are told to contact Bassani.
+- After packing completes a partial order: Orders Clerk clicks "Mark as Collected" (creates partial Odoo invoice for delivered qty only). Backorder entries sit in `waiting_stock` state until Phase 13 production flow assigns stock.
 
 **Section 21 authorisation:**
 - Every order for a named patient requires a structured Section 21 Authorisation Letter (medicine-specific, quantity-specific). The current implementation stores a single s21script string — this is a known gap flagged for Phase 8 hardening.
@@ -130,6 +144,33 @@ See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all su
 **Batch traceability (Phase 13):**
 - Bassani's batch ID schema is fixed: `BH` + `API`/`B` + strain code + sequence + date (e.g. `BHAPIBBY-001-010126`). Suffixes: `-D` Drying, `-U` Unmanicured, `-M` Manicured, `-P` Pops, `-T` Trim. Post-manicure: `-MC` Crushed, `-MCPR` Pre-Roll. Do not re-derive this schema — it is confirmed from Bassani's own Medicinal Cannabis Batch Traceability Guide V6.
 - Full traceability chain: cultivation batch → manufacturing/blend batch → finished goods → Sale Order → Delivery Note → Named Patient + Script + Section 21 Authorisation.
+
+---
+
+## Document Maintenance — Mandatory After Every Change
+
+After every completed feature, fix, or refactor, update the four living documents below before considering the work done. This is not optional and is not deferred to a separate session.
+
+**The four documents:**
+- `CLAUDE.md` — this file. Architecture rules, key files, patterns, roadmap table.
+- `PRODUCTION_ROADMAP.md` — authoritative phase tracker with Definition of Done per sub-phase.
+- `BASSANI_HEALTH_USER_MANUAL.md` — operational guide for all roles.
+- `BASSANI_HEALTH_EXECUTIVE_OVERVIEW.md` — business-level summary for non-technical stakeholders.
+
+**Rules for each change type:**
+
+| Change type | What to do |
+|---|---|
+| **New feature** | Decide where it fits in the roadmap first. If it belongs under an existing phase, add it as a numbered sub-phase (e.g. 8.12) and check off items as built. If it introduces a genuinely new phase, create the phase with a clear scope and Definition of Done. Never add a feature to the roadmap as a vague bullet — it must have a sub-phase number and a Done condition. |
+| **Refactor / improvement** | Update the *existing* section in each document that covers this area. Do not add a new section. Replace the outdated description with the current one. |
+| **Bug fix** | Update only if the fix changes a documented behaviour or constraint. Otherwise no update needed. |
+| **Removed / replaced feature** | Remove or overwrite the old description. Do not leave stale entries alongside new ones. |
+
+**Scope discipline:**
+- The roadmap grows only when scope genuinely grows. A refactor of an existing feature is not a new sub-phase.
+- The user manual grows only when user-facing behaviour changes or new actions become available. Refactoring the internals of a feature does not require a manual update.
+- The executive overview grows only when a new capability is available to the business. Implementation detail does not belong there.
+- CLAUDE.md's key files list and patterns section are replaced/updated, not accumulated. Remove outdated file references when files are deleted or renamed.
 
 ---
 
@@ -180,6 +221,43 @@ All automated emails are defined in `backend/services/email_service.py`. Every t
 - OTP or code display blocks must use a nested `<td>` table cell for the code box — not `display:inline-block` on a `<p>`.
 - The logo banner is a full-width `<img>` at the top of every email. No text or subtitle in the header.
 - After writing any email template, search for `—` in the file. There should be zero matches in any user-visible string.
+
+---
+
+## Confirmed UI Patterns
+
+These patterns are established across the codebase. Follow them exactly — do not invent alternatives.
+
+**Confirmation modals (replaces `window.confirm`):**
+```js
+const [fooConfirm, setFooConfirm] = useState(null);  // null | target object
+const doFoo = async () => {
+  const target = fooConfirm;
+  setFooConfirm(null);
+  try { await api.delete(...); toast.success("Done"); reload(); }
+  catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+};
+// In JSX:
+// <BtnDanger onClick={() => setFooConfirm(item)}>Delete</BtnDanger>
+// {fooConfirm && <Modal title="..." onClose={() => setFooConfirm(null)}>
+//   <p>...</p>
+//   <div className="flex justify-end gap-2 mt-4">
+//     <BtnSecondary onClick={() => setFooConfirm(null)}>Cancel</BtnSecondary>
+//     <BtnDanger onClick={doFoo}>Confirm</BtnDanger>
+//   </div>
+// </Modal>}
+```
+There must be zero `window.confirm` calls in `frontend/src/`. Always use `Modal` + `BtnDanger`/`BtnPrimary` + `BtnSecondary`.
+
+**Standard admin container width:**
+All admin settings/detail pages use `max-w-4xl mx-auto w-full` as the content container. Do not use `max-w-2xl` or `max-w-3xl` for admin views — those narrow widths are reserved for external-facing public forms (`/apply`, `/register`).
+
+**Product search in quote builder:**
+Two paths coexist — both must stay working:
+1. Per-row inline text search in `ProductLineRow` (power-user quick path)
+2. `Browse Products` drawer (`ProductPickerDrawer`) — category + variant filter browse path, internal staff only
+
+`handlePickerAdd` in `SalesTickets.js` replaces the trailing empty line when adding from the drawer rather than always appending — preserves a clean line count.
 
 ---
 

@@ -119,6 +119,7 @@ def _attach_tax_rates(odoo, products: list, company_id: Optional[int] = None) ->
 async def list_products(
     search:       Optional[str] = None,
     category:     Optional[str] = None,
+    category_id:  Optional[int] = Query(None),   # exact categ_id from the picker drawer
     limit:        int           = Query(50, le=200),
     offset:       int           = 0,
     sort_by:      str           = Query("name"),
@@ -149,8 +150,10 @@ async def list_products(
     if search:
         domain += ["|", ("name", "ilike", search), ("default_code", "ilike", search)]
 
-    # Category filter using Odoo's categ_id.name
-    if category and category != "all":
+    # Category filter — prefer exact categ_id from the picker drawer, fall back to name ilike
+    if category_id:
+        domain.append(("categ_id", "=", category_id))
+    elif category and category != "all":
         domain.append(("categ_id.name", "ilike", category))
 
     # Resellers only see products explicitly added to the reseller catalog.
