@@ -57,7 +57,6 @@ const RESELLER_NAV = [
   { label: "Dashboard",  path: "/",         icon: LayoutDashboard, section: "Main" },
   { label: "Products",   path: "/products", icon: Package,         section: "Main" },
   { label: "My Quotes",  path: "/tickets/sales", icon: Ticket,    section: "Orders" },
-  { label: "Orders",     path: "/orders",   icon: ShoppingCart,    section: "Orders" },
   { label: "Commission", path: "/commission", icon: Percent,       section: "Orders", requiresCommission: true },
   { label: "My Customers",    path: "/customers",        icon: Users,         section: "Customers" },
   { label: "My Applications", path: "/my-applications",  icon: ClipboardList, section: "Customers" },

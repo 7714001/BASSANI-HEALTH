@@ -1864,6 +1864,11 @@ export default function SalesTickets() {
             {canDrive && !isReseller && (
               <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>
             )}
+            {isReseller && (
+              <BtnPrimary onClick={() => navigate("/orders", { state: { newQuote: true } })}>
+                <Plus size={14} />New Quote
+              </BtnPrimary>
+            )}
           </div>
         }
       />

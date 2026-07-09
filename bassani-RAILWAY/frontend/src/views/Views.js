@@ -929,6 +929,11 @@ export function Orders() {
     finally { setCartProdsLoading(false); }
   };
 
+  // If navigated here from My Quotes to start a new quote, jump straight to cart
+  useEffect(() => {
+    if (location.state?.newQuote) setView("new");
+  }, []); // eslint-disable-line
+
   // If navigated here from My Quotes with an existing draft to edit, enter edit mode
   useEffect(() => {
     const eq = location.state?.editQuote;
@@ -1040,11 +1045,12 @@ export function Orders() {
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: cartNote,
       });
-      toast.success("Order placed — it's now in the Sales queue for processing");
+      toast.success(isReseller ? "Quote created — view and manage it in My Quotes" : "Order placed — it's now in the Sales queue for processing");
       if (data.credit_warning) {
         toast(`⚠️ ${cartSelectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
           { duration: 10000 });
       }
+      if (isReseller) { navigate("/tickets/sales"); return; }
       setView("list");
       load();
     } catch (e) {
@@ -1159,10 +1165,10 @@ export function Orders() {
           showWarehouseSwitcher
           actions={
             <BtnSecondary onClick={() => {
-              if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
+              if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
               else setView("list");
             }}>
-              {editQuote ? "← Back to My Quotes" : "← Back to Orders"}
+              {editQuote || isReseller ? "← Back to My Quotes" : "← Back to Orders"}
             </BtnSecondary>
           }
         />
