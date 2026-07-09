@@ -221,7 +221,7 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
 
   return (
     <div className="p-6 bg-gray-50 min-h-full">
-      <div className="max-w-2xl mx-auto space-y-5">
+      <div className="max-w-4xl mx-auto w-full space-y-5">
 
         {/* Action row */}
         <div className="flex items-center justify-between flex-wrap gap-3">

@@ -259,7 +259,7 @@ export default function ResellerApplicationDetail() {
         </div>
 
         <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-          <div className="max-w-3xl mx-auto space-y-5">
+          <div className="max-w-4xl mx-auto w-full space-y-5">
 
             {/* Status header */}
             <div className={`rounded-2xl border px-6 py-5 flex items-start gap-4 ${statusCfg.cls}`}>

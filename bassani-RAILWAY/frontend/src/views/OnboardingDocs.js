@@ -63,7 +63,7 @@ export default function OnboardingDocs() {
         subtitle="Send your customer a registration link or download template documents"
       />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className="max-w-4xl mx-auto w-full space-y-6">
 
           {/* Success banner */}
           {sentTo && (

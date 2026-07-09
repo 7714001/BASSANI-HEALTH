@@ -132,7 +132,7 @@ export default function EmailSettings({ embedded = false }) {
       )}
 
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-        <div className="max-w-2xl mx-auto space-y-5">
+        <div className="max-w-4xl mx-auto w-full space-y-5">
 
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
             <p className="text-xs font-semibold text-amber-700 mb-1">Super Admin only</p>

@@ -211,7 +211,7 @@ export default function OnboardingMailboxSettings() {
       />
 
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-        <div className="max-w-2xl mx-auto space-y-5">
+        <div className="max-w-4xl mx-auto w-full space-y-5">
 
           <div className={`rounded-2xl px-5 py-4 border flex items-start gap-3 ${
             configured ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"
