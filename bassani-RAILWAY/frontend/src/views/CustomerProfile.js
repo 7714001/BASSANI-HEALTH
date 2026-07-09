@@ -783,7 +783,6 @@ export default function CustomerProfile() {
                       <th className="text-left px-5 py-2.5 font-medium">Job Title</th>
                       <th className="text-left px-5 py-2.5 font-medium">Email</th>
                       <th className="text-left px-5 py-2.5 font-medium">Phone</th>
-                      <th className="text-left px-5 py-2.5 font-medium">Mobile</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -793,7 +792,6 @@ export default function CustomerProfile() {
                         <td className="px-5 py-3 text-gray-500">{ct.function || "—"}</td>
                         <td className="px-5 py-3 text-gray-500">{ct.email || "—"}</td>
                         <td className="px-5 py-3 text-gray-500">{ct.phone || "—"}</td>
-                        <td className="px-5 py-3 text-gray-500">{ct.mobile || "—"}</td>
                       </tr>
                     ))}
                   </tbody>

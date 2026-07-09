@@ -72,7 +72,7 @@ CUSTOMER_FIELDS = [
     "property_payment_term_id", "active", "comment", "is_company",
 ]
 
-ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "mobile", "email", "function"]
+ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "email", "function"]
 
 
 def _format_address(r: dict) -> dict:
@@ -265,7 +265,7 @@ async def customer_profile(
     )
     contacts = []
     if contact_ids:
-        raw_contacts = odoo.read("res.partner", contact_ids, fields=["id", "name", "email", "phone", "mobile", "function"])
+        raw_contacts = odoo.read("res.partner", contact_ids, fields=["id", "name", "email", "phone", "function"])
         for ct in raw_contacts:
             contacts.append({k: (v if v is not False else None) for k, v in ct.items()})
 
