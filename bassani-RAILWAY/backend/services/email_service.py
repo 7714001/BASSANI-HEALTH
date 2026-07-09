@@ -1112,3 +1112,52 @@ def send_backorder_stock_ready(
         )
         _send(internal_to, f"Backorder Ready to Pack: {order_ref}",
               _wrap(i_body))
+
+
+# ── Auto-payment confirmation digest (Phase 22.1) ────────────────────────────
+
+def send_payment_auto_confirmed(to: list, confirmed_items: list) -> None:
+    """
+    Digest sent to Finance when the background payment check auto-confirms
+    one or more invoices from Odoo bank reconciliation.
+    """
+    if not to or not confirmed_items:
+        return
+    count = len(confirmed_items)
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 0;font-size:13px;color:#0f172a;'
+        f'border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("customer_name", "Unknown")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;'
+        f'border-bottom:1px solid #f1f5f9;">'
+        f'Order #{item.get("order_id", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;'
+        f'text-align:right;border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'{item.get("invoice_name", "")}</td>'
+        f'</tr>'
+        for item in confirmed_items
+    )
+    body = (
+        _h1(f"Payment confirmed: {count} invoice{'s' if count != 1 else ''}")
+        + _p(
+            f"{count} invoice{'s' if count != 1 else ''} "
+            "matched bank records and were confirmed automatically. "
+            "No action is required."
+        )
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + f'<thead><tr>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;'
+        + f'text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">Customer</th>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;'
+        + f'text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Order</th>'
+        + f'<th style="text-align:right;font-size:11px;font-weight:700;color:#64748b;'
+        + f'text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Invoice</th>'
+        + f'</tr></thead>'
+        + f'<tbody>{rows}</tbody>'
+        + f'</table>'
+        + _divider()
+        + _p("Log in to view full payment details for each order.", muted=True)
+    )
+    subject = f"Payments Confirmed: {count} invoice{'s' if count != 1 else ''} matched bank records"
+    _send(to, subject, _wrap(body))

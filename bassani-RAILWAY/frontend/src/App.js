@@ -53,6 +53,7 @@ import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
 import Settings             from "./views/Settings";
+import BankReconciliation   from "./views/BankReconciliation";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -214,6 +215,9 @@ export default function App() {
         } />
         <Route path="/invoices" element={
           <ProtectedRoute adminOnly><AppLayout><Invoices /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/finance/bank-recon" element={
+          <ProtectedRoute adminOnly><AppLayout><BankReconciliation /></AppLayout></ProtectedRoute>
         } />
         <Route path="/targets" element={
           <ProtectedRoute adminOnly><AppLayout><Targets /></AppLayout></ProtectedRoute>

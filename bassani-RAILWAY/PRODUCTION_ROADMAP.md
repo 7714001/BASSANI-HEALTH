@@ -1333,6 +1333,63 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - **Stage advancement only, never backwards.** If the ticket is already at `sale_order` and the linked order is a draft, the ticket stays at `sale_order`. The rep drove it there intentionally.
 - **Cancelled Odoo orders are rejected.** There is no useful state to advance to — reject with a clear message rather than silently linking a dead order.
 
+#### 8.24 — Invoice Lifecycle Actions from Portal — Added 2026-07-09
+
+**Goal:** Finance and Sales never need to open Odoo to manage invoice state. The Sales Ticket detail sidebar exposes every invoice action (send invoice, PDF download, credit note, reset to draft) so the portal is the single interface for the full invoice lifecycle.
+
+**Context:** The existing `confirm-payment` action reads Odoo's `payment_state` to verify payment. But sending the invoice PDF, downloading it, issuing a credit note for returns, or resetting a draft invoice all currently require opening Odoo directly — violating Architecture Principle 2.
+
+- [ ] `POST /api/tickets/{ticket_id}/send-invoice` — finds the linked `account.move`; locates Odoo's invoice mail template (model = `account.move`, name contains "invoice"); calls `send_mail` with `force_send=True`; stamps `invoice_sent_at` on the ticket document; fires background notification to Finance; graceful degradation if Odoo mail server not configured (returns `warning` field); requires `tickets.finance_confirm`
+- [ ] `GET /api/invoices/{invoice_id}/pdf` — calls `ir.actions.report.render_qweb_pdf` via XML-RPC with report `account.report_move_full_lines`; returns PDF bytes as `application/pdf` streaming response; filename: `Invoice-{invoice_name}.pdf`; requires `require_admin`
+- [ ] `POST /api/invoices/{invoice_id}/reset-to-draft` — calls `button_draft()` on Odoo `account.move`; only allowed on `posted` state where `payment_state = 'not_paid'`; blocks on paid invoices (400); audit-logged; requires admin + `tickets.finance_confirm`
+- [ ] `SalesTickets.js` — Invoice section gains: "Send Invoice" / "Resend Invoice" button (adapts label, same pattern as Send Quote), "Download PDF" link (opens `/api/invoices/{id}/pdf` in new tab), "Reset to Draft" button (danger styling, confirm modal, `isAdmin` gate), "Credit Note" button (opens 8.26 modal); `invoice_sent_at` timestamp displayed when set
+
+#### 8.25 — Invoice Type Selection — Added 2026-07-09
+
+**Goal:** The deposit registration modal offers all three Odoo invoice types: regular invoice, down payment by percentage, and down payment by fixed amount. Currently the portal hardcodes fixed-amount down payments — the other two types require opening Odoo.
+
+**Context:** Odoo's `sale.advance.payment.inv` wizard supports `advance_payment_method` values: `'delivered'` (regular invoice for delivered quantities), `'percentage'` (down payment as % of total), `'fixed'` (fixed amount). The existing `register-deposit` endpoint hardcodes `'fixed'`.
+
+- [ ] Extend `DepositBody` Pydantic model in `ticket_routes.py`: add `invoice_type: Literal['delivered', 'percentage', 'fixed'] = 'fixed'`; add `percentage: Optional[float] = None`; validate `percentage` in range (0, 100] when type is `'percentage'`; `amount` required only when type is `'fixed'`; `'delivered'` type requires neither
+- [ ] `register-deposit` backend: passes `advance_payment_method = body.invoice_type` and the correct amount field to the Odoo wizard; `percentage` maps to Odoo's `amount` field; `delivered` passes no amount; audit log `before`/`after` includes `invoice_type`
+- [ ] `SalesTickets.js` — Deposit modal gains a 3-option radio selector: "Regular Invoice (100%)", "Down Payment (%)", "Down Payment (Fixed Amount)"; amount/percentage input shown conditionally; human-readable descriptions under each option; no Odoo terminology exposed
+
+#### 8.26 — Customer Credit Notes — Added 2026-07-09
+
+**Goal:** Finance can raise a credit note against a posted invoice directly from the portal for damaged goods, short deliveries, or pricing corrections. Creates an `account.move` credit note in Odoo, linked back to the ticket.
+
+- [ ] `POST /api/invoices/{invoice_id}/credit-note` — creates `account.move.reversal` in Odoo pointing to the original invoice; calls `reverse_moves()` to generate the credit note; accepts `reason: str`, `date: str`, `journal_id: int`; returns credit note `{id, name, amount}`; stores `credit_note_id` and `credit_note_name` on the ticket document; fires `send_credit_note_raised_internal` email to Finance; audit-logged with full before/after; requires `tickets.finance_confirm`
+- [ ] `GET /api/tickets/credit-note-journals` — returns Odoo `sale` or `general` type journals suitable for credit notes (same XML-RPC pattern as `payment-journals`)
+- [ ] `SalesTickets.js` — "Credit Note" action card in Finance section; shown when `invoice_id` is set and ticket not `cancelled` or `complete`; modal with reason (required free-text), date (defaults today), journal dropdown; confirm step: "This will create a credit note in Odoo against invoice {name}"; shows credit note reference + download link after creation
+- [ ] `send_credit_note_raised_internal(to, invoice_name, credit_note_name, amount, reason, raised_by)` — internal email template in `email_service.py`; no internal system names; follows email copy standards
+
+#### 8.27 — Customer Address Types — Added 2026-07-09
+
+**Goal:** Customers can have separate invoice and delivery addresses that flow through to Odoo sale orders and delivery notes. Currently all addresses are treated as the single contact address — preventing correct delivery documentation for customers with multiple sites.
+
+**Context:** Odoo `sale.order` has `partner_invoice_id` and `partner_shipping_id` alongside `partner_id`. Odoo auto-resolves these from child `res.partner` records typed as `'invoice'` or `'delivery'`. Creating typed address records for customers unlocks correct billing and shipping on every order.
+
+- [ ] `GET /api/customers/{id}/addresses` — returns all `res.partner` records with `parent_id = customer_id`, `active = True`, grouped by type (`contact`, `invoice`, `delivery`, `other`)
+- [ ] `POST /api/customers/{id}/addresses` — creates a child `res.partner` in Odoo with `parent_id = customer_id`, `type` from request body (`'invoice'` | `'delivery'` | `'other'`); required: `street`, `city`, `zip`, `country_id`; optional: `name`, `phone`, `email`; requires `customers.manage`; audit-logged
+- [ ] `PUT /api/customers/{id}/addresses/{address_id}` — updates the child partner; validates `address_id` has correct `parent_id`; audit-logged
+- [ ] `DELETE /api/customers/{id}/addresses/{address_id}` — archives (`active = False`) in Odoo; blocks archiving the main contact address; requires `customers.manage`; audit-logged
+- [ ] `CustomerProfile.js` — Addresses section extended: type badge per address (Invoice / Delivery / Other / Contact); "Add address" button (admin gate) opens modal with type selector and address fields; pencil/archive actions per non-contact row
+- [ ] Quote builder `SalesTickets.js`: "Invoice Address" and "Delivery Address" dropdowns in quote header, populated from `/api/customers/{id}/addresses`; selected IDs passed as `partner_invoice_id` and `partner_shipping_id` in `create-order` and `update-order`; defaults to main contact if only one address exists
+- [ ] `create-order` / `update-order` backend: accept optional `partner_invoice_id` and `partner_shipping_id`; write to `sale.order` in Odoo alongside `partner_id`
+- [ ] Onboarding wizard Step 2 (Business Details): add optional "Delivery Address (if different)" collapsible section; stored in the application document; on approval, creates a child delivery-type partner in Odoo alongside the main company partner
+
+#### 8.28 — Payment Terms and Quotation Descriptions — Added 2026-07-09
+
+**Goal:** The quote builder surfaces the customer's Odoo payment terms so Sales knows the agreed terms before building the quote, and product lines auto-populate from Odoo's sales description field — reducing manual entry and keeping quotes consistent with Odoo records.
+
+- [ ] `GET /api/customers/{id}/payment-terms` — reads `property_payment_term_id` from Odoo `res.partner`; returns `{id, name}` or `null` if not set
+- [ ] `GET /api/tickets/payment-terms` — returns all active `account.payment.term` records from Odoo for the quote builder override dropdown; requires `require_admin`
+- [ ] Quote builder `SalesTickets.js`: "Payment Terms" row in quote header; pre-populated from customer's Odoo record; selectable from full list via `GET /api/tickets/payment-terms`; `payment_term_id` passed in `create-order` / `update-order` body
+- [ ] `create-order` / `update-order` backend: accept optional `payment_term_id`; write to `sale.order` in Odoo; skip (not error) if omitted
+- [ ] `GET /api/products/?search=...` response: include `description_sale` from Odoo `product.product` in each result row
+- [ ] `ProductLineRow.js` inline search dropdown: show `description_sale` as a subtitle line below product name/SKU in results
+- [ ] `ProductLineRow.js` on product selection: if line description field is blank, auto-populate from `description_sale`; field remains editable; auto-populated value can be cleared or overridden
+
 ### Definition of Done
 - [x] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal
 - [x] A direct inquiry (manually created ticket) can move through every stage to Complete, Cancelled, or Incomplete, with a visible timeline of who did what and when
@@ -1345,6 +1402,13 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Marking an Orders ticket Complete validates the linked Odoo Delivery Note, decrementing On Hand stock — non-blocking with visible warning if Odoo validation fails
 - [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role — **pending: accounts not yet created (operational, no code required)**
 - [x] Resellers can build a draft quote via the cart (Orders view), view and manage their quotes in My Quotes (Sales Tickets), and edit a quote by returning to the cart pre-populated — reseller draft quotes are hidden from the staff queue until confirmed
+- [ ] Finance can send an invoice PDF to a customer from the ticket detail — no Odoo access required (8.24)
+- [ ] Finance can download an invoice PDF from the portal (8.24)
+- [ ] Finance can raise a credit note against an invoice from the ticket detail — no Odoo access required (8.26)
+- [ ] The deposit registration modal offers Regular Invoice, Down Payment (%), and Down Payment (Fixed Amount) — all three Odoo invoice types accessible from the portal (8.25)
+- [ ] Customer invoice and delivery addresses are set at quote creation and flow through to the Odoo sale order (8.27)
+- [ ] Customer's Odoo payment terms appear in the quote builder and are written to the Odoo sale order (8.28)
+- [ ] Product line descriptions auto-populate from Odoo's sales description field when a product is added to a quote (8.28)
 
 ### Notes
 > **Sub-deploy 18 (2026-07-09):** 8.23 Reseller quote flow. Resellers now create draft quotes through the existing cart (Orders view) rather than being forwarded to the internal quote builder. `create_order` in `order_routes.py`: reseller orders land at `status: "quote"` (not `sale_order`) in the tickets collection, so pre-confirm reseller drafts are hidden from the staff Sales Tickets queue — staff only see them once confirmed. Commission record, `total_sales` increment, and order-placed email are all deferred from `create_order` to `confirm_order` (commission lookup is idempotent; no duplicate risk). New `_require_confirm_access` dependency in `order_routes.py` grants resellers access to `PUT /api/orders/{id}/confirm` for their own orders. New `_reseller_id_for_user`, `_assert_reseller_owns_ticket`, `_require_ticket_viewer`, `_require_ticket_driver` helpers in `ticket_routes.py` — every ticket endpoint gated so resellers can only read/drive tickets where `reseller_id` matches their own. Packing board reseller-name lookup at confirm time uses `_ticket_reseller_id` from the ticket (not the commission record, which is created at the same moment). Frontend: `SalesTickets.js` — `isReseller` flag gates "New Direct Inquiry" button, source filter, and "Assign to me" hidden for resellers; "My Quotes" added to `RESELLER_NAV` in `UI.js`; "Edit Quote" action now routes resellers to `/orders` with `editQuote` location state instead of opening the internal quote builder. `Views.js` (Orders component): detects `location.state?.editQuote` on mount, pre-populates cart, locks customer picker, routes submit to `PUT /api/tickets/{id}/update-order`, shows "Save Quote"/"Saving…" button labels, Cancel navigates back to `/tickets/sales`. `ResellerProfile.js` (admin view): pipeline section shows the reseller's tickets filtered by `reseller_id`.
@@ -3473,3 +3537,80 @@ Several gaps existed between how the portal presented customer data and how Odoo
 - [x] Admins can add contact persons to company profiles from the portal — no Odoo access required
 - [x] Admins can change Company/Individual classification directly from the profile — audit-logged
 - [x] Converting a company with child contacts to Individual is blocked with a clear error message
+
+---
+
+## Phase 22 — Automated Bank Reconciliation
+
+**Goal:** Finance never manually confirms a payment after Bassani's bank statement is in the system. EFT receipts import into the portal, credits are auto-matched to open invoices, and the portal detects the match and automatically advances the linked ticket — eliminating the daily reconciliation bottleneck and the risk of manual mis-confirmation.  
+**Priority:** High  
+**Status:** ✅ Complete  
+**Completed:** 2026-07-09
+
+### Context
+
+Odoo holds all financial records (`account.move`, `account.payment`). Bank statements in Odoo are `account.bank.statement` objects with child `account.bank.statement.line` records. Odoo's automated reconciliation models match statement lines to open invoices by amount, date, and payment reference. Once matched, the invoice's `payment_state` transitions to `in_payment` or `paid`.
+
+The portal already reads `payment_state` on Finance's "Confirm Payment" action. This phase makes that reading automatic: a background task polls invoice payment states and advances tickets when Odoo confirms payment, without Finance triggering it. The bank statement import UI brings statements into Odoo without Finance opening Odoo directly.
+
+**Why this is high priority:** The current Finance flow — download bank statement → open Odoo → locate invoice → register payment → return to portal → click "Confirm Payment" — is the single most time-consuming manual step per order. At volume this is a daily bottleneck and a source of confirmation errors. Auto-detection eliminates it once statements are imported.
+
+**Odoo prerequisite (Bassani configuration — no portal code needed):**
+- Create a bank journal in Odoo for the EFT account: type Bank, currency ZAR
+- Configure at least one reconciliation model under Accounting > Configuration > Reconciliation Models (match by amount + SA EFT reference patterns)
+- Note the journal `id` from Odoo — used as default in the import endpoint
+
+### Tasks
+
+#### 22.0 — Permission and Navigation Foundation
+- [x] `finance.bank_reconciliation` added to `auth.py`: `True` for `finance` role and `FULL_PERMISSIONS`; `False` for all other roles and `DEFAULT_ADMIN_PERMISSIONS`
+- [x] "Bank Reconciliation" added to `ADMIN_NAV` in `UI.js` under Finance section, gated on `finance.bank_reconciliation`, icon `Landmark`
+- [x] Route `/finance/bank-recon` in `App.js` as `adminOnly`, rendering `BankReconciliation.js`
+
+#### 22.1 — Auto-Payment Detection (Background Task)
+- [x] `backend/services/bank_recon_service.py` — `check_invoice_payments()`: batch-reads Odoo `payment_state` for all open tickets with `invoice_id` set; stamps `payment_confirmed_by: "auto"` on any where Odoo shows `paid` or `in_payment`; digest email to `finance_notification_to` routing addresses; returns `{checked, confirmed}`
+- [x] `server.py` startup event: asyncio loop calling `check_invoice_payments()` every 15 minutes; graceful Odoo-down handling
+- [x] `SalesTickets.js`: "Auto-confirmed from bank" shown when `payment_confirmed_by === "auto"` (two locations: reseller view + sidebar)
+- [x] `finance_notification_to` added to email routing config (`settings_routes.py`, `EmailSettings.js`)
+- [x] `send_payment_auto_confirmed` digest email added to `email_service.py`
+
+#### 22.2 — Bank Statement Import
+- [x] `POST /api/finance/bank-statements/import` — CSV upload, auto-format detection, auto-match credits to open invoices, save statement + lines to MongoDB; returns `{statement_id, lines_imported, auto_matched}`
+- [x] `GET /api/finance/bank-statements/` — list statements from MongoDB, most recent first
+- [x] `GET /api/finance/bank-statements/{statement_id}/lines` — lines for a statement with match metadata
+- [x] `GET /api/finance/bank-journals` — Odoo bank/cash journals for journal selector
+
+#### 22.3 — Manual Reconciliation
+- [x] `POST /api/finance/bank-statements/lines/{line_id}/match` — confirms match, registers Odoo payment via `account.payment.register` + `action_create_payments`; updates line to `manually_matched`; refreshes statement counts
+- [x] `GET /api/finance/invoices/open` — open invoices for manual match typeahead
+- [x] `POST /api/finance/bank-statements/lines/{line_id}/exclude` — portal-level flag, reason stored in MongoDB; does not touch Odoo
+- [x] `POST /api/finance/bank-statements/lines/{line_id}/unmatch` — resets to `unmatched` (does not reverse Odoo payment)
+
+#### 22.4 — Bank Reconciliation Dashboard
+- [x] `frontend/src/views/BankReconciliation.js`:
+  - Statements dashboard with "Import Statement" button, summary cards (total credits, matched, unmatched, excluded), statements table
+  - Import modal: journal selector + CSV file picker; detects FNB/Nedbank format; shows auto-match result on success
+  - Line review: filter pills (All/Unmatched/Auto-matched/Confirmed/Excluded); per-line actions (Match, Exclude, Reset); confidence dot on auto-matched lines
+  - Match modal: invoice search typeahead, journal selector, confirm registers Odoo payment
+  - Exclude modal with optional reason
+  - Reset confirmation modal (warns Odoo payment is not reversed)
+
+#### 22.5 — SA Bank CSV Format Support
+- [x] FNB Business CSV parser: columns `Date, Transaction Type, Reference, Amount, Running Balance`; credits only (positive Amount); date format `DD MMM YYYY`
+- [x] Nedbank Business CSV parser: columns `Date, Reference, Description, Debit, Credit, Balance`; Credit column only; date formats `YYYY-MM-DD`, `DD/MM/YYYY`, `YYYY/MM/DD`
+- [x] Auto-detect by header inspection; `HTTPException(400)` if unrecognised with supported format list
+- [x] Deduplication: `(date, reference, amount)` key checked against existing MongoDB lines; duplicate lines skipped with clear error if entire file is a duplicate
+
+### Implementation notes
+- Statement data is stored in MongoDB (`bank_statements`, `bank_statement_lines`) rather than as Odoo `account.bank.statement` records. This avoids unreliable XML-RPC calls into Odoo's bank statement API in v17 and keeps the portal in control of the UX. Payment registration still goes through Odoo via `account.payment.register` — Odoo stays the financial source of truth.
+- Auto-match scores: exact amount match = 60pts; within 1% = 40pts; invoice name in reference = 40pts; customer name words = up to 20pts. Threshold 40pts to show a suggestion; 80pts = high confidence, 50pts = medium, anything lower = low.
+- "Reset" does not reverse the Odoo payment if one was registered — Finance must handle reversals in Odoo directly. The portal line is reset to unmatched, leaving the Odoo payment intact.
+
+### Definition of Done
+- [x] Finance uploads a CSV bank statement; credits are auto-matched to open invoices; Finance reviews and confirms matches from the portal
+- [x] Confirming a match registers the payment in Odoo — Finance does not open Odoo
+- [x] Bank charges and transfers can be excluded from the unmatched list with an optional reason
+- [x] Auto-confirmed tickets (22.1) show "Auto-confirmed from bank" — not a named user
+- [x] Background payment check runs every 15 minutes
+- [x] FNB Business and Nedbank Business CSV formats both import correctly
+- [x] Duplicate lines are skipped on import

@@ -17,9 +17,10 @@ settings = get_settings()
 
 
 class EmailRoutingConfig(BaseModel):
-    application_submitted_to: List[str] = []
-    order_ready_extra_to:     List[str] = []
-    order_cc:                 List[str] = []
+    application_submitted_to:  List[str] = []
+    order_ready_extra_to:      List[str] = []
+    order_cc:                  List[str] = []
+    finance_notification_to:   List[str] = []
 
 
 async def get_email_routing() -> dict:
@@ -28,13 +29,15 @@ async def get_email_routing() -> dict:
     if not doc:
         return {
             "application_submitted_to": [settings.support_email],
-            "order_ready_extra_to": [],
-            "order_cc": [],
+            "order_ready_extra_to":     [],
+            "order_cc":                 [],
+            "finance_notification_to":  [],
         }
     return {
         "application_submitted_to": doc.get("application_submitted_to") or [settings.support_email],
         "order_ready_extra_to":     doc.get("order_ready_extra_to", []),
         "order_cc":                 doc.get("order_cc", []),
+        "finance_notification_to":  doc.get("finance_notification_to", []),
     }
 
 

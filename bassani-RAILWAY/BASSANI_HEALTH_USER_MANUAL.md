@@ -883,8 +883,8 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 
 ## Finance Team — Kashi & Ragini
 
-**Role in system:** `finance` (permission: `tickets.finance_confirm`)  
-**Access:** Sales Tickets (payment confirmation and deposit registration only)
+**Role in system:** `finance` (permissions: `tickets.finance_confirm`, `finance.bank_reconciliation`)  
+**Access:** Sales Tickets, Bank Reconciliation
 
 ### Registering a Deposit
 
@@ -928,6 +928,53 @@ For tickets where the payment was registered directly in Odoo (outside the porta
 4. If Odoo shows the payment, you confirm it and the ticket advances
 
 > **You cannot confirm payment if Odoo does not show it.** This is a hard rule — the portal reads directly from Odoo, so if the payment isn't there, it hasn't been properly recorded yet.
+
+### Bank Reconciliation
+
+**Navigate to:** Finance > Bank Reconciliation
+
+The Bank Reconciliation page lets you import a bank statement CSV and match credits to open invoices directly in the portal — without opening Odoo. Confirming a match registers the payment in the accounting system immediately.
+
+#### Importing a Bank Statement
+
+1. Click **Import Statement**
+2. Select the bank journal (which bank account)
+3. Choose your CSV file (FNB Business or Nedbank Business format)
+4. Click **Import**
+
+The portal reads the CSV, extracts credit lines only, auto-matches them to open invoices by amount and payment reference, and shows you the result. Duplicate lines from previous imports are automatically skipped.
+
+#### Reviewing Lines
+
+After import, each credit line has one of four states:
+
+| Status | Meaning | Action needed |
+|---|---|---|
+| **Auto-matched** | Portal found a high-confidence invoice match | Review and confirm, or override with a different invoice |
+| **Unmatched** | No confident match found | Search for the invoice and match manually |
+| **Confirmed** | Match approved — payment registered | No action needed |
+| **Excluded** | Line marked as fee/transfer/not a customer payment | No action needed |
+
+Use the filter pills at the top to focus on **Unmatched** lines.
+
+#### Confirming a Match
+
+1. Hover the line and click **Match**
+2. Select the payment journal
+3. Search for the invoice by number or customer name
+4. Click **Confirm Match**
+
+The payment is registered in the accounting system. The line moves to Confirmed.
+
+#### Excluding a Line
+
+Bank fees, inter-account transfers, and refunds are not customer payments. Hover the line and click **Exclude** (with an optional reason). The line is hidden from the unmatched count and does not affect accounting.
+
+#### Auto-Confirmed Tickets
+
+Every 15 minutes, the portal checks whether any outstanding invoices have been marked as paid in the accounting system. When it detects a payment, it automatically advances the linked sales ticket without Finance clicking "Confirm Payment". The ticket will show "Auto-confirmed from bank" with the date.
+
+> **Tip:** If you use **Register Balance Payment** directly in the portal (see above), the ticket advances immediately. The auto-confirm background check is the backstop for payments registered outside the portal.
 
 ---
 

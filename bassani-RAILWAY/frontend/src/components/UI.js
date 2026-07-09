@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -35,8 +35,9 @@ const NAV = [
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
   { label: "Sales Agents", path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
   { label: "Commission",   path: "/commission",  icon: Percent,         section: "Resellers",permission: "commission.view"     },
-  { label: "Invoices",     path: "/invoices",    icon: FileText,        section: "Finance",  permission: "invoices.view"       },
-  { label: "Targets",      path: "/targets",     icon: Target,          section: "Finance",  permission: "reports.view"        },
+  { label: "Invoices",          path: "/invoices",         icon: FileText,  section: "Finance", permission: "invoices.view"                   },
+  { label: "Bank Reconciliation", path: "/finance/bank-recon", icon: Landmark, section: "Finance", permission: "finance.bank_reconciliation" },
+  { label: "Targets",           path: "/targets",          icon: Target,    section: "Finance", permission: "reports.view"                    },
   { label: "Reports",      path: "/reports",      icon: BarChart3,       section: "Insights", permission: "reports.view"  },
   { label: "Healthcare",   path: "/healthcare",  icon: Phone,           section: "Insights", permission: "healthcare.view"     },
   { label: "Scripts",      path: "/scripts",     icon: ScrollText,      section: "Insights"  },

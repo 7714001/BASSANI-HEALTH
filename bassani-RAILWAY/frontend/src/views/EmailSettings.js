@@ -91,6 +91,7 @@ export default function EmailSettings({ embedded = false }) {
     application_submitted_to: [],
     order_ready_extra_to:     [],
     order_cc:                 [],
+    finance_notification_to:  [],
   });
 
   useEffect(() => {
@@ -186,6 +187,22 @@ export default function EmailSettings({ embedded = false }) {
                 emails={config.order_cc}
                 onChange={upd("order_cc")}
                 placeholder="ops@bassanihealth.com"
+              />
+            </div>
+          </RoutingSection>
+
+          <RoutingSection
+            icon={Mail}
+            title="Finance: Payment Auto-Confirmed"
+            description="Sent when the portal detects a paid invoice from bank records and auto-confirms the ticket — no manual click needed."
+            note="Add the Finance team addresses here. A single digest email is sent per check cycle listing all auto-confirmed invoices. If this list is empty, no email is sent but the ticket still advances automatically."
+          >
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
+              <EmailTagInput
+                emails={config.finance_notification_to}
+                onChange={upd("finance_notification_to")}
+                placeholder="finance@bassanihealth.com"
               />
             </div>
           </RoutingSection>

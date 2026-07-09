@@ -47,6 +47,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "settings":           {"manage": False},
     "signing_authority":  {"sign": False},
     "labels":             {"print": False},
+    "finance":            {"bank_reconciliation": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -70,6 +71,7 @@ FULL_PERMISSIONS: dict = {
     "settings":           {"manage": True},
     "signing_authority":  {"sign": True},
     "labels":             {"print": True},
+    "finance":            {"bank_reconciliation": True},
 }
 
 # Full default permission sets for each staff role.
@@ -98,6 +100,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
+        "finance":           {"bank_reconciliation": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -119,6 +122,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
         "labels":            {"print": True},
+        "finance":           {"bank_reconciliation": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -140,6 +144,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
+        "finance":           {"bank_reconciliation": True},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -161,6 +166,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "settings":          {"manage": False},
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
+        "finance":           {"bank_reconciliation": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -182,6 +188,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "settings":          {"manage": False},
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
+        "finance":           {"bank_reconciliation": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias

@@ -1154,7 +1154,11 @@ export default function SalesTickets() {
                         )}
                         {detail.payment_confirmed_at && (
                           <p className="text-[11px] text-green-600 flex items-center gap-1.5 mt-3 pt-3 border-t border-gray-100">
-                            <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
+                            <CheckCircle2 size={11} />
+                            {detail.payment_confirmed_by === "auto"
+                              ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
+                              : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
+                            }
                           </p>
                         )}
                       </div>
@@ -1237,7 +1241,11 @@ export default function SalesTickets() {
                       )}
                       {!isReseller && detail.payment_confirmed_at && (
                         <p className="text-xs text-green-600 flex items-center gap-1.5">
-                          <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
+                          <CheckCircle2 size={11} />
+                          {detail.payment_confirmed_by === "auto"
+                            ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
+                            : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
+                          }
                         </p>
                       )}
                     </div>

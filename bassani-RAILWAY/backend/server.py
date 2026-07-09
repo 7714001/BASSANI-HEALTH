@@ -444,6 +444,26 @@ async def _run_inbox_startup(
 
 
 @app.on_event("startup")
+async def initialise_payment_check():
+    """Phase 22.1 — auto-payment detection: polls Odoo every 15 min."""
+    import asyncio
+
+    async def _payment_check_loop():
+        await asyncio.sleep(60)  # let the server fully start before first run
+        while True:
+            try:
+                from services.bank_recon_service import check_invoice_payments
+                result = await check_invoice_payments()
+                logger.info("auto_payment_check_complete", extra=result)
+            except Exception as exc:
+                logger.warning("auto_payment_check_loop_error", extra={"error": str(exc)})
+            await asyncio.sleep(900)  # 15 minutes
+
+    asyncio.create_task(_payment_check_loop())
+    logger.info("payment_check_loop_started interval_s=900")
+
+
+@app.on_event("startup")
 async def initialise_inbox():
     """Phase 11 — sales_inbox indexes, Graph subscription, and IMAP polling."""
     await _run_inbox_startup("sales", "sales_inbox", "sales_inbox")
@@ -534,6 +554,7 @@ from routes.doc_template_routes       import router as doc_template_router
 from routes.signing_authority_routes  import router as signing_authority_router
 from routes.profile_routes            import router as profile_router
 from routes.label_routes              import router as label_router
+from routes.bank_recon_routes         import router as bank_recon_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -546,7 +567,7 @@ for router in [
     reseller_catalog_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,
-    label_router,
+    label_router, bank_recon_router,
 ]:
     app.include_router(router)
 

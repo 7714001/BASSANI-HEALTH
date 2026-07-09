@@ -106,7 +106,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. Staff account creation still outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.28 planned: invoice lifecycle actions, invoice type selection, credit notes, customer address types, payment terms + quote descriptions. Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
@@ -114,6 +114,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 13 | Production and Cultivation Module | Concept — needs SAHPRA scoping |
 | 19 | Per-User Document Signing | Complete — `signing_authority.sign` permission, My Profile setup, countersignature flow |
 | 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag, internal agents excluded from bulk runs |
+| 22 | Automated Bank Reconciliation | Complete — 22.1 auto-payment detection (15-min Odoo poll); 22.2 CSV import + auto-match; 22.3 manual match/exclude/unmatch (registers Odoo payment via account.payment.register); 22.4 Finance dashboard (statements list + line review); 22.5 FNB Business + Nedbank Business CSV parsers. Permission: `finance.bank_reconciliation`. Routes: `bank_recon_routes.py`. View: `BankReconciliation.js` |
 
 See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all sub-deploy notes. That document is the authoritative phase tracker.
 
