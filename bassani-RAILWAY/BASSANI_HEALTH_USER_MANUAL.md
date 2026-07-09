@@ -971,7 +971,25 @@ Once both QA Manager and Responsible Pharmacist have approved:
 1. The **Mark Complete** button becomes available
 2. Click it to close the order
 
-The Sales Ticket is automatically updated to `Complete`.
+If the order ships in full, the Sales Ticket automatically updates to `Complete` and a ready-for-collection email goes to the warehouse supervisors.
+
+**Partial Fulfilment (Backorders)**
+When a confirmed order cannot be fully filled from current stock, the system handles the split automatically:
+
+1. Click **Mark Complete** as normal — the system validates what is available in Odoo and creates a backorder picking for the remainder
+2. The Orders Tickets list shows the original delivery at `Complete` and a new `Waiting for Stock` entry for the backordered items
+3. The reseller receives an email listing what is shipping now and what is on backorder
+
+**Marking a delivery as collected**
+For orders where the invoice is created on collection (partial orders), an additional step appears:
+1. When the customer collects the delivery, open the order ticket at `Complete` stage
+2. Click **Mark as Collected** — this creates the Odoo invoice for the quantities delivered and records the collection timestamp
+3. When all deliveries for an order (including backorders) have been collected, the Sales Ticket advances to `Complete`
+
+**Checking backorder stock availability**
+When backorder entries are on the board:
+- A **Check backorder stock** button appears in the top bar
+- Click it to poll Odoo for stock changes — if stock has been reserved for any waiting backorder, the system notifies the reseller and internal team automatically
 
 ---
 
@@ -1491,6 +1509,15 @@ From **My Quotes** you can:
 - **Edit Quote** — returns you to the cart pre-populated with the current lines so you can adjust quantities or add/remove products. The customer cannot be changed once the quote is created.
 - **Send Quote** — sends the quote to the customer for review (optional)
 - **Confirm Order** — converts the draft to a live sale order and hands it to Bassani's team for fulfilment
+
+When you click Confirm Order, the portal checks current stock availability before committing. If all items are in stock, confirmation proceeds immediately. If some items are not available:
+
+- A **stock check modal** shows which items will ship now and which will be backordered
+- You can choose to confirm with a backorder or cancel and wait
+- If you confirm, Bassani will ship what is available immediately and fulfil the rest as soon as stock arrives
+- You will receive a separate email when the backorder is ready for collection
+
+On your **My Quotes** detail view, when an order is partially fulfilled you can see the split: items that shipped are listed under "Shipping now" and backordered items under "Backordered" with quantities.
 
 > Once an order is confirmed, Bassani staff pick it up for packing, QA/RP approval, and fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
 

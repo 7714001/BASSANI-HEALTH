@@ -27,15 +27,17 @@ const fmtR = (n) =>
 
 const STATUS_LABEL = {
   open: "Open (RFQ)", quote: "Quote", sale_order: "Sale Order", invoice: "Invoice",
-  confirmed_wip: "Confirmed — WIP", ready_for_collection: "Ready for Collection", incomplete: "Incomplete",
+  confirmed_wip: "Confirmed — WIP", ready_for_collection: "Ready for Collection",
+  incomplete: "Incomplete", partially_fulfilled: "Partially Fulfilled",
 };
 const STATUS_COLOR = {
   open: "gray", quote: "amber", sale_order: "blue", invoice: "indigo",
   confirmed_wip: "teal", ready_for_collection: "green", incomplete: "orange",
+  partially_fulfilled: "amber",
 };
 const EXIT_LABEL  = { not_interested: "Not Interested", cancelled: "Cancelled", complete: "Complete" };
 const EXIT_COLOR  = { not_interested: "gray", cancelled: "red", complete: "green" };
-const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "incomplete"];
+const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "partially_fulfilled", "incomplete"];
 const PRE_CONFIRM = new Set(["open", "quote", "sale_order", "invoice"]);
 
 const ORDER_STATE_LABEL = {
@@ -54,10 +56,12 @@ const ORDER_STATE_COLOR = {
 const PACK_STATUS_LABEL = {
   queued: "Queued", packing: "Packing", ready: "Ready for Inspection",
   complete: "Complete", incomplete: "Incomplete", cancelled: "Cancelled",
+  waiting_stock: "Waiting for Stock",
 };
 const PACK_STATUS_COLOR = {
   queued: "gray", packing: "amber", ready: "blue",
   complete: "green", incomplete: "orange", cancelled: "red",
+  waiting_stock: "amber",
 };
 
 // Reseller-facing labels — plain English, no internal system terms
@@ -66,17 +70,19 @@ const R_STATUS_LABEL = {
   sale_order:           "Pending Confirmation",
   confirmed_wip:        "In Fulfilment",
   ready_for_collection: "Ready for Collection",
+  partially_fulfilled:  "Partially Fulfilled",
   incomplete:           "Unable to Fulfil",
 };
 const R_STATUS_COLOR = {
   quote: "amber", sale_order: "amber", confirmed_wip: "teal",
-  ready_for_collection: "green", incomplete: "orange",
+  ready_for_collection: "green", partially_fulfilled: "amber", incomplete: "orange",
 };
 const R_EXIT_LABEL = { not_interested: "Cancelled", cancelled: "Cancelled", complete: "Complete" };
 const R_PACK_LABEL = {
   queued: "Preparing your order", packing: "Being packed",
   ready: "Packed — awaiting final checks", complete: "Fulfilled",
   incomplete: "Issue — contact Bassani", cancelled: "Cancelled",
+  waiting_stock: "Awaiting restocking",
 };
 
 // Steps shown in the reseller progress tracker (in detail view)
@@ -84,13 +90,14 @@ const R_STEPS = [
   { key: "draft",      label: "Quote Created"    },
   { key: "confirmed",  label: "Order Confirmed"  },
   { key: "packing",    label: "Being Packed"     },
-  { key: "ready",      label: "Ready"            },
+  { key: "ready",      label: "Fulfilment Ready" },
   { key: "complete",   label: "Complete"         },
 ];
 const resellerStep = (ticket, packing) => {
-  if (ticket.exit_status === "complete")    return 4;
-  if (ticket.exit_status)                   return -1; // cancelled
-  if (ticket.status === "ready_for_collection" || packing?.status === "ready") return 3;
+  if (ticket.exit_status === "complete")                                         return 4;
+  if (ticket.exit_status)                                                        return -1;
+  if (ticket.status === "partially_fulfilled")                                   return 3;
+  if (ticket.status === "ready_for_collection" || packing?.status === "ready")  return 3;
   if (ticket.status === "confirmed_wip")    return packing ? 2 : 1;
   if (ticket.status === "sale_order")       return 1;
   return 0;
@@ -193,6 +200,10 @@ export default function SalesTickets() {
   const [confirming, setConfirming]     = useState(false);
   const [sending, setSending]           = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
+
+  // ── Reseller pre-confirm stock-check modal ────────────────────────────────
+  const [stockCheckModal, setStockCheckModal] = useState(false);
+  const [stockCheckData,  setStockCheckData ] = useState(null); // {is_partial, lines}
 
   // ── Link existing order modal ─────────────────────────────────────────────
   const [linkOrderOpen,        setLinkOrderOpen       ] = useState(false);
@@ -507,7 +518,24 @@ export default function SalesTickets() {
     }
   };
 
-  const confirmOrder = async (overrideCredit = false) => {
+  const confirmOrder = async (overrideCredit = false, skipStockCheck = false) => {
+    // Show stock-check modal for all roles — a quote placed days ago may have stock gaps
+    if (!skipStockCheck && detail.order_id) {
+      setConfirming(true);
+      try {
+        const { data } = await api.get(`/api/orders/${detail.order_id}/stock-check`);
+        setStockCheckData(data);
+        setStockCheckModal(true);
+      } catch {
+        // If stock-check fails, proceed without it
+        setStockCheckModal(false);
+        await confirmOrder(overrideCredit, true);
+      } finally {
+        setConfirming(false);
+      }
+      return;
+    }
+
     setConfirming(true);
     try {
       const { data } = await api.put(
@@ -516,19 +544,23 @@ export default function SalesTickets() {
         { params: overrideCredit ? { override_credit: true } : {} },
       );
       if (data.invoice_name) {
-        toast.success(`Order confirmed · Invoice ${data.invoice_name} created`);
+        toast.success(`Order confirmed. Invoice ${data.invoice_name} created.`);
+      } else if (data.warnings?.some(w => w.toLowerCase().includes("deferred"))) {
+        toast.success("Order confirmed. Invoice will be created on collection.");
       } else {
         toast.success("Order confirmed — ticket moved to WIP");
       }
       if (data.warnings?.length) {
-        data.warnings.forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
+        data.warnings.filter(w => !w.toLowerCase().includes("deferred"))
+          .forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
       }
+      setStockCheckModal(false);
       refreshDetail(detail.id);
     } catch (e) {
       if (e.response?.status === 402) {
         setConfirming(false);
         if (window.confirm(`${e.response.data.detail}\n\nConfirm anyway?`)) {
-          await confirmOrder(true);
+          await confirmOrder(true, true);
         }
         return;
       }
@@ -1066,6 +1098,33 @@ export default function SalesTickets() {
                             })}
                           </div>
                         )}
+                        {/* Partial fulfilment split — shown to reseller when first delivery is ready */}
+                        {detail.status === "partially_fulfilled" && packingEntry?.items?.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                            {packingEntry.items.filter(i => !i.is_backordered).length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1">Shipping now</p>
+                                {packingEntry.items.filter(i => !i.is_backordered).map((i, idx) => (
+                                  <div key={idx} className="flex justify-between text-[11px] text-gray-600 py-0.5">
+                                    <span>{i.name}</span>
+                                    <span className="font-medium">{i.qty_reserved ?? i.qty} units</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {packingEntry.items.filter(i => i.is_backordered).length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1">Backordered</p>
+                                {packingEntry.items.filter(i => i.is_backordered).map((i, idx) => (
+                                  <div key={idx} className="flex justify-between text-[11px] text-gray-500 py-0.5">
+                                    <span>{i.name}</span>
+                                    <span className="font-medium text-amber-600">{Math.round((i.qty_ordered ?? i.qty) - (i.qty_reserved ?? 0))} units</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {detail.payment_confirmed_at && (
                           <p className="text-[11px] text-green-600 flex items-center gap-1.5 mt-3 pt-3 border-t border-gray-100">
                             <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
@@ -1091,7 +1150,7 @@ export default function SalesTickets() {
                       {detail.customer_email && (
                         <p className="text-xs text-gray-500 flex items-center gap-1.5">
                           <Mail size={11} className="text-gray-400 flex-shrink-0" />
-                          <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors truncate">{detail.customer_email}</a>
+                          <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors truncate min-w-0">{detail.customer_email}</a>
                         </p>
                       )}
                       {detail.customer_company_id ? (
@@ -1478,6 +1537,82 @@ export default function SalesTickets() {
               </div>
             </div>
           </main>
+        )}
+
+        {/* Reseller pre-confirm stock-check modal */}
+        {stockCheckModal && stockCheckData && (
+          <Modal title="Confirm Order" onClose={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+            {stockCheckData.is_partial ? (
+              <>
+                <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
+                  <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      {isReseller
+                        ? "Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready."
+                        : "Confirming will create a partial delivery. Available items will ship immediately and a backorder will be created in Odoo for the remainder. The client and your team will be notified."}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-3 mb-4">
+                  {stockCheckData.lines.filter(l => !l.will_backorder).length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Ships now</p>
+                      <div className="space-y-1">
+                        {stockCheckData.lines.filter(l => !l.will_backorder).map((l, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-green-50 rounded-lg px-3 py-1.5">
+                            <span className="text-gray-700">{l.name}</span>
+                            <span className="font-medium text-green-700">{l.qty_available} units</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {stockCheckData.lines.filter(l => l.will_backorder).length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Backordered</p>
+                      <div className="space-y-1">
+                        {stockCheckData.lines.filter(l => l.will_backorder).map((l, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-amber-50 rounded-lg px-3 py-1.5">
+                            <span className="text-gray-700">{l.name}</span>
+                            <span className="font-medium text-amber-700">{l.qty_available} of {l.qty_ordered} in stock</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                    Cancel
+                  </BtnSecondary>
+                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => confirmOrder(false, true)}>
+                    {isReseller ? "Confirm with Backorder" : "Confirm — Create Backorder"}
+                  </BtnPrimary>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
+                  <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-green-800">
+                    {isReseller
+                      ? "All items are in stock. Your order will be fulfilled in full."
+                      : "All items are in stock. This order will be fulfilled in full."}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                    Cancel
+                  </BtnSecondary>
+                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => confirmOrder(false, true)}>
+                    Confirm Order
+                  </BtnPrimary>
+                </div>
+              </>
+            )}
+          </Modal>
         )}
 
         {/* Deposit modal overlays the detail page */}

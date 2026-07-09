@@ -26,7 +26,12 @@ from database import col, NO_ID
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
 from routes.settings_routes import get_email_routing
-from services.email_service import send_order_ready_for_collection
+from services.email_service import (
+    send_order_ready_for_collection,
+    send_partial_delivery_ready,
+    send_backorder_created_internal,
+    send_backorder_stock_ready,
+)
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
 settings = get_settings()
@@ -124,6 +129,8 @@ async def _sync_sales_ticket(order_id: str, outcome: str, reason: Optional[str] 
         if outcome == "incomplete":
             updates["status"] = "incomplete"
             updates["incomplete_reason"] = reason
+        elif outcome == "partially_fulfilled":
+            updates["status"] = "partially_fulfilled"
         else:  # complete | cancelled — terminal exit
             updates["exit_status"] = outcome
         await col("tickets").update_one(
@@ -304,6 +311,10 @@ class CancelBody(BaseModel):
 class AdoptBody(BaseModel):
     order_id: int  # Odoo sale.order ID (integer)
 
+class MarkCollectedBody(BaseModel):
+    order_id: str
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
+
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
@@ -432,13 +443,15 @@ def _validate_odoo_delivery(odoo_order_id: int) -> dict:
 
     Sets qty_done = reserved quantity on every move line before validating to
     avoid the Immediate Transfer dialog. If button_validate returns a backorder
-    wizard dict (partial reservation), processes it best-effort so Odoo creates
-    the backorder automatically.
+    wizard dict (partial reservation), processes it so Odoo creates the backorder
+    and captures the new picking's ID and name for portal tracking.
 
-    Returns {"success": bool, "pickings": [name, ...], "error": str|None}.
+    Returns {"success": bool, "pickings": [name, ...], "error": str|None,
+             "backorder_picking_id": int|None, "backorder_picking_name": str|None}.
     Never raises — caller always continues regardless of outcome.
     """
     _odoo = get_odoo_client()
+    _no_backorder = {"backorder_picking_id": None, "backorder_picking_name": None}
     try:
         pickings = _odoo.search_read(
             "stock.picking",
@@ -446,13 +459,15 @@ def _validate_odoo_delivery(odoo_order_id: int) -> dict:
             ["id", "name"],
         )
     except Exception as e:
-        return {"success": False, "pickings": [], "error": f"Could not fetch delivery orders from Odoo: {e}"}
+        return {"success": False, "pickings": [], "error": f"Could not fetch delivery orders from Odoo: {e}", **_no_backorder}
 
     if not pickings:
-        return {"success": False, "pickings": [], "error": "No delivery orders in Ready state found for this order"}
+        return {"success": False, "pickings": [], "error": "No delivery orders in Ready state found for this order", **_no_backorder}
 
     validated: list = []
     errors: list = []
+    backorder_picking_id: Optional[int] = None
+    backorder_picking_name: Optional[str] = None
     for picking in pickings:
         pid = picking["id"]
         pname = picking["name"]
@@ -464,6 +479,16 @@ def _validate_odoo_delivery(odoo_order_id: int) -> dict:
                 try:
                     wiz_id = _odoo.create("stock.backorder.confirmation", {"pick_ids": [(4, pid)]})
                     _odoo.execute("stock.backorder.confirmation", "process", [wiz_id])
+                    # Capture the new backorder picking so we can create a portal entry
+                    _bo_picks = _odoo.search_read(
+                        "stock.picking",
+                        [("backorder_id", "=", pid), ("state", "not in", ["done", "cancel"])],
+                        ["id", "name"],
+                        limit=1,
+                    )
+                    if _bo_picks:
+                        backorder_picking_id = _bo_picks[0]["id"]
+                        backorder_picking_name = _bo_picks[0]["name"]
                 except Exception:
                     pass  # backorder wizard failed — picking validated with partial qty_done
             validated.append(pname)
@@ -471,10 +496,10 @@ def _validate_odoo_delivery(odoo_order_id: int) -> dict:
             errors.append(f"{pname}: {e}")
 
     if errors and not validated:
-        return {"success": False, "pickings": [], "error": "; ".join(errors)}
+        return {"success": False, "pickings": [], "error": "; ".join(errors), **_no_backorder}
     if errors:
-        return {"success": True, "pickings": validated, "error": f"Partial: {'; '.join(errors)}"}
-    return {"success": True, "pickings": validated, "error": None}
+        return {"success": True, "pickings": validated, "error": f"Partial: {'; '.join(errors)}", "backorder_picking_id": backorder_picking_id, "backorder_picking_name": backorder_picking_name}
+    return {"success": True, "pickings": validated, "error": None, "backorder_picking_id": backorder_picking_id, "backorder_picking_name": backorder_picking_name}
 
 
 @router.put("/complete")
@@ -497,17 +522,62 @@ async def complete_entry(
     now = datetime.now(timezone.utc)
 
     # ── Odoo delivery validation (non-blocking) ────────────────────────────────
-    delivery_result: dict = {"success": False, "pickings": [], "error": "Not attempted"}
+    _no_bo: dict = {"backorder_picking_id": None, "backorder_picking_name": None}
+    delivery_result: dict = {"success": False, "pickings": [], "error": "Not attempted", **_no_bo}
     try:
         odoo_order_id = int(entry["order_id"])
         delivery_result = _validate_odoo_delivery(odoo_order_id)
     except (ValueError, TypeError) as e:
-        delivery_result = {"success": False, "pickings": [], "error": f"Invalid order ID: {e}"}
+        delivery_result = {"success": False, "pickings": [], "error": f"Invalid order ID: {e}", **_no_bo}
     except Exception as e:
-        delivery_result = {"success": False, "pickings": [], "error": str(e)}
+        delivery_result = {"success": False, "pickings": [], "error": str(e), **_no_bo}
+
+    is_partial = bool(entry.get("has_pending_invoice"))
+    backorder_entry_id: Optional[str] = None
+    backorder_picking_name: Optional[str] = delivery_result.get("backorder_picking_name")
+
+    # ── Create backorder packing entry when a partial delivery was validated ──
+    if is_partial and delivery_result.get("backorder_picking_id"):
+        _bo_items = [
+            {
+                "name": i["name"],
+                "sku": i.get("sku", ""),
+                "qty": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
+                "qty_ordered": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
+                "qty_reserved": 0,
+                "is_backordered": False,
+                "location": "",
+            }
+            for i in entry.get("items", [])
+            if i.get("is_backordered")
+        ]
+        _bo_entry = {
+            "order_id": body.order_id,
+            "odoo_picking_id": delivery_result["backorder_picking_id"],
+            "picking_name": backorder_picking_name,
+            "is_backorder": True,
+            "parent_packing_id": str(entry["_id"]),
+            "waiting_stock": True,
+            "has_pending_invoice": True,
+            "status": "waiting_stock",
+            "items": _bo_items,
+            "reseller_id": entry.get("reseller_id"),
+            "customer_name": entry.get("customer_name"),
+            "partner_id": entry.get("partner_id"),
+            "assigned_packer": None,
+            "qa_approved_at": None, "qa_approved_by": None,
+            "rp_approved_at": None, "rp_approved_by": None,
+            "collected_at": None, "collected_by": None,
+            "delivery_validated": None,
+            "created_at": now,
+            "completed_at": None,
+            "notes": f"Backorder for {entry.get('picking_name', body.order_id)}",
+        }
+        _bo_result = await col("packing_board").insert_one(_bo_entry)
+        backorder_entry_id = str(_bo_result.inserted_id)
 
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"order_id": body.order_id, "is_backorder": {"$ne": True}},
         {"$set": {
             "status": "complete",
             "completed_at": now,
@@ -515,8 +585,9 @@ async def complete_entry(
         }},
         return_document=True,
     )
-    updated.pop("_id", None)
-    await push_update(updated)
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
     await audit_log("packing.complete", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
     await audit_log(
         "packing.delivery_validated",
@@ -526,33 +597,234 @@ async def complete_entry(
         user=current_user,
         detail=delivery_result,
     )
-    await _sync_sales_ticket(body.order_id, "complete")
+    await _sync_sales_ticket(body.order_id, "partially_fulfilled" if is_partial else "complete")
 
-    _sups = await col("users").find(
-        {"role": "warehouse_supervisor", "email": {"$exists": True, "$ne": ""}},
-        {"email": 1, "_id": 0},
-    ).to_list(50)
     _routing = await get_email_routing()
-    _sup_emails = [u["email"] for u in _sups if u.get("email")]
-    for _extra in _routing.get("order_ready_extra_to", []):
-        if _extra and _extra not in _sup_emails:
-            _sup_emails.append(_extra)
-    if _sup_emails:
-        background_tasks.add_task(
-            send_order_ready_for_collection,
-            order_ref=str(updated.get("order_id", body.order_id)),
-            customer_name=updated.get("customer_name", ""),
-            packer_name=updated.get("assigned_packer", "") or updated.get("packer_name", ""),
-            supervisor_emails=_sup_emails,
-        )
+
+    if is_partial:
+        # ── Partial: notify reseller of first delivery + backorder creation ──
+        _reseller_email: Optional[str] = None
+        _reseller_name: Optional[str] = None
+        if entry.get("reseller_id"):
+            _res = await col("resellers").find_one(
+                {"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
+            )
+            if _res:
+                _reseller_email = _res.get("email")
+                _reseller_name = _res.get("name")
+        _shipped_items = [
+            {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
+            for i in entry.get("items", [])
+            if not i.get("is_backordered")
+        ]
+        _backorder_items = [
+            {"name": i["name"], "qty": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4)}
+            for i in entry.get("items", [])
+            if i.get("is_backordered")
+        ]
+        if _reseller_email:
+            background_tasks.add_task(
+                send_partial_delivery_ready,
+                reseller_email=_reseller_email,
+                order_ref=str(entry.get("order_id", body.order_id)),
+                customer_name=entry.get("customer_name", ""),
+                reseller_name=_reseller_name or "",
+                shipped_lines=_shipped_items,
+                backorder_lines=_backorder_items,
+                cc=_routing.get("order_cc") or None,
+            )
+        if _routing.get("order_to"):
+            background_tasks.add_task(
+                send_backorder_created_internal,
+                to=_routing["order_to"],
+                order_ref=str(entry.get("order_id", body.order_id)),
+                customer_name=entry.get("customer_name", ""),
+                backorder_ref=backorder_picking_name or "",
+                backorder_lines=_backorder_items,
+            )
+    else:
+        # ── Full delivery: notify supervisors for collection ──────────────────
+        _sups = await col("users").find(
+            {"role": "warehouse_supervisor", "email": {"$exists": True, "$ne": ""}},
+            {"email": 1, "_id": 0},
+        ).to_list(50)
+        _sup_emails = [u["email"] for u in _sups if u.get("email")]
+        for _extra in _routing.get("order_ready_extra_to", []):
+            if _extra and _extra not in _sup_emails:
+                _sup_emails.append(_extra)
+        if _sup_emails:
+            background_tasks.add_task(
+                send_order_ready_for_collection,
+                order_ref=str((updated or entry).get("order_id", body.order_id)),
+                customer_name=(updated or entry).get("customer_name", ""),
+                packer_name=(updated or entry).get("assigned_packer", "") or (updated or entry).get("packer_name", ""),
+                supervisor_emails=_sup_emails,
+            )
 
     response: dict = {"success": True, "delivery_validated": delivery_result["success"]}
+    if is_partial:
+        response["is_partial"] = True
+        response["backorder_entry_id"] = backorder_entry_id
     if not delivery_result["success"]:
         response["warning"] = (
             delivery_result.get("error")
             or "Delivery could not be validated in Odoo. Stock levels may not reflect this completion."
         )
     return response
+
+
+@router.put("/mark-collected")
+async def mark_collected(
+    body: MarkCollectedBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Orders Clerk confirms customer has collected a delivery (primary or backorder).
+    Creates the Odoo invoice for the delivered qty, then checks whether all pickings
+    for this order are now collected — if so, advances the ticket to complete."""
+    query: dict = {"order_id": body.order_id}
+    if body.picking_id:
+        query["odoo_picking_id"] = body.picking_id
+    else:
+        query["is_backorder"] = {"$ne": True}  # target primary entry when no picking_id given
+
+    entry = await col("packing_board").find_one(query)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Packing entry not found")
+    if entry.get("collected_at"):
+        raise HTTPException(status_code=400, detail="This delivery has already been marked as collected")
+    if entry.get("status") != "complete":
+        raise HTTPException(status_code=400, detail="Delivery must be complete before it can be marked as collected")
+
+    now = datetime.now(timezone.utc)
+    actor_name = current_user.get("name") or current_user.get("username", "")
+
+    # ── Create Odoo invoice for delivered qty ─────────────────────────────────
+    invoice_id: Optional[int] = None
+    invoice_name: Optional[str] = None
+    invoice_warning: Optional[str] = None
+    if entry.get("has_pending_invoice"):
+        try:
+            odoo = get_odoo_client()
+            sale_order_id = int(entry["order_id"])
+            wiz_id = odoo.create(
+                "sale.advance.payment.inv",
+                {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+            )
+            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
+            inv_rows = odoo.search_read(
+                "account.move",
+                [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
+                ["id", "name"],
+                order="id desc",
+                limit=1,
+            )
+            if inv_rows:
+                invoice_id = inv_rows[0]["id"]
+                invoice_name = inv_rows[0]["name"]
+        except Exception as e:
+            invoice_warning = f"Invoice creation failed: {e}"
+
+    # ── Mark entry collected ──────────────────────────────────────────────────
+    update_fields: dict = {"collected_at": now, "collected_by": actor_name}
+    if invoice_id:
+        update_fields["invoice_id"] = invoice_id
+        update_fields["invoice_name"] = invoice_name
+
+    await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": update_fields})
+    await audit_log(
+        "packing.collected",
+        "packing_board",
+        body.order_id,
+        entity_label=body.order_id,
+        user=current_user,
+        detail={"picking_id": entry.get("odoo_picking_id"), "invoice_id": invoice_id},
+    )
+
+    # ── Check if all pickings for this order are now collected ────────────────
+    all_entries = await col("packing_board").find({"order_id": body.order_id}).to_list(50)
+    # Exclude waiting_stock backorders — they haven't started yet and don't count
+    relevant = [e for e in all_entries if not e.get("waiting_stock")]
+    all_collected = bool(relevant) and all(e.get("collected_at") is not None for e in relevant)
+    if all_collected:
+        await _sync_sales_ticket(body.order_id, "complete")
+
+    response: dict = {
+        "success": True,
+        "collected_at": now.isoformat(),
+        "invoice_id": invoice_id,
+        "invoice_name": invoice_name,
+        "order_complete": all_collected,
+    }
+    if invoice_warning:
+        response["warning"] = invoice_warning
+    return response
+
+
+@router.get("/backorders/check-stock")
+async def check_backorder_stock(
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Check all waiting_stock backorder entries against Odoo. When a backorder picking
+    has moved to 'assigned' (stock reserved), clears the waiting flag and fires
+    notifications to the reseller and internal staff."""
+    entries = await col("packing_board").find(
+        {"is_backorder": True, "waiting_stock": True}
+    ).to_list(200)
+
+    if not entries:
+        return {"checked": 0, "ready": 0, "updated": []}
+
+    odoo = get_odoo_client()
+    _routing = await get_email_routing()
+    updated_refs: list = []
+
+    for bo_entry in entries:
+        picking_id = bo_entry.get("odoo_picking_id")
+        if not picking_id:
+            continue
+        try:
+            pick_rows = odoo.read("stock.picking", [picking_id], fields=["id", "state"])
+        except Exception:
+            continue
+        if not pick_rows or pick_rows[0]["state"] != "assigned":
+            continue
+
+        await col("packing_board").update_one(
+            {"_id": bo_entry["_id"]},
+            {"$set": {"waiting_stock": False}},
+        )
+
+        order_ref = str(bo_entry.get("order_id", ""))
+        customer_name = bo_entry.get("customer_name", "")
+        reseller_email: Optional[str] = None
+        reseller_name: Optional[str] = None
+        if bo_entry.get("reseller_id"):
+            _res = await col("resellers").find_one(
+                {"id": bo_entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
+            )
+            if _res:
+                reseller_email = _res.get("email")
+                reseller_name = _res.get("name")
+
+        _bo_items = [
+            {"name": i["name"], "qty": i.get("qty_ordered", i.get("qty", 0))}
+            for i in bo_entry.get("items", [])
+        ]
+
+        background_tasks.add_task(
+            send_backorder_stock_ready,
+            reseller_email=reseller_email,
+            internal_to=_routing.get("order_to"),
+            order_ref=order_ref,
+            customer_name=customer_name,
+            reseller_name=reseller_name or "",
+            backorder_lines=_bo_items,
+        )
+        updated_refs.append(order_ref)
+
+    return {"checked": len(entries), "ready": len(updated_refs), "updated": updated_refs}
 
 
 @router.put("/incomplete")

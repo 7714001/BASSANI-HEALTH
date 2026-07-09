@@ -12,7 +12,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck,
+  AlertTriangle, Package, Clock, Truck, RefreshCw,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
@@ -20,21 +20,23 @@ import {
 } from "../components/UI";
 
 const STATUS_LABEL = {
-  queued:     "Queued",
-  packing:    "Packing In Progress",
-  ready:      "Ready for Inspection",
-  collected:  "Collected",
-  complete:   "Complete",
-  incomplete: "Incomplete",
-  cancelled:  "Cancelled",
-  cleared:    "Cleared",
+  queued:          "Queued",
+  packing:         "Packing In Progress",
+  ready:           "Ready for Inspection",
+  collected:       "Collected",
+  complete:        "Complete",
+  incomplete:      "Incomplete",
+  cancelled:       "Cancelled",
+  cleared:         "Cleared",
+  waiting_stock:   "Waiting for Stock",
 };
 const STATUS_COLOR = {
   queued: "gray", packing: "blue", ready: "amber", collected: "teal",
   complete: "green", incomplete: "orange", cancelled: "red", cleared: "gray",
+  waiting_stock: "amber",
 };
 const TERMINAL = new Set(["complete", "incomplete", "cancelled", "collected", "cleared"]);
-const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "incomplete", "cancelled", "cleared"];
+const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "incomplete", "cancelled", "cleared", "waiting_stock"];
 
 export default function OrdersTickets() {
   const { can } = useAuth();
@@ -105,14 +107,53 @@ export default function OrdersTickets() {
     setBusyId(detail.order_id);
     try {
       const r = await api.put("/api/packing/complete", { order_id: detail.order_id });
-      if (r.data.warning) {
+      if (r.data.is_partial) {
+        toast.success("Partial delivery validated — backorder entry created");
+      } else if (r.data.warning) {
         toast.success("Order marked complete");
         toast.error(`Delivery not validated in Odoo: ${r.data.warning}`, { duration: 8000 });
       } else {
         toast.success("Order complete — delivery validated in Odoo");
       }
+      load();
       await refreshDetail(detail.order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
+    finally { setBusyId(null); }
+  };
+
+  const handleCollect = async (pickingId = null) => {
+    setBusyId(detail.order_id);
+    try {
+      const r = await api.put("/api/packing/mark-collected", {
+        order_id: detail.order_id,
+        ...(pickingId ? { picking_id: pickingId } : {}),
+      });
+      if (r.data.invoice_name) {
+        toast.success(`Collected. Invoice ${r.data.invoice_name} created.`);
+      } else if (r.data.warning) {
+        toast.success("Marked as collected");
+        toast.error(`Invoice: ${r.data.warning}`, { duration: 8000 });
+      } else {
+        toast.success("Marked as collected");
+      }
+      if (r.data.order_complete) toast.success("All deliveries collected — order complete");
+      load();
+      await refreshDetail(detail.order_id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
+    finally { setBusyId(null); }
+  };
+
+  const handleCheckStock = async () => {
+    setBusyId("check-stock");
+    try {
+      const r = await api.get("/api/packing/backorders/check-stock");
+      if (r.data.ready > 0) {
+        toast.success(`${r.data.ready} backorder${r.data.ready !== 1 ? "s" : ""} now have stock — notifications sent`);
+        load();
+      } else {
+        toast("No backorders have stock available yet", { icon: "ℹ️" });
+      }
+    } catch (e) { toast.error(e.response?.data?.detail || "Stock check failed"); }
     finally { setBusyId(null); }
   };
 
@@ -227,23 +268,35 @@ export default function OrdersTickets() {
                       <thead>
                         <tr className="border-b border-gray-100 bg-slate-50/50">
                           <th className="text-left p-3 pl-6 text-xs font-semibold text-gray-400 uppercase tracking-wide">Item</th>
-                          <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
+                          <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Ordered</th>
+                          <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Reserved</th>
                           <th className="text-center p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Packed</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(detail.items || []).map((item, i) => {
                           const ticked = detail.item_ticks?.[item.sku];
+                          const isBackordered = item.is_backordered;
                           return (
-                            <tr key={i} className="border-b border-gray-50 hover:bg-slate-50/30">
+                            <tr key={i} className={`border-b border-gray-50 hover:bg-slate-50/30 ${isBackordered ? "bg-amber-50/40" : ""}`}>
                               <td className="p-3 pl-6">
-                                <p className="text-sm font-medium text-gray-900">{item.name || item.description || item.sku}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900">{item.name || item.description || item.sku}</p>
+                                  {isBackordered && (
+                                    <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>
+                                  )}
+                                </div>
                                 {item.sku && (
                                   <p className="text-[10px] font-mono text-gray-400 mt-0.5">{item.sku}</p>
                                 )}
                               </td>
                               <td className="p-3 text-center text-sm text-gray-600">
-                                {item.qty ?? item.product_uom_qty ?? "—"}
+                                {item.qty_ordered ?? item.qty ?? item.product_uom_qty ?? "—"}
+                              </td>
+                              <td className="p-3 text-center text-sm">
+                                {item.qty_reserved != null
+                                  ? <span className={item.is_backordered ? "text-amber-600 font-medium" : "text-gray-600"}>{item.qty_reserved}</span>
+                                  : <span className="text-gray-300">—</span>}
                               </td>
                               <td className="p-3 pr-6 text-center">
                                 {ticked
@@ -450,6 +503,65 @@ export default function OrdersTickets() {
                         </div>
                       )}
 
+                      {/* orders_clerk: mark as collected (partial orders only — creates invoice) */}
+                      {canOrders && detail.status === "complete" && detail.has_pending_invoice && !detail.collected_at && (
+                        <div className="bg-teal-50 border border-teal-100 rounded-2xl p-4">
+                          <p className="text-xs text-teal-700 mb-3">
+                            Customer has collected this delivery. Marking as collected will create the invoice in Odoo for the items delivered.
+                          </p>
+                          {detail.collected_at ? (
+                            <p className="text-xs text-green-600 flex items-center gap-1.5">
+                              <CheckCircle2 size={12} />Collected {fmtDate(detail.collected_at)} by {detail.collected_by}
+                            </p>
+                          ) : (
+                            <BtnPrimary
+                              onClick={() => handleCollect(detail.odoo_picking_id || null)}
+                              loading={busyId === detail.order_id}
+                              className="w-full justify-center"
+                            >
+                              <Truck size={13} />Mark as Collected
+                            </BtnPrimary>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Waiting stock — backorder entry info + check stock button */}
+                      {detail.status === "waiting_stock" && (
+                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-xs font-semibold text-amber-800">Awaiting stock reservation</p>
+                              <p className="text-xs text-amber-700 mt-0.5">
+                                This is a backorder. The items below will be fulfilled when stock becomes available in Odoo.
+                              </p>
+                            </div>
+                          </div>
+                          {canOrders && (
+                            <BtnSecondary
+                              onClick={handleCheckStock}
+                              loading={busyId === "check-stock"}
+                              className="w-full justify-center text-amber-700 border-amber-200 hover:bg-amber-100"
+                            >
+                              <RefreshCw size={13} />Check stock availability
+                            </BtnSecondary>
+                          )}
+                        </div>
+                      )}
+
+                      {/* collected_at display for complete backorder entries */}
+                      {detail.status === "complete" && detail.collected_at && (
+                        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
+                          <p className="text-xs text-green-700 flex items-center gap-1.5">
+                            <CheckCircle2 size={13} className="shrink-0" />
+                            Collected {fmtDate(detail.collected_at)} by {detail.collected_by}
+                            {detail.invoice_name && (
+                              <span className="ml-1 font-mono text-green-600">· {detail.invoice_name}</span>
+                            )}
+                          </p>
+                        </div>
+                      )}
+
                       {/* Override stage (tickets.manage only) */}
                       {canManage && (
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
@@ -507,19 +619,65 @@ export default function OrdersTickets() {
 
 
   // ── List view ───────────────────────────────────────────────────────────────
+  const [statusFilter, setStatusFilter] = useState(new Set());
+  const toggleStatus = (s) => setStatusFilter(prev => {
+    const next = new Set(prev); next.has(s) ? next.delete(s) : next.add(s); return next;
+  });
+  const filteredEntries = statusFilter.size === 0 ? entries
+    : entries.filter(e => statusFilter.has(e.status));
+  const hasWaitingStock = entries.some(e => e.status === "waiting_stock");
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Orders Tickets"
         subtitle="Queued → Packing → Ready → QA + RP Approved → Complete"
         onRefresh={load}
+        actions={
+          hasWaitingStock && canOrders ? (
+            <BtnSecondary
+              onClick={handleCheckStock}
+              loading={busyId === "check-stock"}
+              className="text-amber-700 border-amber-200 hover:bg-amber-50"
+            >
+              <RefreshCw size={13} />Check backorder stock
+            </BtnSecondary>
+          ) : undefined
+        }
       />
       <main className="flex-1 overflow-y-auto p-6">
-        {loading ? <LoadingState /> : entries.length === 0 ? (
-          <EmptyState message="No active orders on the board." />
+        {!loading && entries.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {["queued", "packing", "ready", "complete", "incomplete", "waiting_stock"].map(s => (
+              <button
+                key={s}
+                onClick={() => toggleStatus(s)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  statusFilter.has(s)
+                    ? "bg-bassani-600 text-white border-bassani-600"
+                    : "bg-white text-gray-500 border-gray-200 hover:border-bassani-300"
+                }`}
+              >
+                {STATUS_LABEL[s] || s}
+                {s === "waiting_stock" && entries.filter(e => e.status === s).length > 0 && (
+                  <span className="ml-1.5 bg-amber-500 text-white rounded-full px-1.5 text-[10px]">
+                    {entries.filter(e => e.status === s).length}
+                  </span>
+                )}
+              </button>
+            ))}
+            {statusFilter.size > 0 && (
+              <button onClick={() => setStatusFilter(new Set())} className="text-xs text-gray-400 hover:text-gray-600 ml-1 transition-colors">
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+        {loading ? <LoadingState /> : filteredEntries.length === 0 ? (
+          <EmptyState message={entries.length === 0 ? "No active orders on the board." : "No orders match the selected filter."} />
         ) : (
           <DataTable
-            data={entries}
+            data={filteredEntries}
             onRowClick={openDetail}
             columns={[
               { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: e } }) => (
@@ -529,7 +687,12 @@ export default function OrdersTickets() {
                 </div>
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: e } }) => (
-                <Badge color={STATUS_COLOR[e.status]}>{STATUS_LABEL[e.status] || e.status}</Badge>
+                <div className="flex items-center gap-1.5">
+                  <Badge color={STATUS_COLOR[e.status]}>{STATUS_LABEL[e.status] || e.status}</Badge>
+                  {e.is_backorder && (
+                    <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>
+                  )}
+                </div>
               )},
               { accessorKey: "packer_name", header: "Packer", cell: ({ row: { original: e } }) =>
                 e.packer_name || <span className="text-gray-300">—</span>

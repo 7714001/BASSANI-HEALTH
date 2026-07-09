@@ -1154,6 +1154,104 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - **`order_id` in packing board is the Odoo integer as string** — `int(entry["order_id"])` is the safe conversion. This was confirmed by reading `adopt_order()` which sets `order_id = str(body.order_id)` where `body.order_id` is the Odoo integer.
 - **`action_set_quantities_to_reservation()` before validate** — avoids the Odoo "Immediate Transfer" wizard that would otherwise prompt for `qty_done` on every move line. Since QA and RP have already signed off, we want to validate exactly what was reserved.
 
+#### 8.23 — Partial Fulfilment and Backorder Pipeline — Added 2026-07-09
+
+**Goal:** Allow Bassani to partially fulfil an order (ship what is in stock), automatically create an Odoo backorder for the remainder, and track each delivery independently through the portal pipeline — from packing to QA/RP sign-off to customer collection to invoicing. Resellers and internal staff see live visibility of which items are ready and which are pending stock, with email and in-app notifications at every handoff. When upstream production replenishes the backordered stock, the system surfaces this automatically so the team can close the loop without manual chasing.
+
+**Context:** The existing packing board pipeline validates the full delivery in Odoo when the Orders Clerk marks an order complete after QA and RP sign-off (`_validate_odoo_delivery` in `packing_board_routes.py`). When stock is partially reserved, `action_set_quantities_to_reservation()` already sets `qty_done` to the reserved quantity only, and `button_validate()` already triggers Odoo's backorder wizard — but the portal currently treats this as a non-blocking best-effort and does nothing with the created backorder. This sub-deploy makes backorder handling deliberate and visible throughout the pipeline.
+
+**Odoo prerequisite (Bassani configuration):** Set `invoice_policy = 'delivery'` on all product templates in Odoo. This instructs Odoo's invoice wizard to create invoices based on actually delivered quantities, not ordered quantities — which is the correct model for partial fulfilment. Until this is set, invoice amounts will reflect the full ordered quantity regardless of what was physically moved.
+
+**Phase 13 integration point:** When backordered items are produced, manicured, and entered into the vault as finished goods, this pipeline is the downstream consumer. Once a new batch is received into the vault location and Odoo assigns it to the waiting backorder picking (reserved stock), the portal detects this and re-queues the backorder on the packing board automatically.
+
+---
+
+**New ticket statuses:**
+- `partially_fulfilled` — at least one picking is validated done; a backorder picking exists and is not yet complete. Sits between `confirmed_wip` and `ready_for_collection` in the pipeline.
+
+**New packing board fields (per entry):**
+- `is_backorder: bool` — true if this entry corresponds to an Odoo backorder picking
+- `parent_packing_id: str | None` — `_id` of the original packing board entry (set on backorder entries only)
+- `odoo_picking_id: int` — the Odoo `stock.picking.id` this entry maps to (needed for partial validation)
+- `picking_name: str` — the Odoo picking reference (e.g. `WH/OUT/00045`)
+- `collected_at: datetime | None` — set when Orders Clerk marks this delivery as collected
+- `collected_by: str | None` — user id of the clerk who marked it collected
+- `waiting_stock: bool` — true when this is a backorder entry waiting for Odoo to reserve stock
+- `invoice_id: int | None` / `invoice_name: str | None` — the invoice created for THIS picking's delivered quantities (may differ from the ticket-level `invoice_id` when there are multiple pickings)
+- `items[n].qty_ordered: float` — ordered quantity for this move line
+- `items[n].qty_reserved: float` — what Odoo reserved at packing time
+- `items[n].is_backordered: bool` — true when qty_reserved < qty_ordered
+
+**Stock shortfall detection (at `confirm_order` time):**
+- [ ] After `action_confirm`, read all `stock.move` records on the sale order's picking(s); compare `product_uom_qty` (ordered) with `reserved_availability` (what Odoo could reserve)
+- [ ] If any move has `reserved_availability < product_uom_qty`, the order is "partial" — collect a shortfall list: `[{product_name, qty_ordered, qty_available, qty_short}]`
+- [ ] `confirm_order` response gains `is_partial: bool` and `shortfalls: list` fields alongside existing `warnings`
+- [ ] If partial: **skip the immediate invoice creation step** in `confirm_order` — invoice is deferred to collection time. The ticket is flagged `has_pending_invoice: true` in MongoDB.
+- [ ] If not partial: existing invoice-on-confirm behaviour is unchanged
+- [ ] `confirm_order` fires `send_order_confirmed_partial` email to reseller (if reseller order) listing which items will ship and which are on backorder
+- [ ] `confirm_order` fires `send_backorder_alert_internal` email to the `order_to` routing address listing the shortfalls so the fulfilment team is immediately aware
+
+**Pre-confirm shortfall preview (reseller flow):**
+- [ ] `GET /api/orders/{order_id}/stock-check` — new endpoint; reads all `stock.move` records for the order's picking; returns `{is_partial, lines: [{product_name, qty_ordered, qty_available, qty_short, is_backordered}]}`; gated on reseller ownership (same logic as `get_order`)
+- [ ] `SalesTickets.js` — before calling `confirmOrder()` for a reseller, call `stock-check`; if `is_partial`, show a modal: "Some items in this order are not currently in stock and will be placed on backorder. Items ready to ship: [list]. Items on backorder: [list with qty]. Confirm anyway?" — reseller must explicitly acknowledge before the confirmation call proceeds
+- [ ] If reseller declines, return to the ticket detail without confirming
+
+**Packing board — partial-aware entry creation:**
+- [ ] `confirm_order`: when creating the packing board entry, populate `items[n].qty_ordered`, `items[n].qty_reserved`, `items[n].is_backordered` from the stock move data; set `odoo_picking_id` from the picking record; set `picking_name` from `picking["name"]`
+- [ ] `items[n].is_backordered = true` items are visually flagged on the packing board card with an amber "Backordered" chip — packer sees exactly what to pack and what will not be in this delivery
+
+**Packing board complete → Odoo partial validation + backorder creation:**
+- [ ] When `PUT /api/packing/complete` is called (after QA + RP sign-off — existing gate unchanged):
+  - `_validate_odoo_delivery()` runs as now: `action_set_quantities_to_reservation()` then `button_validate()`
+  - If `button_validate` returns a backorder wizard action: call `stock.backorder.confirmation` → `process()` to confirm backorder creation (NOT `process_cancel_backorder`)
+  - After `process()`: read the newly created backorder picking from Odoo — query `stock.picking` where `backorder_id = [original_picking_id]` to get its `id`, `name`, and `move_ids`
+  - Create a new packing board entry for the backorder picking: `is_backorder: true`, `parent_packing_id: str(original_entry._id)`, `odoo_picking_id: backorder_picking_id`, `status: "waiting_stock"`, `waiting_stock: true`; populate items from the backorder's move lines with their remaining quantities
+  - Update the original ticket: `status → "partially_fulfilled"`, push to `stage_history`
+  - Fire `send_partial_delivery_ready` email to reseller (if reseller order) and `send_backorder_created_internal` to fulfilment team
+- [ ] If `button_validate` does NOT return a wizard (full stock was available): existing full-order flow unchanged, no backorder created, ticket advances normally
+
+**Orders Clerk: "Mark as Collected" action (per packing entry):**
+- [ ] New action on the packing board entry detail: `PUT /api/packing/{entry_id}/collected` — gated on `orders_clerk` role or `packing.manage` permission; sets `collected_at`, `collected_by` on the packing board document; triggers invoice creation for THIS picking's delivered quantities via the Odoo advance payment wizard (invoice is scoped to delivered quantities — requires `invoice_policy = 'delivery'` on Odoo products); stores resulting `invoice_id` and `invoice_name` on the packing board entry; audit-logged
+- [ ] After invoice creation for this picking, check if ALL packing entries for this ticket are now `collected` — if yes, advance the ticket to `ready_for_collection` and fire existing payment/completion notifications
+- [ ] `OrdersTickets.js` — "Mark as Collected" button visible per packing entry once it is in `complete` state; shows `collected_at` timestamp and collector name after action
+
+**Backorder stock assignment detection (periodic check / Phase 13 bridge):**
+- [ ] `GET /api/packing/backorders/check-stock` — admin-triggered or scheduled; for all packing board entries where `waiting_stock: true`, read the linked Odoo picking's state; if `state` has moved from `confirmed`/`waiting` to `assigned` (Odoo has reserved stock), update `waiting_stock: false`, `status: "queued"` on the packing board entry, push a `stage_history` entry "Stock available — backorder ready to pack"; fire `send_backorder_stock_ready` email to internal fulfilment team and reseller
+- [ ] In the interim (before Phase 13 automated restock): admin can manually trigger this check from the packing board via a "Check stock availability" button on any `waiting_stock` entry
+- [ ] Phase 13 hook point: when a new batch is received into the vault location and Odoo auto-assigns it to a waiting backorder picking, the next run of this check surfaces it. The hook point is documented here; the automated trigger is built in Phase 13.
+
+**Ticket status model additions:**
+- [ ] `FORWARD_STATUSES` in `SalesTickets.js`: add `"partially_fulfilled"` between `"confirmed_wip"` and `"ready_for_collection"`
+- [ ] `STATUS_LABEL`: `partially_fulfilled → "Partially Fulfilled"`; `STATUS_COLOR`: `partially_fulfilled → "orange"`
+- [ ] Reseller constants: `R_STATUS_LABEL`: `partially_fulfilled → "Partially Shipped — Items on Backorder"`; `R_STATUS_COLOR`: `partially_fulfilled → "orange"`
+- [ ] `R_STEPS` gains a step between "Being Packed" and "Ready": `{ key: "partial", label: "Partial Delivery" }` — active when ticket is `partially_fulfilled`; shows sub-label "Your backordered items will ship when stock is available"
+- [ ] `resellerStep()` updated to map `partially_fulfilled` to the new step index
+
+**Packing board UI — backorder entry visibility:**
+- [ ] `OrdersTickets.js` packing board card: when `is_backorder: true`, show an "Backorder" chip in the card header; `waiting_stock: true` entries render with a distinct amber "Waiting for Stock" state instead of the normal pipeline steps
+- [ ] Packing board list filter: add "Waiting Stock" filter chip (shows only `waiting_stock: true` entries) so the fulfilment team can see all open backorders in one view
+- [ ] Items list on packing card: show `qty_reserved` / `qty_ordered` per item; `is_backordered` items shown in amber with strikethrough on the quantity
+
+**Sales ticket detail — multi-delivery view:**
+- [ ] `SalesTickets.js` detail view Delivery & Fulfilment section already renders all pickings; add `collected_at` display per delivery and the "Mark as Collected" button (for Orders Clerk role) per picking that has `status = done` in Odoo
+- [ ] If ticket is `partially_fulfilled`, show an amber banner: "This order has been partially fulfilled — [N] item(s) are on backorder" with the backorder item list
+
+**Email templates (all in `email_service.py`):**
+- [ ] `send_order_confirmed_partial(reseller_email, order_ref, customer_name, shipped_lines, backorder_lines, reseller_name, cc)` — confirms the order, lists what will ship in the first delivery, lists backordered items and explains they will be fulfilled when stock is available; warm, clear language; no internal system names
+- [ ] `send_backorder_alert_internal(to, order_ref, customer_name, reseller_name, backorder_lines)` — internal alert to fulfilment team at `order_to` routing address; lists the shortfall items, flags the order ref, links to action needed
+- [ ] `send_partial_delivery_ready(reseller_email, order_ref, customer_name, collected_lines, backorder_lines, reseller_name, cc)` — tells reseller their partial delivery is ready for collection; lists what's ready now and what's still on backorder
+- [ ] `send_backorder_created_internal(to, order_ref, customer_name, backorder_ref, backorder_lines)` — internal; backorder picking created in Odoo, items listed, asks fulfilment team to monitor stock
+- [ ] `send_backorder_stock_ready(reseller_email, internal_to, order_ref, customer_name, backorder_lines, reseller_name)` — two sends: internal alert + reseller notification that backordered items are now in stock and will be packed
+- [ ] All templates: no em dashes, no internal system names to external recipients, `_wrap()` shell, responsive layout
+
+**Design decisions:**
+- **Invoice deferred to collection, not confirm, for partial orders only** — full orders continue to invoice on confirm (existing behaviour). Only when `is_partial` is detected at confirm time does the invoice step skip. This avoids invoicing for quantities that haven't shipped, and matches the user's explicit requirement ("invoice on collection for what they collected").
+- **Odoo is source of truth for backorder picking identity** — backorder packing board entries are created by reading the actual Odoo picking created by the backorder wizard. The portal never invents a backorder; it always reads one back from Odoo.
+- **`waiting_stock` is a portal-layer concept** — Odoo's `stock.picking.state` is the authoritative signal (`confirmed`/`waiting` = not yet assigned, `assigned` = ready). The portal's `waiting_stock` flag mirrors this so the packing board can render without a live Odoo call per card.
+- **Mark as Collected is an Orders Clerk action, not Finance** — collection is a physical logistics event, not a financial one. Finance's role begins when the invoice for the collected portion is confirmed paid, using the existing `confirm-payment` flow.
+- **Reseller must explicitly acknowledge backorder at confirm time** — a passive warning is not enough for a financial commitment. The reseller clicks through a modal that lists exactly what will ship and what will be backordered.
+- **Phase 13 bridge is a documented hook, not built here** — the automated "new stock enters vault → backorder assigned → notify team" loop requires Phase 13's batch traceability and vault receipt workflow. The manual "Check stock availability" button on the packing board serves as the interim solution.
+
 #### 8.22 — Customer Document Upload Request — Added 2026-07-07
 
 **Goal:** Admins can request outstanding onboarding documents from an existing customer by generating a secure, time-limited upload link. The link is emailed to the customer (or a contact on their account) and allows unauthenticated file upload directly to R2. The customer profile shows the request status so other admins know a request was sent and can see whether it was acted on.

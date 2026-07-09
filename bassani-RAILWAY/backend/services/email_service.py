@@ -851,3 +851,264 @@ def send_order_ready_for_collection(
     )
     _send(supervisor_emails, f"Ready for Collection: {order_ref}",
           _wrap(body))
+
+
+# ── Partial fulfilment and backorder emails (Phase 8.23) ──────────────────────
+
+def _item_rows(items: list, qty_key: str = "qty") -> str:
+    """Render a list of {name, qty_key} dicts as a simple HTML item list."""
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:6px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("name", "Unknown item")}</td>'
+        f'<td style="padding:6px 0 6px 12px;font-size:13px;color:#475569;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'{item.get(qty_key, item.get("qty", 0)):g} units</td>'
+        f'</tr>'
+        for item in items
+    )
+    return (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:4px 0 0;">{rows}</table>'
+    )
+
+
+def _section_heading(text: str) -> str:
+    return (
+        f'<p style="margin:20px 0 6px;font-size:11px;font-weight:700;color:#64748b;'
+        f'text-transform:uppercase;letter-spacing:0.5px;">{text}</p>'
+    )
+
+
+def send_order_confirmed_partial(
+    order_ref: str,
+    customer_name: str,
+    order_total: float,
+    reseller_name: str,
+    reseller_email: str,
+    shipped_lines: list,
+    backorder_lines: list,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the reseller when their order is confirmed but some items are on backorder.
+    shipped_lines: [{name, qty}] — items available now.
+    backorder_lines: [{name, qty_ordered, qty_short}] — items not currently in stock.
+    """
+    if not reseller_email:
+        return
+    shipped_html = _item_rows(shipped_lines)
+    backorder_html = _item_rows(backorder_lines, qty_key="qty_short")
+    body = (
+        _h1("Order confirmed with partial availability")
+        + _p(f"Hi {reseller_name},")
+        + _p(
+            f"Your order for <strong>{customer_name}</strong> has been confirmed. "
+            "We have the items listed below in stock and will begin fulfilment immediately. "
+            "A number of items are not currently available and have been placed on backorder."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Order total", f"R{order_total:,.2f}"),
+            ("Status", _badge("Partially available", "#d97706")),
+        ], tint="#fffbeb", border="#fde68a")
+        + _section_heading("Items being fulfilled now")
+        + shipped_html
+        + _section_heading("Items on backorder")
+        + backorder_html
+        + _p(
+            "We will contact you as soon as the backordered items are available so "
+            "your customer can collect the remainder. No additional steps are required from you.",
+            muted=True,
+        )
+        + _button("Track your order", f"{settings.portal_url}/tickets/sales")
+    )
+    _send(reseller_email, f"Order Confirmed: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
+def send_backorder_alert_internal(
+    to: "str | list[str]",
+    order_ref: str,
+    customer_name: str,
+    reseller_name: "str | None",
+    backorder_lines: list,
+) -> None:
+    """Internal alert sent to the fulfilment team when a confirmed order has stock shortfalls.
+    backorder_lines: [{name, qty_ordered, qty_available, qty_short}].
+    """
+    if not to:
+        return
+    shortfall_rows = "".join(
+        f'<tr>'
+        f'<td style="padding:6px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("name", "Unknown")}</td>'
+        f'<td style="padding:6px 0 6px 12px;font-size:13px;color:#64748b;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'Ordered: {item.get("qty_ordered", 0):g} / Available: {item.get("qty_available", 0):g} / '
+        f'<strong style="color:#dc2626;">Short: {item.get("qty_short", 0):g}</strong></td>'
+        f'</tr>'
+        for item in backorder_lines
+    )
+    shortfall_table = (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:4px 0 0;">{shortfall_rows}</table>'
+    )
+    via = f" via {reseller_name}" if reseller_name else ""
+    body = (
+        _h1("Order confirmed with stock shortfall")
+        + _p(
+            f"Order <strong>{order_ref}</strong> for <strong>{customer_name}</strong>{via} "
+            "has been confirmed. The items below cannot be fully fulfilled from current stock "
+            "and will require a backorder."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Via", reseller_name or "Direct"),
+        ], tint="#fff7ed", border="#fed7aa")
+        + _section_heading("Stock shortfalls")
+        + shortfall_table
+        + _divider()
+        + _p("The order has been queued on the packing board. Pack what is available "
+             "and the system will create a backorder automatically when the delivery is validated.",
+             muted=True)
+        + _button("Open packing board", f"{settings.portal_url}/orders-tickets")
+    )
+    _send(to, f"Backorder Required: {order_ref}",
+          _wrap(body))
+
+
+def send_partial_delivery_ready(
+    reseller_email: str,
+    order_ref: str,
+    customer_name: str,
+    reseller_name: str,
+    shipped_lines: list,
+    backorder_lines: list,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the reseller when the first (partial) delivery is ready for collection.
+    shipped_lines: [{name, qty}] — items packed and ready.
+    backorder_lines: [{name, qty}] — items still pending.
+    """
+    if not reseller_email:
+        return
+    body = (
+        _h1("Partial delivery ready for collection")
+        + _p(f"Hi {reseller_name},")
+        + _p(
+            f"The items listed below for <strong>{customer_name}</strong> are packed and ready "
+            "for collection. Please arrange collection at your convenience."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Status", _badge("Ready for collection", "#059669")),
+        ], tint="#f0fdf4", border="#86efac")
+        + _section_heading("Ready for collection")
+        + _item_rows(shipped_lines)
+        + _section_heading("Still on backorder")
+        + _item_rows(backorder_lines)
+        + _p(
+            "You will receive a separate notification when the backordered items are available. "
+            "Your customer is welcome to collect the available items now and return for the remainder.",
+            muted=True,
+        )
+        + _button("Track your order", f"{settings.portal_url}/tickets/sales")
+    )
+    _send(reseller_email, f"Ready for Collection: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
+def send_backorder_created_internal(
+    to: "str | list[str]",
+    order_ref: str,
+    customer_name: str,
+    backorder_ref: str,
+    backorder_lines: list,
+) -> None:
+    """Internal notification when a backorder picking is created in Odoo.
+    backorder_lines: [{name, qty}].
+    """
+    if not to:
+        return
+    body = (
+        _h1("Backorder created")
+        + _p(
+            f"A backorder has been created in Odoo for order <strong>{order_ref}</strong> "
+            f"({customer_name}). The picking below contains the items that could not be "
+            "fulfilled in the initial delivery."
+        )
+        + _info_box([
+            ("Original order", f"<strong>{order_ref}</strong>"),
+            ("Backorder picking", _mono(backorder_ref)),
+            ("Customer", customer_name),
+            ("Status", _badge("Waiting for stock", "#d97706")),
+        ], tint="#fff7ed", border="#fed7aa")
+        + _section_heading("Items on backorder")
+        + _item_rows(backorder_lines)
+        + _divider()
+        + _p(
+            "These items will appear on the packing board automatically once stock is available. "
+            "Use the portal to check stock availability or monitor the picking in Odoo.",
+            muted=True,
+        )
+        + _button("Open packing board", f"{settings.portal_url}/orders-tickets")
+    )
+    _send(to, f"Backorder Created: {order_ref}",
+          _wrap(body))
+
+
+def send_backorder_stock_ready(
+    reseller_email: "str | None",
+    internal_to: "str | list[str] | None",
+    order_ref: str,
+    customer_name: str,
+    reseller_name: "str | None",
+    backorder_lines: list,
+) -> None:
+    """Sent when a backorder picking has been assigned stock and is ready to pack.
+    Fires two sends: one to the reseller and one internal alert to the fulfilment team.
+    """
+    if reseller_email and reseller_name:
+        r_body = (
+            _h1("Backordered items are now available")
+            + _p(f"Hi {reseller_name},")
+            + _p(
+                f"The items that were on backorder for <strong>{customer_name}</strong> "
+                "are now available and our team will begin packing them shortly. "
+                "We will notify you when they are ready for collection."
+            )
+            + _info_box([
+                ("Order reference", f"<strong>{order_ref}</strong>"),
+                ("Customer", customer_name),
+                ("Status", _badge("Now in stock", "#059669")),
+            ], tint="#f0fdf4", border="#86efac")
+            + _section_heading("Items now available")
+            + _item_rows(backorder_lines)
+            + _button("Track your order", f"{settings.portal_url}/tickets/sales")
+        )
+        _send(reseller_email, f"Backorder Update: {order_ref}",
+              _wrap(r_body))
+
+    if internal_to:
+        i_body = (
+            _h1("Backorder items ready to pack")
+            + _p(
+                f"Stock has been assigned to the backorder for order "
+                f"<strong>{order_ref}</strong> ({customer_name}). "
+                "The backorder entry has been moved to the packing queue."
+            )
+            + _info_box([
+                ("Order reference", f"<strong>{order_ref}</strong>"),
+                ("Customer", customer_name),
+                ("Via", reseller_name or "Direct"),
+                ("Status", _badge("Ready to pack", "#059669")),
+            ], tint="#f0fdf4", border="#86efac")
+            + _section_heading("Items to pack")
+            + _item_rows(backorder_lines)
+            + _button("Open packing board", f"{settings.portal_url}/orders-tickets")
+        )
+        _send(internal_to, f"Backorder Ready to Pack: {order_ref}",
+              _wrap(i_body))

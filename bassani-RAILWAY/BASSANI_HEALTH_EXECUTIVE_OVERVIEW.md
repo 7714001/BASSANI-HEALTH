@@ -77,6 +77,8 @@ When an order is confirmed, it appears automatically on the packing board — a 
 - Only after both approvals does the order reach **Ready for Collection / Dispatch**
 - Warehouse supervisors receive an automatic notification when an order is cleared for dispatch
 
+**Partial fulfilment and backorders.** When a confirmed order cannot be fully filled from current stock, the system handles the split without requiring manual intervention. It ships what is available immediately, automatically creates a backorder picking in the warehouse management system for the remainder, and adds a second entry to the packing board labelled "Waiting for Stock." The reseller receives an email showing exactly which items are shipping and which are backordered. When the backordered stock arrives and is reserved, a single button in the portal notifies the reseller and the internal team — no manual chasing is required. Invoicing is tied to collection: each delivery is invoiced only when the customer physically collects it, which means Bassani only invoices for what has actually been delivered. The Orders Clerk has a dedicated "Mark as Collected" action for each delivery, and the invoice is created in the financial system automatically on confirmation.
+
 ### For Finance
 
 The finance team confirms payments through the portal. Critically, the system reads the actual financial record to verify payment status — if the financial system shows no payment recorded, the portal will not allow the payment to be confirmed. This closes the gap where orders were previously released based on verbal confirmation.

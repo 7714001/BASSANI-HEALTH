@@ -10,7 +10,10 @@ from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
 from routes.settings_routes import get_email_routing
-from services.email_service import send_order_confirmed, send_order_cancelled
+from services.email_service import (
+    send_order_confirmed, send_order_cancelled,
+    send_order_confirmed_partial, send_backorder_alert_internal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +301,92 @@ async def get_order_deliveries(
         })
 
     return {"deliveries": result, "has_backorder": has_backorder, "count": len(result)}
+
+
+@router.get("/{order_id}/stock-check")
+async def stock_check(order_id: int, current_user: dict = Depends(require_permission("orders.read"))):
+    """Return per-line stock availability for a confirmed Odoo SO (before packing board entry is created).
+    Used by the reseller pre-confirm modal so they see what will ship vs be backordered."""
+    odoo = get_odoo_client()
+    try:
+        order_rows = odoo.read("sale.order", [order_id], fields=["name", "state", "picking_ids", "partner_id", "amount_total"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo read failed: {e}")
+    if not order_rows:
+        raise HTTPException(status_code=404, detail="Order not found in Odoo")
+
+    order = order_rows[0]
+    if order["state"] not in ("draft", "sent", "sale"):
+        raise HTTPException(status_code=400, detail="Order is not in a quotable state")
+
+    picking_ids = order.get("picking_ids") or []
+    lines = []
+    is_partial = False
+
+    if picking_ids:
+        # SO already confirmed — read actual stock.move reservations
+        pick_rows = odoo.read("stock.picking", [picking_ids[0]], fields=["move_ids"])
+        move_ids = pick_rows[0]["move_ids"] if pick_rows and pick_rows[0].get("move_ids") else []
+        if move_ids:
+            moves = odoo.read(
+                "stock.move", move_ids,
+                fields=["product_id", "product_uom_qty", "reserved_availability"],
+            )
+            for m in moves:
+                ordered = float(m.get("product_uom_qty", 0))
+                reserved = float(m.get("reserved_availability", 0))
+                short = ordered - reserved > 0
+                if short:
+                    is_partial = True
+                lines.append({
+                    "name": m["product_id"][1] if m.get("product_id") else "Unknown",
+                    "qty_ordered": ordered,
+                    "qty_available": reserved,
+                    "qty_short": round(ordered - reserved, 4) if short else 0,
+                    "will_backorder": short,
+                })
+    else:
+        # Draft quote — read order lines and check on-hand stock
+        ol_rows = odoo.search_read(
+            "sale.order.line",
+            [["order_id", "=", order_id]],
+            fields=["product_id", "product_uom_qty", "qty_delivered"],
+        )
+        product_ids = [l["product_id"][0] for l in ol_rows if l.get("product_id")]
+        quants = odoo.search_read(
+            "stock.quant",
+            [["product_id", "in", product_ids], ["location_id.usage", "=", "internal"]],
+            fields=["product_id", "quantity", "reserved_quantity"],
+        ) if product_ids else []
+        available_by_product: dict = {}
+        for q in quants:
+            pid = q["product_id"][0]
+            net = float(q.get("quantity", 0)) - float(q.get("reserved_quantity", 0))
+            available_by_product[pid] = available_by_product.get(pid, 0.0) + net
+
+        for l in ol_rows:
+            if not l.get("product_id"):
+                continue
+            pid = l["product_id"][0]
+            pname = l["product_id"][1]
+            ordered = float(l.get("product_uom_qty", 0))
+            avail = available_by_product.get(pid, 0.0)
+            short = avail < ordered
+            if short:
+                is_partial = True
+            lines.append({
+                "name": pname,
+                "qty_ordered": ordered,
+                "qty_available": round(avail, 4),
+                "qty_short": round(ordered - avail, 4) if short else 0,
+                "will_backorder": short,
+            })
+
+    return {
+        "order_ref": order.get("name", f"#{order_id}"),
+        "is_partial": is_partial,
+        "lines": lines,
+    }
 
 
 @router.post("/")
@@ -589,61 +678,100 @@ async def confirm_order(
     except Exception as e:
         warnings.append(f"Could not read order after confirm: {str(e)}")
 
+    # Resolve reseller ID early — needed by both packing board and commission steps.
+    _ticket_reseller_id = _sales_ticket.get("reseller_id") if _sales_ticket else None
+
+    # ── Shortfall detection — check if all stock was reserved ─────────────────
+    # Odoo reserves stock on confirm. If reserved_availability < product_uom_qty
+    # on any move, the order can only be partially fulfilled. Invoice creation is
+    # deferred to collection time for partial orders so we never invoice for goods
+    # that haven't shipped yet.
+    is_partial = False
+    shortfalls: List[dict] = []
+    try:
+        if order_data and order_data.get("picking_ids"):
+            _pick_for_check = order_data["picking_ids"][0]
+            _pick_rows = odoo.read("stock.picking", [_pick_for_check], fields=["move_ids"])
+            if _pick_rows and _pick_rows[0].get("move_ids"):
+                _check_moves = odoo.read(
+                    "stock.move", _pick_rows[0]["move_ids"],
+                    fields=["product_id", "product_uom_qty", "reserved_availability"],
+                )
+                for _cm in _check_moves:
+                    _ordered  = float(_cm.get("product_uom_qty", 0))
+                    _reserved = float(_cm.get("reserved_availability", 0))
+                    if _reserved < _ordered:
+                        is_partial = True
+                        shortfalls.append({
+                            "name":          _cm["product_id"][1] if _cm.get("product_id") else "Unknown",
+                            "qty_ordered":   _ordered,
+                            "qty_available": _reserved,
+                            "qty_short":     round(_ordered - _reserved, 4),
+                        })
+    except Exception as _se:
+        logger.warning("confirm_shortfall_check_failed",
+                       extra={"order_id": order_id, "error": str(_se)})
+
     # ── Step 2: Customer invoice — create and post ─────────────────────────────
+    # Skipped for partial orders: invoicing is deferred to collection time so
+    # we only invoice for what the customer actually receives in each delivery.
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
-    try:
-        # Use the advance payment wizard — the only public XML-RPC route for
-        # creating invoices from a sale order (_create_invoices is private).
-        ctx = {
-            "active_ids": [order_id], "active_model": "sale.order", "active_id": order_id,
-            **company_context(order_company_id),
-        }
-        wizard_id = odoo_call(
-            "sale.advance.payment.inv", "create",
-            [{"advance_payment_method": "delivered"}],
-            {"context": ctx},
-        )
-    except Exception as e:
-        warnings.append(
-            f"Invoice creation failed: {str(e)} — "
-            "create the customer invoice manually in Odoo."
-        )
-        wizard_id = None
-
-    if wizard_id is not None:
+    if not is_partial:
         try:
-            odoo_call(
-                "sale.advance.payment.inv", "create_invoices",
-                [[wizard_id]],
+            # Use the advance payment wizard — the only public XML-RPC route for
+            # creating invoices from a sale order (_create_invoices is private).
+            ctx = {
+                "active_ids": [order_id], "active_model": "sale.order", "active_id": order_id,
+                **company_context(order_company_id),
+            }
+            wizard_id = odoo_call(
+                "sale.advance.payment.inv", "create",
+                [{"advance_payment_method": "delivered"}],
                 {"context": ctx},
             )
         except Exception as e:
-            # create_invoices returns an action dict that may contain None values —
-            # Odoo's marshaller rejects it even though the invoice was created.
-            # We verify via invoice_ids below rather than trusting the return value.
-            logger.warning("confirm_create_invoices_response_error",
-                           extra={"order_id": order_id, "error": str(e)})
-
-        try:
-            refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
-            inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
-            invoice_id = inv_ids[0] if inv_ids else None
-
-            if invoice_id:
-                odoo.execute("account.move", "action_post", [invoice_id])
-                inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
-                invoice_name = inv_rows[0]["name"] if inv_rows else None
-            else:
-                warnings.append(
-                    "Customer invoice could not be created automatically — "
-                    "please create it manually from the sale order in Odoo."
-                )
-        except Exception as e:
             warnings.append(
-                f"Invoice post/read failed: {str(e)} — "
-                "check the invoice in Odoo."
+                f"Invoice creation failed: {str(e)} — "
+                "create the customer invoice manually in Odoo."
             )
+            wizard_id = None
+
+        if wizard_id is not None:
+            try:
+                odoo_call(
+                    "sale.advance.payment.inv", "create_invoices",
+                    [[wizard_id]],
+                    {"context": ctx},
+                )
+            except Exception as e:
+                logger.warning("confirm_create_invoices_response_error",
+                               extra={"order_id": order_id, "error": str(e)})
+
+            try:
+                refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+                inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
+                invoice_id = inv_ids[0] if inv_ids else None
+
+                if invoice_id:
+                    odoo.execute("account.move", "action_post", [invoice_id])
+                    inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
+                    invoice_name = inv_rows[0]["name"] if inv_rows else None
+                else:
+                    warnings.append(
+                        "Customer invoice could not be created automatically — "
+                        "please create it manually from the sale order in Odoo."
+                    )
+            except Exception as e:
+                warnings.append(
+                    f"Invoice post/read failed: {str(e)} — "
+                    "check the invoice in Odoo."
+                )
+    else:
+        warnings.append(
+            "Invoice deferred: this order has items on backorder. "
+            "An invoice will be created for each delivery at collection time."
+        )
 
     # ── Step 3: Packing board (non-blocking) ─────────────────────────────────
     try:
@@ -662,7 +790,7 @@ async def confirm_order(
                     moves = odoo.read(
                         "stock.move",
                         picking["move_ids"],
-                        fields=["product_id", "product_uom_qty", "product_uom"],
+                        fields=["product_id", "product_uom_qty", "reserved_availability", "product_uom"],
                     )
                     for m in moves:
                         pname = m["product_id"][1] if m.get("product_id") else "Unknown"
@@ -671,7 +799,16 @@ async def confirm_order(
                             if m.get("product_id") else []
                         )
                         sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+                        qty_ordered   = float(m.get("product_uom_qty", 0))
+                        qty_reserved  = float(m.get("reserved_availability", qty_ordered))
+                        items.append({
+                            "name": pname, "sku": sku,
+                            "qty": qty_ordered,           # backward-compat alias
+                            "qty_ordered": qty_ordered,
+                            "qty_reserved": qty_reserved,
+                            "is_backordered": qty_reserved < qty_ordered,
+                            "location": "",
+                        })
 
                 partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
                 is_reseller_order = bool(_ticket_reseller_id)
@@ -684,12 +821,18 @@ async def confirm_order(
                 now = datetime.now(timezone.utc)
                 doc = {
                     "order_id": str(order_id),
+                    "odoo_picking_id": picking_id,
+                    "picking_name": picking["name"],
+                    "is_backorder": False,
+                    "parent_packing_id": None,
+                    "waiting_stock": False,
+                    "has_pending_invoice": is_partial,
                     "warehouse_id":   order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
                     "warehouse_name": order_data["warehouse_id"][1] if order_data.get("warehouse_id") else None,
                     "customer_name": partner_name,
                     "customer_city": "",
                     "items": items,
-                    "total_units": int(sum(i["qty"] for i in items)),
+                    "total_units": int(sum(i["qty_ordered"] for i in items)),
                     "inv_num": invoice_name or "",
                     "dn_num": picking["name"],
                     "ps_num": order_data["name"],
@@ -702,10 +845,12 @@ async def confirm_order(
                     "packed_at": None,
                     "ready_at": None,
                     "collected_at": None,
+                    "collected_by": None,
                     "cancelled_at": None,
                     "incomplete_at": None,
                     "completed_at": None,
                     "incomplete_reason": None,
+                    "delivery_validated": None,
                     "qa_approved_by": None, "qa_approved_at": None,
                     "rp_approved_by": None, "rp_approved_at": None,
                     "item_ticks": {i["sku"]: False for i in items},
@@ -737,7 +882,7 @@ async def confirm_order(
     # ── Commission record ─────────────────────────────────────────────────────
     # For reseller quotes the record was deferred from order creation — create it
     # now at the first moment the order is financially committed.
-    _ticket_reseller_id = _sales_ticket.get("reseller_id") if _sales_ticket else None
+    # (_ticket_reseller_id is already resolved above, before the packing board step.)
     comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
     if _ticket_reseller_id and not comm_lookup:
         try:
@@ -771,19 +916,51 @@ async def confirm_order(
                     detail={"invoice_id": invoice_id, "invoice_name": invoice_name, "warnings": warnings},
                     reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
 
+    _order_ref_str = pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}"
+    _routing = await get_email_routing()
+
     if comm_lookup and comm_lookup.get("reseller_id"):
         _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _reseller and _reseller.get("email"):
-            _routing = await get_email_routing()
-            background_tasks.add_task(
-                send_order_confirmed,
-                order_ref=pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}",
-                customer_name=comm_lookup.get("customer_name", ""),
-                order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
-                reseller_name=comm_lookup.get("reseller_name", ""),
-                reseller_email=_reseller["email"],
-                cc=_routing["order_cc"] or None,
-            )
+            if is_partial:
+                _pb_entry = await col("packing_board").find_one({"order_id": str(order_id)}, {"items": 1})
+                _shipped_lines = [
+                    {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
+                    for i in (_pb_entry or {}).get("items", [])
+                    if not i.get("is_backordered")
+                ]
+                background_tasks.add_task(
+                    send_order_confirmed_partial,
+                    order_ref=_order_ref_str,
+                    customer_name=comm_lookup.get("customer_name", ""),
+                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                    reseller_name=comm_lookup.get("reseller_name", ""),
+                    reseller_email=_reseller["email"],
+                    shipped_lines=_shipped_lines,
+                    backorder_lines=shortfalls,
+                    cc=_routing["order_cc"] or None,
+                )
+            else:
+                background_tasks.add_task(
+                    send_order_confirmed,
+                    order_ref=_order_ref_str,
+                    customer_name=comm_lookup.get("customer_name", ""),
+                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                    reseller_name=comm_lookup.get("reseller_name", ""),
+                    reseller_email=_reseller["email"],
+                    cc=_routing["order_cc"] or None,
+                )
+
+    # Internal backorder alert — fire for any partial order regardless of reseller
+    if is_partial and _routing.get("order_to"):
+        background_tasks.add_task(
+            send_backorder_alert_internal,
+            to=_routing["order_to"],
+            order_ref=_order_ref_str,
+            customer_name=comm_lookup.get("customer_name", "") if comm_lookup else "",
+            reseller_name=comm_lookup.get("reseller_name") if comm_lookup else None,
+            backorder_lines=shortfalls,
+        )
 
     return {
         "success": True,
