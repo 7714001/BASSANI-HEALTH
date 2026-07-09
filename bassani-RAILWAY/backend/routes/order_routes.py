@@ -425,6 +425,19 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Select a customer to place the order for")
         order = order.model_copy(update={"reseller_id": reseller_profile["id"]})
 
+    # Resolve individual contacts to their parent company. The company is the
+    # account holder — orders and invoices must be against the company, not the
+    # contact person. Odoo's commercial_partner_id field returns the top-level
+    # company for any contact; it equals self for company-type partners.
+    try:
+        _cpr = odoo.read("res.partner", [effective_partner_id], fields=["commercial_partner_id"])
+        if _cpr:
+            _cp = _cpr[0].get("commercial_partner_id")
+            if _cp and _cp is not False and _cp[0] != effective_partner_id:
+                effective_partner_id = _cp[0]
+    except Exception:
+        pass  # Non-fatal — keep original partner_id if Odoo call fails
+
     # Stock check — block the whole order if any line exceeds what's actually
     # available to promise (on-hand minus what's already reserved by other
     # orders), scoped to the resolved warehouse. The cart already disables

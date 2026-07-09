@@ -828,9 +828,7 @@ export default function SalesTickets() {
         <TopBar
           title={
             detail?.customer_name
-              ? detail.customer_company_name
-                ? `${detail.customer_name} (${detail.customer_company_name})`
-                : detail.customer_name
+              ? (detail.customer_company_name || detail.customer_name)
               : "Loading…"
           }
           subtitle={
@@ -1074,9 +1072,8 @@ export default function SalesTickets() {
                         ) : (
                           <div className="space-y-2">
                             {R_STEPS.map((s, i) => {
-                              const done    = i < step;
-                              const active  = i === step;
-                              const pending = i > step;
+                              const done   = i < step;
+                              const active = i === step;
                               return (
                                 <div key={s.key} className="flex items-center gap-2.5">
                                   <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold
@@ -1146,43 +1143,61 @@ export default function SalesTickets() {
                         </Badge>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      {detail.customer_email && (
-                        <p className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
-                          <Mail size={11} className="text-gray-400 shrink-0" />
-                          <span className="truncate min-w-0">
-                            <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors">{detail.customer_email}</a>
-                          </span>
-                        </p>
-                      )}
+                    <div className="space-y-2">
                       {detail.customer_company_id ? (
-                        <div className="space-y-0.5">
-                          <p className="text-xs text-gray-400">Contact at <span className="font-medium text-gray-600">{detail.customer_company_name}</span></p>
-                          <button
-                            onClick={() => navigate(`/customers/${detail.customer_company_id}`)}
-                            className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
-                          >
-                            <ExternalLink size={11} />View {detail.customer_company_name} profile
-                          </button>
-                        </div>
-                      ) : detail.customer_id ? (
-                        <div className="space-y-1">
-                          <button
-                            onClick={() => navigate(`/customers/${detail.customer_id}`)}
-                            className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
-                          >
-                            <ExternalLink size={11} />View customer profile
-                          </button>
-                          {can("customers.manage") && !detail.customer_is_company && (
+                        <>
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Bill to</p>
                             <button
-                              onClick={openLinkCompanyModal}
-                              className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1 transition-colors"
+                              onClick={() => navigate(`/customers/${detail.customer_company_id}`)}
+                              className="text-sm font-semibold text-bassani-700 hover:text-bassani-800 flex items-center gap-1 transition-colors"
                             >
-                              <Link2 size={11} />Link to company
+                              <ExternalLink size={11} />{detail.customer_company_name}
                             </button>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Contact person</p>
+                            <p className="text-xs font-medium text-gray-700">{detail.customer_name}</p>
+                            {detail.customer_email && (
+                              <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5 min-w-0">
+                                <Mail size={11} className="text-gray-400 shrink-0" />
+                                <span className="truncate min-w-0">
+                                  <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors">{detail.customer_email}</a>
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {detail.customer_email && (
+                            <p className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                              <Mail size={11} className="text-gray-400 shrink-0" />
+                              <span className="truncate min-w-0">
+                                <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors">{detail.customer_email}</a>
+                              </span>
+                            </p>
                           )}
-                        </div>
-                      ) : null}
+                          {detail.customer_id && (
+                            <div className="space-y-1">
+                              <button
+                                onClick={() => navigate(`/customers/${detail.customer_id}`)}
+                                className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
+                              >
+                                <ExternalLink size={11} />View customer profile
+                              </button>
+                              {can("customers.manage") && !detail.customer_is_company && (
+                                <button
+                                  onClick={openLinkCompanyModal}
+                                  className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1 transition-colors"
+                                >
+                                  <Link2 size={11} />Link to company
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
                       {detail.order_id   && <p className="text-xs text-gray-400">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</p>}
                       {!isReseller && detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
                       {detail.quote_sent_at && (
