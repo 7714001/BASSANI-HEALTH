@@ -861,7 +861,7 @@ export default function SalesTickets() {
                               </p>
                             </div>
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-gray-50">
+                          <div className={`grid ${isReseller ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"} gap-6 pt-4 border-t border-gray-50`}>
                             <div>
                               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Bill To</p>
                               <p className="text-sm font-semibold text-gray-900">
@@ -879,13 +879,15 @@ export default function SalesTickets() {
                                 <p className="text-xs text-gray-400">VAT: {detailOrder.partner_detail.vat}</p>
                               )}
                             </div>
-                            <div>
-                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>
-                              <p className="text-sm font-semibold text-gray-900">
-                                {Array.isArray(detailOrder.warehouse_id) ? detailOrder.warehouse_id[1] : "—"}
-                              </p>
-                              <p className="text-xs text-gray-400 mt-0.5">Stock deducted from this location</p>
-                            </div>
+                            {!isReseller && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Warehouse</p>
+                                <p className="text-sm font-semibold text-gray-900">
+                                  {Array.isArray(detailOrder.warehouse_id) ? detailOrder.warehouse_id[1] : "—"}
+                                </p>
+                                <p className="text-xs text-gray-400 mt-0.5">Stock deducted from this location</p>
+                              </div>
+                            )}
                           </div>
                         </div>
 
