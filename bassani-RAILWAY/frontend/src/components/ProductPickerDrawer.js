@@ -1,8 +1,145 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, X, Package, Loader2, CheckCircle2 } from "lucide-react";
+import { Search, X, Package, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import api from "../api";
 import { fmtR } from "./UI";
 
+// ── Searchable dropdown select ────────────────────────────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled }) {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef      = useRef(null);
+  const inputRef          = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  // Focus search input when panel opens; clear query on close
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 30);
+    else setQuery("");
+  }, [open]);
+
+  const selectedLabel = value != null ? (options.find(o => o.value === value)?.label ?? null) : null;
+  const filtered = options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Trigger */}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => { if (!disabled) setOpen(v => !v); }}
+        className={[
+          "flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors whitespace-nowrap",
+          disabled
+            ? "text-gray-300 border-gray-100 bg-gray-50 cursor-not-allowed"
+            : value != null
+              ? "text-bassani-700 border-bassani-300 bg-bassani-50"
+              : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
+        ].join(" ")}
+      >
+        <span className="max-w-[140px] truncate">
+          {selectedLabel ?? placeholder}
+        </span>
+        {value != null ? (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onChange(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onChange(null); } }}
+            className="ml-0.5 text-bassani-400 hover:text-bassani-700 transition-colors cursor-pointer"
+            aria-label="Clear selection"
+          >
+            <X size={11} />
+          </span>
+        ) : (
+          <ChevronDown
+            size={11}
+            className={`shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          />
+        )}
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div className="absolute top-full left-0 mt-1.5 w-60 bg-white border border-gray-200 rounded-xl shadow-xl z-10 overflow-hidden">
+          {/* Search input */}
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={searchPlaceholder}
+                className="w-full text-xs pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-bassani-300 focus:border-bassani-400 placeholder-gray-400 bg-gray-50/50"
+              />
+            </div>
+          </div>
+
+          {/* Option list */}
+          <div className="max-h-56 overflow-y-auto py-1">
+            {/* "All" row — only show when not filtering by query */}
+            {!query && (
+              <button
+                type="button"
+                onClick={() => { onChange(null); setOpen(false); }}
+                className={[
+                  "w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between",
+                  value == null
+                    ? "bg-bassani-50 text-bassani-700 font-semibold"
+                    : "text-gray-500 hover:bg-gray-50",
+                ].join(" ")}
+              >
+                All
+                {value == null && <CheckCircle2 size={11} className="text-bassani-500 shrink-0" />}
+              </button>
+            )}
+
+            {filtered.length === 0 && (
+              <p className="text-xs text-gray-400 text-center py-3 px-3">No matches</p>
+            )}
+
+            {filtered.map(o => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                className={[
+                  "w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between",
+                  value === o.value
+                    ? "bg-bassani-50 text-bassani-700 font-semibold"
+                    : "text-gray-700 hover:bg-gray-50",
+                ].join(" ")}
+              >
+                <span className="truncate pr-2">{o.label}</span>
+                {value === o.value && <CheckCircle2 size={11} className="text-bassani-500 shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main drawer ───────────────────────────────────────────────────────────────
 export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd }) {
   const [categories,      setCategories     ] = useState([]);
   const [catLoaded,       setCatLoaded      ] = useState(false);
@@ -70,17 +207,23 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
     return () => clearTimeout(debounceRef.current);
   }, [open, search, selectedCat, warehouseId]);
 
+  // Category options for the select
+  const categoryOptions = useMemo(
+    () => categories.map(c => ({ value: c.id, label: c.name })),
+    [categories]
+  );
+
   // Derive unique variant labels from the current product set
-  const variants = useMemo(() => {
+  const variantOptions = useMemo(() => {
     const seen = new Set();
     products.forEach(p => {
       const m = (p.display_name || p.name || "").match(/\((.+)\)$/);
       if (m) seen.add(m[1]);
     });
-    return [...seen].sort();
+    return [...seen].sort().map(v => ({ value: v, label: v }));
   }, [products]);
 
-  // Client-side variant filter on top of the API results
+  // Client-side variant filter on top of API results
   const displayed = useMemo(() => {
     if (!selectedVariant) return products;
     return products.filter(p =>
@@ -122,7 +265,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
           <div>
             <h2 className="text-sm font-bold text-gray-900">Browse Products</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Select a category or search to add lines to the quote
+              Search or filter by category and variant to add lines to the quote
             </p>
           </div>
           <button
@@ -134,7 +277,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
         </div>
 
         {/* ── Search bar ── */}
-        <div className="px-4 pt-3.5 pb-3 border-b border-gray-50 shrink-0">
+        <div className="px-4 pt-3.5 pb-3 shrink-0">
           <div className="relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             <input
@@ -156,78 +299,30 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
           </div>
         </div>
 
-        {/* ── Category pills ── */}
-        {categories.length > 0 && (
-          <div className="px-4 py-3 border-b border-gray-50 shrink-0">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
-              Category
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => { setSelectedCat(null); setSelectedVariant(null); }}
-                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors border ${
-                  !selectedCat
-                    ? "bg-bassani-600 text-white border-bassani-600"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-bassani-300 hover:text-bassani-700"
-                }`}
-              >
-                All
-              </button>
-              {categories.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => { setSelectedCat(c.id); setSelectedVariant(null); }}
-                  className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors border ${
-                    selectedCat === c.id
-                      ? "bg-bassani-600 text-white border-bassani-600"
-                      : "bg-white text-gray-600 border-gray-200 hover:border-bassani-300 hover:text-bassani-700"
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Variant chips (only when multiple variants present in results) ── */}
-        {variants.length > 1 && (
-          <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/60 shrink-0">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-              Variant
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setSelectedVariant(null)}
-                className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors border ${
-                  !selectedVariant
-                    ? "bg-gray-700 text-white border-gray-700"
-                    : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                All variants
-              </button>
-              {variants.map(v => (
-                <button
-                  key={v}
-                  onClick={() => setSelectedVariant(v === selectedVariant ? null : v)}
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors border ${
-                    selectedVariant === v
-                      ? "bg-gray-700 text-white border-gray-700"
-                      : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* ── Filter bar ── */}
+        <div className="flex items-center gap-2 px-4 pb-3 border-b border-gray-100 shrink-0">
+          <SearchableSelect
+            value={selectedCat}
+            onChange={(v) => { setSelectedCat(v); setSelectedVariant(null); }}
+            options={categoryOptions}
+            placeholder="All categories"
+            searchPlaceholder="Search categories…"
+            disabled={false}
+          />
+          <SearchableSelect
+            value={selectedVariant}
+            onChange={setSelectedVariant}
+            options={variantOptions}
+            placeholder="All variants"
+            searchPlaceholder="Search variants…"
+            disabled={variantOptions.length === 0}
+          />
+        </div>
 
         {/* ── Results ── */}
         <div className="flex-1 overflow-y-auto">
 
-          {/* Prompt state — nothing selected yet */}
+          {/* Prompt state */}
           {!loading && !selectedCat && !search.trim() && (
             <div className="flex flex-col items-center justify-center h-full text-center px-10 py-16">
               <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mb-3">
@@ -235,7 +330,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
               </div>
               <p className="text-sm font-semibold text-gray-500">Select a category or search</p>
               <p className="text-xs text-gray-400 mt-1 leading-relaxed">
-                Choose a product category from the filters above, or type a name or SKU to search across all products.
+                Choose a category from the filter above, or type a name or SKU to search across all products.
               </p>
             </div>
           )}
@@ -313,10 +408,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
                               : "bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200"
                         }`}
                       >
-                        {added
-                          ? <><CheckCircle2 size={11} />Added</>
-                          : "+ Add"
-                        }
+                        {added ? <><CheckCircle2 size={11} />Added</> : "+ Add"}
                       </button>
                     </div>
                   </div>
