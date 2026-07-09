@@ -1173,7 +1173,7 @@ export default function SalesTickets() {
                           >
                             <ExternalLink size={11} />View customer profile
                           </button>
-                          {can("customers.manage") && (
+                          {can("customers.manage") && !detail.customer_is_company && (
                             <button
                               onClick={openLinkCompanyModal}
                               className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1 transition-colors"

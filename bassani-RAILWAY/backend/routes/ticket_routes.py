@@ -251,7 +251,7 @@ async def create_ticket(
     already exist in Odoo — create them via the Customers page first if not."""
     odoo = get_odoo_client()
     try:
-        customers = odoo.read("res.partner", [body.customer_id], fields=["name", "email", "parent_id"])
+        customers = odoo.read("res.partner", [body.customer_id], fields=["name", "email", "parent_id", "is_company"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not customers:
@@ -279,6 +279,7 @@ async def create_ticket(
         "customer_id": body.customer_id,
         "customer_name": _cust["name"],
         "customer_email": _customer_email,
+        "customer_is_company": bool(_cust.get("is_company")),
         "customer_company_id": _company_id,
         "customer_company_name": _company_name,
         "order_id": None,
@@ -583,13 +584,14 @@ async def get_ticket(
     _needs_backfill = (
         ticket.get("customer_id") and (
             "customer_company_id" not in ticket or
-            "customer_email" not in ticket
+            "customer_email" not in ticket or
+            "customer_is_company" not in ticket
         )
     )
     if _needs_backfill:
         try:
             _odoo = get_odoo_client()
-            _pr = _odoo.read("res.partner", [ticket["customer_id"]], fields=["parent_id", "email"])
+            _pr = _odoo.read("res.partner", [ticket["customer_id"]], fields=["parent_id", "email", "is_company"])
             if _pr:
                 _bf: dict = {}
                 _p = _pr[0].get("parent_id")
@@ -599,6 +601,8 @@ async def get_ticket(
                 if "customer_email" not in ticket:
                     _em = _pr[0].get("email")
                     _bf["customer_email"] = _em if _em and _em is not False else None
+                if "customer_is_company" not in ticket:
+                    _bf["customer_is_company"] = bool(_pr[0].get("is_company"))
                 if _bf:
                     ticket.update(_bf)
                     await col("tickets").update_one({"_id": oid}, {"$set": _bf})

@@ -641,7 +641,8 @@ export function Customers() {
         <DataTable
           columns={[
             { accessorKey:"name", header:"Customer", cell:({row:{original:c}})=><p className="font-medium">{c.name}</p> },
-            { id:"type", header:"Type", enableSorting:false, accessorFn:r=>r.comment?.match(/Type: (\w+)/)?.[1]||"—", cell:({row:{original:c}})=><Badge status={c.comment?.match(/Type: (\w+)/)?.[1]?.toLowerCase()||"pharmacy"} label={c.comment?.match(/Type: (\w+)/)?.[1]||"—"} /> },
+            { id:"type", header:"Type", enableSorting:false, accessorFn:r=>r.is_company?"Company":"Individual", cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.is_company?"Company":"Individual"}</span> },
+            { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"}, accessorFn:r=>r.comment?.match(/Type: (\w+)/)?.[1]||"—", cell:({row:{original:c}})=>{ const cat=c.comment?.match(/Type: (\w+)/)?.[1]; return cat?<Badge status={cat.toLowerCase()} label={cat} />:<span className="text-xs text-gray-400">—</span>; } },
             { accessorKey:"email", header:"Contact", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
             { accessorKey:"city", header:"City", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
             { id:"s21", header:"Section 21", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
