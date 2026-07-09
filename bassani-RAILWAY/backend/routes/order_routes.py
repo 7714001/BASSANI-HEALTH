@@ -3,14 +3,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_permission
+from auth import get_current_user, require_permission, ADMIN_ROLES
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
 from routes.settings_routes import get_email_routing
-from services.email_service import send_order_placed, send_order_confirmed, send_order_cancelled
+from services.email_service import send_order_confirmed, send_order_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,6 @@ async def get_order_deliveries(
 @router.post("/")
 async def create_order(
     order: OrderCreate,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -407,7 +406,8 @@ async def create_order(
 
     # Auto-create a Sales ticket — unified pipeline: every portal order (reseller
     # or staff) enters the ticket workflow so the team processes everything in one
-    # place. Best-effort / non-blocking: a failure here never blocks the order.
+    # place. Reseller orders start at 'quote' so the reseller can edit/send before
+    # Bassani staff pick it up. Best-effort / non-blocking.
     try:
         _ticket_customer_name = credit_partner_name  # set by credit check above
         if not _ticket_customer_name:
@@ -418,14 +418,16 @@ async def create_order(
                 pass
         _now_t = datetime.now(timezone.utc)
         _role = current_user.get("role", "")
+        _is_reseller_order = bool(order.reseller_id)
+        _ticket_status = "quote" if _is_reseller_order else "sale_order"
         _assigned = current_user["id"] if _role == "sales" else None
         _assigned_name = (
             (current_user.get("name") or current_user.get("username"))
             if _assigned else None
         )
         _note = (
-            f"Portal order — reseller {order.reseller_id}"
-            if order.reseller_id
+            f"Quote created by reseller {order.reseller_id}"
+            if _is_reseller_order
             else f"Portal order — {_role} ({current_user.get('username', '')})"
         )
         await col("tickets").insert_one({
@@ -436,15 +438,16 @@ async def create_order(
             "order_id": odoo_order_id,
             "invoice_id": None,
             "orders_ticket_ref": None,
-            "status": "sale_order",
+            "status": _ticket_status,
             "exit_status": None,
+            "reseller_id": order.reseller_id or None,
             "assigned_to": _assigned,
             "assigned_to_name": _assigned_name,
             "payment_confirmed_by": None,
             "payment_confirmed_at": None,
             "incomplete_reason": None,
             "stage_history": [{
-                "status": "sale_order",
+                "status": _ticket_status,
                 "exit_status": None,
                 "actor_id": current_user["id"],
                 "actor_name": current_user.get("name") or current_user.get("username") or "unknown",
@@ -457,55 +460,11 @@ async def create_order(
     except Exception as _te:
         print(f"⚠️  Auto-ticket creation failed for order {odoo_order_id}: {_te}")
 
-    # Record order for commission tracking — amount calculated at month-end via tier bands
-    if order.reseller_id:
-        reseller = await col("resellers").find_one({"id": order.reseller_id}, NO_ID)
-        reseller_name = reseller["name"] if reseller else ""
+    # Commission record, total_sales, and the "order placed" email are deferred
+    # to confirm_order for reseller orders — the quote is a draft until confirmed
+    # and may be cancelled or revised before then.
 
-        customer_name = ""
-        try:
-            partners = odoo.read("res.partner", [effective_partner_id], fields=["name"])
-            customer_name = partners[0]["name"] if partners else ""
-        except Exception:
-            pass
-
-        original_subtotal = sum(l.product_uom_qty * l.price_unit for l in order.order_line)
-
-        await col("order_commissions").insert_one({
-            "odoo_order_id": str(odoo_order_id),
-            "reseller_id": order.reseller_id,
-            "reseller_name": reseller_name,
-            "customer_partner_id": effective_partner_id,
-            "customer_name": customer_name,
-            "original_subtotal": original_subtotal,
-            "commission_total": 0,      # Set when monthly statement is generated
-            "payout_status": "pending",
-            "created_at": datetime.now(timezone.utc),
-        })
-
-        await col("resellers").update_one(
-            {"id": order.reseller_id},
-            {"$inc": {"total_sales": original_subtotal}},
-        )
-
-        if reseller_profile and reseller_profile.get("email"):
-            try:
-                _name_rows = odoo.read("sale.order", [odoo_order_id], fields=["name"])
-                _order_ref = _name_rows[0]["name"] if _name_rows else f"#{odoo_order_id}"
-            except Exception:
-                _order_ref = f"#{odoo_order_id}"
-            _routing = await get_email_routing()
-            background_tasks.add_task(
-                send_order_placed,
-                order_ref=_order_ref,
-                customer_name=customer_name,
-                order_total=original_subtotal,
-                reseller_name=reseller_profile.get("name", ""),
-                reseller_email=reseller_profile["email"],
-                cc=_routing["order_cc"] or None,
-            )
-
-    await audit_log("order.create", "order", odoo_order_id, entity_label=customer_name if order.reseller_id else "",
+    await audit_log("order.create", "order", odoo_order_id, entity_label=credit_partner_name if order.reseller_id else "",
                     user=current_user, after={"partner_id": effective_partner_id, "lines": len(order.order_line)},
                     reseller_id=order.reseller_id)
 
@@ -516,12 +475,26 @@ async def create_order(
     return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning}
 
 
+async def _require_confirm_access(current_user: dict = Depends(get_current_user)) -> dict:
+    """Allow staff with orders.confirm permission OR resellers (ownership checked in endpoint)."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") == "reseller":
+        return current_user
+    if current_user.get("role") not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("orders", {}).get("confirm"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
 @router.put("/{order_id}/confirm")
 async def confirm_order(
     order_id: int,
     background_tasks: BackgroundTasks,
     override_credit: bool = Query(False),
-    current_user: dict = Depends(require_permission("orders.confirm")),
+    current_user: dict = Depends(_require_confirm_access),
 ):
     """
     Confirm a quotation. On success, three further steps run in sequence:
@@ -534,11 +507,22 @@ async def confirm_order(
     odoo = get_odoo_client()
     warnings: List[str] = []
 
+    # ── Reseller ownership check ───────────────────────────────────────────────
+    # Resellers may only confirm their own quotes (those whose ticket carries their reseller_id).
+    _sales_ticket = await col("tickets").find_one(
+        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1}
+    )
+    if current_user.get("role") == "reseller":
+        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"_id": 1})
+        _my_rid = str(_res_doc["_id"]) if _res_doc else None
+        if not _my_rid or not _sales_ticket or _sales_ticket.get("reseller_id") != _my_rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+
     # ── Step 0: Credit check — hard gate unless explicitly overridden ──────────
     # Unlike the warning at order creation, this blocks: confirming commits to
     # an invoice, so it's the point where being over limit actually matters.
     try:
-        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "company_id", "warehouse_id", "name"])
+        pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "amount_untaxed", "company_id", "warehouse_id", "name"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not read order: {str(e)}")
     if not pre_rows:
@@ -683,11 +667,11 @@ async def confirm_order(
                         items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
 
                 partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
-                comm_data = await col("order_commissions").find_one(
-                    {"odoo_order_id": str(order_id)}, NO_ID
-                )
-                is_reseller_order = bool(comm_data)
-                reseller_name_val = comm_data.get("reseller_name") if comm_data else None
+                is_reseller_order = bool(_ticket_reseller_id)
+                reseller_name_val = None
+                if _ticket_reseller_id:
+                    _res_pb = await col("resellers").find_one({"id": _ticket_reseller_id}, {"name": 1, "_id": 0})
+                    reseller_name_val = _res_pb["name"] if _res_pb else None
 
                 from routes.packing_board_routes import manager
                 now = datetime.now(timezone.utc)
@@ -743,7 +727,37 @@ async def confirm_order(
     except Exception as e:
         print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
 
+    # ── Commission record ─────────────────────────────────────────────────────
+    # For reseller quotes the record was deferred from order creation — create it
+    # now at the first moment the order is financially committed.
+    _ticket_reseller_id = _sales_ticket.get("reseller_id") if _sales_ticket else None
     comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
+    if _ticket_reseller_id and not comm_lookup:
+        try:
+            _reseller_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, NO_ID)
+            _reseller_name_val = _reseller_doc["name"] if _reseller_doc else ""
+            _cust_name_val = order_data["partner_id"][1] if order_data and order_data.get("partner_id") else ""
+            _order_subtotal = float(pre_rows[0].get("amount_untaxed", 0)) if pre_rows else 0
+            _comm_doc = {
+                "odoo_order_id": str(order_id),
+                "reseller_id": _ticket_reseller_id,
+                "reseller_name": _reseller_name_val,
+                "customer_partner_id": partner[0] if partner else None,
+                "customer_name": _cust_name_val,
+                "original_subtotal": _order_subtotal,
+                "commission_total": 0,
+                "payout_status": "pending",
+                "created_at": datetime.now(timezone.utc),
+            }
+            await col("order_commissions").insert_one(_comm_doc)
+            await col("resellers").update_one(
+                {"id": _ticket_reseller_id},
+                {"$inc": {"total_sales": _order_subtotal}},
+            )
+            comm_lookup = _comm_doc
+        except Exception as _ce:
+            print(f"⚠️  Commission record creation failed at confirm for order {order_id}: {_ce}")
+
     await audit_log("order.confirm", "order", order_id,
                     entity_label=order_data.get("name", "") if order_data else "",
                     user=current_user,

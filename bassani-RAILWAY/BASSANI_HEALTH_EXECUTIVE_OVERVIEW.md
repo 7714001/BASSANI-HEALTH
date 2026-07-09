@@ -279,6 +279,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Capability | Status |
 |---|---|
 | Sales Agent portal — product catalogue, order placement, commission (eligibility-gated per agent) | Live |
+| Reseller quote flow — resellers build draft quotes via cart, manage them in My Quotes, edit/send/confirm without Bassani staff involvement; draft quotes hidden from staff queue until confirmed | Live |
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |

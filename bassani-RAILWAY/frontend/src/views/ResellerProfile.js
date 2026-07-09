@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronDown, ShoppingCart, TrendingUp, Users, CreditCard,
-  FileText, Clock, Building2, History, Plus, X, Search, Loader2, Link2, Unlink,
+  FileText, Clock, Building2, History, Plus, X, Search, Loader2, Link2, Unlink, Ticket,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -136,6 +136,22 @@ const STATE_LABEL   = { draft:"Quotation", sale:"Confirmed", done:"Done", cancel
 const PAYMENT_LABEL = { not_paid:"Unpaid", partial:"Partial", in_payment:"In Payment", paid:"Paid" };
 const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_payment:"text-blue-600", paid:"text-green-600" };
 
+const TICKET_STATUS_LABEL = {
+  open: "Open (RFQ)", quote: "Quote", sale_order: "Sale Order", invoice: "Invoice",
+  confirmed_wip: "Confirmed — WIP", ready_for_collection: "Ready", incomplete: "Incomplete",
+};
+const TICKET_STATUS_COLOR = {
+  open: "bg-gray-100 text-gray-600", quote: "bg-amber-100 text-amber-700",
+  sale_order: "bg-blue-100 text-blue-700", invoice: "bg-indigo-100 text-indigo-700",
+  confirmed_wip: "bg-teal-100 text-teal-700", ready_for_collection: "bg-green-100 text-green-700",
+  incomplete: "bg-orange-100 text-orange-700",
+};
+const TICKET_EXIT_LABEL = { not_interested: "Not Interested", cancelled: "Cancelled", complete: "Complete" };
+const TICKET_EXIT_COLOR = {
+  not_interested: "bg-gray-100 text-gray-500", cancelled: "bg-red-100 text-red-600",
+  complete: "bg-green-100 text-green-700",
+};
+
 export default function ResellerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -143,16 +159,18 @@ export default function ResellerProfile() {
   const ACT_PAGE_SIZE = 20;
   const CUST_PAGE_SIZE = 15;
 
-  const [data,        setData      ] = useState(null);
-  const [loading,     setLoading   ] = useState(true);
-  const [activity,    setActivity  ] = useState([]);
-  const [actTotal,    setActTotal  ] = useState(0);
-  const [actPage,     setActPage   ] = useState(0);
-  const [actLoading,  setActLoading] = useState(false);
-  const [customers,   setCustomers ] = useState([]);
-  const [custPage,    setCustPage  ] = useState(0);
-  const [showLink,    setShowLink  ] = useState(false);
-  const [unlinking,   setUnlinking ] = useState(null);
+  const [data,           setData          ] = useState(null);
+  const [loading,        setLoading        ] = useState(true);
+  const [activity,       setActivity       ] = useState([]);
+  const [actTotal,       setActTotal       ] = useState(0);
+  const [actPage,        setActPage        ] = useState(0);
+  const [actLoading,     setActLoading     ] = useState(false);
+  const [customers,      setCustomers      ] = useState([]);
+  const [custPage,       setCustPage       ] = useState(0);
+  const [showLink,       setShowLink       ] = useState(false);
+  const [unlinking,      setUnlinking      ] = useState(null);
+  const [pipeline,       setPipeline       ] = useState([]);
+  const [pipelineLoading,setPipelineLoading] = useState(true);
 
   useEffect(() => {
     api.get(`/api/resellers/${id}/profile`)
@@ -160,6 +178,14 @@ export default function ResellerProfile() {
       .catch(() => { toast.error("Failed to load reseller profile"); navigate("/resellers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  useEffect(() => {
+    setPipelineLoading(true);
+    api.get("/api/tickets/", { params: { reseller_id: id } })
+      .then(r => setPipeline(r.data.tickets || []))
+      .catch(() => setPipeline([]))
+      .finally(() => setPipelineLoading(false));
+  }, [id]);
 
   useEffect(() => {
     if (!can("audit.view")) return;
@@ -294,6 +320,63 @@ export default function ResellerProfile() {
                       <td className="px-5 py-3"><Badge status={o.state} label={STATE_LABEL[o.state] || o.state} /></td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            )}
+          </Section>
+
+          {/* Pipeline */}
+          <Section
+            title={`Quote Pipeline (${pipeline.filter(t => !t.exit_status).length} active)`}
+            action={
+              <button
+                onClick={() => navigate("/tickets/sales")}
+                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors"
+              >
+                <Ticket size={12} /> Open in Sales Tickets
+              </button>
+            }
+          >
+            {pipelineLoading ? (
+              <p className="text-sm text-gray-400 px-5 py-4 flex items-center gap-1.5">
+                <Loader2 size={13} className="animate-spin" />Loading pipeline…
+              </p>
+            ) : pipeline.length === 0 ? (
+              <p className="text-sm text-gray-400 px-5 py-4">No quotes or tickets yet.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-xs text-gray-500">
+                    <th className="text-left px-5 py-2.5 font-medium">Customer</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Status</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Order Ref</th>
+                    <th className="text-left px-5 py-2.5 font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pipeline.map(t => {
+                    const statusKey   = t.exit_status ? null : t.status;
+                    const labelText   = t.exit_status
+                      ? (TICKET_EXIT_LABEL[t.exit_status] || t.exit_status)
+                      : (TICKET_STATUS_LABEL[t.status] || t.status);
+                    const badgeCls    = t.exit_status
+                      ? (TICKET_EXIT_COLOR[t.exit_status] || "bg-gray-100 text-gray-500")
+                      : (TICKET_STATUS_COLOR[statusKey]   || "bg-gray-100 text-gray-500");
+                    return (
+                      <tr key={t.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3 font-medium text-gray-900">{t.customer_name || "—"}</td>
+                        <td className="px-5 py-3">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}`}>
+                            {labelText}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 font-mono text-xs text-bassani-700">
+                          {t.order_id ? `#${t.order_id}` : "—"}
+                        </td>
+                        <td className="px-5 py-3 text-gray-500 text-xs">{fmtDate(t.updated_at)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

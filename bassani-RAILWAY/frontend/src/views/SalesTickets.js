@@ -64,10 +64,11 @@ const PACK_STATUS_COLOR = {
 export default function SalesTickets() {
   const { can, user, isAdmin } = useAuth();
   const navigate        = useNavigate();
-  const canDrive        = can("tickets.sales");
+  const isReseller      = user?.role === "reseller";
+  const canDrive        = can("tickets.sales") || isReseller;
   const canFinance      = can("tickets.finance_confirm");
   const canManage       = can("tickets.manage");
-  const canConfirmOrder = can("orders.confirm");
+  const canConfirmOrder = can("orders.confirm") || isReseller;
 
   // ── List state ────────────────────────────────────────────────────────────
   const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
@@ -75,6 +76,7 @@ export default function SalesTickets() {
   const [loading, setLoading] = useState(true);
   const [listSearch,   setListSearch  ] = useState("");
   const [statusFilter, setStatusFilter] = useState(new Set());
+  const [sourceFilter, setSourceFilter] = useState("all"); // "all" | "internal" | "external"
 
   const toggleStatus = (key) =>
     setStatusFilter(prev => {
@@ -1063,7 +1065,7 @@ export default function SalesTickets() {
                           </button>
                         )}
                       </div>
-                      {!detail.assigned_to && canDrive && (
+                      {!detail.assigned_to && canDrive && !isReseller && (
                         <BtnSecondary size="sm" onClick={() => assignToMe(detail.id)}>
                           <UserPlus size={12} />Assign to me
                         </BtnSecondary>
@@ -1169,7 +1171,33 @@ export default function SalesTickets() {
                       <div className="p-2">
 
                         {detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
-                          <button onClick={openQuoteEdit} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                          <button
+                            onClick={() => {
+                              if (isReseller) {
+                                navigate("/orders", {
+                                  state: {
+                                    editQuote: {
+                                      ticketId:     detail.id,
+                                      orderId:      detail.order_id,
+                                      customerName: detail.customer_name,
+                                      customerId:   Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : detail.customer_id,
+                                      lines: (detailOrder?.lines || []).map(l => ({
+                                        product_id:      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
+                                        product_uom_qty: l.product_uom_qty,
+                                        price_unit:      l.price_unit,
+                                        name:            l.name,
+                                        _sku:            "",
+                                        _taxRate:        0,
+                                      })),
+                                    },
+                                  },
+                                });
+                              } else {
+                                openQuoteEdit();
+                              }
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                          >
                             <ShoppingCart size={14} className="text-gray-400 shrink-0" />Edit Quote
                           </button>
                         )}
@@ -1803,6 +1831,8 @@ export default function SalesTickets() {
 
   // ── Filtered ticket list (client-side) ───────────────────────────────────
   const filteredTickets = tickets.filter(t => {
+    if (sourceFilter === "internal" &&  t.reseller_id) return false;
+    if (sourceFilter === "external" && !t.reseller_id) return false;
     if (statusFilter.size > 0) {
       const key = t.exit_status ? `exit:${t.exit_status}` : t.status;
       if (!statusFilter.has(key)) return false;
@@ -1831,7 +1861,7 @@ export default function SalesTickets() {
               <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? "bg-green-500" : "bg-gray-300"}`} />
               {wsConnected ? "Live" : "Reconnecting…"}
             </span>
-            {canDrive && (
+            {canDrive && !isReseller && (
               <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>
             )}
           </div>
@@ -1845,9 +1875,16 @@ export default function SalesTickets() {
               onChange={setListSearch}
               placeholder="Search customer or SO number…"
             />
-            {(listSearch || statusFilter.size > 0) && (
+            {!isReseller && (
+              <div className="flex items-center gap-1">
+                {[["all", "All"], ["internal", "Internal"], ["external", "Resellers"]].map(([val, label]) => (
+                  <FilterPill key={val} label={label} active={sourceFilter === val} onClick={() => setSourceFilter(val)} />
+                ))}
+              </div>
+            )}
+            {(listSearch || statusFilter.size > 0 || (!isReseller && sourceFilter !== "all")) && (
               <button
-                onClick={() => { setListSearch(""); setStatusFilter(new Set()); }}
+                onClick={() => { setListSearch(""); setStatusFilter(new Set()); setSourceFilter("all"); }}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors shrink-0"
               >
                 Clear filters

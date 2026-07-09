@@ -1481,12 +1481,18 @@ Each product shows:
 
 ### Placing an Order
 
-1. Go to **Tickets → Sales** and click **New Direct Inquiry** OR use the **Sales Tickets** flow to build a quote for a customer
-2. Build your quote — search for products by name or SKU, set quantities
-3. Your assigned warehouse is set automatically — your orders always draw from the correct vault
-4. Once the quote is confirmed by Bassani admin, the order moves into fulfilment
+1. Go to **Orders** in the sidebar — you will see the product catalogue
+2. Search or browse for a product and click **Add to Order** — the item appears in your cart on the right
+3. Adjust quantities as needed (you cannot go below any minimum order quantity shown in amber)
+4. Select the customer you are ordering for, then click **Place Order**
+5. A draft quote is created. You will be taken to **My Quotes** where you can see it.
 
-> As a reseller, you can see your orders in **Orders** at any time. The order shows delivery status, tracking reference (if available), and whether any backorders exist.
+From **My Quotes** you can:
+- **Edit Quote** — returns you to the cart pre-populated with the current lines so you can adjust quantities or add/remove products. The customer cannot be changed once the quote is created.
+- **Send Quote** — sends the quote to the customer for review (optional)
+- **Confirm Order** — confirms the order in the system, converting the draft to a live sale order. Once confirmed, Bassani's team takes over.
+
+> Once an order is confirmed, Bassani staff pick it up for packing, QA/RP approval, and fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
 
 ### Viewing Your Commissions
 
@@ -1713,8 +1719,9 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Archive an onboarding email thread | Admin with `onboarding.inbox` |
 | Configure the onboarding mailbox | Super Admin only (Settings > Onboarding Mailbox) |
 | Create a direct inquiry ticket | Merveille (sales) |
-| Build or edit a quote | Merveille (sales) |
-| Send quote to customer | Merveille (sales) |
+| Build or edit a quote (staff — internal quote builder) | Merveille (sales) |
+| Build or edit a quote (reseller — cart view) | Any reseller |
+| Send quote to customer | Merveille (sales) or any reseller |
 | Register a 50% deposit | Kashi or Ragini (finance) |
 | Register balance (final) payment | Kashi or Ragini (finance) |
 | Confirm payment received | Kashi or Ragini (finance) |
@@ -1757,6 +1764,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 8 July 2026
+**Last Updated:** 9 July 2026
 
 *This manual covers the system as built through Phase 20 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), and the Sales Agent commission_eligible flag with commission exclusion (Phase 20). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

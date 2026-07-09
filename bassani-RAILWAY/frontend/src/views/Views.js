@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent } from "lucide-react";
@@ -875,6 +875,8 @@ export function Customers() {
 // ─────────────────────────────────────────────────────────────────────────────
 export function Orders() {
   const { user, can } = useAuth();
+  const navigate   = useNavigate();
+  const location   = useLocation();
   const isReseller = user?.role === "reseller";
 
   // ── List view state ───────────────────────────────────────────────────────
@@ -912,6 +914,7 @@ export function Orders() {
   const [cartSelectedCust, setCartSelectedCust] = useState(null);
   const [cartCustDropOpen, setCartCustDropOpen] = useState(false);
   const [cartSubmitting,   setCartSubmitting  ] = useState(false);
+  const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
 
   const loadCartProducts = async () => {
     setCartProdsLoading(true);
@@ -925,6 +928,26 @@ export function Orders() {
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
   };
+
+  // If navigated here from My Quotes with an existing draft to edit, enter edit mode
+  useEffect(() => {
+    const eq = location.state?.editQuote;
+    if (!eq) return;
+    setEditQuote(eq);
+    setCart((eq.lines || []).map(l => ({
+      product_id: l.product_id,
+      product_uom_qty: l.product_uom_qty,
+      price_unit: l.price_unit,
+      name: l.name,
+      _sku: l._sku || "",
+      _stock: 9999,
+      _taxRate: l._taxRate || 0,
+    })));
+    setCartSelectedCust({ id: eq.customerId, name: eq.customerName });
+    setCartCustSearch(eq.customerName || "");
+    loadCartProducts();
+    setView("new");
+  }, []); // eslint-disable-line
 
   // Customer search debounce (cart)
   useEffect(() => {
@@ -979,6 +1002,24 @@ export function Orders() {
     if (cart.length === 0) return toast.error("Add at least one product");
     if (!cartSelectedCust) return toast.error("Select a customer first");
     setCartSubmitting(true);
+
+    // Edit-quote mode: update existing draft order lines via the ticket endpoint
+    if (editQuote) {
+      try {
+        await api.put(`/api/tickets/${editQuote.ticketId}/update-order`, {
+          order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
+          note: cartNote || undefined,
+        });
+        toast.success("Quote updated");
+        setEditQuote(null);
+        navigate("/tickets/sales");
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Failed to update quote");
+      } finally {
+        setCartSubmitting(false);
+      }
+      return;
+    }
 
     // Section 21 script check — blocks expired/missing scripts, warns if expiring soon
     try {
@@ -1112,10 +1153,19 @@ export function Orders() {
   if (view === "new" && isReseller) {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar title="Place New Order"
-          subtitle="Select a customer and add products"
+        <TopBar
+          title={editQuote ? "Edit Quote" : "Place New Order"}
+          subtitle={editQuote ? `Revising quote for ${editQuote.customerName}` : "Select a customer and add products"}
           showWarehouseSwitcher
-          actions={<BtnSecondary onClick={()=>setView("list")}>← Back to Orders</BtnSecondary>} />
+          actions={
+            <BtnSecondary onClick={() => {
+              if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
+              else setView("list");
+            }}>
+              {editQuote ? "← Back to My Quotes" : "← Back to Orders"}
+            </BtnSecondary>
+          }
+        />
 
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
 
@@ -1217,7 +1267,14 @@ export function Orders() {
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
                   Ordering For (Customer) <span className="text-red-400">*</span>
                 </p>
-                {cartSelectedCust ? (
+                {editQuote ? (
+                  /* In edit mode the customer is locked — resellers cannot change the customer on an existing quote */
+                  <div className="flex items-center gap-2 border border-gray-200 bg-gray-50 rounded-xl px-3 py-2">
+                    <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0"/>
+                    <p className="text-sm font-semibold text-gray-700 flex-1 truncate">{editQuote.customerName}</p>
+                    <span className="text-[10px] text-gray-400 shrink-0">Locked</span>
+                  </div>
+                ) : cartSelectedCust ? (
                   <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
                     <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
                     <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{cartSelectedCust.name}</p>
@@ -1308,9 +1365,12 @@ export function Orders() {
               )}
               <Textarea value={cartNote} onChange={e => setCartNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
               <div className="flex gap-2">
-                <BtnSecondary onClick={() => setView("list")} className="flex-1">Cancel</BtnSecondary>
+                <BtnSecondary onClick={() => {
+                  if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
+                  else setView("list");
+                }} className="flex-1">Cancel</BtnSecondary>
                 <BtnPrimary onClick={submitCart} loading={cartSubmitting} disabled={cartSubmitting || cart.length === 0} className="flex-1">
-                  {cartSubmitting ? "Placing…" : "Place Order"}
+                  {cartSubmitting ? (editQuote ? "Saving…" : "Placing…") : (editQuote ? "Save Quote" : "Place Order")}
                 </BtnPrimary>
               </div>
             </div>

@@ -18,7 +18,10 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
 from config import get_settings
-from auth import require_permission, require_any_permission, require_admin, get_user_by_username
+from auth import (
+    require_permission, require_any_permission, require_admin,
+    get_current_user, get_user_by_username, ADMIN_ROLES, TICKET_ROLES,
+)
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col, NO_ID
@@ -190,6 +193,53 @@ def _actor(current_user: dict) -> str:
     return current_user.get("name") or current_user.get("username") or "unknown"
 
 
+# ── Reseller-aware auth helpers ───────────────────────────────────────────────
+# These replace individual require_permission() calls on endpoints that resellers
+# need to reach. Each helper replicates the super-admin bypass and role gate from
+# require_permission(), then adds a reseller pass-through beneath it.
+
+async def _require_ticket_viewer(current_user: dict = Depends(get_current_user)) -> dict:
+    """Staff with tickets.sales or tickets.finance_confirm, OR any reseller."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") == "reseller":
+        return current_user
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("tickets", {}).get("sales") or perms.get("tickets", {}).get("finance_confirm"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _require_ticket_driver(current_user: dict = Depends(get_current_user)) -> dict:
+    """Staff with tickets.sales, OR any reseller (for their own tickets)."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") == "reseller":
+        return current_user
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("tickets", {}).get("sales"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _reseller_id_for_user(user: dict) -> Optional[str]:
+    """Return the reseller document _id string for a reseller user, None for staff."""
+    if user.get("role") != "reseller":
+        return None
+    doc = await col("resellers").find_one({"user_id": user["id"]}, {"_id": 1})
+    return str(doc["_id"]) if doc else None
+
+
+def _assert_reseller_owns_ticket(ticket: dict, reseller_id: str) -> None:
+    """Raise 403 if this ticket does not belong to the given reseller."""
+    if ticket.get("reseller_id") != reseller_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/")
@@ -262,25 +312,47 @@ async def list_tickets(
     status: Optional[str] = None,
     exit_status: Optional[str] = None,
     assigned_to: Optional[str] = None,
-    current_user: dict = Depends(require_any_permission("tickets.sales", "tickets.finance_confirm")),
+    reseller_id: Optional[str] = None,
+    current_user: dict = Depends(_require_ticket_viewer),
 ):
     """
-    List Sales tickets. A plain `sales`-role account only sees their own queue
-    by default (no `assigned_to` override) — admins/super_admins and finance
-    (who need to find tickets awaiting payment confirmation across all reps)
-    see everything unless they filter explicitly.
+    List Sales tickets.
+    - Resellers see only their own tickets (scoped by reseller_id automatically).
+    - Sales role sees their own queue + unassigned internal tickets + reseller
+      tickets only from sale_order onwards (pre-confirm drafts are the reseller's
+      workspace, not the staff queue).
+    - Admins/super_admins see everything; can pass reseller_id to scope to one
+      reseller (used by the Reseller Profile pipeline panel).
+    - Finance sees everything (needs cross-rep visibility to find tickets awaiting
+      payment confirmation).
     """
+    role = current_user.get("role", "")
     query: dict = {"type": "sales"}
     if status:
         query["status"] = status
     if exit_status:
         query["exit_status"] = exit_status
-    if assigned_to:
+
+    if role == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            return {"tickets": [], "total": 0}
+        query["reseller_id"] = rid
+    elif reseller_id and (current_user.get("is_super_admin") or role in ADMIN_ROLES):
+        # Admin drilling into a specific reseller's pipeline (e.g. from Reseller Profile page)
+        query["reseller_id"] = reseller_id
+    elif assigned_to:
         query["assigned_to"] = assigned_to
-    elif current_user.get("role") == "sales":
-        # Sales users see their own queue plus unassigned tickets (portal orders
-        # placed by resellers/admins that haven't been claimed yet).
-        query["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}]
+    elif role == "sales":
+        # Staff sales queue: own tickets + unassigned internal + reseller tickets
+        # that have been confirmed and handed to Bassani (sale_order and beyond).
+        # Pre-confirm reseller quotes (open/quote) are hidden — the reseller is
+        # still working on them and they haven't entered the Bassani pipeline yet.
+        query["$or"] = [
+            {"assigned_to": current_user["id"]},
+            {"assigned_to": None, "reseller_id": None},
+            {"reseller_id": {"$ne": None}, "status": {"$nin": ["open", "quote"]}},
+        ]
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
@@ -320,7 +392,7 @@ async def list_payment_journals(
 @router.get("/{ticket_id}")
 async def get_ticket(
     ticket_id: str,
-    current_user: dict = Depends(require_any_permission("tickets.sales", "tickets.finance_confirm")),
+    current_user: dict = Depends(_require_ticket_viewer),
 ):
     try:
         oid = ObjectId(ticket_id)
@@ -329,6 +401,11 @@ async def get_ticket(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    if current_user.get("role") == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        _assert_reseller_owns_ticket(ticket, rid)
 
     # Full sync with Odoo on every detail fetch. Odoo is the financial source of truth.
     # Handles three cases: cancellation, and forward-advancement through the portal pipeline
@@ -679,7 +756,7 @@ async def confirm_payment(
 async def create_order_from_ticket(
     ticket_id: str,
     body: TicketOrderCreate,
-    current_user: dict = Depends(require_permission("tickets.sales")),
+    current_user: dict = Depends(_require_ticket_driver),
 ):
     """
     Build a draft Odoo sale.order from a direct inquiry ticket.
@@ -694,6 +771,11 @@ async def create_order_from_ticket(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    if current_user.get("role") == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if ticket.get("order_id"):
@@ -787,7 +869,7 @@ async def create_order_from_ticket(
 @router.post("/{ticket_id}/cancel-order")
 async def cancel_order_from_ticket(
     ticket_id: str,
-    current_user: dict = Depends(require_permission("tickets.sales")),
+    current_user: dict = Depends(_require_ticket_driver),
 ):
     """
     Cancel the linked Odoo draft order and close the ticket as 'cancelled'.
@@ -801,6 +883,11 @@ async def cancel_order_from_ticket(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    if current_user.get("role") == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
@@ -866,7 +953,7 @@ async def cancel_order_from_ticket(
 async def update_order_from_ticket(
     ticket_id: str,
     body: TicketOrderUpdate,
-    current_user: dict = Depends(require_permission("tickets.sales")),
+    current_user: dict = Depends(_require_ticket_driver),
 ):
     """
     Replace line items on an existing draft/sent Odoo sale.order.
@@ -881,6 +968,14 @@ async def update_order_from_ticket(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    is_reseller_caller = current_user.get("role") == "reseller"
+    if is_reseller_caller:
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        _assert_reseller_owns_ticket(ticket, rid)
+        if body.customer_id:
+            raise HTTPException(status_code=403, detail="Resellers cannot change the customer on a quote")
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
@@ -1000,7 +1095,7 @@ async def update_order_from_ticket(
 @router.post("/{ticket_id}/send-quote")
 async def send_quote(
     ticket_id: str,
-    current_user: dict = Depends(require_permission("tickets.sales")),
+    current_user: dict = Depends(_require_ticket_driver),
 ):
     """Email the PDF quotation to the customer via Odoo's built-in quotation
     template. Marks the Odoo order as 'sent' and stamps quote_sent_at on the
@@ -1012,6 +1107,11 @@ async def send_quote(
     ticket = await col("tickets").find_one({"_id": oid})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    if current_user.get("role") == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
