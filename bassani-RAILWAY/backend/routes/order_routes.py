@@ -155,7 +155,9 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
     """Get a single order with line items and commission breakdown."""
     odoo = get_odoo_client()
     try:
-        # Reseller access check — must own this order
+        # Reseller access check — must own this order.
+        # Commission records only exist post-confirmation, so for draft quotes
+        # we fall back to checking the sales ticket's reseller_id.
         if current_user.get("role") == "reseller":
             reseller = await col("resellers").find_one(
                 {"user_id": current_user["id"]}, NO_ID
@@ -165,7 +167,12 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
                 {"odoo_order_id": str(order_id), "reseller_id": reseller_id}, NO_ID
             )
             if not comm_check:
-                raise HTTPException(status_code=403, detail="Access denied")
+                ticket_check = await col("tickets").find_one(
+                    {"type": "sales", "order_id": order_id, "reseller_id": reseller_id},
+                    {"_id": 1},
+                )
+                if not ticket_check:
+                    raise HTTPException(status_code=403, detail="Access denied")
 
         records = odoo.read("sale.order", [order_id], fields=ORDER_FIELDS)
         if not records:
