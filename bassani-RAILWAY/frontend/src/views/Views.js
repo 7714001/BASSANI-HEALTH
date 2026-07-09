@@ -1290,6 +1290,7 @@ export function Orders() {
                       className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
                   </div>
                 ) : (
+                  <>
                   <div className="relative">
                     <Input value={cartCustSearch} onChange={e => setCartCustSearch(e.target.value)}
                       onFocus={() => setCartCustDropOpen(true)}
@@ -1313,6 +1314,7 @@ export function Orders() {
                     )}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
+                  </>
                 )}
               </div>
 
