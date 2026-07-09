@@ -1566,6 +1566,19 @@ export default function SalesTickets() {
           <Modal title="Confirm Order" onClose={() => { setStockCheckModal(false); setStockCheckData(null); }}>
             {stockCheckData.is_partial ? (
               <>
+                {stockCheckData.invoice_policy_block && (
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
+                    <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
+                      <p className="text-xs text-red-700 mt-1">
+                        {isReseller
+                          ? "This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming."
+                          : "One or more products are set to invoice on ordered quantity, not delivered quantity. Update the invoice policy to \"Delivered quantities\" in Odoo, then retry."}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
                   <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
                   <div>
@@ -1609,9 +1622,11 @@ export default function SalesTickets() {
                   <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
                     Cancel
                   </BtnSecondary>
-                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => confirmOrder(false, true)}>
-                    {isReseller ? "Confirm with Backorder" : "Confirm — Create Backorder"}
-                  </BtnPrimary>
+                  {!stockCheckData.invoice_policy_block && (
+                    <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => confirmOrder(false, true)}>
+                      {isReseller ? "Confirm with Backorder" : "Confirm — Create Backorder"}
+                    </BtnPrimary>
+                  )}
                 </div>
               </>
             ) : (

@@ -561,7 +561,10 @@ Once the customer confirms and (if required) finance has registered a deposit:
 
 1. Click **Confirm Order** in the right sidebar
 2. If the customer is over their credit limit, you will be prompted to confirm the override
-3. On confirmation, the ticket automatically advances to `Confirmed WIP` and the order joins the packing queue
+3. The portal checks stock availability — if all items are in stock, the order confirms immediately. If some items are short, a modal appears showing what will ship now and what will be backordered. Confirm to proceed with a partial delivery, or cancel to wait
+4. On confirmation, the ticket automatically advances to `Confirmed WIP` and the order joins the packing queue
+
+> **If the stock check modal shows a red "Partial fulfilment blocked" notice:** The backorder option is not available because one or more products on the order have their Odoo invoicing policy set to "Ordered quantities" instead of "Delivered quantities". A partial delivery requires the "Delivered quantities" setting so the invoice reflects what actually shipped. To fix: open the product in Odoo, go to the General Information tab, change Invoicing Policy to "Delivered quantities", and save. Then return to the ticket and click Confirm Order again.
 
 ### Cancelling a Quote
 
@@ -1542,6 +1545,8 @@ When you click Confirm Order, the portal checks current stock availability befor
 - If you confirm, Bassani will ship what is available immediately and fulfil the rest as soon as stock arrives
 - You will receive a separate email when the backorder is ready for collection
 
+> **If the stock check modal shows a red "Partial fulfilment blocked" notice:** The "Confirm with Backorder" button will not be available. This is a configuration issue on the Bassani side — one or more products on the order need a setting updated before a partial delivery can be invoiced correctly. Contact Bassani directly. Do not attempt to re-confirm until you have been notified that the issue is resolved.
+
 On your **My Quotes** detail view, when an order is partially fulfilled you can see the split: items that shipped are listed under "Shipping now" and backordered items under "Backordered" with quantities.
 
 > Once an order is confirmed, Bassani staff pick it up for packing, QA/RP approval, and fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
@@ -1731,6 +1736,9 @@ The display token URL may be incorrect or the token may have been regenerated. G
 
 **Q: Odoo is down — can we still use the portal?**  
 The portal will enter a degraded state. The health endpoint (`/health`) will report `degraded`. MongoDB-only features (commission statements, audit trail, tickets, reseller profiles) will still work. Anything that reads from or writes to Odoo (products, orders, invoices, customer data) will fail with an appropriate error message. The portal will recover automatically once Odoo comes back online.
+
+**Q: The stock check modal shows a red "Partial fulfilment blocked" message and there is no option to confirm the backorder.**  
+One or more products on the order are configured in Odoo with an invoicing policy of "Ordered quantities". Partial deliveries require the "Delivered quantities" policy so each invoice reflects only what has actually shipped. **Admin / sales:** Open the affected product in Odoo, go to the General Information tab, set Invoicing Policy to "Delivered quantities", and save. Then return to the ticket and retry confirming. All Bassani products should have this policy — if you see this error it means the Odoo product record was not updated correctly. **Resellers:** Contact Bassani directly — this cannot be resolved from the reseller portal and Bassani's team will fix it promptly.
 
 **Q: A product shows 0 forecasted stock but I can see it on the shelf.**  
 Check the **Reservations** drill-down — click the icon next to the Forecasted figure in the Products table. This shows every confirmed order that is reserving those units. The forecasted figure is on-hand minus reserved, so 0 forecasted = all on-hand units are committed to open orders. Those units are not available to promise to new orders until the existing orders are fulfilled or cancelled.

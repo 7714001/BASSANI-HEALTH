@@ -382,10 +382,27 @@ async def stock_check(order_id: int, current_user: dict = Depends(require_permis
                 "will_backorder": short,
             })
 
+    invoice_policy_block = False
+    invoice_policy_blocked_products: list[str] = []
+    if is_partial:
+        try:
+            if picking_ids:
+                _ip = list({m["product_id"][0] for m in moves if m.get("product_id")})
+            else:
+                _ip = [l["product_id"][0] for l in ol_rows if l.get("product_id")]
+            if _ip:
+                prods = odoo.read("product.product", _ip, fields=["name", "invoice_policy"])
+                invoice_policy_blocked_products = [p["name"] for p in prods if p.get("invoice_policy") == "order"]
+                invoice_policy_block = bool(invoice_policy_blocked_products)
+        except Exception:
+            pass  # never block a user if the policy check itself fails
+
     return {
         "order_ref": order.get("name", f"#{order_id}"),
         "is_partial": is_partial,
         "lines": lines,
+        "invoice_policy_block": invoice_policy_block,
+        "invoice_policy_blocked_products": invoice_policy_blocked_products,
     }
 
 
