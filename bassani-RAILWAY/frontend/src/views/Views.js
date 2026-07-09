@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X } from "lucide-react";
 import OrderView from "./OrderView";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -225,32 +225,70 @@ export function Products() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher
-        actions={can("products.manage") && <BtnPrimary onClick={openNew}><Plus size={14} />Add Product</BtnPrimary>} />
+      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
-          <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
+          {/* Search + compact stock toggle */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({...p, pageIndex:0})); }} placeholder="Search products, SKU…" />
+            </div>
+            <div className="flex items-center bg-gray-100 rounded-xl p-0.5 shrink-0">
+              <button
+                onClick={() => { setStockFilter("in_stock"); setPagination(p => ({...p, pageIndex:0})); }}
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "in_stock" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+              >On Hand</button>
+              <button
+                onClick={() => { setStockFilter("all"); setPagination(p => ({...p, pageIndex:0})); }}
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "all" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+              >All</button>
+            </div>
+          </div>
+
+          {/* Adaptive filter row — categories at top level, variants when drilled in */}
           <ChipRow>
-            {["all",...categories.map(c=>c.name)].map(c => <FilterPill key={c} label={c==="all"?"All":c} active={cat===c} onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }} />)}
+            {cat === "all" ? (
+              ["all", ...categories.map(c => c.name)].map(c => (
+                <FilterPill key={c} label={c === "all" ? "All" : c} active={cat === c}
+                  onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }} />
+              ))
+            ) : (
+              <>
+                {/* Active category as removable crumb — click anywhere to go back */}
+                <button
+                  onClick={() => { setCat("all"); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
+                >
+                  {cat} <X size={11} className="opacity-80" />
+                </button>
+                <span className="text-gray-200 select-none self-center">|</span>
+                {(() => {
+                  const opts = Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
+                  if (opts.length === 0) return null;
+                  return [
+                    <FilterPill key="__all__" label="All variants" active={variant === "all"} onClick={() => setVariant("all")} />,
+                    ...opts.map(v => <FilterPill key={v} label={v} active={variant === v} onClick={() => setVariant(v)} />)
+                  ];
+                })()}
+              </>
+            )}
           </ChipRow>
-          <ChipRow>
-            <FilterPill label="On Hand" active={stockFilter === "in_stock"} onClick={() => { setStockFilter("in_stock"); setPagination(p => ({...p, pageIndex:0})); }} />
-            <FilterPill label="All Products" active={stockFilter === "all"} onClick={() => { setStockFilter("all"); setPagination(p => ({...p, pageIndex:0})); }} />
-          </ChipRow>
-          {(() => {
-            const opts = cat === "all" ? [] : Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
-            return opts.length > 0 ? (
-              <ChipRow>
-                {["all", ...opts].map(v => (
-                  <FilterPill key={v} label={v === "all" ? "All Variants" : v} active={variant === v} onClick={() => setVariant(v)} />
-                ))}
-              </ChipRow>
-            ) : null;
-          })()}
         </div>
         <DataTable
           columns={[
-            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => <div><p className="font-medium text-gray-900">{p.display_name||p.name}</p><p className="font-mono text-[10px] text-gray-400">{p.default_code||"—"}</p></div> },
+            { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => {
+              const full = p.display_name || p.name || "";
+              const bi   = full.indexOf(" (");
+              const base = bi !== -1 ? full.slice(0, bi) : full;
+              const vari = bi !== -1 ? full.slice(bi + 2, -1) : null;
+              return (
+                <div>
+                  <p className="font-medium text-gray-900">{base}</p>
+                  {vari && <span className="inline-block mt-0.5 text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{vari}</span>}
+                  <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code||"—"}</p>
+                </div>
+              );
+            } },
             { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>
               p.barcode
                 ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
@@ -313,7 +351,8 @@ export function Products() {
                 );
               }
             }] : []),
-            ...(can("products.manage") ? [{ id:"actions", header:"", enableSorting:false, cell:({ row:{original:p} })=><div className="flex gap-1.5"><BtnSecondary size="sm" onClick={e=>{e.stopPropagation();openEdit(p);}}><Edit2 size={11}/></BtnSecondary><BtnDanger onClick={e=>{e.stopPropagation();archive(p.id);}} loading={archivingId===p.id} disabled={!!archivingId}><Archive size={11}/></BtnDanger></div> }] : []),
+            // Edit / archive actions hidden — product changes are made in Odoo and synced here.
+            // Restore by uncommenting: ...(can("products.manage") ? [{ id:"actions", ... }] : []),
           ]}
           data={variant === "all" ? products : products.filter(p => getVariantLabel(p) === variant)} loading={loading} total={total}
           pagination={pagination} onPaginationChange={setPagination}
