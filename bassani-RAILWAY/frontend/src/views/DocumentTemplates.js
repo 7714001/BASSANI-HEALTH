@@ -638,7 +638,7 @@ export default function DocumentTemplates({ embedded = false }) {
     <div className={embedded ? "flex flex-col flex-1 overflow-hidden" : "flex flex-col min-h-screen bg-gray-50"}>
       {!embedded && <TopBar title="Document Templates" />}
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="w-full">
+        <div className="max-w-4xl mx-auto w-full">
 
           <div className="mb-6">
                 <p className="text-sm text-gray-500">
