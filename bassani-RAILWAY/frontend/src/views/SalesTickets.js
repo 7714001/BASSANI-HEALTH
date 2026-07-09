@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
-  BtnPrimary, BtnSecondary, Badge, LoadingState, EmptyState, fmtDate,
+  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   SearchBar, ChipRow, FilterPill,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
@@ -199,7 +199,10 @@ export default function SalesTickets() {
   const [saving, setSaving]             = useState(false);
   const [confirming, setConfirming]     = useState(false);
   const [sending, setSending]           = useState(false);
-  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideOpen,       setOverrideOpen      ] = useState(false);
+  const [exitConfirm,        setExitConfirm       ] = useState(null);
+  const [confirmAnywayMsg,   setConfirmAnywayMsg  ] = useState(null);
+  const [cancelQuoteOpen,    setCancelQuoteOpen   ] = useState(false);
 
   // ── Reseller pre-confirm stock-check modal ────────────────────────────────
   const [stockCheckModal, setStockCheckModal] = useState(false);
@@ -470,8 +473,10 @@ export default function SalesTickets() {
     finally { setSaving(false); }
   };
 
-  const markExit = async (exit_status) => {
-    if (!window.confirm(`Mark this ticket as "${EXIT_LABEL[exit_status]}"? This closes the ticket.`)) return;
+  const markExit = (exit_status) => setExitConfirm(exit_status);
+
+  const doMarkExit = async (exit_status) => {
+    setExitConfirm(null);
     setSaving(true);
     try {
       await api.put(`/api/tickets/${detail.id}/stage`, { exit_status });
@@ -559,9 +564,7 @@ export default function SalesTickets() {
     } catch (e) {
       if (e.response?.status === 402) {
         setConfirming(false);
-        if (window.confirm(`${e.response.data.detail}\n\nConfirm anyway?`)) {
-          await confirmOrder(true, true);
-        }
+        setConfirmAnywayMsg(e.response.data.detail);
         return;
       }
       toast.error(e.response?.data?.detail || "Failed to confirm order");
@@ -669,8 +672,10 @@ export default function SalesTickets() {
       return prev.filter(l => l._id !== id);
     });
 
-  const cancelQuote = async () => {
-    if (!window.confirm("Cancel this quote?\n\nThe Odoo draft order will be cancelled and the ticket closed.")) return;
+  const cancelQuote = () => setCancelQuoteOpen(true);
+
+  const doCancelQuote = async () => {
+    setCancelQuoteOpen(false);
     setSaving(true);
     try {
       await api.post(`/api/tickets/${detail.id}/cancel-order`);
@@ -2275,6 +2280,34 @@ export default function SalesTickets() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCreateModal(false)} disabled={creating}>Cancel</BtnSecondary>
             <BtnPrimary onClick={createTicket} loading={creating}>Create Ticket</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+      {exitConfirm && (
+        <Modal title="Close Ticket" onClose={() => setExitConfirm(null)}>
+          <p className="text-sm text-gray-600">Mark this ticket as <strong>{EXIT_LABEL[exitConfirm]}</strong>? This will close the ticket permanently.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setExitConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={() => doMarkExit(exitConfirm)}>Close Ticket</BtnDanger>
+          </div>
+        </Modal>
+      )}
+      {confirmAnywayMsg && (
+        <Modal title="Credit Limit Exceeded" onClose={() => setConfirmAnywayMsg(null)}>
+          <p className="text-sm text-gray-600 mb-3">{confirmAnywayMsg}</p>
+          <p className="text-sm text-gray-500">Confirm the order anyway?</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setConfirmAnywayMsg(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={() => { setConfirmAnywayMsg(null); confirmOrder(true, true); }}>Confirm Anyway</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+      {cancelQuoteOpen && (
+        <Modal title="Cancel Quote" onClose={() => setCancelQuoteOpen(false)}>
+          <p className="text-sm text-gray-600">Cancel this quote? The draft order will be cancelled in Odoo and the ticket will be closed.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setCancelQuoteOpen(false)}>Keep Quote</BtnSecondary>
+            <BtnDanger onClick={doCancelQuote}>Cancel Quote</BtnDanger>
           </div>
         </Modal>
       )}

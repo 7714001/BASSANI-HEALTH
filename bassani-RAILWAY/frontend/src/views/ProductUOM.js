@@ -11,6 +11,7 @@ export default function ProductUOM() {
   const [uoms, setUoms]             = useState([]);
   const [uomCats, setUomCats]       = useState([]);
   const [loading, setLoading]       = useState(true);
+  const [archiveConfirm, setArchiveConfirm] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,8 +68,11 @@ export default function ProductUOM() {
     finally { setSaving(false); }
   };
 
-  const archive = async (u) => {
-    if (!window.confirm(`Archive "${u.name}"? It will no longer appear in product forms.`)) return;
+  const archive = (u) => setArchiveConfirm(u);
+
+  const doArchive = async () => {
+    const u = archiveConfirm;
+    setArchiveConfirm(null);
     try {
       await api.put(`/api/products/uoms/${u.id}/archive`);
       toast.success("Archived");
@@ -187,6 +191,15 @@ export default function ProductUOM() {
             <BtnPrimary onClick={save} loading={saving}>
               {modal === "create" ? "Create" : "Save changes"}
             </BtnPrimary>
+          </div>
+        </Modal>
+      )}
+      {archiveConfirm && (
+        <Modal title="Archive Unit of Measure" onClose={() => setArchiveConfirm(null)}>
+          <p className="text-sm text-gray-600">Archive <strong>{archiveConfirm.name}</strong>? It will no longer appear in product forms.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setArchiveConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doArchive}>Archive</BtnDanger>
           </div>
         </Modal>
       )}

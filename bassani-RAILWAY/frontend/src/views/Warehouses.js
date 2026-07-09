@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { Copy, Check, RefreshCw, Star } from "lucide-react";
-import { TopBar, DataTable, BtnSecondary, Badge } from "../components/UI";
+import { TopBar, DataTable, Modal, BtnPrimary, BtnSecondary, Badge } from "../components/UI";
 import { useAuth } from "../AuthContext";
 
 export default function Warehouses({ embedded = false }) {
@@ -13,6 +13,7 @@ export default function Warehouses({ embedded = false }) {
   const [tokens,            setTokens           ] = useState({});
   const [defaultWarehouseId, setDefaultWarehouseId] = useState(null);
   const [loading,           setLoading          ] = useState(true);
+  const [rotateConfirm,     setRotateConfirm    ] = useState(null);
   const [copied,            setCopied           ] = useState(null);
   const [settingDefault,    setSettingDefault   ] = useState(null);
 
@@ -35,10 +36,13 @@ export default function Warehouses({ embedded = false }) {
   };
   useEffect(() => { load(); }, []);
 
-  const rotate = async (w) => {
-    if (tokens[w.id] && !window.confirm(
-      `Generate a new display token for ${w.name}? The screen currently using this URL will lose connection until its URL is updated.`
-    )) return;
+  const rotate = (w) => {
+    if (tokens[w.id]) { setRotateConfirm(w); return; }
+    doRotate(w);
+  };
+
+  const doRotate = async (w) => {
+    setRotateConfirm(null);
     try {
       const r = await api.post(`/api/warehouses/${w.id}/display-token`);
       setTokens(prev => ({ ...prev, [w.id]: r.data.token }));
@@ -146,6 +150,15 @@ export default function Warehouses({ embedded = false }) {
           ]}
         />
       </main>
+      {rotateConfirm && (
+        <Modal title="Rotate Display Token" onClose={() => setRotateConfirm(null)}>
+          <p className="text-sm text-gray-600">Generate a new display token for <strong>{rotateConfirm.name}</strong>? The screen currently using this URL will lose its connection until you update its URL.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setRotateConfirm(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={() => doRotate(rotateConfirm)}>Rotate Token</BtnPrimary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { User, KeyRound, PenLine, RotateCcw, Upload, CheckCircle, Trash2 } from 
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, Spinner, BtnPrimary, BtnDanger, FormGroup, Input, Badge } from "../components/UI";
+import { TopBar, Spinner, Modal, BtnPrimary, BtnSecondary, BtnDanger, FormGroup, Input, Badge } from "../components/UI";
 
 const ROLE_LABELS = {
   super_admin:            "Super Admin",
@@ -42,7 +42,8 @@ export default function MyProfile() {
   const [sigPreviewUrl,setSigPreviewUrl] = useState(null);
   const [uploadFile,   setUploadFile  ] = useState(null);
   const [sigSaving,    setSigSaving   ] = useState(false);
-  const [deletingSig,  setDeletingSig ] = useState(false);
+  const [deletingSig,    setDeletingSig   ] = useState(false);
+  const [sigDeleteConfirm, setSigDeleteConfirm] = useState(false);
 
   const canvasRef = useRef(null);
   const hasMark   = useRef(false);
@@ -185,8 +186,10 @@ export default function MyProfile() {
     }
   };
 
-  const deleteSignature = async () => {
-    if (!window.confirm("Remove your signature? You will need to re-upload it before you can countersign documents.")) return;
+  const deleteSignature = () => setSigDeleteConfirm(true);
+
+  const doDeleteSignature = async () => {
+    setSigDeleteConfirm(false);
     setDeletingSig(true);
     try {
       await api.delete("/api/profile/signature");
@@ -416,6 +419,15 @@ export default function MyProfile() {
           </div>
         </div>
       </main>
+      {sigDeleteConfirm && (
+        <Modal title="Remove Signature" onClose={() => setSigDeleteConfirm(false)}>
+          <p className="text-sm text-gray-600">Remove your signature image? You will need to re-upload it before you can countersign documents.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setSigDeleteConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doDeleteSignature}>Remove Signature</BtnDanger>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

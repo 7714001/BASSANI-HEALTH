@@ -8,7 +8,7 @@ import {
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Spinner, fmtDate } from "../components/UI";
+import { Spinner, Modal, BtnPrimary, BtnSecondary, fmtDate } from "../components/UI";
 import { DOC_CONFIGS, detectFields, countersignPdf } from "../utils/pdfSigning";
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
@@ -752,7 +752,8 @@ export default function CustomerApplicationDetail() {
   const [loading,     setLoading    ] = useState(true);
   const [docs,        setDocs       ] = useState(null);
   const [docsLoading, setDocsLoading] = useState(true);
-  const [assigning,   setAssigning  ] = useState(false);
+  const [assigning,      setAssigning     ] = useState(false);
+  const [takeoverConfirm, setTakeoverConfirm] = useState(false);
 
   useEffect(() => {
     api.get(`/api/onboarding/${id}`)
@@ -960,7 +961,8 @@ export default function CustomerApplicationDetail() {
                         const myId = user?.id;
                         const assignedToMe = app.assigned_to?.user_id === myId;
                         if (!assignedToMe && app.assigned_to) {
-                          if (!window.confirm(`This application is claimed by ${app.assigned_to.name}. Take over the claim?`)) return;
+                          setTakeoverConfirm(true);
+                          return;
                         }
                         handleAssign();
                       }}
@@ -998,6 +1000,15 @@ export default function CustomerApplicationDetail() {
           </div>
         </div>
       </div>
+      {takeoverConfirm && app?.assigned_to && (
+        <Modal title="Take Over Claim" onClose={() => setTakeoverConfirm(false)}>
+          <p className="text-sm text-gray-600">This application is currently claimed by <strong>{app.assigned_to.name}</strong>. Take over the claim?</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setTakeoverConfirm(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={() => { setTakeoverConfirm(false); handleAssign(); }}>Take Over</BtnPrimary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

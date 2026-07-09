@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, BtnPrimary, BtnSecondary, LoadingState } from "../components/UI";
+import { TopBar, Modal, BtnPrimary, BtnSecondary, BtnDanger, LoadingState } from "../components/UI";
 
 const PROVIDERS = [
   { label: "Select provider…", value: "" },
@@ -80,7 +80,8 @@ export default function OnboardingMailboxSettings() {
   const [loading,    setLoading   ] = useState(true);
   const [saving,     setSaving    ] = useState(false);
   const [testing,    setTesting   ] = useState(false);
-  const [clearing,   setClearing  ] = useState(false);
+  const [clearing,          setClearing         ] = useState(false);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [configured, setConfigured] = useState(false);
   const [form,       setForm      ] = useState(BLANK);
@@ -163,8 +164,10 @@ export default function OnboardingMailboxSettings() {
     }
   };
 
-  const clear = async () => {
-    if (!window.confirm("Disconnect this mailbox? The Onboarding Inbox will stop receiving emails until a mailbox is reconnected.")) return;
+  const clear = () => setDisconnectConfirm(true);
+
+  const doClear = async () => {
+    setDisconnectConfirm(false);
     setClearing(true);
     try {
       await api.delete(BASE);
@@ -320,6 +323,15 @@ export default function OnboardingMailboxSettings() {
 
         </div>
       </main>
+      {disconnectConfirm && (
+        <Modal title="Disconnect Mailbox" onClose={() => setDisconnectConfirm(false)}>
+          <p className="text-sm text-gray-600">Disconnect the Onboarding Inbox? It will stop receiving emails until a mailbox is reconnected.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setDisconnectConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doClear}>Disconnect</BtnDanger>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

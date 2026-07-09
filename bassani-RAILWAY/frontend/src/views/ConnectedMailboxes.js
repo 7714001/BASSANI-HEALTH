@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, Building2, Server, MailX } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, BtnPrimary, BtnSecondary, LoadingState } from "../components/UI";
+import { TopBar, Modal, BtnPrimary, BtnSecondary, BtnDanger, LoadingState } from "../components/UI";
 
 // Quick-fill presets for IMAP (avoids making users look up server addresses)
 const IMAP_PRESETS = [
@@ -86,8 +86,10 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
   const [loading,       setLoading      ] = useState(true);
   const [saving,        setSaving       ] = useState(false);
   const [testing,       setTesting      ] = useState(false);
-  const [clearing,      setClearing     ] = useState(false);
-  const [clearingInbox, setClearingInbox] = useState(false);
+  const [clearing,          setClearing         ] = useState(false);
+  const [clearingInbox,     setClearingInbox     ] = useState(false);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(false);
+  const [clearInboxConfirm, setClearInboxConfirm] = useState(false);
   const [testResult,    setTestResult   ] = useState(null);
   const [configured,    setConfigured   ] = useState(false);
   const [form,          setForm         ] = useState(BLANK);
@@ -179,8 +181,10 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
     }
   };
 
-  const clear = async () => {
-    if (!window.confirm(`Disconnect this mailbox? The ${inboxName} will stop receiving emails until reconnected.`)) return;
+  const clear = () => setDisconnectConfirm(true);
+
+  const doClear = async () => {
+    setDisconnectConfirm(false);
     setClearing(true);
     try {
       await api.delete(apiBase);
@@ -196,8 +200,10 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
     }
   };
 
-  const clearInbox = async () => {
-    if (!window.confirm(`Clear all messages from the ${inboxName}? This cannot be undone.`)) return;
+  const clearInbox = () => setClearInboxConfirm(true);
+
+  const doClearInbox = async () => {
+    setClearInboxConfirm(false);
     setClearingInbox(true);
     try {
       const r = await api.delete(`${apiBase}/clear-inbox`);
@@ -405,6 +411,24 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
         )}
 
       </div>
+      {disconnectConfirm && (
+        <Modal title="Disconnect Mailbox" onClose={() => setDisconnectConfirm(false)}>
+          <p className="text-sm text-gray-600">Disconnect the {inboxName}? It will stop receiving emails until reconnected.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setDisconnectConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doClear}>Disconnect</BtnDanger>
+          </div>
+        </Modal>
+      )}
+      {clearInboxConfirm && (
+        <Modal title="Clear Inbox" onClose={() => setClearInboxConfirm(false)}>
+          <p className="text-sm text-gray-600">Clear all messages from the {inboxName}? This cannot be undone.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setClearInboxConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doClearInbox}>Clear Inbox</BtnDanger>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

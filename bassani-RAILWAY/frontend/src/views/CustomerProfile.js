@@ -131,6 +131,7 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
   const [docsLoading,      setDocsLoading     ] = useState(true);
   const [uploading,        setUploading       ] = useState(null); // doc_type key or "custom"
   const [deleting,         setDeleting        ] = useState(null);
+  const [deleteConfirmDoc, setDeleteConfirmDoc] = useState(null);
   const [showCustomUpload, setShowCustomUpload] = useState(false);
   const [customLabel,      setCustomLabel     ] = useState("");
   const fileInputRef  = useRef(null);   // hidden input for structured doc types
@@ -298,9 +299,9 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
                               className="flex items-center gap-1 text-xs text-gray-400 hover:text-bassani-600 transition-colors">
                               <Upload size={12} /> Replace
                             </button>
-                            <button onClick={() => handleDelete(doc)} disabled={deleting === doc.id}
-                              className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
-                              {deleting === doc.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            <button onClick={() => setDeleteConfirmDoc(doc)}
+                              className="text-gray-300 hover:text-red-500 transition-colors">
+                              <Trash2 size={13} />
                             </button>
                           </>
                         )}
@@ -344,9 +345,9 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
                           <span className="text-[10px] text-gray-400">Unavailable</span>
                         )}
                         {canUpload && d.source !== "inbox" && (
-                          <button onClick={() => handleDelete(d)} disabled={deleting === d.id}
-                            className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50">
-                            {deleting === d.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          <button onClick={() => setDeleteConfirmDoc(d)}
+                            className="text-gray-300 hover:text-red-500 transition-colors">
+                            <Trash2 size={13} />
                           </button>
                         )}
                       </div>
@@ -355,6 +356,27 @@ function DocumentsSection({ customerId, canUpload, onSendDocs, sendingDocs, docs
                 })}
               </div>
             </div>
+          )}
+
+          {/* Delete confirm modal */}
+          {deleteConfirmDoc && (
+            <Modal title="Remove document" onClose={() => setDeleteConfirmDoc(null)}>
+              <p className="text-sm text-gray-600">
+                Remove <strong>{deleteConfirmDoc.label || deleteConfirmDoc.doc_type || "this document"}</strong>?
+                This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2 mt-5">
+                <BtnSecondary onClick={() => setDeleteConfirmDoc(null)}>Cancel</BtnSecondary>
+                <button
+                  onClick={async () => { await handleDelete(deleteConfirmDoc); setDeleteConfirmDoc(null); }}
+                  disabled={!!deleting}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  Remove
+                </button>
+              </div>
+            </Modal>
           )}
 
           {/* Upload additional / custom document */}
@@ -437,8 +459,11 @@ export default function CustomerProfile() {
   const [addContactForm,   setAddContactForm  ] = useState({ name: "", function: "", email: "", phone: "" });
   const [addContactSaving, setAddContactSaving] = useState(false);
 
-  const [typeChanging,     setTypeChanging    ] = useState(false);
-  const [typeConfirmOpen,  setTypeConfirmOpen ] = useState(false);
+  const [typeChanging,       setTypeChanging      ] = useState(false);
+  const [typeConfirmOpen,    setTypeConfirmOpen   ] = useState(false);
+  const [typeConfirmTarget,  setTypeConfirmTarget ] = useState(null); // true = company, false = individual
+
+  const [sendDocsConfirmOpen, setSendDocsConfirmOpen] = useState(false);
 
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
@@ -561,24 +586,15 @@ export default function CustomerProfile() {
     }
   };
 
-  const handleSendDocs = async () => {
+  const handleSendDocs = () => {
+    if (!data?.customer?.email) return;
+    setSendDocsConfirmOpen(true);
+  };
+
+  const executeSendDocs = async () => {
     const email = data?.customer?.email;
     const name  = data?.customer?.name;
-    if (!email) return;
-
-    if (docsSentInfo?.sent) {
-      const sentAt  = new Date(docsSentInfo.sent_at);
-      const ageMs   = Date.now() - sentAt.getTime();
-      const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      if (ageDays < 7) {
-        const when = fmtDate(docsSentInfo.sent_at);
-        const who  = docsSentInfo.sent_by;
-        if (!window.confirm(
-          `Onboarding documents were already sent to ${email} on ${when} by ${who}.\n\nSend again?`
-        )) return;
-      }
-    }
-
+    setSendDocsConfirmOpen(false);
     setSendingDocs(true);
     try {
       await api.post("/api/onboarding-inbox/send-docs", {
@@ -627,12 +643,13 @@ export default function CustomerProfile() {
     } finally {
       setTypeChanging(false);
       setTypeConfirmOpen(false);
+      setTypeConfirmTarget(null);
     }
   };
 
   const handleTypeChange = (newIsCompany) => {
-    if (c.is_company && !newIsCompany) { setTypeConfirmOpen(true); return; }
-    applyTypeChange(newIsCompany);
+    setTypeConfirmTarget(newIsCompany);
+    setTypeConfirmOpen(true);
   };
 
   const handleAddContact = async () => {
@@ -1151,7 +1168,7 @@ export default function CustomerProfile() {
         );
       })()}
 
-      {typeConfirmOpen && (
+      {typeConfirmOpen && typeConfirmTarget === false && (
         <Modal title="Convert to Individual?" onClose={() => setTypeConfirmOpen(false)}>
           <div className="space-y-4">
             <p className="text-sm text-gray-700">
@@ -1168,6 +1185,42 @@ export default function CustomerProfile() {
             <div className="flex justify-end gap-2 pt-1">
               <BtnSecondary onClick={() => setTypeConfirmOpen(false)}>Cancel</BtnSecondary>
               <BtnPrimary onClick={() => applyTypeChange(false)} loading={typeChanging}>Convert to Individual</BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {typeConfirmOpen && typeConfirmTarget === true && (
+        <Modal title="Convert to Company?" onClose={() => setTypeConfirmOpen(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              You are changing <strong>{c.name}</strong> from an Individual to a Company account.
+            </p>
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              This change is reflected immediately in Odoo. Once changed, you can add contact persons to this account.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <BtnSecondary onClick={() => setTypeConfirmOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={() => applyTypeChange(true)} loading={typeChanging}>Convert to Company</BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {sendDocsConfirmOpen && (
+        <Modal title="Send onboarding documents?" onClose={() => setSendDocsConfirmOpen(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              This will email the four Bassani onboarding templates (NDA, Store Agreement, TQA, Customer Information Form) to <strong>{data?.customer?.email}</strong>.
+            </p>
+            {docsSentInfo?.sent && (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                Documents were already sent to this address on {fmtDate(docsSentInfo.sent_at)}{docsSentInfo.sent_by ? ` by ${docsSentInfo.sent_by}` : ""}. Sending again will issue a fresh set.
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <BtnSecondary onClick={() => setSendDocsConfirmOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={executeSendDocs} loading={sendingDocs}>Send Documents</BtnPrimary>
             </div>
           </div>
         </Modal>

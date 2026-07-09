@@ -7,7 +7,7 @@ import {
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { Badge, BtnSecondary, LoadingState, PaginationBar, fmtR, fmtDate, Modal } from "../components/UI";
+import { Badge, BtnSecondary, BtnDanger, LoadingState, PaginationBar, fmtR, fmtDate, Modal } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -169,6 +169,7 @@ export default function ResellerProfile() {
   const [custPage,       setCustPage       ] = useState(0);
   const [showLink,       setShowLink       ] = useState(false);
   const [unlinking,      setUnlinking      ] = useState(null);
+  const [unlinkConfirm,  setUnlinkConfirm  ] = useState(null);
   const [pipeline,       setPipeline       ] = useState([]);
   const [pipelineLoading,setPipelineLoading] = useState(true);
 
@@ -198,8 +199,11 @@ export default function ResellerProfile() {
 
   const custSlice = customers.slice(custPage * CUST_PAGE_SIZE, (custPage + 1) * CUST_PAGE_SIZE);
 
-  const handleUnlink = async (customer) => {
-    if (!window.confirm(`Remove ${customer.name} from this reseller's account?\n\nThis will prevent the reseller from placing orders for this customer.`)) return;
+  const handleUnlink = (customer) => setUnlinkConfirm(customer);
+
+  const doUnlink = async () => {
+    const customer = unlinkConfirm;
+    setUnlinkConfirm(null);
     setUnlinking(customer.id);
     try {
       await api.delete(`/api/resellers/${id}/customers/${customer.id}/unlink`);
@@ -542,6 +546,15 @@ export default function ResellerProfile() {
           onClose={() => setShowLink(false)}
           onLinked={handleLinked}
         />
+      )}
+      {unlinkConfirm && (
+        <Modal title="Remove Customer" onClose={() => setUnlinkConfirm(null)}>
+          <p className="text-sm text-gray-600">Remove <strong>{unlinkConfirm.name}</strong> from this reseller's account? This will prevent them from placing orders for this customer.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setUnlinkConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doUnlink}>Remove</BtnDanger>
+          </div>
+        </Modal>
       )}
     </div>
   );

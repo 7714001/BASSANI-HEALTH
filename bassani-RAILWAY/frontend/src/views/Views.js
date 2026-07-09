@@ -55,7 +55,8 @@ export function Products() {
   const [editing,     setEditing    ] = useState(null);
   const [form,        setForm       ] = useState({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"product", description:"", uom_id:"", tax_id:"", barcode:"" });
   const [saving,      setSaving     ] = useState(false);
-  const [archivingId, setArchivingId] = useState(null);
+  const [archivingId,    setArchivingId   ] = useState(null);
+  const [archiveConfirm, setArchiveConfirm] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -208,8 +209,14 @@ export function Products() {
     finally { setSaving(false); }
   };
 
-  const archive = async (id) => {
-    if (!window.confirm("Archive this product?")) return;
+  const archive = (id) => {
+    const p = products.find(pr => pr.id === id);
+    setArchiveConfirm({ id, name: p?.name || "this product" });
+  };
+
+  const doArchive = async () => {
+    const { id } = archiveConfirm;
+    setArchiveConfirm(null);
     setArchivingId(id);
     try { await api.delete(`/api/products/${id}`); toast.success("Product archived"); load(); }
     catch { toast.error("Archive failed"); }
@@ -433,6 +440,12 @@ export function Products() {
       {viewingOrder && (
         <OrderView order={viewingOrder} onClose={()=>setViewingOrder(null)} />
       )}
+      {archiveConfirm && (
+        <Modal title="Archive Product" onClose={()=>setArchiveConfirm(null)}>
+          <p className="text-sm text-gray-600">Archive <strong>{archiveConfirm.name}</strong>? It will no longer appear in the product catalogue.</p>
+          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setArchiveConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doArchive}>Archive</BtnDanger></div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -510,7 +523,8 @@ export function Customers() {
   const [sessionId,      setSessionId     ] = useState("");
   const [stagedDocs,     setStagedDocs    ] = useState([]);
   const [uploadingDoc,   setUploadingDoc  ] = useState(null);
-  const [removingDoc,    setRemovingDoc   ] = useState(null);
+  const [removingDoc,       setRemovingDoc      ] = useState(null);
+  const [removeDocConfirm,  setRemoveDocConfirm ] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -573,7 +587,11 @@ export function Customers() {
     finally { setUploadingDoc(null); }
   };
 
-  const removeDoc = async (docKey) => {
+  const removeDoc = (docKey) => setRemoveDocConfirm(docKey);
+
+  const doRemoveDoc = async () => {
+    const docKey = removeDocConfirm;
+    setRemoveDocConfirm(null);
     setRemovingDoc(docKey);
     try {
       await api.delete(`/api/onboarding/documents/${sessionId}/${docKey}`);
@@ -865,6 +883,12 @@ export function Customers() {
               <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Customer</BtnPrimary></div>
             </>
           )}
+        </Modal>
+      )}
+      {removeDocConfirm && (
+        <Modal title="Remove Document" onClose={()=>setRemoveDocConfirm(null)}>
+          <p className="text-sm text-gray-600">Remove this document from the application? You will need to re-upload it to continue.</p>
+          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setRemoveDocConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doRemoveDoc}>Remove</BtnDanger></div>
         </Modal>
       )}
     </div>
@@ -1495,7 +1519,8 @@ export function Resellers() {
   const [rSellerSessionId,    setRSellerSessionId   ] = useState("");
   const [rSellerStagedDocs,   setRSellerStagedDocs  ] = useState([]);
   const [rSellerUploadingDoc, setRSellerUploadingDoc] = useState(null);
-  const [rSellerRemovingDoc,  setRSellerRemovingDoc ] = useState(null);
+  const [rSellerRemovingDoc,      setRSellerRemovingDoc     ] = useState(null);
+  const [rSellerRemoveDocConfirm, setRSellerRemoveDocConfirm] = useState(null);
   const [rSellerCustHasDocs,  setRSellerCustHasDocs ] = useState(null); // null=unknown, true/false
   const [rStep,               setRStep              ] = useState(1);
 
@@ -1645,7 +1670,11 @@ export function Resellers() {
     finally { setRSellerUploadingDoc(null); }
   };
 
-  const rSellerRemoveDoc = async (docKey) => {
+  const rSellerRemoveDoc = (docKey) => setRSellerRemoveDocConfirm(docKey);
+
+  const doRSellerRemoveDoc = async () => {
+    const docKey = rSellerRemoveDocConfirm;
+    setRSellerRemoveDocConfirm(null);
     setRSellerRemovingDoc(docKey);
     try {
       await api.delete(`/api/onboarding/documents/${rSellerSessionId}/${docKey}`);
@@ -2085,6 +2114,12 @@ export function Resellers() {
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)} disabled={editSaving}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit} loading={editSaving}>Save Changes</BtnPrimary></div>
         </Modal>
       )}
+      {rSellerRemoveDocConfirm && (
+        <Modal title="Remove Document" onClose={()=>setRSellerRemoveDocConfirm(null)}>
+          <p className="text-sm text-gray-600">Remove this document from the application? You will need to re-upload it to continue.</p>
+          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setRSellerRemoveDocConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doRSellerRemoveDoc}>Remove</BtnDanger></div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -2313,6 +2348,7 @@ function AdminCommissionView() {
   const [paying,      setPaying     ] = useState(false);
   const [expanded,    setExpanded   ] = useState(null);
   const [stmtOrders,  setStmtOrders ] = useState({});
+  const [resetConfirm,  setResetConfirm ] = useState(false);
   const [resolveModal,  setResolveModal ] = useState(null);
   const [resolveNotes,  setResolveNotes ] = useState("");
   const [resolving,     setResolving    ] = useState(false);
@@ -2465,7 +2501,10 @@ function AdminCommissionView() {
     finally { setTierSaving(false); }
   };
 
-  const resetTiers = async () => {
+  const resetTiers = () => setResetConfirm(true);
+
+  const doResetTiers = async () => {
+    setResetConfirm(false);
     setTierSaving(true);
     try {
       const r = await api.delete("/api/commission/tiers/reset");
@@ -2766,6 +2805,15 @@ function AdminCommissionView() {
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setPayModal(null)}>Cancel</BtnSecondary>
             <BtnPrimary onClick={markPaid} loading={paying}>Confirm Payment</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+      {resetConfirm && (
+        <Modal title="Reset Commission Tiers" onClose={() => setResetConfirm(false)}>
+          <p className="text-sm text-gray-600">Reset all commission tiers to system defaults? This will overwrite any custom tier configuration and affects all commission calculations going forward.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setResetConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doResetTiers}>Reset to Defaults</BtnDanger>
           </div>
         </Modal>
       )}

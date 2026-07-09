@@ -7,6 +7,7 @@ import {
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
+import { Modal, BtnSecondary, BtnDanger } from "../components/UI";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,8 @@ export default function CustomerOnboarding() {
   // Step 0 — document upload path state
   const [uploads,       setUploads     ] = useState({});
   const [uploadingDoc,  setUploadingDoc] = useState(null);
-  const [removingDoc,   setRemovingDoc ] = useState(null);
+  const [removingDoc,      setRemovingDoc     ] = useState(null);
+  const [removeDocConfirm, setRemoveDocConfirm] = useState(null);
 
   // Step 0 — invitation path state
   const [inviteSent,    setInviteSent  ] = useState(false);
@@ -232,7 +234,11 @@ export default function CustomerOnboarding() {
     }
   };
 
-  const removeDoc = async (docType) => {
+  const removeDoc = (docType) => setRemoveDocConfirm(docType);
+
+  const doRemoveDoc = async () => {
+    const docType = removeDocConfirm;
+    setRemoveDocConfirm(null);
     setRemovingDoc(docType);
     try {
       await api.delete(`/api/onboarding/documents/${sessionId}/${docType}`);
@@ -826,6 +832,15 @@ export default function CustomerOnboarding() {
           )}
         </div>
       </div>
+      {removeDocConfirm && (
+        <Modal title="Remove Document" onClose={() => setRemoveDocConfirm(null)}>
+          <p className="text-sm text-gray-600">Remove this document? You will need to re-upload it to continue.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setRemoveDocConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doRemoveDoc}>Remove</BtnDanger>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

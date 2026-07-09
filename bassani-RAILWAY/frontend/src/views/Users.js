@@ -342,6 +342,9 @@ export default function Users() {
   const [warehouseTarget, setWarehouseTarget] = useState(null);
   const [warehouseValue,  setWarehouseValue ] = useState("");
 
+  // Deactivate confirm
+  const [deactivateConfirm, setDeactivateConfirm] = useState(null);
+
   // Reset password modal
   const [resetModal,    setResetModal   ] = useState(false);
   const [resetTarget,   setResetTarget  ] = useState(null);
@@ -452,8 +455,13 @@ export default function Users() {
 
   // ── Toggle active ────────────────────────────────────────────────────────────
 
-  const toggleActive = async (u) => {
-    if (u.active && !window.confirm(`Deactivate ${u.username}? They will no longer be able to log in.`)) return;
+  const toggleActive = (u) => {
+    if (u.active) { setDeactivateConfirm(u); return; }
+    doToggleActive(u);
+  };
+
+  const doToggleActive = async (u) => {
+    setDeactivateConfirm(null);
     try {
       if (u.active) await api.delete(`/api/users/${u.id}`);
       else          await api.post(`/api/users/${u.id}/reactivate`);
@@ -884,6 +892,17 @@ export default function Users() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setWarehouseModal(false)}>Cancel</BtnSecondary>
             <BtnPrimary onClick={saveWarehouse}><Warehouse size={13} /> Save</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Deactivate confirm modal ── */}
+      {deactivateConfirm && (
+        <Modal title="Deactivate Account" onClose={() => setDeactivateConfirm(null)}>
+          <p className="text-sm text-gray-600">Deactivate <strong>{deactivateConfirm.username}</strong>? They will no longer be able to log in. You can reactivate the account at any time.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setDeactivateConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={() => doToggleActive(deactivateConfirm)}>Deactivate</BtnDanger>
           </div>
         </Modal>
       )}
