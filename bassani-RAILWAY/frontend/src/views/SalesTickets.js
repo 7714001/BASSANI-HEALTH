@@ -1148,9 +1148,11 @@ export default function SalesTickets() {
                     </div>
                     <div className="space-y-1.5">
                       {detail.customer_email && (
-                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
-                          <Mail size={11} className="text-gray-400 flex-shrink-0" />
-                          <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors truncate min-w-0">{detail.customer_email}</a>
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                          <Mail size={11} className="text-gray-400 shrink-0" />
+                          <span className="truncate min-w-0">
+                            <a href={`mailto:${detail.customer_email}`} className="hover:text-bassani-600 transition-colors">{detail.customer_email}</a>
+                          </span>
                         </p>
                       )}
                       {detail.customer_company_id ? (
