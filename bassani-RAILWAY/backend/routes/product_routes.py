@@ -38,6 +38,9 @@ class ProductUpdate(BaseModel):
 class StockAdjustment(BaseModel):
     qty: float
 
+class BarcodeUpdate(BaseModel):
+    barcode: Optional[str] = None  # None / empty string = clear the barcode
+
 class CategoryCreate(BaseModel):
     name: str
     parent_id: Optional[int] = None
@@ -594,6 +597,35 @@ async def update_product(
         await audit_log("product.update", "product", product_id, entity_label=variants[0].get("name", ""),
                         user=current_user, after=after)
         return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.patch("/{product_id}/barcode")
+async def set_product_barcode(
+    product_id: int,
+    body: BarcodeUpdate,
+    current_user: dict = Depends(require_admin),
+):
+    """Write a barcode directly to the product.product variant in Odoo."""
+    odoo = get_odoo_client()
+    try:
+        variants = odoo.read("product.product", [product_id], fields=["name", "barcode"])
+        if not variants:
+            raise HTTPException(status_code=404, detail="Product not found")
+        before_val = variants[0].get("barcode") or ""
+        new_val = (body.barcode or "").strip()
+        odoo.write("product.product", [product_id], {"barcode": new_val or False})
+        await audit_log(
+            "product.barcode_updated", "product", product_id,
+            entity_label=variants[0].get("name", ""),
+            user=current_user,
+            before={"barcode": before_val},
+            after={"barcode": new_val},
+        )
+        return {"success": True, "barcode": new_val}
     except HTTPException:
         raise
     except Exception as e:

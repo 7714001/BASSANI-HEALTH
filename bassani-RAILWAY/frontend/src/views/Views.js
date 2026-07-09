@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Check, Pencil } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import {
@@ -58,7 +58,9 @@ export function Products() {
   const [saving,      setSaving     ] = useState(false);
   const [archivingId,    setArchivingId   ] = useState(null);
   const [archiveConfirm, setArchiveConfirm] = useState(null);
-  const [gs1Product,  setGs1Product ] = useState(null);
+  const [gs1Product,     setGs1Product    ] = useState(null);
+  const [editingBarcode, setEditingBarcode] = useState(null); // product id being edited
+  const [barcodeInput,   setBarcodeInput  ] = useState("");
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -178,6 +180,21 @@ export function Products() {
     }
   };
 
+  const startEditBarcode = (p) => { setEditingBarcode(p.id); setBarcodeInput(p.barcode || ""); };
+  const cancelEditBarcode = () => { setEditingBarcode(null); setBarcodeInput(""); };
+  const saveBarcode = async (productId) => {
+    const val = barcodeInput.trim();
+    const tid = toast.loading("Saving barcode…");
+    try {
+      await api.patch(`/api/products/${productId}/barcode`, { barcode: val });
+      setProducts(prev => prev.map(p => p.id === productId ? { ...p, barcode: val } : p));
+      toast.success(val ? "Barcode saved" : "Barcode cleared", { id: tid });
+      setEditingBarcode(null);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save barcode", { id: tid });
+    }
+  };
+
   const openNew = () => { setEditing(null); setForm({ name:"", default_code:"", categ_id:"", list_price:"", standard_price:"", type:"consu", description:"", stock_qty:"", uom_id:"", tax_id:"", barcode:"" }); setModal(true); };
   const openEdit = (p) => { setEditing(p); setForm({ name:p.name, default_code:p.default_code||"", categ_id:p.categ_id?.[0]||"", list_price:p.list_price, standard_price:p.standard_price, type:p.type, description:p.description||"", stock_qty:"", uom_id:p.uom_id?.[0]||"", tax_id:p.tax_id||"", barcode:p.barcode||"" }); setModal(true); };
 
@@ -293,20 +310,51 @@ export function Products() {
             } },
             { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>{
               const isGtin = /^\d{13,14}$/.test(p.barcode || "");
+              const isEditing = editingBarcode === p.id;
+              if (isEditing) {
+                return (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={barcodeInput}
+                      onChange={e => setBarcodeInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") saveBarcode(p.id); if (e.key === "Escape") cancelEditBarcode(); }}
+                      placeholder="Enter GTIN-13 or GTIN-14"
+                      className="w-36 text-xs font-mono border border-bassani-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                    />
+                    <button onClick={() => saveBarcode(p.id)} className="p-1 text-green-600 hover:text-green-700" title="Save"><Check size={13} /></button>
+                    <button onClick={cancelEditBarcode} className="p-1 text-gray-400 hover:text-gray-600" title="Cancel"><X size={13} /></button>
+                  </div>
+                );
+              }
               return (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
                   {p.barcode
                     ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
-                    : <span className="text-xs text-gray-300">—</span>
+                    : (
+                      <button
+                        onClick={() => startEditBarcode(p)}
+                        className="text-[11px] text-bassani-500 hover:text-bassani-700 font-medium transition-colors"
+                      >
+                        + Set GTIN
+                      </button>
+                    )
                   }
-                  {isGtin && can("labels.print") && (
-                    <button
-                      onClick={() => setGs1Product(p)}
-                      className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-bassani-50 text-bassani-700 hover:bg-bassani-100 border border-bassani-200 transition-colors leading-none"
-                    >
-                      GS1
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {p.barcode && (
+                      <button onClick={() => startEditBarcode(p)} className="text-gray-300 hover:text-gray-500 transition-colors" title="Edit barcode">
+                        <Pencil size={11} />
+                      </button>
+                    )}
+                    {isGtin && can("labels.print") && (
+                      <button
+                        onClick={() => setGs1Product(p)}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-bassani-50 text-bassani-700 hover:bg-bassani-100 border border-bassani-200 transition-colors leading-none"
+                      >
+                        GS1
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             }},
@@ -347,8 +395,8 @@ export function Products() {
                       aria-checked={active}
                       onClick={() => toggleCatalog(p.id)}
                       title={active ? "Remove from reseller catalog" : "Add to reseller catalog"}
-                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-1 ${active ? "bg-bassani-600" : "bg-gray-300"}`}>
-                      <span className={`pointer-events-none h-3 w-3 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${active ? "translate-x-3" : "translate-x-0"}`} />
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-1 ${active ? "bg-bassani-600" : "bg-gray-200"}`}>
+                      <span className={`pointer-events-none h-4 w-4 transform rounded-full bg-white shadow-sm transition duration-200 ease-in-out ${active ? "translate-x-4" : "translate-x-0"}`} />
                     </button>
                     {active && (
                       <input
