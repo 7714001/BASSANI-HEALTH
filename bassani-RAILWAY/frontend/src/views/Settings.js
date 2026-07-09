@@ -4,12 +4,14 @@ import Warehouses from "./Warehouses";
 import EmailSettings from "./EmailSettings";
 import ConnectedMailboxes from "./ConnectedMailboxes";
 import DocumentTemplates from "./DocumentTemplates";
+import LabelPrinters from "./LabelPrinters";
 
 const TABS = [
-  { key: "warehouses",    label: "Warehouses" },
-  { key: "email-routing", label: "Email Notifications" },
-  { key: "mailboxes",     label: "Connected Mailboxes" },
-  { key: "doc-templates", label: "Document Templates" },
+  { key: "warehouses",     label: "Warehouses" },
+  { key: "email-routing",  label: "Email Notifications" },
+  { key: "mailboxes",      label: "Connected Mailboxes" },
+  { key: "doc-templates",  label: "Document Templates" },
+  { key: "label-printers", label: "Label Printers" },
 ];
 
 export default function Settings() {
@@ -40,10 +42,11 @@ export default function Settings() {
         </div>
       </div>
 
-      {active === "warehouses"    && <Warehouses embedded />}
-      {active === "email-routing" && <EmailSettings embedded />}
-      {active === "mailboxes"     && <ConnectedMailboxes embedded />}
-      {active === "doc-templates" && <DocumentTemplates embedded />}
+      {active === "warehouses"     && <Warehouses embedded />}
+      {active === "email-routing"  && <EmailSettings embedded />}
+      {active === "mailboxes"      && <ConnectedMailboxes embedded />}
+      {active === "doc-templates"  && <DocumentTemplates embedded />}
+      {active === "label-printers" && <LabelPrinters embedded />}
     </div>
   );
 }

@@ -46,6 +46,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "suppliers":          {"view": True,  "manage": False},
     "settings":           {"manage": False},
     "signing_authority":  {"sign": False},
+    "labels":             {"print": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -68,6 +69,7 @@ FULL_PERMISSIONS: dict = {
     "suppliers":          {"view": True,  "manage": True},
     "settings":           {"manage": True},
     "signing_authority":  {"sign": True},
+    "labels":             {"print": True},
 }
 
 # Full default permission sets for each staff role.
@@ -95,6 +97,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "suppliers":         {"view": False, "manage": False},
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
+        "labels":            {"print": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -115,6 +118,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "suppliers":         {"view": False, "manage": False},
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
+        "labels":            {"print": True},
     },
     "finance": {
         "products":   {"manage": False},
@@ -135,6 +139,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "suppliers":         {"view": True,  "manage": False},
         "settings":          {"manage": False},
         "signing_authority": {"sign": False},
+        "labels":            {"print": False},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -155,6 +160,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "suppliers":         {"view": False, "manage": False},
         "settings":          {"manage": False},
         "signing_authority": {"sign": True},
+        "labels":            {"print": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -175,6 +181,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "suppliers":         {"view": False, "manage": False},
         "settings":          {"manage": False},
         "signing_authority": {"sign": True},
+        "labels":            {"print": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias

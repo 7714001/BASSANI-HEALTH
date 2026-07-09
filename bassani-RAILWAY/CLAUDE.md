@@ -79,13 +79,17 @@ No new external services without an explicit decision. Approved additions: Resen
 - `backend/services/warehouse_context.py` — `get_company_id()` and `company_context()` helpers
 - `backend/routes/order_routes.py` — order pipeline, stock-check endpoint (`invoice_policy_block` logic here)
 - `backend/routes/product_routes.py` — product list (`category_id` int param for picker drawer), categories endpoint
+- `backend/routes/label_routes.py` — GS1 label printing: printer CRUD (`/api/labels/printers`) + ZPL print endpoint (`/api/labels/gs1/print`). Printers stored in MongoDB `portal_settings` `_id: "label_printers"`.
+- `backend/services/gs1.py` — `validate_gtin()`, `build_gs1_text()`, `build_zpl_unit_label()`, `build_zpl_carton_label()`, `send_zpl()` (TCP port 9100)
 - `frontend/src/AuthContext.js` — auth state, `can()` permission helper, `isAdmin` flag
 - `frontend/src/components/UI.js` — shared components: `TopBar`, `DataTable`, `SearchBar`, `FilterPill`, `Sidebar`, `Modal`, `BtnDanger`, `BtnPrimary`, `BtnSecondary`, `fmtR`, etc.
 - `frontend/src/components/ProductLineRow.js` — shared product line row (quote builder + reseller cart). Uses `createPortal(dropdown, document.body)` with `getBoundingClientRect()` to escape the `overflow-x-auto` table ancestor — never add a containing ancestor that clips this dropdown.
-- `frontend/src/components/ProductPickerDrawer.js` — right-side drawer for quote builder (staff only). Categories from `/api/products/categories`, variants derived client-side from `display_name` pattern `"Name (Variant)"`, `category_id` int param to backend.
+- `frontend/src/components/ProductPickerDrawer.js` — right-side drawer for quote builder (staff only). Categories from `/api/products/categories`, variants derived client-side from `display_name` pattern `"Name (Variant)"`, `category_id` int param to backend. Category + variant filters use `SearchableSelect` (internal component: trigger + dropdown panel with search input, outside-click close, auto-focus).
+- `frontend/src/components/GS1LabelModal.js` — GS1 label printing modal. `bwip-js` renders live DataMatrix + GS1-128 preview on canvas. Lot/expiry/serial/qty fields; Unit/Carton/Both toggle; printer selector from `/api/labels/printers`; "Print to Zebra" (POST) + "Print via browser" (`window.print()`) actions. Opened from the Barcode column GS1 button in the Products table.
 - `frontend/src/views/SalesTickets.js` — the core ticket view: 3 sub-views in one file (list / detail / quote-builder). The quote builder has both "Add a line" (per-row inline search) and "Browse Products" (picker drawer) — both paths must stay working.
 - `frontend/src/views/ConnectedMailboxes.js` — tabbed mailbox config panel (Sales Inbox tab + Onboarding Mailbox tab). `MailboxConfigPanel` is an inner component — state and modals must be scoped to it.
 - `frontend/src/views/DocumentTemplates.js` — version-controlled onboarding template management (upload, activate, rollback, version history).
+- `frontend/src/views/LabelPrinters.js` — Settings tab for Zebra printer management (add/test/delete). Embedded into `Settings.js` as "Label Printers" tab.
 - `frontend/src/App.js` — all routes; role-based route branching (e.g. reseller sees `ResellerCatalog`, admin sees `Products`)
 
 ---
@@ -106,7 +110,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
-| 12 | Barcode Integration | In Progress |
+| 12 | Barcode Integration | In Progress — 12.0 backend done; 12.4 GS1 backend + Products-page label modal built; serial tracking + packing-board integration pending |
 | 13 | Production and Cultivation Module | Concept — needs SAHPRA scoping |
 | 19 | Per-User Document Signing | Complete — `signing_authority.sign` permission, My Profile setup, countersignature flow |
 | 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag, internal agents excluded from bulk runs |

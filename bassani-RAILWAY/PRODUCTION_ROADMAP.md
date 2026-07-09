@@ -2039,9 +2039,9 @@ Changes to the existing Sales Ticket system (Phase 8):
 
 **Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. The vault team leader scans finished goods batches in at the vault as they arrive from production, and scans them out at dispatch — creating the physical handoff record that bridges the Phase 13 production chain to the commercial order pipeline.
 
-**Estimate:** 1–2 weeks  
-**Status:** 🟡 In Progress — 12.0 complete  
-**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29
+**Estimate:** 2–3 weeks  
+**Status:** 🟡 In Progress — 12.0 complete; 12.4 backend + Products-page label printing built, serial tracking + packing-board integration pending  
+**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29; Sub-deploy 2 (12.4 GS1 backend + Products page modal) — 2026-07-09
 
 ### Context
 
@@ -2183,6 +2183,121 @@ A new dedicated vault scanning screen accessible to `warehouse_supervisor` role 
 **Phase 13 linkage (design constraint for Phase 12 implementation):**
 
 The vault IN endpoint is designed to accept a `linked_batch_id` reference that Phase 13 will populate once the production module exists. For Phase 12, this field is always `null` — the team leader manually types the batch ID from the physical label. When Phase 13 ships, the vault scan will auto-match the scanned barcode to an open production batch record, and the `linked_batch_id` will be written automatically. Phase 12 must not design the vault receipt endpoint in a way that prevents this linkage later — the `vault_movements` document must always carry the `linked_batch_id` field, even if null.
+
+---
+
+### 12.4 — GS1 Pharmaceutical Label Generation (Finished Goods to Pharmacy)
+
+**Goal:** Every finished goods order dispatched to a pharmacy carries two GS1-compliant labels: a GS1 DataMatrix on each individual unit (bottle/blister) encoding GTIN + batch + expiry + per-unit serial number, and a GS1-128 on the outer shipping carton encoding GTIN + batch + expiry + quantity. Labels are sent directly from the portal to a networked Zebra ZT411 label printer via ZPL over TCP. All issued serial numbers are permanently recorded for traceability.
+
+**Business dependency (must be completed before any build work starts):**
+- Bassani registers with GS1 South Africa ([gs1za.org](https://www.gs1za.org)) and receives their Company Prefix — estimated R2,500–R4,000/year
+- Tristan assigns a unique GTIN (Global Trade Item Number) to every finished goods product variant in Odoo's `barcode` field — this is the GS1 product identifier. One GTIN per sellable variant (e.g. "Tincture 10mg" and "Tincture 20mg" are two GTINs)
+- Hardware: Zebra ZT411 300 DPI, thermal transfer, Ethernet model — printer must be on the same network as the portal server or accessible via static IP
+
+**What a GS1 DataMatrix unit label encodes:**
+```
+(01) GTIN-13/14      ← from Odoo product.barcode field
+(10) Batch/Lot no.   ← from Odoo stock.lot name (Phase 13 batch ID once built)
+(17) Expiry date     ← from Odoo stock.lot expiration_date (YYMMDD format)
+(21) Serial number   ← portal-generated, auto-incremented per unit within this GTIN+batch
+```
+
+**What a GS1-128 carton label encodes:**
+```
+(01) GTIN-13/14
+(10) Batch/Lot no.
+(17) Expiry date
+(37) Quantity in carton
+```
+
+---
+
+**Task list:**
+
+**Python dependencies (backend):**
+- [x] No server-side barcode rendering library needed — DataMatrix is rendered client-side in the browser via `bwip-js`; ZPL DataMatrix uses Zebra's onboard `^BX` command (no Python image library required)
+- [ ] Add `reportlab` to `requirements.txt` — PDF fallback label generation (deferred to PDF fallback phase)
+
+**Serial number tracking — new MongoDB collection `gs1_serials`:**
+- [ ] Schema per document: `{ gtin, lot_name, warehouse_id, next_serial, serials: [{ serial_no, order_id, packing_entry_id, product_id, issued_at }] }`
+- [ ] `next_serial` auto-increments per GTIN+lot combination — atomic MongoDB `findOneAndUpdate` with `$inc` to prevent duplicate serial assignment under concurrent prints
+- [ ] Serial numbers are zero-padded to 8 digits (e.g. `00000042`) — compliant with GS1 serialization recommendations
+- [ ] Serial records are permanent — never deleted even if an order is cancelled (cancelled serials are flagged `voided: true`, not removed)
+
+**GS1 string builder (Python utility — `backend/services/gs1.py`) — BUILT 2026-07-09:**
+- [x] `build_gs1_text(gtin, lot, expiry_yymmdd, serial)` — assembles GS1 AI bracket-notation string for bwip-js and ZPL; fixed-length AIs first, variable-length last (no unnecessary FNC1 separators)
+- [x] `build_zpl_unit_label(product_name, gtin, lot, expiry_display, expiry_yymmdd, serial, width_mm, height_mm, dpi)` — complete ZPL for unit label: Bassani Health wordmark, product name, lot + expiry + serial (human-readable), GS1 DataMatrix (`^BX` with `>8` prefix)
+- [x] `build_zpl_carton_label(product_name, gtin, lot, expiry_display, expiry_yymmdd, qty, width_mm, height_mm, dpi)` — complete ZPL for carton label: header fields + GS1-128 linear barcode (`^BC` with `>;` prefix)
+- [x] `send_zpl(printer_ip, zpl, port=9100, timeout=10)` — TCP socket to `printer_ip:9100`, sends ZPL bytes; raises `ConnectionError` on failure (surfaces as `503` from API)
+- [x] `validate_gtin(gtin)` — checks digit count (8/12/13/14), all-numeric, GS1 check digit algorithm; `gtin14(gtin)` zero-pads to 14 chars for AI string
+
+**GTIN validation:**
+- [x] Before generating any label, validate that `product.barcode` is a valid GTIN-13 or GTIN-14: all digits, correct length, passes GS1 check digit algorithm
+- [x] Products that fail GTIN validation get a `422` from the print endpoint; the GS1 button in the Products table is only shown for products whose barcode passes `/^\d{13,14}$/`
+
+**Backend endpoints (`backend/routes/label_routes.py` — BUILT 2026-07-09):**
+- [x] `POST /api/labels/gs1/print` — gated by `require_permission("labels.print")`: body `{ product_id, product_name, gtin, lot, expiry_display, expiry_yymmdd, serial_start, qty, printer_key, label_type }`. Validates GTIN, fetches printer IP, generates unit labels (one per unit with incrementing serial) and/or carton label, sends via TCP. Returns label count. Note: this is a standalone per-product endpoint (Products page); order-integrated packing-board version with serial tracking is a separate task below.
+- [ ] Order-integrated print: `POST /api/labels/gs1/print-order` — fetches packing entry, reads Odoo lots/expiry, assigns serials from `gs1_serials`, writes serial manifest, audit-logs, updates packing entry with `labels_printed: true`
+- [ ] `GET /api/labels/gs1/serials/{order_id}` — returns the full serial manifest for an order (gated by `require_admin`)
+- [ ] `GET /api/labels/gs1/pdf/{order_id}` — PDF fallback using ReportLab, 4-up tiled A4 layout
+- [x] `GET /api/labels/printers` — list configured printers (`require_admin`)
+- [x] `PUT /api/labels/printers` — add/update printer by key (`settings.manage`)
+- [x] `DELETE /api/labels/printers/{key}` — remove printer (`settings.manage`)
+- [x] `POST /api/labels/printers/{key}/test` — send test ZPL; returns `503` on connection failure
+
+**Frontend — Settings > Label Printers (BUILT 2026-07-09 — `frontend/src/views/LabelPrinters.js`):**
+- [x] New "Label Printers" tab in admin Settings page (`Settings.js` updated)
+- [x] Table: printer name, IP address, warehouse assignment, Delete button with confirmation modal
+- [x] "Add Printer" form: name, IP address, optional warehouse ID
+- [x] "Test" button per printer row — calls test endpoint, shows success toast or inline error
+- [x] Standard `max-w-4xl mx-auto w-full` container, confirmation modal on delete (no `window.confirm`)
+
+**Frontend — Products page GS1 button + modal (BUILT 2026-07-09 — `frontend/src/components/GS1LabelModal.js`):**
+- [x] GS1 badge button in the Barcode column of the Products table — visible only when barcode passes GTIN-13/14 regex AND `can("labels.print")`; clicking opens `GS1LabelModal`
+- [x] Modal: product name + GTIN header; lot/expiry/serial/qty fields; Unit/Carton/Both label type toggle; printer selector (loaded from `/api/labels/printers`); live bwip-js DataMatrix + GS1-128 preview (updates as fields change); "Print to Zebra" button (POST to `/api/labels/gs1/print`); "Print via browser" fallback (`window.print()` on hidden print-only div)
+- [x] Amber warning banner when no printer is configured — links to Settings → Label Printers
+- [x] Amber notice when GTIN is not a valid GTIN-13/14 — instructs staff to update Odoo barcode field
+- [x] Dummy GTIN reminder shown at bottom of modal
+
+**Frontend — Packing board "Print GS1 Labels" button (pending serial tracking build):**
+- [ ] Button appears on packing board entries in `packing` or `ready` state (after QA + RP approval, before collection) — gated by `can("labels.print")`
+- [ ] If no printer is configured: button is disabled with tooltip "No label printer configured — add one in Settings"
+- [ ] If any product line is missing a valid GTIN: button shows amber warning chip "X products missing GTIN" and is disabled; clicking the chip shows a modal listing the affected products with a prompt to update them in Odoo
+- [ ] If all GTINs valid and printer configured: button is active — clicking opens a confirm modal:
+  - Summary: "X unit labels + X carton labels will be printed to [Printer Name]"
+  - Serial range preview: "Serials will be assigned starting at XXXXXXXX for each product line"
+  - Confirm / Cancel
+- [ ] On confirm: POST to order-integrated print endpoint → success shows "Labels printed" green badge on the entry with timestamp and total serial count; error shows specific message (printer offline, GTIN invalid, lot not found)
+- [ ] If `labels_printed: true` already on the entry: button changes to "Reprint Labels" with amber styling and a warning in the confirm modal ("These serials were already issued — reprinting will not assign new serial numbers")
+- [ ] Serial manifest link: small "View serials" link on entries with `labels_printed: true` — opens a modal listing every serial issued for the order
+
+**PDF fallback UI:**
+- [ ] "Download PDF Labels" link appears alongside "Print GS1 Labels" when no Zebra printer is configured
+- [ ] Calls `GET /api/labels/gs1/pdf/{order_id}` — browser downloads the PDF
+- [ ] PDF opens in browser print dialog; user selects their label printer manually
+
+**`labels.print` permission (BUILT 2026-07-09):**
+- [x] `labels.print` in `auth.py` `DEFAULT_ADMIN_PERMISSIONS` and `FULL_PERMISSIONS`
+- [x] `labels.print: True` granted by default to: `orders_clerk`
+- [x] `labels.print: False` for all other non-admin roles; grantable by super_admin via permission management UI
+
+---
+
+**Definition of Done for 12.4:**
+
+- [ ] GS1 SA registration is complete and Bassani has their Company Prefix (business dependency — not a code task)
+- [ ] Every finished goods product variant has a valid GTIN-13 or GTIN-14 in Odoo's barcode field
+- [ ] Pressing "Print GS1 Labels" on a packing board entry sends ZPL to the configured Zebra ZT411 and labels physically emerge from the printer
+- [ ] Each unit label's DataMatrix decodes correctly on a GS1-capable scanner: GTIN matches the product, batch matches the Odoo lot, expiry matches the lot expiry date, serial is unique across all orders
+- [ ] Carton label GS1-128 decodes correctly: GTIN, batch, expiry, and quantity all present and correct
+- [ ] No two units in any order share a serial number; no serial number is ever reused across orders for the same GTIN+lot
+- [ ] The `gs1_serials` collection contains a complete record of every serial ever issued — sufficient to answer "which order and pharmacy received unit serial XXXXXXXX?"
+- [ ] A product with a missing or invalid GTIN shows a clear error before printing is blocked; other products in the same order are not affected if their GTINs are valid
+- [ ] Reprint scenario: reprinting an already-printed order does not issue new serial numbers
+- [ ] PDF fallback produces a correctly tiled A4 PDF that prints readable labels on a standard laser printer
+- [ ] "Test Printer" in Settings confirms connectivity before a real print job is attempted
+- [ ] All print actions are audit-logged with actor, order reference, printer IP, serial ranges, and timestamp
 
 ---
 

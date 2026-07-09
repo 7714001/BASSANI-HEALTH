@@ -1091,7 +1091,9 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 **Why Forecasted stock matters:** If a product shows 150 on hand but 0 forecasted, it means 150 units are reserved against confirmed orders that haven't been delivered yet. Click the icon next to the Forecasted figure to see exactly which orders are holding that stock.
 
-**Adding/editing products:** The portal syncs with Odoo. When you create or edit a product here, it writes directly to Odoo. You do not need to log into Odoo to manage your catalogue.
+**Adding/editing products:** Products are managed in Odoo and synced automatically to the portal. Do not use the portal to create or edit products — use Odoo directly so all pricing, tax, and stock configurations are correct. The portal reflects Odoo as the source of truth.
+
+**GS1 pharmaceutical labels:** Products with a valid GTIN barcode (set in Odoo's barcode field) show a small **GS1** badge button in the Barcode column. Clicking it opens the label printing modal. You can enter the batch/lot number, expiry date, and starting serial number, choose Unit label (GS1 DataMatrix, 57×32mm), Carton label (GS1-128, 100×50mm), or both, set the quantity, select a Zebra printer, and click **Print to Zebra**. A live preview of the label renders in the modal as you type. If no Zebra printer is configured, use **Print via browser** to print to any connected printer. Printers are configured in **Settings → Label Printers**. Note: GTINs must be officially registered with GS1 South Africa before labels can be used on product dispatched to pharmacy — dummy GTINs may be used for setup and testing.
 
 **Reseller catalog toggle:** The "Reseller / MOQ" column controls which products appear in the reseller catalog. The toggle switch adds or removes the product. When a product is toggled on, a small number input appears next to the toggle — enter a minimum order quantity (MOQ) and click away to save. Leave it blank for no minimum. If you toggle a product off and back on, any previously set MOQ is restored.
 
@@ -1821,9 +1823,11 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Email onboarding template docs to customer | Any authenticated user |
 | Upload signed documents (onboarding wizard) | Reseller |
 | Browse reseller product catalog | Reseller |
+| Print GS1 pharmaceutical labels from the Products page | Admin or staff with `labels.print` (Tshidi by default) |
+| Add/edit/delete/test a label printer | Super Admin or admin with `settings.manage` |
 
 ---
 
 **Last Updated:** 9 July 2026
 
-*This manual covers the system as built through Phase 20 including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), and the Sales Agent commission_eligible flag with commission exclusion (Phase 20). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*
+*This manual covers the system as built through Phase 20 and Phase 12.4 (partial), including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), the Sales Agent commission_eligible flag with commission exclusion (Phase 20), and GS1 pharmaceutical label printing from the Products page (Phase 12.4 — requires Zebra ZT411 printer and valid GTINs from GS1 South Africa). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

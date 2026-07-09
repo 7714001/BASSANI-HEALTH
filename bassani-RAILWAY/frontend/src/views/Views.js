@@ -8,6 +8,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X } from "lucide-react";
 import OrderView from "./OrderView";
+import GS1LabelModal from "../components/GS1LabelModal";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
@@ -57,6 +58,7 @@ export function Products() {
   const [saving,      setSaving     ] = useState(false);
   const [archivingId,    setArchivingId   ] = useState(null);
   const [archiveConfirm, setArchiveConfirm] = useState(null);
+  const [gs1Product,  setGs1Product ] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -289,11 +291,25 @@ export function Products() {
                 </div>
               );
             } },
-            { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>
-              p.barcode
-                ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
-                : <span className="text-xs text-gray-300">—</span>
-            },
+            { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>{
+              const isGtin = /^\d{13,14}$/.test(p.barcode || "");
+              return (
+                <div className="flex items-center gap-2">
+                  {p.barcode
+                    ? <span className="font-mono text-xs text-gray-500">{p.barcode}</span>
+                    : <span className="text-xs text-gray-300">—</span>
+                  }
+                  {isGtin && can("labels.print") && (
+                    <button
+                      onClick={() => setGs1Product(p)}
+                      className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-bassani-50 text-bassani-700 hover:bg-bassani-100 border border-bassani-200 transition-colors leading-none"
+                    >
+                      GS1
+                    </button>
+                  )}
+                </div>
+              );
+            }},
             { id:"category", header:"Category", enableSorting:false, meta:{className:"hidden md:table-cell"}, accessorFn:r=>r.categ_id?.[1]||"—", cell:({getValue})=><span className="text-xs text-gray-500">{getValue()}</span> },
             { accessorKey:"list_price", header:"Sale Price", meta:{className:"hidden sm:table-cell"}, cell:({ row:{original:p} })=><span className="font-semibold">{fmtR(p.list_price)}</span> },
             { accessorKey:"standard_price", header:"Cost", meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=><span className="text-gray-500">{fmtR(p.standard_price)}</span> },
@@ -485,6 +501,7 @@ export function Products() {
           <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setArchiveConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doArchive}>Archive</BtnDanger></div>
         </Modal>
       )}
+      {gs1Product && <GS1LabelModal product={gs1Product} onClose={() => setGs1Product(null)} />}
     </div>
   );
 }
