@@ -227,11 +227,11 @@ async def _require_ticket_driver(current_user: dict = Depends(get_current_user))
 
 
 async def _reseller_id_for_user(user: dict) -> Optional[str]:
-    """Return the reseller document _id string for a reseller user, None for staff."""
+    """Return the reseller's `id` field — the same value stored in ticket.reseller_id by create_order."""
     if user.get("role") != "reseller":
         return None
-    doc = await col("resellers").find_one({"user_id": user["id"]}, {"_id": 1})
-    return str(doc["_id"]) if doc else None
+    doc = await col("resellers").find_one({"user_id": user["id"]}, {"id": 1, "_id": 0})
+    return doc["id"] if doc else None
 
 
 def _assert_reseller_owns_ticket(ticket: dict, reseller_id: str) -> None:

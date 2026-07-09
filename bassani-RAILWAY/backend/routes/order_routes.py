@@ -513,8 +513,8 @@ async def confirm_order(
         {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1}
     )
     if current_user.get("role") == "reseller":
-        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"_id": 1})
-        _my_rid = str(_res_doc["_id"]) if _res_doc else None
+        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
+        _my_rid = _res_doc["id"] if _res_doc else None
         if not _my_rid or not _sales_ticket or _sales_ticket.get("reseller_id") != _my_rid:
             raise HTTPException(status_code=403, detail="Access denied")
 
