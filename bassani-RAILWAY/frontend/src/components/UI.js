@@ -46,11 +46,8 @@ const NAV = [
   { label: "Orders Tickets",     path: "/tickets/orders",   icon: Ticket, section: "Orders",  permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Partner Directory", path: "/partners",            icon: Users,    section: "Admin", permission: "customers.manage"    },
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
-  { label: "Warehouses",   path: "/warehouses",             icon: Warehouse, section: "Admin", permission: "warehouse.supervise" },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
-  { label: "Email Routing",       path: "/settings/email-routing", icon: Settings, section: "Admin", permission: "settings.manage" },
-  { label: "Connected Mailboxes", path: "/settings/mailboxes",     icon: Mail,     section: "Admin", permission: "settings.manage" },
-  { label: "Document Templates",  path: "/doc-templates",          icon: FileText, section: "Admin", permission: "settings.manage" },
+  { label: "Settings",    path: "/settings",               icon: Settings, section: "Admin", permission: "settings.manage"     },
 ];
 
 const RESELLER_NAV = [

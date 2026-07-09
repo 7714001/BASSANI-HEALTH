@@ -607,7 +607,7 @@ function DocTypeCard({ template, isSuperAdmin, onUploaded }) {
 }
 
 // ── Main view ─────────────────────────────────────────────────────────────────
-export default function DocumentTemplates() {
+export default function DocumentTemplates({ embedded = false }) {
   const { can } = useAuth();
   const isSuperAdmin = can("settings.manage");
 
@@ -626,8 +626,8 @@ export default function DocumentTemplates() {
   useEffect(() => { load(); }, [listKey]); // eslint-disable-line
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      <TopBar title="Document Templates" />
+    <div className={embedded ? "flex flex-col flex-1 overflow-hidden" : "flex flex-col min-h-screen bg-gray-50"}>
+      {!embedded && <TopBar title="Document Templates" />}
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto w-full">
 

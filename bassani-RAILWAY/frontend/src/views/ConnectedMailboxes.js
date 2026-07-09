@@ -409,16 +409,18 @@ function MailboxConfigPanel({ apiBase, inboxName, placeholder }) {
   );
 }
 
-export default function ConnectedMailboxes() {
+export default function ConnectedMailboxes({ embedded = false }) {
   const [active, setActive] = useState("sales");
   const tab = TABS.find(t => t.key === active);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar
-        title="Connected Mailboxes"
-        subtitle="Configure the mailboxes the portal monitors for incoming email"
-      />
+      {!embedded && (
+        <TopBar
+          title="Connected Mailboxes"
+          subtitle="Configure the mailboxes the portal monitors for incoming email"
+        />
+      )}
 
       <div className="border-b border-gray-200 bg-white px-6 shrink-0">
         <div className="flex gap-1">

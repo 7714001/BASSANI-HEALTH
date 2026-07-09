@@ -5,7 +5,7 @@ import { Copy, Check, RefreshCw, Star } from "lucide-react";
 import { TopBar, DataTable, BtnSecondary, Badge } from "../components/UI";
 import { useAuth } from "../AuthContext";
 
-export default function Warehouses() {
+export default function Warehouses({ embedded = false }) {
   const { can } = useAuth();
   const isSuperAdmin = can("settings.manage");
 
@@ -77,11 +77,13 @@ export default function Warehouses() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar
-        title="Warehouses"
-        subtitle="Packing-floor display screen tokens and portal default warehouse"
-        onRefresh={load}
-      />
+      {!embedded && (
+        <TopBar
+          title="Warehouses"
+          subtitle="Packing-floor display screen tokens and portal default warehouse"
+          onRefresh={load}
+        />
+      )}
       <main className="flex-1 overflow-y-auto p-6">
         <DataTable
           loading={loading}

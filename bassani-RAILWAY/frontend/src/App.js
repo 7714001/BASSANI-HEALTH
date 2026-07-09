@@ -52,6 +52,7 @@ import PublicRegister        from "./views/PublicRegister";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
+import Settings             from "./views/Settings";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -235,8 +236,9 @@ export default function App() {
         <Route path="/audit" element={
           <ProtectedRoute adminOnly><AppLayout><AuditTrail /></AppLayout></ProtectedRoute>
         } />
-        <Route path="/warehouses" element={
-          <ProtectedRoute adminOnly><AppLayout><Warehouses /></AppLayout></ProtectedRoute>
+        <Route path="/warehouses" element={<Navigate to="/settings?tab=warehouses" replace />} />
+        <Route path="/settings" element={
+          <ProtectedRoute adminOnly><AppLayout><Settings /></AppLayout></ProtectedRoute>
         } />
         <Route path="/inbox" element={
           <ProtectedRoute><AppLayout><SalesInbox /></AppLayout></ProtectedRoute>
@@ -260,16 +262,9 @@ export default function App() {
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
         } />
 
-        <Route path="/doc-templates" element={
-          <ProtectedRoute adminOnly><AppLayout><DocumentTemplates /></AppLayout></ProtectedRoute>
-        } />
-
-        <Route path="/settings/email-routing" element={
-          <ProtectedRoute><AppLayout><EmailSettings /></AppLayout></ProtectedRoute>
-        } />
-        <Route path="/settings/mailboxes" element={
-          <ProtectedRoute><AppLayout><ConnectedMailboxes /></AppLayout></ProtectedRoute>
-        } />
+        <Route path="/doc-templates" element={<Navigate to="/settings?tab=doc-templates" replace />} />
+        <Route path="/settings/email-routing" element={<Navigate to="/settings?tab=email-routing" replace />} />
+        <Route path="/settings/mailboxes" element={<Navigate to="/settings?tab=mailboxes" replace />} />
         <Route path="/settings/mailbox" element={
           <ProtectedRoute><AppLayout><MailboxSettings /></AppLayout></ProtectedRoute>
         } />

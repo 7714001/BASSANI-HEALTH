@@ -84,7 +84,7 @@ function RoutingSection({ icon: Icon, title, description, note, children }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function EmailSettings() {
+export default function EmailSettings({ embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving ] = useState(false);
   const [config,  setConfig ] = useState({
@@ -118,16 +118,18 @@ export default function EmailSettings() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar
-        title="Email Routing"
-        subtitle="Configure who receives automated notifications"
-        actions={
-          <BtnPrimary onClick={save} disabled={saving}>
-            {saving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Save size={13} className="mr-1.5" />}
-            Save Changes
-          </BtnPrimary>
-        }
-      />
+      {!embedded && (
+        <TopBar
+          title="Email Routing"
+          subtitle="Configure who receives automated notifications"
+          actions={
+            <BtnPrimary onClick={save} disabled={saving}>
+              {saving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Save size={13} className="mr-1.5" />}
+              Save Changes
+            </BtnPrimary>
+          }
+        />
+      )}
 
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
         <div className="max-w-2xl mx-auto space-y-5">
@@ -188,6 +190,14 @@ export default function EmailSettings() {
             </div>
           </RoutingSection>
 
+          {embedded && (
+            <div className="flex justify-end pt-2">
+              <BtnPrimary onClick={save} disabled={saving}>
+                {saving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Save size={13} className="mr-1.5" />}
+                Save Changes
+              </BtnPrimary>
+            </div>
+          )}
         </div>
       </main>
     </div>
