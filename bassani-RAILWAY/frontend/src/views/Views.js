@@ -880,7 +880,9 @@ export function Orders() {
   const isReseller = user?.role === "reseller";
 
   // ── List view state ───────────────────────────────────────────────────────
-  const [view,        setView       ] = useState("list"); // "list" | "detail" | "new"
+  const [view,        setView       ] = useState(
+    (location.state?.newQuote || location.state?.editQuote) ? "new" : "list"
+  ); // "list" | "detail" | "new"
   const [orders,      setOrders     ] = useState([]);
   const [orderTotal,  setOrderTotal ] = useState(0);
   const [loading,     setLoading    ] = useState(true);
@@ -929,9 +931,9 @@ export function Orders() {
     finally { setCartProdsLoading(false); }
   };
 
-  // If navigated here from My Quotes to start a new quote, jump straight to cart
+  // If navigated here from My Quotes to start a new quote, load the product catalogue
   useEffect(() => {
-    if (location.state?.newQuote) setView("new");
+    if (location.state?.newQuote) loadCartProducts();
   }, []); // eslint-disable-line
 
   // If navigated here from My Quotes with an existing draft to edit, enter edit mode

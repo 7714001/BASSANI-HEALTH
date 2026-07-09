@@ -1481,16 +1481,16 @@ Each product shows:
 
 ### Placing an Order
 
-1. Go to **Orders** in the sidebar — you will see the product catalogue
-2. Search or browse for a product and click **Add to Order** — the item appears in your cart on the right
-3. Adjust quantities as needed (you cannot go below any minimum order quantity shown in amber)
-4. Select the customer you are ordering for, then click **Place Order**
-5. A draft quote is created. You will be taken to **My Quotes** where you can see it.
+1. Go to **My Quotes** in the sidebar and click **New Quote** — the product catalogue opens in cart mode
+2. Select the customer you are ordering for using the search box on the right
+3. Search or browse the catalogue and click **Add to Order** — the item appears in your cart
+4. Adjust quantities as needed (you cannot go below any minimum order quantity shown in amber)
+5. Click **Place Order** — a draft quote is created and you are taken back to **My Quotes**
 
 From **My Quotes** you can:
 - **Edit Quote** — returns you to the cart pre-populated with the current lines so you can adjust quantities or add/remove products. The customer cannot be changed once the quote is created.
 - **Send Quote** — sends the quote to the customer for review (optional)
-- **Confirm Order** — confirms the order in the system, converting the draft to a live sale order. Once confirmed, Bassani's team takes over.
+- **Confirm Order** — converts the draft to a live sale order and hands it to Bassani's team for fulfilment
 
 > Once an order is confirmed, Bassani staff pick it up for packing, QA/RP approval, and fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
 
