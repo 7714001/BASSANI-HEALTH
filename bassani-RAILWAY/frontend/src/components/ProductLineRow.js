@@ -52,7 +52,13 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
         const params = { search: q, limit: 30 };
         if (warehouseId) params.warehouse_id = warehouseId;
         const r = await api.get("/api/products/", { params });
-        setSearchResults(r.data.products || []);
+        const raw = r.data.products || [];
+        raw.sort((a, b) => {
+          const aIn = (a.virtual_available || 0) > 0;
+          const bIn = (b.virtual_available || 0) > 0;
+          return aIn === bIn ? 0 : aIn ? -1 : 1;
+        });
+        setSearchResults(raw);
         setDropdownOpen(true);
       } catch {
         setSearchResults([]);

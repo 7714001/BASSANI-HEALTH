@@ -223,12 +223,16 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
     return [...seen].sort().map(v => ({ value: v, label: v }));
   }, [products]);
 
-  // Client-side variant filter on top of API results
+  // Client-side variant filter + in-stock-first sort
   const displayed = useMemo(() => {
-    if (!selectedVariant) return products;
-    return products.filter(p =>
-      (p.display_name || p.name || "").includes(`(${selectedVariant})`)
-    );
+    const list = selectedVariant
+      ? products.filter(p => (p.display_name || p.name || "").includes(`(${selectedVariant})`))
+      : products;
+    return [...list].sort((a, b) => {
+      const aIn = (a.virtual_available || 0) > 0;
+      const bIn = (b.virtual_available || 0) > 0;
+      return aIn === bIn ? 0 : aIn ? -1 : 1;
+    });
   }, [products, selectedVariant]);
 
   const handleAdd = (product) => {
