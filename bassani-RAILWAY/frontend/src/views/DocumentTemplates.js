@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   Upload, Download, Clock, CheckCircle, ChevronDown, ChevronUp,
   Loader2, FileText, RotateCcw, FlaskConical, AlertTriangle,
-  Eye, X,
+  Eye, X, Info,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal, FormGroup } from "../components/UI";
@@ -611,9 +611,18 @@ export default function DocumentTemplates({ embedded = false }) {
   const { can } = useAuth();
   const isSuperAdmin = can("settings.manage");
 
-  const [templates, setTemplates] = useState([]);
-  const [loading,   setLoading  ] = useState(true);
-  const [listKey,   setListKey  ] = useState(0);
+  const [templates,    setTemplates   ] = useState([]);
+  const [loading,      setLoading     ] = useState(true);
+  const [listKey,      setListKey     ] = useState(0);
+  const [fieldRefOpen, setFieldRefOpen] = useState(false);
+  const [fieldRefTab,  setFieldRefTab ] = useState("nda");
+
+  const FIELD_REF_DOCS = [
+    { key: "nda",                        label: "NDA" },
+    { key: "store_onboarding_agreement", label: "Store Agreement" },
+    { key: "tqa",                        label: "TQA" },
+    { key: "customer_information_form",  label: "Customer Info Form" },
+  ];
 
   const load = () => {
     setLoading(true);
@@ -629,23 +638,29 @@ export default function DocumentTemplates({ embedded = false }) {
     <div className={embedded ? "flex flex-col flex-1 overflow-hidden" : "flex flex-col min-h-screen bg-gray-50"}>
       {!embedded && <TopBar title="Document Templates" />}
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto w-full">
+        <div className="w-full">
 
           <div className="mb-6">
-                <p className="text-sm text-gray-500 max-w-2xl">
+                <p className="text-sm text-gray-500">
                   Manage the four Bassani-issued onboarding template PDFs. Uploading a new version
-                  immediately replaces what customers download — no redeployment needed. Previous
+                  immediately replaces what customers download. No redeployment needed. Previous
                   versions are archived and can be restored at any time.
                 </p>
                 {isSuperAdmin && (
-                  <div className="mt-3 flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 max-w-2xl">
-                    <span className="text-blue-500 text-xs mt-0.5">ℹ</span>
-                    <p className="text-xs text-blue-700">
-                      Before enabling e-signatures, prepare each PDF with embedded form fields
-                      (signature, name, date, company) in Adobe Acrobat or LibreOffice. Field
-                      positions are stored in the PDF itself and update automatically when you
-                      upload a new version.
-                    </p>
+                  <div className="mt-3 flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                    <Info size={14} className="text-blue-500 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-xs text-blue-700">
+                        Before enabling e-signatures, prepare each PDF with embedded form fields in Adobe Acrobat or LibreOffice.
+                        Each field must use the exact name the portal expects. Field positions are stored in the PDF itself and update automatically when you upload a new version.
+                      </p>
+                      <button
+                        onClick={() => setFieldRefOpen(true)}
+                        className="mt-2 text-xs font-semibold text-blue-700 underline underline-offset-2 hover:text-blue-900 transition-colors"
+                      >
+                        View required field names per document
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -667,17 +682,103 @@ export default function DocumentTemplates({ embedded = false }) {
                 </div>
               )}
 
-              <div className="mt-8 bg-gray-100 rounded-2xl px-6 py-5 max-w-2xl">
+              <div className="mt-8 bg-gray-100 rounded-2xl px-6 py-5">
                 <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Version control</h3>
                 <ul className="space-y-1.5 text-xs text-gray-500">
-                  <li>Each upload creates a numbered version — v1, v2, v3…</li>
+                  <li>Each upload creates a numbered version (v1, v2, v3).</li>
                   <li>The active version is what customers and resellers download immediately.</li>
-                  <li>Archived versions are never deleted — signed copies always reference the exact version at time of signing.</li>
+                  <li>Archived versions are never deleted. Signed copies always reference the exact version at time of signing.</li>
                   <li>Roll back to any previous version using the Activate button in the version history.</li>
                 </ul>
               </div>
         </div>
       </main>
+
+      {fieldRefOpen && (
+        <Modal title="PDF Field Name Reference" onClose={() => setFieldRefOpen(false)} width="max-w-2xl">
+          <p className="text-xs text-gray-500 mb-4">
+            These are the exact AcroForm field names your PDF must use. Create them in Adobe Acrobat or LibreOffice Draw before uploading.
+            Fields marked as auto-filled are written by the portal and do not need to be filled in by the customer.
+          </p>
+
+          <div className="border-b border-gray-200 mb-4">
+            <div className="flex gap-1">
+              {FIELD_REF_DOCS.map(d => (
+                <button
+                  key={d.key}
+                  onClick={() => setFieldRefTab(d.key)}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+                    fieldRefTab === d.key
+                      ? "border-bassani-600 text-bassani-700"
+                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {FIELD_REF_DOCS.filter(d => d.key === fieldRefTab).map(d => {
+            const cfg = DOC_CONFIGS[d.key];
+            return (
+              <div key={d.key} className="space-y-4">
+                {(cfg?.sections || []).map(section => (
+                  <div key={section.title}>
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">{section.title}</h4>
+                    <div className="border border-gray-100 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-100">
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 w-1/2">Field name</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500">Label / purpose</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {section.fields.map((f, i) => (
+                            <tr key={f.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                              <td className="px-3 py-2 font-mono text-bassani-700 select-all">{f.name}</td>
+                              <td className="px-3 py-2 text-gray-600">{f.label}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+                {cfg?.hasBassaniSig && (
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700 space-y-2">
+                    <p>This document requires a Bassani countersignature. Add a signature field with a name starting with <span className="font-mono font-semibold">bassani_</span> — the portal embeds the signature image during admin approval.</p>
+                    {cfg.bassaniTextFields?.length > 0 && (
+                      <>
+                        <p className="font-semibold pt-1">The following text fields are also auto-filled by the portal. Do not make them customer-editable:</p>
+                        <div className="border border-amber-200 rounded-lg overflow-hidden">
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-amber-100/60 border-b border-amber-200">
+                                <th className="text-left px-3 py-1.5 font-semibold w-1/2">Field name</th>
+                                <th className="text-left px-3 py-1.5 font-semibold">Filled with</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cfg.bassaniTextFields.map((f, i) => (
+                                <tr key={f.name} className={i % 2 === 0 ? "" : "bg-amber-100/40"}>
+                                  <td className="px-3 py-1.5 font-mono font-semibold">{f.name}</td>
+                                  <td className="px-3 py-1.5">{f.description}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Modal>
+      )}
     </div>
   );
 }

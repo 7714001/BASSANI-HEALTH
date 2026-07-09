@@ -120,7 +120,7 @@ export default function EmailSettings({ embedded = false }) {
     <div className="flex flex-col flex-1 overflow-hidden">
       {!embedded && (
         <TopBar
-          title="Email Routing"
+          title="Email Notifications"
           subtitle="Configure who receives automated notifications"
           actions={
             <BtnPrimary onClick={save} disabled={saving}>

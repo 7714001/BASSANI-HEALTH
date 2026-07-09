@@ -20,9 +20,14 @@ export const DOC_CONFIGS = {
     ],
     isAutoFill: (name) => name.startsWith("bassani_") || name.startsWith("effective_date"),
     getAutoFillValue: (name, profile) => {
+      if (name === "bassani_name")                 return profile?.name  || "";
       if (name.toLowerCase().includes("position")) return profile?.title || "";
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
+    bassaniTextFields: [
+      { name: "bassani_name",     description: "Full name of Bassani signing authority" },
+      { name: "effective_date_*", description: "Effective date of the agreement (set to today)" },
+    ],
   },
   store_onboarding_agreement: {
     hasBassaniSig: true,
@@ -54,9 +59,17 @@ export const DOC_CONFIGS = {
     ],
     isAutoFill: (name) => name.startsWith("bassani_") || name === "store_date_es_:signer:date",
     getAutoFillValue: (name, profile) => {
-      if (name === "bassani_witness") return "";
+      if (name === "bassani_name")     return profile?.name  || "";
+      if (name === "bassani_position") return profile?.title || "";
+      if (name === "bassani_witness")  return "";
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
+    bassaniTextFields: [
+      { name: "bassani_name",               description: "Full name of Bassani signing authority" },
+      { name: "bassani_position",           description: "Title / position of Bassani signing authority" },
+      { name: "bassani_witness",            description: "Left blank (witness signs by hand)" },
+      { name: "store_date_es_:signer:date", description: "Date of signing (set to today)" },
+    ],
   },
   tqa: {
     hasBassaniSig: true,
@@ -75,6 +88,10 @@ export const DOC_CONFIGS = {
       if (name === "bassani_name") return profile?.name || "";
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
     },
+    bassaniTextFields: [
+      { name: "bassani_name",            description: "Full name of Bassani signing authority" },
+      { name: "customer_date_es_:date",  description: "Date of signing (set to today)" },
+    ],
   },
   customer_information_form: {
     hasBassaniSig: false,

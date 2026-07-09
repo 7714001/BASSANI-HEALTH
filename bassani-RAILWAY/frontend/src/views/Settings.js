@@ -7,7 +7,7 @@ import DocumentTemplates from "./DocumentTemplates";
 
 const TABS = [
   { key: "warehouses",    label: "Warehouses" },
-  { key: "email-routing", label: "Email Routing" },
+  { key: "email-routing", label: "Email Notifications" },
   { key: "mailboxes",     label: "Connected Mailboxes" },
   { key: "doc-templates", label: "Document Templates" },
 ];
