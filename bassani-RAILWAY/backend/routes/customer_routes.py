@@ -61,6 +61,12 @@ class AddressUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
 
+class ContactCreate(BaseModel):
+    name: str
+    function: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
 class LinkCompanyBody(BaseModel):
     company_id: int
 
@@ -688,6 +694,35 @@ def update_customer_address(
     try:
         odoo.write("res.partner", [address_id], vals)
         return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/{customer_id}/contacts")
+def create_customer_contact(
+    customer_id: int,
+    body: ContactCreate,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    odoo = get_odoo_client()
+    try:
+        parent = odoo.read("res.partner", [customer_id], fields=["id", "is_company"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not parent:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    if not parent[0].get("is_company"):
+        raise HTTPException(status_code=400, detail="Contacts can only be added to company-type customers")
+    vals: dict = {"parent_id": customer_id, "name": body.name, "type": "contact"}
+    if body.function:
+        vals["function"] = body.function
+    if body.email:
+        vals["email"] = body.email
+    if body.phone:
+        vals["phone"] = body.phone
+    try:
+        contact_id = odoo.create("res.partner", vals)
+        return {"success": True, "contact_id": contact_id}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 

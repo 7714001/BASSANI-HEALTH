@@ -433,6 +433,10 @@ export default function CustomerProfile() {
   const [sendingDocs,  setSendingDocs ] = useState(false);
   const [docsSentInfo, setDocsSentInfo] = useState(null); // { sent, sent_at, sent_by, to_email }
 
+  const [addContactOpen,   setAddContactOpen  ] = useState(false);
+  const [addContactForm,   setAddContactForm  ] = useState({ name: "", function: "", email: "", phone: "" });
+  const [addContactSaving, setAddContactSaving] = useState(false);
+
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
   const [reqModalOpen,         setReqModalOpen        ] = useState(false);
@@ -608,6 +612,23 @@ export default function CustomerProfile() {
 
   useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line
 
+  const handleAddContact = async () => {
+    if (!addContactForm.name.trim()) return toast.error("Name is required");
+    setAddContactSaving(true);
+    try {
+      await api.post(`/api/customers/${id}/contacts`, addContactForm);
+      toast.success("Contact added");
+      setAddContactOpen(false);
+      setAddContactForm({ name: "", function: "", email: "", phone: "" });
+      const r = await api.get(`/api/customers/${id}/profile`);
+      setData(r.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add contact");
+    } finally {
+      setAddContactSaving(false);
+    }
+  };
+
   if (loading) return <LoadingState />;
   if (!data)   return null;
 
@@ -772,31 +793,45 @@ export default function CustomerProfile() {
             )}
           </Section>
 
-          {/* Contacts */}
-          {contacts.length > 0 && (
-            <Section title={`Contacts (${contacts.length})`}>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                    <tr>
-                      <th className="text-left px-5 py-2.5 font-medium">Name</th>
-                      <th className="text-left px-5 py-2.5 font-medium">Job Title</th>
-                      <th className="text-left px-5 py-2.5 font-medium">Email</th>
-                      <th className="text-left px-5 py-2.5 font-medium">Phone</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {contacts.map(ct => (
-                      <tr key={ct.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3 font-medium text-gray-900">{ct.name}</td>
-                        <td className="px-5 py-3 text-gray-500">{ct.function || "—"}</td>
-                        <td className="px-5 py-3 text-gray-500">{ct.email || "—"}</td>
-                        <td className="px-5 py-3 text-gray-500">{ct.phone || "—"}</td>
+          {/* Contacts — only companies can have sub-contacts */}
+          {c.is_company && (
+            <Section
+              title={`Contacts (${contacts.length})`}
+              actions={canManageAddresses && (
+                <button
+                  onClick={() => { setAddContactForm({ name: "", function: "", email: "", phone: "" }); setAddContactOpen(true); }}
+                  className="flex items-center gap-1.5 text-xs font-medium text-bassani-700 hover:text-bassani-800 transition-colors"
+                >
+                  <Plus size={13} />Add contact
+                </button>
+              )}
+            >
+              {contacts.length === 0 ? (
+                <p className="px-5 py-4 text-sm text-gray-400">No contacts on file.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Job Title</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Email</th>
+                        <th className="text-left px-5 py-2.5 font-medium">Phone</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {contacts.map(ct => (
+                        <tr key={ct.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                          <td className="px-5 py-3 font-medium text-gray-900">{ct.name}</td>
+                          <td className="px-5 py-3 text-gray-500">{ct.function || "—"}</td>
+                          <td className="px-5 py-3 text-gray-500">{ct.email || "—"}</td>
+                          <td className="px-5 py-3 text-gray-500">{ct.phone || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </Section>
           )}
 
@@ -1074,6 +1109,46 @@ export default function CustomerProfile() {
           </Modal>
         );
       })()}
+
+      {addContactOpen && (
+        <Modal title="Add Contact Person" onClose={() => setAddContactOpen(false)}>
+          <div className="space-y-4">
+            <FormGroup label="Full name" required>
+              <Input
+                value={addContactForm.name}
+                onChange={e => setAddContactForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Jane Smith"
+                autoFocus
+              />
+            </FormGroup>
+            <FormGroup label="Job title">
+              <Input
+                value={addContactForm.function}
+                onChange={e => setAddContactForm(f => ({ ...f, function: e.target.value }))}
+                placeholder="e.g. Pharmacist in Charge"
+              />
+            </FormGroup>
+            <FormGroup label="Email">
+              <Input
+                type="email"
+                value={addContactForm.email}
+                onChange={e => setAddContactForm(f => ({ ...f, email: e.target.value }))}
+              />
+            </FormGroup>
+            <FormGroup label="Phone">
+              <Input
+                value={addContactForm.phone}
+                onChange={e => setAddContactForm(f => ({ ...f, phone: e.target.value }))}
+                placeholder="+27 …"
+              />
+            </FormGroup>
+            <div className="flex justify-end gap-2 pt-2">
+              <BtnSecondary onClick={() => setAddContactOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={handleAddContact} loading={addContactSaving}>Add Contact</BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {addrModal && (
         <Modal title={addrTarget ? "Edit Address" : "Add Address"} onClose={() => setAddrModal(false)}>
