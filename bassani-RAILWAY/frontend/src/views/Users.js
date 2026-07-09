@@ -152,6 +152,13 @@ const PERMISSION_GROUPS = [
       { key: "sign", label: "Upload personal signature and countersign customer onboarding documents" },
     ],
   },
+  {
+    domain: "finance",
+    label: "Bank Reconciliation",
+    actions: [
+      { key: "bank_reconciliation", label: "Import bank statements and match credits to open invoices" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -204,6 +211,7 @@ const DEFAULT_ADMIN_PERMS = {
   onboarding:        { inbox: false },
   settings:          { manage: false },
   signing_authority: { sign: false },
+  finance:           { bank_reconciliation: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
@@ -227,6 +235,7 @@ const ROLE_DEFAULT_PERMS = {
     orders_inbox:      { view: false },
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
+    finance:           { bank_reconciliation: false },
   },
   orders_clerk: {
     products:   { manage: false },
@@ -245,6 +254,7 @@ const ROLE_DEFAULT_PERMS = {
     orders_inbox:      { view: true },
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
+    finance:           { bank_reconciliation: false },
   },
   finance: {
     products:   { manage: false },
@@ -263,6 +273,7 @@ const ROLE_DEFAULT_PERMS = {
     orders_inbox:      { view: false },
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
+    finance:           { bank_reconciliation: true },
   },
   qa_manager: {
     products:   { manage: false },
@@ -281,6 +292,7 @@ const ROLE_DEFAULT_PERMS = {
     orders_inbox:      { view: true },
     onboarding:        { inbox: false },
     signing_authority: { sign: true },
+    finance:           { bank_reconciliation: false },
   },
   responsible_pharmacist: {
     products:   { manage: false },
@@ -299,6 +311,7 @@ const ROLE_DEFAULT_PERMS = {
     orders_inbox:      { view: true },
     onboarding:        { inbox: false },
     signing_authority: { sign: true },
+    finance:           { bank_reconciliation: false },
   },
 };
 
