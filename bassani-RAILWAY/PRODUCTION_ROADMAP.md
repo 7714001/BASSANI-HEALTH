@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-08  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
 
 ---
 
@@ -32,6 +32,7 @@
 | 18 | In-Portal Customer Document Signing | 🟢 Complete | 18.0–18.4 complete — 2026-07-08 |
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
+| 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -3294,3 +3295,66 @@ No external-facing API breaking changes — existing resellers without the field
 - [x] Banking details section in Edit modal hidden for non-eligible agents
 - [x] Existing resellers without the `commission_eligible` field default to `true` — no data migration required
 - [x] Admin-targeted single-agent commission statement generation is not affected by the eligibility filter
+
+---
+
+## Phase 21 — Customer Data Model Hardening
+
+**Goal:** Bring the customer data model into alignment with Odoo's actual contact hierarchy — Company vs Individual, bill-to vs contact person, and contact person management — so the portal correctly reflects how Bassani's customer accounts are structured.  
+**Status:** 🟢 Complete  
+**Completed:** 21.0–21.5 — 2026-07-09
+
+### Context
+
+Several gaps existed between how the portal presented customer data and how Odoo's `res.partner` model actually works. Orders were being placed against individual contact persons rather than their parent companies, the customer listing used a fragile regex against the Odoo `comment` field to derive contact type, and the customer profile had no way to add contact persons or change the Company/Individual classification. A production crash was also discovered where the contacts read was requesting `mobile` — a field that does not exist on `res.partner` in this Odoo instance.
+
+### 21.0 — Customer Profile Crash Fix
+
+- [x] `mobile` removed from contact person read (`customer_routes.py` line 268) — field does not exist on `res.partner` in this Odoo instance; was crashing all customer profile page loads
+- [x] `mobile` removed from `ADDRESS_FIELDS` for the same reason
+- [x] "Mobile" column removed from the contacts table in `CustomerProfile.js`
+
+### 21.1 — Customer Listing: True Odoo Type and Business Category
+
+- [x] `is_company` added to `CUSTOMER_FIELDS` in `customer_routes.py`
+- [x] Customers listing "Type" column now reads directly from Odoo's `is_company` field — shows "Company" or "Individual" for all customers, not just portal-onboarded ones
+- [x] Comment-parsed business category (Pharmacy / Retail etc.) moved to a separate "Category" column — shown for portal-onboarded customers; "—" for Odoo-native customers where the comment format was not written by the portal
+
+### 21.2 — Sales Ticket: Bill-to Display and Contact Person Model
+
+- [x] `is_company` added to ticket creation partner read in `ticket_routes.py`; stored as `customer_is_company` on the ticket document
+- [x] Lazy backfill extended to populate `customer_is_company` on existing tickets on first view
+- [x] "Link to company" button suppressed for company-type contacts (was incorrectly shown for companies who have no parent to link to)
+- [x] Sales ticket customer info panel restructured: when the ticket's customer is an individual linked to a company, the panel now shows "Bill to" (company name, linked to account profile) and "Contact person" (individual name + email) instead of the ambiguous "Contact at X" label
+- [x] TopBar title on sales ticket detail leads with the company name when the customer is a contact linked to a company
+
+### 21.3 — Order Creation: Commercial Partner Resolution
+
+- [x] `effective_partner_id` in `order_routes.py` is now resolved to `commercial_partner_id` before the Odoo `sale.order` is created — if the selected customer is an individual linked to a company, the order and invoice are raised against the company (the account holder), not the contact person
+- [x] Standalone individuals (no parent company) are unaffected — `commercial_partner_id` equals self for top-level partners
+
+### 21.4 — Customer Profile: Add Contact Persons
+
+- [x] `POST /api/customers/{id}/contacts` endpoint added — validates parent is a company (400 if not), creates `res.partner` in Odoo with `parent_id` set and `type = "contact"`. Fields: name (required), job title (`function`), email, phone
+- [x] Contacts section in `CustomerProfile.js` now only renders for company-type customers
+- [x] "Add contact" button visible to admins with `customers.manage`; opens modal with name, job title, email, phone fields
+- [x] Empty state shown when no contacts exist ("No contacts on file") so the section and button are always visible for companies
+- [x] Profile refreshed on successful add so the new contact appears immediately
+
+### 21.5 — Customer Profile: Type Display and Editing
+
+- [x] `PATCH /api/customers/{id}/type` endpoint — reads current `is_company`, blocks Company→Individual conversion if child contacts exist (400), writes `is_company` to Odoo, audit-logs the before/after state
+- [x] Customer profile header shows "Company" / "Individual" type badge immediately below the customer name for all viewers
+- [x] Admins with `customers.manage` see the badge as a dropdown — changing to Company applies immediately; changing to Individual shows a confirmation modal explaining implications before applying
+- [x] Individual → Company: no confirmation required (safe operation)
+- [x] Company → Individual: confirmation modal + backend guard blocks conversion if child contacts exist
+
+### Definition of Done
+
+- [x] Customer profile page loads for any customer (including those with contacts) — mobile field crash resolved
+- [x] Customer listing Type column shows Company/Individual for all 120+ customers, not just portal-onboarded ones
+- [x] Sales tickets for contact persons show the billing company as the primary account, not the individual name
+- [x] New orders created via the portal are raised against the commercial partner (company) in Odoo
+- [x] Admins can add contact persons to company profiles from the portal — no Odoo access required
+- [x] Admins can change Company/Individual classification directly from the profile — audit-logged
+- [x] Converting a company with child contacts to Individual is blocked with a clear error message

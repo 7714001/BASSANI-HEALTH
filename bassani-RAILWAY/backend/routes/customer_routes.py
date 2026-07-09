@@ -67,6 +67,9 @@ class ContactCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
 
+class CustomerTypeUpdate(BaseModel):
+    is_company: bool
+
 class LinkCompanyBody(BaseModel):
     company_id: int
 
@@ -696,6 +699,48 @@ def update_customer_address(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.patch("/{customer_id}/type")
+async def update_customer_type(
+    customer_id: int,
+    body: CustomerTypeUpdate,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    odoo = get_odoo_client()
+    try:
+        partner = odoo.read("res.partner", [customer_id], fields=["id", "name", "is_company"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    current_is_company = bool(partner[0].get("is_company"))
+    if current_is_company == body.is_company:
+        return {"success": True, "is_company": body.is_company}
+
+    # Changing Company → Individual is only safe when no child contacts exist.
+    if current_is_company and not body.is_company:
+        child_ids = odoo.search("res.partner", [["parent_id", "=", customer_id], ["active", "=", True]], limit=1)
+        if child_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot convert to Individual: this customer has linked contacts. Remove or reassign them first.",
+            )
+
+    try:
+        odoo.write("res.partner", [customer_id], {"is_company": body.is_company})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    await audit_log(
+        "customer.type_change", "customer", customer_id,
+        entity_label=partner[0]["name"],
+        user=current_user,
+        before={"is_company": current_is_company},
+        after={"is_company": body.is_company},
+    )
+    return {"success": True, "is_company": body.is_company}
 
 
 @router.post("/{customer_id}/contacts")

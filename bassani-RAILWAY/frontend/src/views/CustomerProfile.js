@@ -437,6 +437,9 @@ export default function CustomerProfile() {
   const [addContactForm,   setAddContactForm  ] = useState({ name: "", function: "", email: "", phone: "" });
   const [addContactSaving, setAddContactSaving] = useState(false);
 
+  const [typeChanging,     setTypeChanging    ] = useState(false);
+  const [typeConfirmOpen,  setTypeConfirmOpen ] = useState(false);
+
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
   const [reqModalOpen,         setReqModalOpen        ] = useState(false);
@@ -612,6 +615,26 @@ export default function CustomerProfile() {
 
   useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line
 
+  const applyTypeChange = async (newIsCompany) => {
+    setTypeChanging(true);
+    try {
+      await api.patch(`/api/customers/${id}/type`, { is_company: newIsCompany });
+      toast.success(`Customer updated to ${newIsCompany ? "Company" : "Individual"}`);
+      const r = await api.get(`/api/customers/${id}/profile`);
+      setData(r.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update customer type");
+    } finally {
+      setTypeChanging(false);
+      setTypeConfirmOpen(false);
+    }
+  };
+
+  const handleTypeChange = (newIsCompany) => {
+    if (c.is_company && !newIsCompany) { setTypeConfirmOpen(true); return; }
+    applyTypeChange(newIsCompany);
+  };
+
   const handleAddContact = async () => {
     if (!addContactForm.name.trim()) return toast.error("Name is required");
     setAddContactSaving(true);
@@ -672,6 +695,24 @@ export default function CustomerProfile() {
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">{c.name}</h1>
                   <div className="flex flex-wrap items-center gap-2 mt-1">
+                    {canManageAddresses ? (
+                      <div className="relative inline-flex items-center">
+                        <select
+                          value={c.is_company ? "company" : "individual"}
+                          onChange={e => handleTypeChange(e.target.value === "company")}
+                          disabled={typeChanging}
+                          className="text-xs bg-gray-100 border border-gray-200 text-gray-700 pl-2 pr-6 py-0.5 rounded-full font-medium cursor-pointer hover:bg-gray-200 transition-colors appearance-none disabled:opacity-50"
+                        >
+                          <option value="company">Company</option>
+                          <option value="individual">Individual</option>
+                        </select>
+                        <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                      </div>
+                    ) : (
+                      <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium border border-gray-200">
+                        {c.is_company ? "Company" : "Individual"}
+                      </span>
+                    )}
                     {customerType && (
                       <span className="text-xs bg-bassani-50 text-bassani-700 px-2 py-0.5 rounded-full font-medium">{customerType}</span>
                     )}
@@ -1109,6 +1150,28 @@ export default function CustomerProfile() {
           </Modal>
         );
       })()}
+
+      {typeConfirmOpen && (
+        <Modal title="Convert to Individual?" onClose={() => setTypeConfirmOpen(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              You are changing <strong>{c.name}</strong> from a Company to an Individual. This means:
+            </p>
+            <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
+              <li>This account will no longer be able to have linked contacts</li>
+              <li>Any existing child contacts must be removed first (the system will block this if any exist)</li>
+              <li>Orders and invoices already raised against this account are unaffected</li>
+            </ul>
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              This change is reflected immediately in Odoo. Only proceed if you are sure this account should be classified as an individual person, not a business.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <BtnSecondary onClick={() => setTypeConfirmOpen(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={() => applyTypeChange(false)} loading={typeChanging}>Convert to Individual</BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {addContactOpen && (
         <Modal title="Add Contact Person" onClose={() => setAddContactOpen(false)}>

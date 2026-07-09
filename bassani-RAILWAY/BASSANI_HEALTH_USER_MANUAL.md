@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 7 July 2026
+**Last Updated:** 9 July 2026
 
 ---
 
@@ -1153,11 +1153,36 @@ Click any customer to open their full profile. You will see:
 - Outstanding invoices and balance
 - Their credit limit and how much of it is used
 - The reseller who onboarded them (if applicable)
+- Their contact persons (for company accounts)
 - Their delivery addresses
 - Their onboarding and compliance documents
 - Their full account statement (all invoices and credit notes)
 
+**Customer type badge:** Every customer profile shows a "Company" or "Individual" badge directly under their name. This reflects the Odoo contact type.
+
+**Changing a customer's type** *(requires `customers.manage` permission)*
+
+Admins see the type badge as a dropdown. Select "Company" or "Individual" to change the classification:
+
+- **Individual → Company:** Applied immediately. The account becomes a company-level partner and can now have linked contact persons and delivery addresses.
+- **Company → Individual:** A confirmation screen appears explaining the implications. The change is blocked if the customer has any linked contact persons — remove or reassign them first. Once confirmed, the change is applied in Odoo immediately and audit-logged.
+
+> Only change a customer's type if you are certain it is misclassified. Orders and invoices already raised against the account are unaffected, but the change affects how future orders are structured.
+
 **Credit Hold:** If a customer appears with a red "Credit Hold" badge, they are over their Odoo credit limit. Orders for this customer will produce a warning at quote stage and a hard block at confirmation stage (unless you override).
+
+**Contact persons** *(company accounts only)*
+
+Company profiles show a Contacts section listing all individuals linked to that company account in Odoo. These are the people Bassani communicates with at that business (pharmacists in charge, procurement managers, etc.).
+
+To add a contact person *(requires `customers.manage` permission)*:
+1. Open the company's customer profile
+2. Scroll to the **Contacts** section
+3. Click **Add contact**
+4. Enter their full name (required), job title, email address, and phone number
+5. Click **Add Contact**
+
+The new contact appears in the list immediately and is created in Odoo.
 
 **Customer Documents:**
 The **Documents** section on a customer's profile shows all compliance documents associated with that customer, with a progress counter in the section header (e.g. "Documents (3 / 5 onboarding)"):
