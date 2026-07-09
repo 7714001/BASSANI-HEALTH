@@ -330,7 +330,26 @@ export function LoadingState({ message = "Loading…" }) {
   );
 }
 
-export function EmptyState({ message = "No records found" }) {
+export function EmptyState({ message = "No records found", heading, icon: Icon, action }) {
+  if (heading || Icon || action) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-4">
+        {Icon && (
+          <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center">
+            <Icon size={26} className="text-gray-300" />
+          </div>
+        )}
+        {heading && <p className="text-base font-semibold text-gray-500">{heading}</p>}
+        <p className="text-sm text-gray-400 max-w-xs leading-relaxed">{message}</p>
+        {action && (
+          <button onClick={action.onClick}
+            className="mt-1 px-4 py-2 rounded-xl bg-bassani-600 text-white text-sm font-medium hover:bg-bassani-700 transition-colors">
+            {action.label}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="text-center py-12 text-gray-400 text-sm">{message}</div>
   );

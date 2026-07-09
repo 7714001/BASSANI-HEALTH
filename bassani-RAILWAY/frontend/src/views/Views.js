@@ -1311,8 +1311,8 @@ export function Orders() {
                         ))}
                       </div>
                     )}
-                    <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
                   </div>
+                  <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
                 )}
               </div>
 

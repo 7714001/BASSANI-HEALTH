@@ -60,6 +60,42 @@ const PACK_STATUS_COLOR = {
   complete: "green", incomplete: "orange", cancelled: "red",
 };
 
+// Reseller-facing labels — plain English, no internal system terms
+const R_STATUS_LABEL = {
+  quote:                "Draft",
+  sale_order:           "Pending Confirmation",
+  confirmed_wip:        "In Fulfilment",
+  ready_for_collection: "Ready for Collection",
+  incomplete:           "Unable to Fulfil",
+};
+const R_STATUS_COLOR = {
+  quote: "amber", sale_order: "amber", confirmed_wip: "teal",
+  ready_for_collection: "green", incomplete: "orange",
+};
+const R_EXIT_LABEL = { not_interested: "Cancelled", cancelled: "Cancelled", complete: "Complete" };
+const R_PACK_LABEL = {
+  queued: "Preparing your order", packing: "Being packed",
+  ready: "Packed — awaiting final checks", complete: "Fulfilled",
+  incomplete: "Issue — contact Bassani", cancelled: "Cancelled",
+};
+
+// Steps shown in the reseller progress tracker (in detail view)
+const R_STEPS = [
+  { key: "draft",      label: "Quote Created"    },
+  { key: "confirmed",  label: "Order Confirmed"  },
+  { key: "packing",    label: "Being Packed"     },
+  { key: "ready",      label: "Ready"            },
+  { key: "complete",   label: "Complete"         },
+];
+const resellerStep = (ticket, packing) => {
+  if (ticket.exit_status === "complete")    return 4;
+  if (ticket.exit_status)                   return -1; // cancelled
+  if (ticket.status === "ready_for_collection" || packing?.status === "ready") return 3;
+  if (ticket.status === "confirmed_wip")    return packing ? 2 : 1;
+  if (ticket.status === "sale_order")       return 1;
+  return 0;
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
   const { can, user, isAdmin } = useAuth();
@@ -989,15 +1025,65 @@ export default function SalesTickets() {
                 {/* ── Right sidebar: status + actions + timeline ── */}
                 <div className="space-y-4">
 
+                  {/* Reseller: progress tracker */}
+                  {isReseller && (() => {
+                    const step = resellerStep(detail, packingEntry);
+                    const cancelled = step === -1;
+                    return (
+                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Order Progress</p>
+                        {cancelled ? (
+                          <div className="flex items-center gap-2 text-sm text-red-500">
+                            <XCircle size={16} />
+                            <span className="font-medium">{R_EXIT_LABEL[detail.exit_status] || "Cancelled"}</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {R_STEPS.map((s, i) => {
+                              const done    = i < step;
+                              const active  = i === step;
+                              const pending = i > step;
+                              return (
+                                <div key={s.key} className="flex items-center gap-2.5">
+                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold
+                                    ${done   ? "bg-bassani-600 text-white"
+                                    : active ? "bg-bassani-100 border-2 border-bassani-600 text-bassani-600"
+                                             : "bg-gray-100 text-gray-300"}`}>
+                                    {done ? "✓" : i + 1}
+                                  </div>
+                                  <span className={`text-xs ${done ? "text-gray-400 line-through" : active ? "font-semibold text-gray-800" : "text-gray-300"}`}>
+                                    {s.label}
+                                    {active && packingEntry && R_PACK_LABEL[packingEntry.status] && (
+                                      <span className="block text-[10px] font-normal text-bassani-600 mt-0.5">
+                                        {R_PACK_LABEL[packingEntry.status]}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {detail.payment_confirmed_at && (
+                          <p className="text-[11px] text-green-600 flex items-center gap-1.5 mt-3 pt-3 border-t border-gray-100">
+                            <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Status & Details */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                     <div className="flex flex-wrap gap-2">
                       {detail.exit_status
-                        ? <Badge color={EXIT_COLOR[detail.exit_status]}>{EXIT_LABEL[detail.exit_status]}</Badge>
-                        : <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>}
-                      <Badge color={detail.source === "portal" ? "blue" : "gray"}>
-                        {detail.source === "portal" ? "Portal Order" : detail.source === "email" ? "Email Inquiry" : "Direct Inquiry"}
-                      </Badge>
+                        ? <Badge color={EXIT_COLOR[detail.exit_status]}>{isReseller ? (R_EXIT_LABEL[detail.exit_status] || detail.exit_status) : EXIT_LABEL[detail.exit_status]}</Badge>
+                        : <Badge color={isReseller ? (R_STATUS_COLOR[detail.status] || "gray") : (STATUS_COLOR[detail.status])}>{isReseller ? (R_STATUS_LABEL[detail.status] || detail.status) : (STATUS_LABEL[detail.status] || detail.status)}</Badge>}
+                      {!isReseller && (
+                        <Badge color={detail.source === "portal" ? "blue" : "gray"}>
+                          {detail.source === "portal" ? "Portal Order" : detail.source === "email" ? "Email Inquiry" : "Direct Inquiry"}
+                        </Badge>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       {detail.customer_email && (
@@ -1034,20 +1120,20 @@ export default function SalesTickets() {
                           )}
                         </div>
                       ) : null}
-                      {detail.order_id   && <p className="text-xs text-gray-400">Odoo SO #{detail.order_id}</p>}
-                      {detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                      {detail.order_id   && <p className="text-xs text-gray-400">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</p>}
+                      {!isReseller && detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
                       {detail.quote_sent_at && (
                         <p className="text-xs text-blue-600 flex items-center gap-1.5">
                           <Send size={11} />Quote sent {fmtDate(detail.quote_sent_at)}
                         </p>
                       )}
-                      {detail.payment_confirmed_at && (
+                      {!isReseller && detail.payment_confirmed_at && (
                         <p className="text-xs text-green-600 flex items-center gap-1.5">
                           <CheckCircle2 size={11} />Payment confirmed {fmtDate(detail.payment_confirmed_at)}
                         </p>
                       )}
                     </div>
-                    <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                    {!isReseller && <div className="pt-2 border-t border-gray-100 space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         {detail.assigned_to_name
                           ? <span className="text-xs text-gray-500">
@@ -1116,7 +1202,7 @@ export default function SalesTickets() {
                           </div>
                         </div>
                       )}
-                    </div>
+                    </div>}
                   </div>
 
                   {/* Packing Status — read-only visibility for sales */}
@@ -1852,8 +1938,8 @@ export default function SalesTickets() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
-        title="Sales Tickets"
-        subtitle="PO/RFQ → Quote → Sale Order → Invoice → Payment → Complete"
+        title={isReseller ? "My Quotes" : "Sales Tickets"}
+        subtitle={isReseller ? "Build, send, and confirm your orders" : "PO/RFQ → Quote → Sale Order → Invoice → Payment → Complete"}
         onRefresh={load}
         actions={
           <div className="flex items-center gap-3">
@@ -1924,12 +2010,43 @@ export default function SalesTickets() {
           )}
         </div>
         {loading ? <LoadingState /> : filteredTickets.length === 0 ? (
-          <EmptyState message={tickets.length === 0 ? "No sales tickets yet." : "No tickets match your filters."} />
+          tickets.length === 0 && isReseller ? (
+            <EmptyState
+              icon={ShoppingCart}
+              heading="No quotes yet"
+              message="When you place a new order it will appear here. Use the New Quote button above to get started."
+              action={{ label: "New Quote", onClick: () => navigate("/orders", { state: { newQuote: true } }) }}
+            />
+          ) : (
+            <EmptyState message={tickets.length === 0 ? "No sales tickets yet." : "No tickets match your filters."} />
+          )
         ) : (
           <DataTable
             data={filteredTickets}
             onRowClick={openDetail}
-            columns={[
+            columns={isReseller ? [
+              { accessorKey: "customer_name", header: "Patient / Customer", cell: ({ row: { original: t } }) => (
+                <p className="font-medium text-gray-900">
+                  {t.customer_name}
+                  {t.customer_company_name && (
+                    <span className="font-normal text-gray-400 ml-1">({t.customer_company_name})</span>
+                  )}
+                </p>
+              )},
+              { id: "status", header: "Status", cell: ({ row: { original: t } }) =>
+                t.exit_status
+                  ? <Badge color={t.exit_status === "complete" ? "green" : "red"}>{R_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
+                  : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>
+              },
+              { id: "order_ref", header: "Order Ref", cell: ({ row: { original: t } }) =>
+                t.order_id
+                  ? <span className="text-xs font-mono text-gray-500">#{t.order_id}</span>
+                  : <span className="text-xs text-gray-300">—</span>
+              },
+              { accessorKey: "updated_at", header: "Last Updated", cell: ({ row: { original: t } }) =>
+                <span className="text-xs text-gray-400">{fmtDate(t.updated_at)}</span>
+              },
+            ] : [
               { accessorKey: "customer_name", header: "Customer", cell: ({ row: { original: t } }) => (
                 <div>
                   <p className="font-medium text-gray-900">
