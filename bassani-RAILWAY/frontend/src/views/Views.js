@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Check, Pencil } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Check, Pencil, Layers } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import {
@@ -79,6 +79,11 @@ export function Products() {
   const [historyFrom,    setHistoryFrom   ] = useState("");
   const [historyTo,      setHistoryTo     ] = useState("");
 
+  const [lotsModal,   setLotsModal  ] = useState(false);
+  const [lotsProduct, setLotsProduct] = useState(null);
+  const [lots,        setLots       ] = useState([]);
+  const [lotsLoading, setLotsLoading] = useState(false);
+
   const openReservationOrder = async (orderId) => {
     setViewingOrderId(orderId);
     try {
@@ -121,6 +126,21 @@ export function Products() {
       setHistoryMoves([]);
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  const openLots = async (p) => {
+    setLotsProduct(p);
+    setLotsModal(true);
+    setLotsLoading(true);
+    try {
+      const r = await api.get(`/api/products/${p.id}/lots`);
+      setLots(r.data.lots || []);
+    } catch {
+      toast.error("Failed to load lot breakdown");
+      setLots([]);
+    } finally {
+      setLotsLoading(false);
     }
   };
 
@@ -366,7 +386,7 @@ export function Products() {
                 ? <span className="text-xs text-gray-500">{p.tax_rate}%</span>
                 : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
             },
-            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button></span>; } },
+            { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button><button onClick={e=>{e.stopPropagation();openLots(p);}} title="View lot / batch breakdown" className="text-gray-400 hover:text-bassani-600 transition-colors"><Layers size={13}/></button></span>; } },
             { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>{
               const onHand = p.qty_available ?? 0;
               const forecasted = p.virtual_available ?? 0;
@@ -538,6 +558,37 @@ export function Products() {
             </div>
           )}
           <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setHistoryModal(false)}>Close</BtnSecondary></div>
+        </Modal>
+      )}
+      {lotsModal && lotsProduct && (
+        <Modal title={`Lot / Batch Breakdown — ${lotsProduct.display_name || lotsProduct.name}`} onClose={()=>setLotsModal(false)}>
+          {lotsLoading && <LoadingState />}
+          {!lotsLoading && lots.length === 0 && (
+            <EmptyState message="No tracked lots found with on-hand stock. This product may not have lot tracking enabled in Odoo, or all lots are at zero quantity." />
+          )}
+          {!lotsLoading && lots.length > 0 && (
+            <>
+              <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100 max-h-[420px] overflow-y-auto">
+                <div className="grid grid-cols-3 px-4 py-2 bg-gray-50 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                  <span>Lot / Batch</span>
+                  <span className="text-right">On Hand</span>
+                  <span className="text-right">Expires</span>
+                </div>
+                {lots.map(l => (
+                  <div key={l.id} className="grid grid-cols-3 px-4 py-2.5 items-center">
+                    <span className="text-sm font-mono text-gray-900">{l.name}</span>
+                    <span className="text-sm font-semibold text-bassani-700 text-right">{l.qty}{l.uom_name ? <span className="text-xs text-gray-400 font-normal ml-1">{l.uom_name}</span> : null}</span>
+                    <span className="text-xs text-gray-500 text-right">{l.expiration_date || <span className="text-gray-300">—</span>}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between mt-3 px-1">
+                <p className="text-xs text-gray-400">{lots.length} lot{lots.length !== 1 ? "s" : ""} · Total on hand: <span className="font-semibold text-gray-600">{lots.reduce((s, l) => s + l.qty, 0).toFixed(3).replace(/\.?0+$/, "")} {lots[0]?.uom_name || ""}</span></p>
+                <BtnSecondary onClick={()=>setLotsModal(false)}>Close</BtnSecondary>
+              </div>
+            </>
+          )}
+          {!lotsLoading && lots.length === 0 && <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setLotsModal(false)}>Close</BtnSecondary></div>}
         </Modal>
       )}
       {viewingOrder && (

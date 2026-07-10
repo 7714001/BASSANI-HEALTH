@@ -890,3 +890,58 @@ async def set_stock_level(
         return {"success": True, "quant_id": quant_id, "location_id": location_id, "warehouse_id": warehouse_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{product_id}/lots")
+def get_product_lots(product_id: int, current_user: dict = Depends(get_current_user)):
+    """Return in-stock lots for a product variant, with on-hand qty, UOM, and expiry date."""
+    odoo = get_odoo_client()
+    try:
+        quants = odoo.search_read(
+            "stock.quant",
+            domain=[
+                ("product_id", "=", product_id),
+                ("location_id.usage", "=", "internal"),
+                ("lot_id", "!=", False),
+                ("quantity", ">", 0),
+            ],
+            fields=["lot_id", "quantity", "product_uom_id"],
+            limit=500,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    # Aggregate qty per lot (a lot may be split across locations)
+    lot_qty: dict = {}
+    lot_uom: dict = {}
+    for q in quants:
+        if not q.get("lot_id"):
+            continue
+        lid = q["lot_id"][0]
+        lot_qty[lid] = lot_qty.get(lid, 0) + (q.get("quantity") or 0)
+        if q.get("product_uom_id") and lid not in lot_uom:
+            lot_uom[lid] = q["product_uom_id"][1]
+
+    lot_ids = [lid for lid, qty in lot_qty.items() if qty > 0]
+    if not lot_ids:
+        return {"lots": []}
+
+    try:
+        lot_rows = odoo.read("stock.lot", lot_ids, fields=["name", "expiration_date"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading lots: {str(e)}")
+
+    lots = []
+    for r in lot_rows:
+        lid = r["id"]
+        expiry_raw = r.get("expiration_date")
+        lots.append({
+            "id":              lid,
+            "name":            r["name"],
+            "qty":             round(lot_qty.get(lid, 0), 3),
+            "uom_name":        lot_uom.get(lid),
+            "expiration_date": expiry_raw[:10] if expiry_raw else None,
+        })
+
+    lots.sort(key=lambda x: x["name"])
+    return {"lots": lots}

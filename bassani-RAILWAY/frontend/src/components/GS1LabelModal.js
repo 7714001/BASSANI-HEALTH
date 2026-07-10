@@ -180,14 +180,18 @@ const LABEL_TYPES = [
 ];
 
 export default function GS1LabelModal({ product, onClose }) {
-  const [lot,        setLot       ] = useState("");
-  const [expiry,     setExpiry    ] = useState("");
-  const [serial,     setSerial    ] = useState("00000001");
-  const [qty,        setQty       ] = useState(1);
-  const [labelType,  setLabelType ] = useState("unit");
-  const [printers,   setPrinters  ] = useState([]);
-  const [printerKey, setPrinterKey] = useState("");
-  const [printing,   setPrinting  ] = useState(false);
+  const [lot,         setLot        ] = useState("");
+  const [expiry,      setExpiry     ] = useState("");
+  const [serial,      setSerial     ] = useState("00000001");
+  const [qty,         setQty        ] = useState(1);
+  const [labelType,   setLabelType  ] = useState("unit");
+  const [printers,    setPrinters   ] = useState([]);
+  const [printerKey,  setPrinterKey ] = useState("");
+  const [printing,    setPrinting   ] = useState(false);
+  const [lots,        setLots       ] = useState([]);
+  const [lotsLoading, setLotsLoading] = useState(false);
+  const [showLotDrop, setShowLotDrop] = useState(false);
+  const [uomName,     setUomName    ] = useState(null);
 
   const gtin          = product?.barcode || "";
   const isValidGtin   = looksLikeGtin(gtin);
@@ -215,6 +219,27 @@ export default function GS1LabelModal({ product, onClose }) {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!product?.id) return;
+    setLotsLoading(true);
+    api.get(`/api/products/${product.id}/lots`)
+      .then(r => setLots(r.data.lots || []))
+      .catch(() => {})
+      .finally(() => setLotsLoading(false));
+  }, [product?.id]); // eslint-disable-line
+
+  const lotSuggestions = lots.filter(l =>
+    !lot || l.name.toLowerCase().includes(lot.toLowerCase())
+  );
+
+  const selectLot = (l) => {
+    setLot(l.name);
+    if (l.expiration_date) setExpiry(l.expiration_date);
+    setQty(Math.max(1, Math.floor(l.qty)));
+    setUomName(l.uom_name || null);
+    setShowLotDrop(false);
+  };
 
   const printToZebra = async () => {
     if (!printerKey) return toast.error("No printer selected");
@@ -338,11 +363,34 @@ export default function GS1LabelModal({ product, onClose }) {
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Label Data</p>
               <div className="space-y-3">
                 <FormGroup label="Batch / Lot number">
-                  <Input
-                    value={lot}
-                    onChange={e => setLot(e.target.value)}
-                    placeholder="e.g. BHAPIBBY-001-010126"
-                  />
+                  <div className="relative">
+                    <Input
+                      value={lot}
+                      onChange={e => { setLot(e.target.value); setShowLotDrop(true); }}
+                      onFocus={() => setShowLotDrop(true)}
+                      onBlur={() => setTimeout(() => setShowLotDrop(false), 150)}
+                      placeholder={lotsLoading ? "Loading lots…" : lots.length > 0 ? "Type or select a lot…" : "e.g. BHAPIBBY-001-010126"}
+                    />
+                    {showLotDrop && lotSuggestions.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                        {lotSuggestions.map(l => (
+                          <button
+                            key={l.id}
+                            onMouseDown={() => selectLot(l)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-bassani-50 transition-colors border-b border-gray-50 last:border-0"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-mono font-medium text-gray-900">{l.name}</span>
+                              <span className="text-xs text-bassani-700 font-semibold shrink-0">{l.qty} {l.uom_name || ""}</span>
+                            </div>
+                            {l.expiration_date && (
+                              <p className="text-[10px] text-gray-400 mt-0.5">Exp: {l.expiration_date}</p>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </FormGroup>
                 <FormGroup label="Expiry date">
                   <Input
@@ -360,7 +408,7 @@ export default function GS1LabelModal({ product, onClose }) {
                       onChange={e => setSerial(String(Math.max(1, parseInt(e.target.value) || 1)).padStart(8, "0"))}
                     />
                   </FormGroup>
-                  <FormGroup label="Quantity">
+                  <FormGroup label={uomName ? `Quantity (${uomName})` : "Quantity"}>
                     <Input
                       type="number"
                       min="1"
