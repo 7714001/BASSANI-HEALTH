@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from typing import Optional, List
 from pydantic import BaseModel
-from datetime import date as date_type
-from auth import get_current_user, require_admin
+from datetime import date as date_type, datetime, timezone
+from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
@@ -441,3 +442,177 @@ async def acknowledge_credit_note_request(
     await audit_log("invoice.acknowledge_credit_note", "invoice", req["invoice_id"],
                     entity_label=req.get("invoice_ref", ""), user=current_user)
     return {"success": True}
+
+
+# ── 8.24 — Invoice lifecycle actions ─────────────────────────────────────────
+
+@router.get("/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Render and stream the Odoo invoice PDF.
+    Uses ir.actions.report.render_qweb_pdf — returns binary PDF bytes via XML-RPC.
+    """
+    odoo = get_odoo_client()
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv_name = records[0].get("name", f"Invoice-{invoice_id}").replace("/", "-")
+
+    try:
+        result = odoo_call(
+            "ir.actions.report", "render_qweb_pdf",
+            ["account.report_move_full_lines", [invoice_id]],
+            {},
+        )
+        # XML-RPC returns (Binary, 'pdf') — extract bytes
+        pdf_data = result[0]
+        if hasattr(pdf_data, "data"):
+            pdf_bytes = pdf_data.data
+        elif isinstance(pdf_data, (bytes, bytearray)):
+            pdf_bytes = bytes(pdf_data)
+        else:
+            pdf_bytes = bytes(pdf_data)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"PDF rendering failed: {e}")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{inv_name}.pdf"'},
+    )
+
+
+@router.post("/{invoice_id}/reset-to-draft")
+async def reset_invoice_to_draft(
+    invoice_id: int,
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
+):
+    """Reset a posted, unpaid invoice to draft state."""
+    odoo = get_odoo_client()
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "payment_state"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = records[0]
+    if inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Only posted invoices can be reset to draft")
+    if inv.get("payment_state") not in ("not_paid", "nothing_to_pay", None, False):
+        raise HTTPException(status_code=400, detail="Cannot reset a paid invoice to draft")
+    try:
+        odoo.execute("account.move", "button_draft", [invoice_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    await audit_log("invoice.reset_to_draft", "invoice", invoice_id,
+                    entity_label=inv["name"], user=current_user)
+    return {"success": True}
+
+
+# ── 8.26 — Credit notes ───────────────────────────────────────────────────────
+
+@router.get("/credit-note-journals")
+def list_credit_note_journals(current_user: dict = Depends(require_admin)):
+    """Journals suitable for raising a credit note (sale or general type)."""
+    odoo = get_odoo_client()
+    journals = odoo.search_read(
+        "account.journal",
+        [("type", "in", ["sale", "general"])],
+        fields=["id", "name", "type"],
+        limit=50,
+    )
+    return {"journals": journals}
+
+
+class CreditNoteBody(BaseModel):
+    reason: str
+    date: Optional[str] = None      # ISO date, defaults to today
+    journal_id: Optional[int] = None
+
+
+@router.post("/{invoice_id}/credit-note")
+async def create_credit_note(
+    invoice_id: int,
+    body: CreditNoteBody,
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
+):
+    """
+    Create a credit note against a posted invoice via Odoo's account.move.reversal wizard.
+    Stores credit_note_id/name on the linked ticket.
+    """
+    odoo = get_odoo_client()
+    records = odoo.read(
+        "account.move", [invoice_id],
+        fields=["name", "state", "payment_state", "partner_id", "amount_total", "journal_id"],
+    )
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = records[0]
+    if inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Only posted invoices can have a credit note raised")
+
+    credit_date = body.date or date_type.today().isoformat()
+    journal_id = body.journal_id or (inv["journal_id"][0] if isinstance(inv.get("journal_id"), list) else inv.get("journal_id"))
+
+    try:
+        reversal_ctx = {
+            "active_model": "account.move",
+            "active_ids": [invoice_id],
+            "active_id": invoice_id,
+        }
+        wizard_id = odoo_call(
+            "account.move.reversal", "create",
+            [{"reason": body.reason, "date": credit_date, "journal_id": journal_id}],
+            {"context": reversal_ctx},
+        )
+        result = odoo_call(
+            "account.move.reversal", "reverse_moves",
+            [[wizard_id]],
+            {"context": reversal_ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error creating credit note: {e}")
+
+    # Retrieve the new credit note from the reversal result
+    cn_id = None
+    cn_name = None
+    if isinstance(result, dict) and result.get("res_id"):
+        cn_id = result["res_id"]
+    else:
+        # Fallback: search for the most recent out_refund linked to this invoice
+        refunds = odoo.search_read(
+            "account.move",
+            [("move_type", "=", "out_refund"), ("reversed_entry_id", "=", invoice_id)],
+            fields=["id", "name", "amount_total"],
+            limit=1,
+            order="id desc",
+        )
+        if refunds:
+            cn_id = refunds[0]["id"]
+
+    if cn_id:
+        cn_records = odoo.read("account.move", [cn_id], fields=["name", "amount_total"])
+        cn_name = cn_records[0]["name"] if cn_records else f"RCNV/{cn_id}"
+        cn_amount = cn_records[0].get("amount_total", 0) if cn_records else 0
+    else:
+        cn_name = "Credit note created"
+        cn_amount = 0
+
+    # Stamp the linked ticket
+    ticket = await col("tickets").find_one({"invoice_id": invoice_id})
+    if ticket:
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {"$set": {
+                "credit_note_id": cn_id,
+                "credit_note_name": cn_name,
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+
+    await audit_log(
+        "invoice.credit_note", "invoice", invoice_id,
+        entity_label=inv["name"], user=current_user,
+        detail={"reason": body.reason, "credit_note_id": cn_id, "credit_note_name": cn_name},
+    )
+    return {"success": True, "credit_note_id": cn_id, "credit_note_name": cn_name, "amount": cn_amount}

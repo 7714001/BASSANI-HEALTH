@@ -146,6 +146,8 @@ class TicketOrderCreate(BaseModel):
     order_line: List[TicketOrderLine]
     warehouse_id: Optional[int] = None
     partner_shipping_id: Optional[int] = None   # explicit delivery address; auto-resolved if omitted
+    partner_invoice_id: Optional[int] = None    # explicit invoice address (8.27)
+    payment_term_id: Optional[int] = None       # Odoo payment term (8.28)
     note: Optional[str] = ""
 
 
@@ -153,11 +155,15 @@ class TicketOrderUpdate(BaseModel):
     order_line: List[TicketOrderLine]
     customer_id: Optional[int] = None           # if provided, updates partner_id on the Odoo order
     partner_shipping_id: Optional[int] = None   # if provided, updates delivery address on the Odoo order
+    partner_invoice_id: Optional[int] = None    # if provided, updates invoice address on the Odoo order (8.27)
+    payment_term_id: Optional[int] = None       # if provided, updates payment terms on the Odoo order (8.28)
     note: Optional[str] = ""
 
 
 class TicketDepositRegister(BaseModel):
-    amount: float
+    invoice_type: str = "fixed"   # 'fixed' | 'percentage' | 'delivered'
+    amount: Optional[float] = None   # required for 'fixed'
+    percentage: Optional[float] = None  # required for 'percentage', 0 < x <= 100
     date: str           # YYYY-MM-DD
     journal_id: int
     note: Optional[str] = ""
@@ -836,11 +842,14 @@ async def create_order_from_ticket(
     vals: dict = {
         "partner_id": customer_id,
         "partner_shipping_id": partner_shipping_id,
+        "partner_invoice_id": body.partner_invoice_id or customer_id,
         "order_line": lines,
         "note": body.note or "",
     }
     if body.warehouse_id:
         vals["warehouse_id"] = body.warehouse_id
+    if body.payment_term_id:
+        vals["payment_term_id"] = body.payment_term_id
 
     try:
         odoo_order_id = odoo.create("sale.order", vals, context=create_context)
@@ -1037,6 +1046,18 @@ async def update_order_from_ticket(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Odoo error updating delivery address: {str(e)}")
 
+    if body.partner_invoice_id:
+        try:
+            odoo.write("sale.order", [order_id], {"partner_invoice_id": body.partner_invoice_id})
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error updating invoice address: {str(e)}")
+
+    if body.payment_term_id:
+        try:
+            odoo.write("sale.order", [order_id], {"payment_term_id": body.payment_term_id})
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error updating payment terms: {str(e)}")
+
     # Replace lines atomically: unlink all existing, then create the new set
     existing_line_ids = order.get("order_line") or []
     if existing_line_ids:
@@ -1222,8 +1243,16 @@ async def register_deposit(
         raise HTTPException(status_code=400, detail="No linked order — build the quote first")
     if ticket.get("payment_confirmed_at"):
         raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
-    if body.amount <= 0:
-        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    invoice_type = body.invoice_type or "fixed"
+    if invoice_type not in ("fixed", "percentage", "delivered"):
+        raise HTTPException(status_code=400, detail="invoice_type must be 'fixed', 'percentage', or 'delivered'")
+    if invoice_type == "fixed":
+        if not body.amount or body.amount <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be positive for a fixed invoice")
+    if invoice_type == "percentage":
+        if not body.percentage or not (0 < body.percentage <= 100):
+            raise HTTPException(status_code=400, detail="Percentage must be between 0 and 100")
 
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
@@ -1242,12 +1271,17 @@ async def register_deposit(
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
 
-    # Step 1: Create fixed-amount down payment invoice via Odoo wizard
+    # Step 1: Create down payment invoice via Odoo wizard
     ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
+    wizard_vals: dict = {"advance_payment_method": invoice_type}
+    if invoice_type == "fixed":
+        wizard_vals["fixed_amount"] = body.amount
+    elif invoice_type == "percentage":
+        wizard_vals["amount"] = body.percentage
     try:
         wizard_id = odoo_call(
             "sale.advance.payment.inv", "create",
-            [{"advance_payment_method": "fixed", "fixed_amount": body.amount}],
+            [wizard_vals],
             {"context": ctx},
         )
     except Exception as e:
@@ -1279,13 +1313,20 @@ async def register_deposit(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to post deposit invoice: {str(e)}")
 
+    # Resolve invoice amount for non-fixed types (Odoo computes it)
+    if invoice_type != "fixed":
+        inv_row = odoo.read("account.move", [invoice_id], fields=["amount_residual"])
+        pay_amount = inv_row[0]["amount_residual"] if inv_row else body.amount
+    else:
+        pay_amount = body.amount
+
     # Step 2: Register and reconcile payment via Odoo wizard
     try:
         pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
         pay_wizard_id = odoo_call(
             "account.payment.register", "create",
             [{
-                "amount": body.amount,
+                "amount": pay_amount,
                 "journal_id": body.journal_id,
                 "payment_date": body.date,
             }],
@@ -1329,7 +1370,7 @@ async def register_deposit(
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
                 "at": now,
-                "note": body.note or f"Deposit registered — R{body.amount:,.2f} via journal {body.journal_id}",
+                "note": body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}",
             }},
         },
     )
@@ -1337,7 +1378,7 @@ async def register_deposit(
         "ticket.register_deposit", "ticket", ticket_id,
         entity_label=ticket.get("customer_name", ""),
         user=current_user,
-        detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
+        detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
     )
     rid = ticket.get("reseller_id")
     await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
@@ -1816,3 +1857,91 @@ async def reassign_ticket(
         "assigned_to_name": new_name,
         "assigned_to_role": new_role,
     }
+
+
+# ── 8.24 — Send invoice from portal ──────────────────────────────────────────
+
+@router.post("/{ticket_id}/send-invoice")
+async def send_invoice(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """
+    Send (or resend) the Odoo invoice PDF to the customer via Odoo's mail system.
+    Stamps invoice_sent_at on the ticket. Gracefully degrades if Odoo mail isn't configured.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="No invoice linked to this ticket yet")
+
+    invoice_id = ticket["invoice_id"]
+    odoo = get_odoo_client()
+
+    # Verify invoice exists and is posted
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found in Odoo")
+    inv = records[0]
+    if inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Invoice must be posted before sending")
+
+    warning = None
+    try:
+        # Find Odoo's invoice mail template
+        templates = odoo.search_read(
+            "mail.template",
+            [("model", "=", "account.move")],
+            fields=["id", "name"],
+            limit=10,
+        )
+        invoice_template = next(
+            (t for t in templates if "invoice" in t["name"].lower()),
+            templates[0] if templates else None,
+        )
+        if invoice_template:
+            odoo_call(
+                "mail.template", "send_mail",
+                [invoice_template["id"], invoice_id],
+                {"force_send": True},
+            )
+        else:
+            warning = "No invoice email template found in Odoo — configure one under Email > Templates"
+    except Exception as e:
+        warning = f"Email may not have been sent: {e}"
+
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"invoice_sent_at": now, "updated_at": now}},
+    )
+    await audit_log(
+        "ticket.send_invoice", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"invoice_id": invoice_id, "invoice_name": inv["name"]},
+    )
+    result: dict = {"success": True, "invoice_sent_at": now.isoformat()}
+    if warning:
+        result["warning"] = warning
+    return result
+
+
+# ── 8.26 + 8.28 — Lookup endpoints ───────────────────────────────────────────
+
+@router.get("/payment-terms")
+def list_payment_terms(current_user: dict = Depends(require_admin)):
+    """All active Odoo payment terms for the quote builder override dropdown."""
+    odoo = get_odoo_client()
+    terms = odoo.search_read(
+        "account.payment.term",
+        [("active", "=", True)],
+        fields=["id", "name", "note"],
+        limit=100,
+    )
+    return {"payment_terms": terms}

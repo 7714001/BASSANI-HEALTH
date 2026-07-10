@@ -1056,3 +1056,60 @@ async def link_contact_to_company(
         "company_id":    body.company_id,
         "company_name":  company["name"],
     }
+
+
+# ── 8.27 — Archive address ────────────────────────────────────────────────────
+
+@router.delete("/{customer_id}/addresses/{address_id}")
+async def archive_customer_address(
+    customer_id: int,
+    address_id: int,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    """Archive (soft-delete) a child address. Blocks archiving the main contact record."""
+    odoo = get_odoo_client()
+    try:
+        existing = odoo.read("res.partner", [address_id], fields=["parent_id", "type", "name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not existing:
+        raise HTTPException(status_code=404, detail="Address not found")
+    row = existing[0]
+    parent = row.get("parent_id")
+    parent_id = parent[0] if isinstance(parent, list) else parent
+    if parent_id != customer_id:
+        raise HTTPException(status_code=400, detail="Address does not belong to this customer")
+    if row.get("type") == "contact":
+        raise HTTPException(status_code=400, detail="Cannot archive the main contact address")
+    try:
+        odoo.write("res.partner", [address_id], {"active": False})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    await audit_log(
+        "customer.archive_address", "customer", customer_id,
+        entity_label=row.get("name", ""),
+        user=current_user,
+        detail={"address_id": address_id, "type": row.get("type")},
+    )
+    return {"success": True}
+
+
+# ── 8.28 — Customer payment terms ─────────────────────────────────────────────
+
+@router.get("/{customer_id}/payment-terms")
+def get_customer_payment_terms(
+    customer_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return the customer's configured Odoo payment terms."""
+    odoo = get_odoo_client()
+    try:
+        records = odoo.read("res.partner", [customer_id], fields=["property_payment_term_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not records:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    term = records[0].get("property_payment_term_id")
+    if isinstance(term, list) and len(term) == 2:
+        return {"payment_term": {"id": term[0], "name": term[1]}}
+    return {"payment_term": None}

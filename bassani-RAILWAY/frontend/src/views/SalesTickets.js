@@ -14,6 +14,7 @@ import {
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
+  Download, RotateCcw, FileX, ReceiptText,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -588,6 +589,11 @@ export default function SalesTickets() {
   const [quoteCustomerResults, setQuoteCustomerResults] = useState([]);
   const [quoteCustomerEditing, setQuoteCustomerEditing] = useState(false);
   const [pickerOpen,           setPickerOpen          ] = useState(false);
+  const [quoteAddresses,       setQuoteAddresses      ] = useState([]);
+  const [quoteShippingId,      setQuoteShippingId     ] = useState("");
+  const [quoteInvoiceId,       setQuoteInvoiceId      ] = useState("");
+  const [quotePaymentTerms,    setQuotePaymentTerms   ] = useState([]);
+  const [quotePaymentTermId,   setQuotePaymentTermId  ] = useState("");
 
   useEffect(() => {
     if (quoteMode !== "edit" || quoteCustomerSearch.length < 2) { setQuoteCustomerResults([]); return; }
@@ -614,14 +620,15 @@ export default function SalesTickets() {
     const stock      = Math.max(0, Math.floor(product.virtual_available || 0));
     const populated  = {
       ...newLine(),
-      product_id:      product.id,
-      _product_label:  label,
-      name:            baseName,
-      price_unit:      product.list_price || 0,
-      _tax_rate:       product.tax_rate   || 0,
-      _sku:            product.default_code || "",
-      _stock:          stock,
-      product_uom_qty: 1,
+      product_id:        product.id,
+      _product_label:    label,
+      name:              product.description_sale || baseName,
+      _description_sale: product.description_sale || "",
+      price_unit:        product.list_price || 0,
+      _tax_rate:         product.tax_rate   || 0,
+      _sku:              product.default_code || "",
+      _stock:            stock,
+      product_uom_qty:   1,
     };
     setQuoteLines(prev => {
       const last = prev[prev.length - 1];
@@ -631,6 +638,22 @@ export default function SalesTickets() {
     });
   };
 
+  const loadQuoteCustomerContext = async (customerId, preShippingId, preInvoiceId, prePaymentTermId) => {
+    try {
+      const [addrRes, termRes] = await Promise.all([
+        api.get(`/api/customers/${customerId}/addresses`),
+        api.get(`/api/customers/${customerId}/payment-terms`),
+      ]);
+      setQuoteAddresses(addrRes.data.addresses || []);
+      const defaultTermId = termRes.data.payment_term?.id;
+      setQuotePaymentTermId(prePaymentTermId ? String(prePaymentTermId) : (defaultTermId ? String(defaultTermId) : ""));
+    } catch {
+      setQuoteAddresses([]);
+    }
+    setQuoteShippingId(preShippingId ? String(preShippingId) : "");
+    setQuoteInvoiceId(preInvoiceId ? String(preInvoiceId) : "");
+  };
+
   const openQuoteBuilder = async (ticket) => {
     const firstLine = newLine();
     setQuoteTicket(ticket);
@@ -638,24 +661,37 @@ export default function SalesTickets() {
     setLastAddedId(firstLine._id);
     setQuoteNote("");
     setQuoteMode("create");
+    setQuoteAddresses([]);
+    setQuoteShippingId("");
+    setQuoteInvoiceId("");
+    setQuotePaymentTermId("");
     setView("quote-builder");
+    const promises = [];
     if (quoteWarehouses.length === 0) {
-      try {
-        const r = await api.get("/api/warehouses/");
-        const whs = r.data.warehouses || [];
-        const defId = r.data.default_warehouse_id;
-        setQuoteWarehouses(whs);
-        if (whs.length > 0) {
-          const preferred = defId && whs.find(w => w.id === defId) ? String(defId) : String(whs[0].id);
-          setQuoteWarehouseId(preferred);
-        }
-      } catch {
-        console.warn("Quote builder — warehouses load failed (non-fatal)");
-      }
+      promises.push(
+        api.get("/api/warehouses/").then(r => {
+          const whs = r.data.warehouses || [];
+          const defId = r.data.default_warehouse_id;
+          setQuoteWarehouses(whs);
+          if (whs.length > 0) {
+            const preferred = defId && whs.find(w => w.id === defId) ? String(defId) : String(whs[0].id);
+            setQuoteWarehouseId(preferred);
+          }
+        }).catch(() => console.warn("Quote builder — warehouses load failed (non-fatal)"))
+      );
     }
+    if (quotePaymentTerms.length === 0) {
+      promises.push(
+        api.get("/api/tickets/payment-terms").then(r => setQuotePaymentTerms(r.data.payment_terms || [])).catch(() => {})
+      );
+    }
+    if (ticket?.customer_id) {
+      promises.push(loadQuoteCustomerContext(ticket.customer_id));
+    }
+    await Promise.all(promises);
   };
 
-  const openQuoteEdit = () => {
+  const openQuoteEdit = async () => {
     const lines = (detailOrder?.lines || []).map(l => ({
       _id: Date.now() + Math.random(),
       product_id:      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
@@ -680,6 +716,16 @@ export default function SalesTickets() {
     setQuoteNote("");
     setQuoteMode("edit");
     setView("quote-builder");
+    const customerId = currentCustomer.id;
+    const preShippingId = Array.isArray(detailOrder?.partner_shipping_id) ? detailOrder.partner_shipping_id[0] : null;
+    const preInvoiceId  = Array.isArray(detailOrder?.partner_invoice_id)  ? detailOrder.partner_invoice_id[0]  : null;
+    const prePaymentTermId = Array.isArray(detailOrder?.payment_term_id)  ? detailOrder.payment_term_id[0]     : null;
+    if (quotePaymentTerms.length === 0) {
+      api.get("/api/tickets/payment-terms").then(r => setQuotePaymentTerms(r.data.payment_terms || [])).catch(() => {});
+    }
+    if (customerId) {
+      await loadQuoteCustomerContext(customerId, preShippingId, preInvoiceId, prePaymentTermId);
+    }
   };
 
   const addLine = () => {
@@ -723,14 +769,20 @@ export default function SalesTickets() {
       if (quoteMode === "edit") {
         await api.put(`/api/tickets/${tid}/update-order`, {
           order_line: linePayload,
-          customer_id: quoteCustomer?.id || undefined,
+          customer_id:        quoteCustomer?.id || undefined,
+          partner_shipping_id: quoteShippingId ? parseInt(quoteShippingId) : undefined,
+          partner_invoice_id:  quoteInvoiceId  ? parseInt(quoteInvoiceId)  : undefined,
+          payment_term_id:     quotePaymentTermId ? parseInt(quotePaymentTermId) : undefined,
           note: quoteNote || undefined,
         });
         toast.success("Quote updated in Odoo");
       } else {
         await api.post(`/api/tickets/${tid}/create-order`, {
           order_line: linePayload,
-          warehouse_id: quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
+          warehouse_id:        quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
+          partner_shipping_id: quoteShippingId  ? parseInt(quoteShippingId) : undefined,
+          partner_invoice_id:  quoteInvoiceId   ? parseInt(quoteInvoiceId)  : undefined,
+          payment_term_id:     quotePaymentTermId ? parseInt(quotePaymentTermId) : undefined,
           note: quoteNote || undefined,
         });
         toast.success("Quote created in Odoo — ticket advanced to Quote stage");
@@ -745,12 +797,12 @@ export default function SalesTickets() {
   // ── Deposit Registration ──────────────────────────────────────────────────
   const [depositModal, setDepositModal]     = useState(false);
   const [depositJournals, setDepositJournals] = useState([]);
-  const [depositForm, setDepositForm]       = useState({ amount: "", date: "", journal_id: "", note: "" });
+  const [depositForm, setDepositForm]       = useState({ invoice_type: "fixed", amount: "", percentage: "", date: "", journal_id: "", note: "" });
   const [depositSaving, setDepositSaving]   = useState(false);
 
   const openDepositModal = async () => {
     const today = new Date().toISOString().split("T")[0];
-    setDepositForm({ amount: "", date: today, journal_id: "", note: "" });
+    setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     try {
       const [journalRes, orderRes] = await Promise.all([
         api.get("/api/tickets/payment-journals"),
@@ -769,22 +821,79 @@ export default function SalesTickets() {
   };
 
   const registerDeposit = async () => {
-    if (!depositForm.amount || !depositForm.date || !depositForm.journal_id)
-      return toast.error("Amount, date and payment method are required");
+    const { invoice_type, amount, percentage, date, journal_id } = depositForm;
+    if (!date || !journal_id) return toast.error("Date and payment method are required");
+    if (invoice_type === "fixed" && !amount) return toast.error("Amount is required");
+    if (invoice_type === "percentage" && (!percentage || percentage <= 0 || percentage > 100))
+      return toast.error("Percentage must be between 1 and 100");
     setDepositSaving(true);
     const tid = detail.id;
+    const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined };
+    if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
+    if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
     try {
-      await api.post(`/api/tickets/${tid}/register-deposit`, {
-        amount:     parseFloat(depositForm.amount),
-        date:       depositForm.date,
-        journal_id: parseInt(depositForm.journal_id),
-        note:       depositForm.note || undefined,
-      });
+      await api.post(`/api/tickets/${tid}/register-deposit`, body);
       toast.success("Deposit registered and invoice created in Odoo");
       setDepositModal(false);
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
     finally { setDepositSaving(false); }
+  };
+
+  // ── Invoice lifecycle actions (8.24) ─────────────────────────────────────
+  const [sendingInvoice, setSendingInvoice] = useState(false);
+  const [resetDraftConfirm, setResetDraftConfirm] = useState(false);
+  const [creditNoteModal, setCreditNoteModal] = useState(false);
+  const [creditNoteJournals, setCreditNoteJournals] = useState([]);
+  const [creditNoteForm, setCreditNoteForm] = useState({ reason: "", date: "", journal_id: "" });
+  const [creditNoteSaving, setCreditNoteSaving] = useState(false);
+
+  const sendInvoice = async () => {
+    setSendingInvoice(true);
+    try {
+      const r = await api.post(`/api/tickets/${detail.id}/send-invoice`);
+      if (r.data.warning) toast.error(r.data.warning, { duration: 6000 });
+      else toast.success("Invoice sent to customer");
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to send invoice"); }
+    finally { setSendingInvoice(false); }
+  };
+
+  const resetToDraft = async () => {
+    setResetDraftConfirm(false);
+    try {
+      await api.post(`/api/invoices/${detail.invoice_id}/reset-to-draft`);
+      toast.success("Invoice reset to draft");
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+
+  const openCreditNoteModal = async () => {
+    const today = new Date().toISOString().split("T")[0];
+    setCreditNoteForm({ reason: "", date: today, journal_id: "" });
+    try {
+      const r = await api.get("/api/invoices/credit-note-journals");
+      const journals = r.data.journals || [];
+      setCreditNoteJournals(journals);
+      setCreditNoteForm(f => ({ ...f, journal_id: journals[0]?.id ? String(journals[0].id) : "" }));
+    } catch { toast.error("Failed to load journals"); }
+    setCreditNoteModal(true);
+  };
+
+  const createCreditNote = async () => {
+    if (!creditNoteForm.reason) return toast.error("Reason is required");
+    setCreditNoteSaving(true);
+    try {
+      const r = await api.post(`/api/invoices/${detail.invoice_id}/credit-note`, {
+        reason:     creditNoteForm.reason,
+        date:       creditNoteForm.date || undefined,
+        journal_id: creditNoteForm.journal_id ? parseInt(creditNoteForm.journal_id) : undefined,
+      });
+      toast.success(`Credit note ${r.data.credit_note_name} created`);
+      setCreditNoteModal(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create credit note"); }
+    finally { setCreditNoteSaving(false); }
   };
 
   // ── Balance Payment Registration ─────────────────────────────────────────
@@ -1234,9 +1343,19 @@ export default function SalesTickets() {
                       )}
                       {detail.order_id   && <p className="text-xs text-gray-400">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</p>}
                       {!isReseller && detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                      {!isReseller && detail.credit_note_name && (
+                        <p className="text-xs text-orange-600 flex items-center gap-1.5">
+                          <FileX size={11} />Credit note {detail.credit_note_name}
+                        </p>
+                      )}
                       {detail.quote_sent_at && (
                         <p className="text-xs text-blue-600 flex items-center gap-1.5">
                           <Send size={11} />Quote sent {fmtDate(detail.quote_sent_at)}
+                        </p>
+                      )}
+                      {!isReseller && detail.invoice_sent_at && (
+                        <p className="text-xs text-blue-600 flex items-center gap-1.5">
+                          <ReceiptText size={11} />Invoice sent {fmtDate(detail.invoice_sent_at)}
                         </p>
                       )}
                       {!isReseller && detail.payment_confirmed_at && (
@@ -1438,6 +1557,27 @@ export default function SalesTickets() {
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
                           </button>
+                        )}
+
+                        {/* 8.24 — Invoice lifecycle actions */}
+                        {detail.invoice_id && !isReseller && canFinance && (
+                          <>
+                            <button onClick={sendInvoice} disabled={sendingInvoice} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
+                              {sendingInvoice ? <Loader2 size={14} className="shrink-0 animate-spin" /> : <Send size={14} className="text-blue-500 shrink-0" />}
+                              {detail.invoice_sent_at ? "Resend Invoice" : "Send Invoice"}
+                            </button>
+                            <a href={`/api/invoices/${detail.invoice_id}/pdf`} target="_blank" rel="noreferrer" className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
+                              <Download size={14} className="text-blue-500 shrink-0" />Download Invoice PDF
+                            </a>
+                            {!detail.payment_confirmed_at && (
+                              <button onClick={() => setResetDraftConfirm(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                                <RotateCcw size={14} className="shrink-0" />Reset Invoice to Draft
+                              </button>
+                            )}
+                            <button onClick={openCreditNoteModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-orange-700 hover:bg-orange-50 rounded-lg transition-colors text-left">
+                              <FileX size={14} className="text-orange-500 shrink-0" />Raise Credit Note
+                            </button>
+                          </>
                         )}
 
                         {/* Divider before destructive actions */}
@@ -1689,29 +1829,50 @@ export default function SalesTickets() {
         {depositModal && (
           <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
             <p className="text-xs text-gray-500 mb-4">
-              Creates a down payment invoice in Odoo and registers payment against it — Odoo remains the financial source of truth.
+              Creates an invoice in Odoo and registers payment against it.
             </p>
-            <FormGroup label="Amount (ZAR)" required>
-              <Input
-                type="number" step="0.01" min="0.01"
-                value={depositForm.amount}
-                onChange={e => setDepositForm(f => ({ ...f, amount: e.target.value }))}
-                placeholder="e.g. 15000.00"
-                autoFocus
-              />
+            <FormGroup label="Invoice Type" required>
+              <div className="space-y-2">
+                {[
+                  { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount" },
+                  { value: "percentage",label: "Percentage",          desc: "Down payment as % of order total" },
+                  { value: "delivered", label: "Regular Invoice",     desc: "Full invoice for delivered quantities" },
+                ].map(opt => (
+                  <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${depositForm.invoice_type === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
+                    <input type="radio" name="invoice_type" value={opt.value} checked={depositForm.invoice_type === opt.value}
+                      onChange={e => setDepositForm(f => ({ ...f, invoice_type: e.target.value }))}
+                      className="mt-0.5 accent-bassani-600" />
+                    <span>
+                      <span className="text-sm font-semibold text-gray-900">{opt.label}</span>
+                      <span className="block text-xs text-gray-400">{opt.desc}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </FormGroup>
+            {depositForm.invoice_type === "fixed" && (
+              <FormGroup label="Amount (ZAR)" required>
+                <Input type="number" step="0.01" min="0.01"
+                  value={depositForm.amount}
+                  onChange={e => setDepositForm(f => ({ ...f, amount: e.target.value }))}
+                  placeholder="e.g. 15000.00" autoFocus />
+              </FormGroup>
+            )}
+            {depositForm.invoice_type === "percentage" && (
+              <FormGroup label="Percentage (%)" required>
+                <Input type="number" step="1" min="1" max="100"
+                  value={depositForm.percentage}
+                  onChange={e => setDepositForm(f => ({ ...f, percentage: e.target.value }))}
+                  placeholder="e.g. 50" />
+              </FormGroup>
+            )}
             <FormGroup label="Payment Date" required>
-              <Input
-                type="date"
-                value={depositForm.date}
-                onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))}
-              />
+              <Input type="date" value={depositForm.date}
+                onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))} />
             </FormGroup>
             <FormGroup label="Payment Method" required>
-              <Select
-                value={depositForm.journal_id}
-                onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}
-              >
+              <Select value={depositForm.journal_id}
+                onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}>
                 <option value="">— Select —</option>
                 {depositJournals.map(j => (
                   <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
@@ -1719,15 +1880,65 @@ export default function SalesTickets() {
               </Select>
             </FormGroup>
             <FormGroup label="Note">
-              <Input
-                value={depositForm.note}
+              <Input value={depositForm.note}
                 onChange={e => setDepositForm(f => ({ ...f, note: e.target.value }))}
-                placeholder="e.g. EFT received 2026-06-21"
-              />
+                placeholder="e.g. EFT received 2026-06-21" />
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerDeposit} loading={depositSaving}>Register in Odoo</BtnPrimary>
+              <BtnPrimary onClick={registerDeposit} disabled={depositSaving}>
+                {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                Register in Odoo
+              </BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {/* 8.24 — Reset to draft confirm */}
+        {resetDraftConfirm && (
+          <Modal title="Reset Invoice to Draft" onClose={() => setResetDraftConfirm(false)}>
+            <p className="text-sm text-gray-600 mb-4">
+              This will reset the posted invoice back to draft in Odoo. Use this to correct errors before the invoice has been paid.
+              The invoice cannot be reset if a payment has already been registered against it.
+            </p>
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => setResetDraftConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={resetToDraft}>Reset to Draft</BtnDanger>
+            </div>
+          </Modal>
+        )}
+
+        {/* 8.26 — Credit note modal */}
+        {creditNoteModal && (
+          <Modal title="Raise Credit Note" onClose={() => setCreditNoteModal(false)}>
+            <p className="text-xs text-gray-500 mb-4">
+              Creates a credit note in Odoo against invoice #{detail.invoice_id}. Use this for damaged goods, short deliveries, or pricing corrections.
+            </p>
+            <FormGroup label="Reason" required>
+              <Input value={creditNoteForm.reason}
+                onChange={e => setCreditNoteForm(f => ({ ...f, reason: e.target.value }))}
+                placeholder="e.g. Goods returned — short delivery on 3 units"
+                autoFocus />
+            </FormGroup>
+            <FormGroup label="Credit Note Date">
+              <Input type="date" value={creditNoteForm.date}
+                onChange={e => setCreditNoteForm(f => ({ ...f, date: e.target.value }))} />
+            </FormGroup>
+            <FormGroup label="Journal">
+              <Select value={creditNoteForm.journal_id}
+                onChange={e => setCreditNoteForm(f => ({ ...f, journal_id: e.target.value }))}>
+                <option value="">— Default —</option>
+                {creditNoteJournals.map(j => (
+                  <option key={j.id} value={j.id}>{j.name}</option>
+                ))}
+              </Select>
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setCreditNoteModal(false)} disabled={creditNoteSaving}>Cancel</BtnSecondary>
+              <BtnDanger onClick={createCreditNote} disabled={creditNoteSaving}>
+                {creditNoteSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                Create Credit Note
+              </BtnDanger>
             </div>
           </Modal>
         )}
@@ -1978,6 +2189,7 @@ export default function SalesTickets() {
                                   setQuoteCustomerEditing(false);
                                   setQuoteCustomerSearch("");
                                   setQuoteCustomerResults([]);
+                                  if (c.id) loadQuoteCustomerContext(c.id);
                                 }}
                                 className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
                               >
@@ -2035,7 +2247,38 @@ export default function SalesTickets() {
                   )}
                 </div>
               </div>
+              {/* ── Address + Payment Terms row ── */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-100">
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Invoice Address</p>
+                  <Select value={quoteInvoiceId} onChange={e => setQuoteInvoiceId(e.target.value)}>
+                    <option value="">Default (same as customer)</option>
+                    {quoteAddresses.filter(a => a.type === "invoice" || a.type === "contact").map(a => (
+                      <option key={a.id} value={a.id}>{a.name}{a.city ? ` — ${a.city}` : ""}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Delivery Address</p>
+                  <Select value={quoteShippingId} onChange={e => setQuoteShippingId(e.target.value)}>
+                    <option value="">Default (same as customer)</option>
+                    {quoteAddresses.filter(a => a.type === "delivery" || a.type === "contact").map(a => (
+                      <option key={a.id} value={a.id}>{a.name}{a.city ? ` — ${a.city}` : ""}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Payment Terms</p>
+                  <Select value={quotePaymentTermId} onChange={e => setQuotePaymentTermId(e.target.value)}>
+                    <option value="">Default (from customer profile)</option>
+                    {quotePaymentTerms.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
             </div>
+
 
             {/* ── Line items ── */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">

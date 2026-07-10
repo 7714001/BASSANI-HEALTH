@@ -77,14 +77,15 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
     setProdSearch(label);
     setDropdownOpen(false);
     onUpdate({
-      product_id:       p.id,
-      _product_label:   label,
-      name:             baseName,
-      price_unit:       p.list_price || 0,
-      _tax_rate:        p.tax_rate   || 0,
-      _sku:             p.default_code || "",
-      _stock:           stock,
-      product_uom_qty:  1,
+      product_id:          p.id,
+      _product_label:      label,
+      name:                p.description_sale || baseName,
+      _description_sale:   p.description_sale || "",
+      price_unit:          p.list_price || 0,
+      _tax_rate:           p.tax_rate   || 0,
+      _sku:                p.default_code || "",
+      _stock:              stock,
+      product_uom_qty:     1,
     });
   };
 
@@ -124,7 +125,7 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                 onClick={() => {
                   setProdSearch("");
                   setSearchResults([]);
-                  onUpdate({ product_id: null, _product_label: "", name: "", price_unit: 0, _tax_rate: 0, _stock: 0, _sku: "" });
+                  onUpdate({ product_id: null, _product_label: "", name: "", _description_sale: "", price_unit: 0, _tax_rate: 0, _stock: 0, _sku: "" });
                 }}
                 title="Change product"
                 className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
@@ -186,6 +187,7 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                           );
                         })()}
                         {p.default_code && <p className="text-[10px] font-mono text-gray-400 mt-0.5">{p.default_code}</p>}
+                        {p.description_sale && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{p.description_sale}</p>}
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-xs font-semibold text-gray-800">{fmtR(p.list_price)}</p>

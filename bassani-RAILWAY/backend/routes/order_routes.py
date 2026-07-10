@@ -44,6 +44,7 @@ ORDER_FIELDS = [
     "id", "name", "partner_id", "date_order", "amount_untaxed",
     "amount_tax", "amount_total", "state", "invoice_status",
     "order_line", "note", "user_id", "warehouse_id",
+    "partner_invoice_id", "partner_shipping_id", "payment_term_id",
 ]
 
 

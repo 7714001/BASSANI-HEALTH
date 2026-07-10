@@ -94,7 +94,7 @@ No new external services without an explicit decision. Approved additions: Resen
 
 ---
 
-## Roadmap Status (as of 2026-07-09)
+## Roadmap Status (as of 2026-07-10)
 
 | Phase | Name | Status |
 |---|---|---|
@@ -106,7 +106,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.28 planned: invoice lifecycle actions, invoice type selection, credit notes, customer address types, payment terms + quote descriptions. Staff account creation outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.28 complete: invoice lifecycle actions (send, PDF, reset-to-draft), invoice type selection (fixed/percentage/delivered), credit notes, customer address management (add/edit/archive) on CustomerProfile + Invoice/Delivery address dropdowns in quote builder, payment terms (customer default + quote override). Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |

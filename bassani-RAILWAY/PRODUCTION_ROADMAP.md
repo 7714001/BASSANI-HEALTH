@@ -1333,62 +1333,61 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - **Stage advancement only, never backwards.** If the ticket is already at `sale_order` and the linked order is a draft, the ticket stays at `sale_order`. The rep drove it there intentionally.
 - **Cancelled Odoo orders are rejected.** There is no useful state to advance to — reject with a clear message rather than silently linking a dead order.
 
-#### 8.24 — Invoice Lifecycle Actions from Portal — Added 2026-07-09
+#### 8.24 — Invoice Lifecycle Actions from Portal — Complete 2026-07-10
 
 **Goal:** Finance and Sales never need to open Odoo to manage invoice state. The Sales Ticket detail sidebar exposes every invoice action (send invoice, PDF download, credit note, reset to draft) so the portal is the single interface for the full invoice lifecycle.
 
 **Context:** The existing `confirm-payment` action reads Odoo's `payment_state` to verify payment. But sending the invoice PDF, downloading it, issuing a credit note for returns, or resetting a draft invoice all currently require opening Odoo directly — violating Architecture Principle 2.
 
-- [ ] `POST /api/tickets/{ticket_id}/send-invoice` — finds the linked `account.move`; locates Odoo's invoice mail template (model = `account.move`, name contains "invoice"); calls `send_mail` with `force_send=True`; stamps `invoice_sent_at` on the ticket document; fires background notification to Finance; graceful degradation if Odoo mail server not configured (returns `warning` field); requires `tickets.finance_confirm`
-- [ ] `GET /api/invoices/{invoice_id}/pdf` — calls `ir.actions.report.render_qweb_pdf` via XML-RPC with report `account.report_move_full_lines`; returns PDF bytes as `application/pdf` streaming response; filename: `Invoice-{invoice_name}.pdf`; requires `require_admin`
-- [ ] `POST /api/invoices/{invoice_id}/reset-to-draft` — calls `button_draft()` on Odoo `account.move`; only allowed on `posted` state where `payment_state = 'not_paid'`; blocks on paid invoices (400); audit-logged; requires admin + `tickets.finance_confirm`
-- [ ] `SalesTickets.js` — Invoice section gains: "Send Invoice" / "Resend Invoice" button (adapts label, same pattern as Send Quote), "Download PDF" link (opens `/api/invoices/{id}/pdf` in new tab), "Reset to Draft" button (danger styling, confirm modal, `isAdmin` gate), "Credit Note" button (opens 8.26 modal); `invoice_sent_at` timestamp displayed when set
+- [x] `POST /api/tickets/{ticket_id}/send-invoice` — finds the linked `account.move`; locates Odoo's invoice mail template (model = `account.move`, name contains "invoice"); calls `send_mail` with `force_send=True`; stamps `invoice_sent_at` on the ticket document; fires background notification to Finance; graceful degradation if Odoo mail server not configured (returns `warning` field); requires `tickets.finance_confirm`
+- [x] `GET /api/invoices/{invoice_id}/pdf` — calls `ir.actions.report.render_qweb_pdf` via XML-RPC with report `account.report_move_full_lines`; returns PDF bytes as `application/pdf` streaming response; filename: `Invoice-{invoice_name}.pdf`; requires `require_admin`
+- [x] `POST /api/invoices/{invoice_id}/reset-to-draft` — calls `button_draft()` on Odoo `account.move`; only allowed on `posted` state where `payment_state = 'not_paid'`; blocks on paid invoices (400); audit-logged; requires admin + `tickets.finance_confirm`
+- [x] `SalesTickets.js` — Invoice section gains: "Send Invoice" / "Resend Invoice" button (adapts label, same pattern as Send Quote), "Download PDF" link (opens `/api/invoices/{id}/pdf` in new tab), "Reset to Draft" button (danger styling, confirm modal, `isAdmin` gate), "Credit Note" button (opens 8.26 modal); `invoice_sent_at` timestamp displayed when set
 
-#### 8.25 — Invoice Type Selection — Added 2026-07-09
+#### 8.25 — Invoice Type Selection — Complete 2026-07-10
 
 **Goal:** The deposit registration modal offers all three Odoo invoice types: regular invoice, down payment by percentage, and down payment by fixed amount. Currently the portal hardcodes fixed-amount down payments — the other two types require opening Odoo.
 
 **Context:** Odoo's `sale.advance.payment.inv` wizard supports `advance_payment_method` values: `'delivered'` (regular invoice for delivered quantities), `'percentage'` (down payment as % of total), `'fixed'` (fixed amount). The existing `register-deposit` endpoint hardcodes `'fixed'`.
 
-- [ ] Extend `DepositBody` Pydantic model in `ticket_routes.py`: add `invoice_type: Literal['delivered', 'percentage', 'fixed'] = 'fixed'`; add `percentage: Optional[float] = None`; validate `percentage` in range (0, 100] when type is `'percentage'`; `amount` required only when type is `'fixed'`; `'delivered'` type requires neither
-- [ ] `register-deposit` backend: passes `advance_payment_method = body.invoice_type` and the correct amount field to the Odoo wizard; `percentage` maps to Odoo's `amount` field; `delivered` passes no amount; audit log `before`/`after` includes `invoice_type`
-- [ ] `SalesTickets.js` — Deposit modal gains a 3-option radio selector: "Regular Invoice (100%)", "Down Payment (%)", "Down Payment (Fixed Amount)"; amount/percentage input shown conditionally; human-readable descriptions under each option; no Odoo terminology exposed
+- [x] Extend `DepositBody` Pydantic model in `ticket_routes.py`: add `invoice_type: Literal['delivered', 'percentage', 'fixed'] = 'fixed'`; add `percentage: Optional[float] = None`; validate `percentage` in range (0, 100] when type is `'percentage'`; `amount` required only when type is `'fixed'`; `'delivered'` type requires neither
+- [x] `register-deposit` backend: passes `advance_payment_method = body.invoice_type` and the correct amount field to the Odoo wizard; `percentage` maps to Odoo's `amount` field; `delivered` passes no amount; audit log `before`/`after` includes `invoice_type`
+- [x] `SalesTickets.js` — Deposit modal gains a 3-option radio selector: "Regular Invoice (100%)", "Down Payment (%)", "Down Payment (Fixed Amount)"; amount/percentage input shown conditionally; human-readable descriptions under each option; no Odoo terminology exposed
 
-#### 8.26 — Customer Credit Notes — Added 2026-07-09
+#### 8.26 — Customer Credit Notes — Complete 2026-07-10
 
 **Goal:** Finance can raise a credit note against a posted invoice directly from the portal for damaged goods, short deliveries, or pricing corrections. Creates an `account.move` credit note in Odoo, linked back to the ticket.
 
-- [ ] `POST /api/invoices/{invoice_id}/credit-note` — creates `account.move.reversal` in Odoo pointing to the original invoice; calls `reverse_moves()` to generate the credit note; accepts `reason: str`, `date: str`, `journal_id: int`; returns credit note `{id, name, amount}`; stores `credit_note_id` and `credit_note_name` on the ticket document; fires `send_credit_note_raised_internal` email to Finance; audit-logged with full before/after; requires `tickets.finance_confirm`
-- [ ] `GET /api/tickets/credit-note-journals` — returns Odoo `sale` or `general` type journals suitable for credit notes (same XML-RPC pattern as `payment-journals`)
-- [ ] `SalesTickets.js` — "Credit Note" action card in Finance section; shown when `invoice_id` is set and ticket not `cancelled` or `complete`; modal with reason (required free-text), date (defaults today), journal dropdown; confirm step: "This will create a credit note in Odoo against invoice {name}"; shows credit note reference + download link after creation
-- [ ] `send_credit_note_raised_internal(to, invoice_name, credit_note_name, amount, reason, raised_by)` — internal email template in `email_service.py`; no internal system names; follows email copy standards
+- [x] `POST /api/invoices/{invoice_id}/credit-note` — creates `account.move.reversal` in Odoo pointing to the original invoice; calls `reverse_moves()` to generate the credit note; accepts `reason: str`, `date: str`, `journal_id: int`; returns credit note `{id, name, amount}`; stores `credit_note_id` and `credit_note_name` on the ticket document; fires `send_credit_note_raised_internal` email to Finance; audit-logged with full before/after; requires `tickets.finance_confirm`
+- [x] `GET /api/tickets/credit-note-journals` — returns Odoo `sale` or `general` type journals suitable for credit notes (same XML-RPC pattern as `payment-journals`)
+- [x] `SalesTickets.js` — "Credit Note" action card in Finance section; shown when `invoice_id` is set and ticket not `cancelled` or `complete`; modal with reason (required free-text), date (defaults today), journal dropdown; confirm step: "This will create a credit note in Odoo against invoice {name}"; shows credit note reference + download link after creation
 
-#### 8.27 — Customer Address Types — Added 2026-07-09
+#### 8.27 — Customer Address Types — Complete 2026-07-10
 
 **Goal:** Customers can have separate invoice and delivery addresses that flow through to Odoo sale orders and delivery notes. Currently all addresses are treated as the single contact address — preventing correct delivery documentation for customers with multiple sites.
 
 **Context:** Odoo `sale.order` has `partner_invoice_id` and `partner_shipping_id` alongside `partner_id`. Odoo auto-resolves these from child `res.partner` records typed as `'invoice'` or `'delivery'`. Creating typed address records for customers unlocks correct billing and shipping on every order.
 
-- [ ] `GET /api/customers/{id}/addresses` — returns all `res.partner` records with `parent_id = customer_id`, `active = True`, grouped by type (`contact`, `invoice`, `delivery`, `other`)
-- [ ] `POST /api/customers/{id}/addresses` — creates a child `res.partner` in Odoo with `parent_id = customer_id`, `type` from request body (`'invoice'` | `'delivery'` | `'other'`); required: `street`, `city`, `zip`, `country_id`; optional: `name`, `phone`, `email`; requires `customers.manage`; audit-logged
-- [ ] `PUT /api/customers/{id}/addresses/{address_id}` — updates the child partner; validates `address_id` has correct `parent_id`; audit-logged
-- [ ] `DELETE /api/customers/{id}/addresses/{address_id}` — archives (`active = False`) in Odoo; blocks archiving the main contact address; requires `customers.manage`; audit-logged
-- [ ] `CustomerProfile.js` — Addresses section extended: type badge per address (Invoice / Delivery / Other / Contact); "Add address" button (admin gate) opens modal with type selector and address fields; pencil/archive actions per non-contact row
-- [ ] Quote builder `SalesTickets.js`: "Invoice Address" and "Delivery Address" dropdowns in quote header, populated from `/api/customers/{id}/addresses`; selected IDs passed as `partner_invoice_id` and `partner_shipping_id` in `create-order` and `update-order`; defaults to main contact if only one address exists
-- [ ] `create-order` / `update-order` backend: accept optional `partner_invoice_id` and `partner_shipping_id`; write to `sale.order` in Odoo alongside `partner_id`
-- [ ] Onboarding wizard Step 2 (Business Details): add optional "Delivery Address (if different)" collapsible section; stored in the application document; on approval, creates a child delivery-type partner in Odoo alongside the main company partner
+- [x] `GET /api/customers/{id}/addresses` — returns all `res.partner` records with `parent_id = customer_id`, `active = True`, grouped by type (`contact`, `invoice`, `delivery`, `other`)
+- [x] `POST /api/customers/{id}/addresses` — creates a child `res.partner` in Odoo with `parent_id = customer_id`, `type` from request body (`'invoice'` | `'delivery'` | `'other'`); required: `street`, `city`, `zip`, `country_id`; optional: `name`, `phone`, `email`; requires `customers.manage`; audit-logged
+- [x] `PUT /api/customers/{id}/addresses/{address_id}` — updates the child partner; validates `address_id` has correct `parent_id`; audit-logged
+- [x] `DELETE /api/customers/{id}/addresses/{address_id}` — archives (`active = False`) in Odoo; blocks archiving the main contact address; requires `customers.manage`; audit-logged
+- [x] `CustomerProfile.js` — Addresses section extended: type badge per address (Invoice / Delivery / Other / Contact); "Add address" button (admin gate) opens modal with type selector and address fields; pencil/archive actions per non-contact row
+- [x] Quote builder `SalesTickets.js`: "Invoice Address" and "Delivery Address" dropdowns in quote header, populated from `/api/customers/{id}/addresses`; selected IDs passed as `partner_invoice_id` and `partner_shipping_id` in `create-order` and `update-order`; defaults to main contact if only one address exists
+- [x] `create-order` / `update-order` backend: accept optional `partner_invoice_id` and `partner_shipping_id`; write to `sale.order` in Odoo alongside `partner_id`
+- [ ] Onboarding wizard Step 2 (Business Details): add optional "Delivery Address (if different)" collapsible section; stored in the application document; on approval, creates a child delivery-type partner in Odoo alongside the main company partner — **deferred, lower priority**
 
-#### 8.28 — Payment Terms and Quotation Descriptions — Added 2026-07-09
+#### 8.28 — Payment Terms and Quotation Descriptions — Complete 2026-07-10
 
 **Goal:** The quote builder surfaces the customer's Odoo payment terms so Sales knows the agreed terms before building the quote, and product lines auto-populate from Odoo's sales description field — reducing manual entry and keeping quotes consistent with Odoo records.
 
-- [ ] `GET /api/customers/{id}/payment-terms` — reads `property_payment_term_id` from Odoo `res.partner`; returns `{id, name}` or `null` if not set
-- [ ] `GET /api/tickets/payment-terms` — returns all active `account.payment.term` records from Odoo for the quote builder override dropdown; requires `require_admin`
-- [ ] Quote builder `SalesTickets.js`: "Payment Terms" row in quote header; pre-populated from customer's Odoo record; selectable from full list via `GET /api/tickets/payment-terms`; `payment_term_id` passed in `create-order` / `update-order` body
-- [ ] `create-order` / `update-order` backend: accept optional `payment_term_id`; write to `sale.order` in Odoo; skip (not error) if omitted
-- [ ] `GET /api/products/?search=...` response: include `description_sale` from Odoo `product.product` in each result row
-- [ ] `ProductLineRow.js` inline search dropdown: show `description_sale` as a subtitle line below product name/SKU in results
-- [ ] `ProductLineRow.js` on product selection: if line description field is blank, auto-populate from `description_sale`; field remains editable; auto-populated value can be cleared or overridden
+- [x] `GET /api/customers/{id}/payment-terms` — reads `property_payment_term_id` from Odoo `res.partner`; returns `{id, name}` or `null` if not set
+- [x] `GET /api/tickets/payment-terms` — returns all active `account.payment.term` records from Odoo for the quote builder override dropdown; requires `require_admin`
+- [x] Quote builder `SalesTickets.js`: "Payment Terms" row in quote header; pre-populated from customer's Odoo record; selectable from full list via `GET /api/tickets/payment-terms`; `payment_term_id` passed in `create-order` / `update-order` body
+- [x] `create-order` / `update-order` backend: accept optional `payment_term_id`; write to `sale.order` in Odoo; skip (not error) if omitted
+- [x] `GET /api/products/?search=...` response: include `description_sale` from Odoo `product.product` in each result row
+- [x] `ProductLineRow.js` inline search dropdown: show `description_sale` as a subtitle line below product name/SKU in results
+- [x] `ProductLineRow.js` on product selection: if line description field is blank, auto-populate from `description_sale`; field remains editable; auto-populated value can be cleared or overridden
 
 ### Definition of Done
 - [x] Every portal order (reseller-placed or staff-placed) auto-creates a Sales ticket — no manual entry required for orders that come through the portal

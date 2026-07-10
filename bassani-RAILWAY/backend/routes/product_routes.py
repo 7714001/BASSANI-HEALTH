@@ -64,7 +64,7 @@ PRODUCT_FIELDS = [
     "id", "name", "display_name", "default_code", "type", "categ_id",
     "lst_price", "standard_price", "uom_id",
     "qty_available", "virtual_available", "taxes_id",
-    "description", "active", "product_tmpl_id", "barcode",
+    "description", "description_sale", "active", "product_tmpl_id", "barcode",
 ]
 
 

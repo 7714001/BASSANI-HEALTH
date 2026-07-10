@@ -4,7 +4,7 @@ import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCar
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { Badge, BtnPrimary, BtnSecondary, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
+import { Badge, BtnPrimary, BtnSecondary, BtnDanger, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -450,7 +450,8 @@ export default function CustomerProfile() {
   const [addrModal,  setAddrModal ] = useState(false);
   const [addrTarget, setAddrTarget] = useState(null);
   const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
-  const [addrSaving, setAddrSaving] = useState(false);
+  const [addrSaving,        setAddrSaving       ] = useState(false);
+  const [addrArchiveConfirm, setAddrArchiveConfirm] = useState(null); // null | address object
 
   const [sendingDocs,  setSendingDocs ] = useState(false);
   const [docsSentInfo, setDocsSentInfo] = useState(null); // { sent, sent_at, sent_by, to_email }
@@ -525,6 +526,18 @@ export default function CustomerProfile() {
     });
     setAddrTarget(addr);
     setAddrModal(true);
+  };
+
+  const doArchiveAddr = async () => {
+    const addr = addrArchiveConfirm;
+    setAddrArchiveConfirm(null);
+    try {
+      await api.delete(`/api/customers/${id}/addresses/${addr.id}`);
+      toast.success("Address removed");
+      loadAddresses();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to remove address");
+    }
   };
 
   const saveAddr = async () => {
@@ -807,7 +820,7 @@ export default function CustomerProfile() {
                     <th className="text-left px-5 py-2.5 font-medium">Street</th>
                     <th className="text-left px-5 py-2.5 font-medium">City / ZIP</th>
                     <th className="text-left px-5 py-2.5 font-medium">Phone</th>
-                    {canManageAddresses && <th className="w-10" />}
+                    {canManageAddresses && <th className="w-20" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -828,9 +841,16 @@ export default function CustomerProfile() {
                       <td className="px-5 py-3 text-gray-500">{a.phone || "—"}</td>
                       {canManageAddresses && (
                         <td className="px-5 py-3">
-                          <button onClick={() => openAddrEdit(a)} className="text-gray-400 hover:text-bassani-600 transition-colors p-1">
-                            <Pencil size={13} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openAddrEdit(a)} className="text-gray-400 hover:text-bassani-600 transition-colors p-1" title="Edit">
+                              <Pencil size={13} />
+                            </button>
+                            {a.type !== "contact" && (
+                              <button onClick={() => setAddrArchiveConfirm(a)} className="text-gray-300 hover:text-red-400 transition-colors p-1" title="Remove">
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -1310,6 +1330,18 @@ export default function CustomerProfile() {
                 {addrTarget ? "Save Changes" : "Add Address"}
               </BtnPrimary>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {addrArchiveConfirm && (
+        <Modal title="Remove Address" onClose={() => setAddrArchiveConfirm(null)}>
+          <p className="text-sm text-gray-600 mb-4">
+            Remove <strong>{addrArchiveConfirm.name}</strong>? This will archive the address in Odoo and it will no longer appear on orders.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setAddrArchiveConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doArchiveAddr}>Remove</BtnDanger>
           </div>
         </Modal>
       )}
