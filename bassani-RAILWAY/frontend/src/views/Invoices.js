@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, Send, Download, RotateCcw, FileX, Plus, Loader2 } from "lucide-react";
+import { Printer, X, ExternalLink, Send, Download, RotateCcw, FileX, Plus, Loader2, FileText, AlertTriangle } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow,
   Modal, FormGroup, Input, Select, Textarea,
@@ -222,6 +222,31 @@ export default function Invoices() {
   // Per-row action states — keyed by invoice id
   const [sendingId,          setSendingId         ] = useState(null);
   const [creatingTicketId,   setCreatingTicketId  ] = useState(null);
+  const [pdfLoadingId,       setPdfLoadingId      ] = useState(null);
+
+  // In-app PDF viewer
+  const [pdfModal, setPdfModal] = useState(null); // null | { name, objectUrl }
+  const pdfUrlRef = useRef(null);
+
+  const openPdfViewer = async (inv) => {
+    setPdfLoadingId(inv.id);
+    try {
+      const r = await api.get(`/api/invoices/${inv.id}/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      pdfUrlRef.current = url;
+      setPdfModal({ name: inv.name || `Invoice ${inv.id}`, objectUrl: url });
+    } catch {
+      toast.error("Could not load PDF — try again");
+    } finally {
+      setPdfLoadingId(null);
+    }
+  };
+
+  const closePdfModal = () => {
+    setPdfModal(null);
+    if (pdfUrlRef.current) { URL.revokeObjectURL(pdfUrlRef.current); pdfUrlRef.current = null; }
+  };
 
   // Reset to draft confirm
   const [resetConfirm,  setResetConfirm ] = useState(null); // null | invoice
@@ -435,17 +460,15 @@ export default function Invoices() {
                       View
                     </button>
 
-                    {/* PDF download — direct Odoo PDF */}
+                    {/* PDF — opens in in-app viewer */}
                     {isPosted && canFinance && (
-                      <a
-                        href={`/api/invoices/${inv.id}/pdf`}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={e => e.stopPropagation()}
-                        className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-bassani-600 font-medium transition-colors"
-                        title="Download Odoo PDF">
-                        <Download size={11} />PDF
-                      </a>
+                      <button
+                        onClick={() => openPdfViewer(inv)}
+                        disabled={pdfLoadingId === inv.id}
+                        className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-bassani-600 font-medium transition-colors disabled:opacity-40"
+                        title="View invoice PDF">
+                        {pdfLoadingId === inv.id ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}PDF
+                      </button>
                     )}
 
                     {/* Send invoice */}
@@ -558,6 +581,37 @@ export default function Invoices() {
             <BtnPrimary onClick={createCreditNote} loading={cnSaving}>Create Credit Note</BtnPrimary>
           </div>
         </Modal>
+      )}
+
+      {/* In-app PDF viewer */}
+      {pdfModal && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-gray-200 shrink-0">
+            <div className="flex items-center gap-2">
+              <FileText size={16} className="text-bassani-600" />
+              <span className="text-sm font-semibold text-gray-800">{pdfModal.name}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <a
+                href={pdfModal.objectUrl}
+                download={`${pdfModal.name}.pdf`}
+                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
+                <Download size={12} /> Download
+              </a>
+              <button onClick={closePdfModal}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 p-4">
+            <iframe
+              src={pdfModal.objectUrl}
+              title={pdfModal.name}
+              className="w-full h-full rounded-xl border border-gray-200 bg-white"
+            />
+          </div>
+        </div>
       )}
 
     </div>
