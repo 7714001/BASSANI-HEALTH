@@ -1294,7 +1294,7 @@ What you can do here:
 
 *Requires `invoices.view` permission*
 
-Go to **Invoices** to see all customer invoices from Odoo.
+Go to **Invoices** to see all customer invoices from Odoo. Click any row to open the print-ready invoice view (portal format with bank details and payment terms).
 
 **Filter chips:**
 - **Outstanding** — invoices with an unpaid or partially paid balance
@@ -1304,11 +1304,21 @@ Go to **Invoices** to see all customer invoices from Odoo.
 - **All** — everything
 - **Credit Notes** — credit notes issued in Odoo (marked with a purple CN badge)
 
+**Invoice actions** *(requires `tickets.finance_confirm`)*:
+
+Each invoice row shows the relevant actions for its state:
+
+- **View** — opens the portal print view; use Print / Save PDF to generate a PDF for the customer.
+- **PDF** — downloads the Odoo-generated invoice PDF directly.
+- **Send** — sends the invoice email to the customer via Odoo's mail template. Only available for posted invoices.
+- **Draft** *(admin only)* — resets a posted, unpaid invoice to draft for editing. A confirmation modal is shown. Not available if any payment has been registered.
+- **CN** — raises a credit note against the invoice. Enter a reason (required), date, and journal, then confirm. The credit note is created in Odoo immediately and appears in the Credit Notes filter.
+- **Ticket** — creates a Sales Ticket from the linked Odoo sale order. Only shown for invoices that have a linked sale order but no portal ticket yet — useful for invoices created directly in Odoo before the portal existed.
+
+If a ticket already exists for the invoice, a **Ticket** link appears in the Status column — click it to open the ticket directly.
+
 **Registering a payment** *(requires `invoices.record_payment`)*:
 For an unpaid invoice, click **Register Payment**, select the payment journal, enter the amount and date, and confirm. The payment is recorded in Odoo immediately.
-
-**Requesting a credit note:**
-On any posted invoice, click **Request CN** to log a credit note request. Enter the reason. The finance team will process the actual credit note in Odoo. The portal tracks the request (pending → acknowledged) so nothing falls through the cracks.
 
 ### Customer Applications
 

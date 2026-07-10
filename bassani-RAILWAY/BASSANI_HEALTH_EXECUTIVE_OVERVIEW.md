@@ -83,6 +83,8 @@ When an order is confirmed, it appears automatically on the packing board — a 
 
 The finance team confirms payments through the portal. Critically, the system reads the actual financial record to verify payment status — if the financial system shows no payment recorded, the portal will not allow the payment to be confirmed. This closes the gap where orders were previously released based on verbal confirmation.
 
+**Full invoice lifecycle without Odoo.** Finance can now manage the complete invoice lifecycle from the Invoices page — send an invoice to a customer, download the PDF, raise a credit note (created directly in the financial system, not just a request), or reset a draft invoice for correction. Invoices created directly in Odoo before the portal existed can be pulled into the ticket pipeline with a single "Create Ticket" action, ensuring nothing falls outside the tracked workflow.
+
 **Bank reconciliation is now built into the portal.** Finance uploads a bank statement CSV (FNB Business or Nedbank Business format) and the portal auto-matches credits to open invoices by amount and reference. Finance reviews the matches, confirms them with a single click, and the payment is registered in the accounting system immediately — without anyone opening Odoo. The portal also runs a background check every 15 minutes and automatically advances any ticket where the payment has already been registered, eliminating the daily manual "confirm payment" step entirely for invoices processed outside the portal.
 
 Commission statements for resellers are generated through the portal, and each payment produces a corresponding vendor bill in the financial system automatically — there is no manual ledger entry.

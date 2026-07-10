@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1401,13 +1401,31 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Marking an Orders ticket Complete validates the linked Odoo Delivery Note, decrementing On Hand stock — non-blocking with visible warning if Odoo validation fails
 - [ ] Each of the 6 named staff can log in and see only the tickets relevant to their role — **pending: accounts not yet created (operational, no code required)**
 - [x] Resellers can build a draft quote via the cart (Orders view), view and manage their quotes in My Quotes (Sales Tickets), and edit a quote by returning to the cart pre-populated — reseller draft quotes are hidden from the staff queue until confirmed
-- [ ] Finance can send an invoice PDF to a customer from the ticket detail — no Odoo access required (8.24)
-- [ ] Finance can download an invoice PDF from the portal (8.24)
-- [ ] Finance can raise a credit note against an invoice from the ticket detail — no Odoo access required (8.26)
-- [ ] The deposit registration modal offers Regular Invoice, Down Payment (%), and Down Payment (Fixed Amount) — all three Odoo invoice types accessible from the portal (8.25)
-- [ ] Customer invoice and delivery addresses are set at quote creation and flow through to the Odoo sale order (8.27)
-- [ ] Customer's Odoo payment terms appear in the quote builder and are written to the Odoo sale order (8.28)
-- [ ] Product line descriptions auto-populate from Odoo's sales description field when a product is added to a quote (8.28)
+- [x] Finance can send an invoice PDF to a customer from the ticket detail — no Odoo access required (8.24)
+- [x] Finance can download an invoice PDF from the portal (8.24)
+- [x] Finance can raise a credit note against an invoice from the ticket detail — no Odoo access required (8.26)
+- [x] The deposit registration modal offers Regular Invoice, Down Payment (%), and Down Payment (Fixed Amount) — all three Odoo invoice types accessible from the portal (8.25)
+- [x] Customer invoice and delivery addresses are set at quote creation and flow through to the Odoo sale order (8.27)
+- [x] Customer's Odoo payment terms appear in the quote builder and are written to the Odoo sale order (8.28)
+- [x] Product line descriptions auto-populate from Odoo's sales description field when a product is added to a quote (8.28)
+- [x] Finance can perform all invoice lifecycle actions (Send, PDF, Reset to Draft, Credit Note) directly from the Invoices page without requiring a linked Sales Ticket (8.29)
+- [x] Invoices with a linked Odoo sale order but no portal ticket show a "Create Ticket" action on the Invoices page (8.29)
+
+#### 8.29 — Invoice Page Enhancements — Complete 2026-07-10
+
+**Goal:** Finance can fully manage the invoice lifecycle directly from the Invoices page, not just from within a Sales Ticket. Pre-portal invoices (created directly in Odoo) are also accessible for ticket creation.
+
+- [x] `sale_order_id` returned per invoice in `GET /api/invoices/` — batch-resolved from `invoice_origin` via `sale.order` lookup; enables "Create Ticket" action
+- [x] `linked_ticket_id` returned per invoice — batch-resolved from `tickets` MongoDB collection against `order_id`; enables "View Ticket" link and gates "Create Ticket" action
+- [x] `POST /api/invoices/{id}/send` — standalone send endpoint; sends via Odoo mail template; validates `state=posted`; no linked ticket required; gated by `tickets.finance_confirm`; audit-logged as `invoice.sent`
+- [x] `GET /api/invoices/{id}/pdf` and `GET /api/invoices/credit-note-journals` — permission updated from `require_admin` to `require_permission("tickets.finance_confirm")` so finance users can access without admin role
+- [x] `Invoices.js` — blue read-only banner removed; "Sale Order" reference shown per invoice (via `invoice_origin`); Sale Order column (origin ref) displayed in the table
+- [x] Actions column per invoice row: "View" (portal print view), "PDF" link (Odoo PDF, new tab), "Send" (fires standalone send endpoint), "Draft" (reset to draft, admin-gated confirm modal), "CN" (credit note modal), "Ticket" (create ticket from linked sale order, shown when `sale_order_id` set and no `linked_ticket_id`)
+- [x] Reset to draft confirm modal — `Modal` + `BtnDanger` pattern; backend guards that payment_state is not_paid before allowing it
+- [x] Credit note modal — reason (required), date, journal selector populated from `/api/invoices/credit-note-journals`; uses existing `POST /api/invoices/{id}/credit-note` endpoint
+- [x] "Create Ticket" flow — calls `POST /api/tickets/from-order` with `order_id: inv.sale_order_id`; navigates to ticket on success; only shown when `inv.sale_order_id` is set and `inv.linked_ticket_id` is null
+- [x] Existing "Ticket" link in status column navigates to `/tickets/sales` with `openTicketId` state when `linked_ticket_id` is present
+- [x] "Credit Notes" filter added to filter pills (sets `move_type=out_refund` in API params); CN badge shown in invoice number column for `out_refund` records
 
 ### Notes
 > **Sub-deploy 18 (2026-07-09):** 8.23 Reseller quote flow. Resellers now create draft quotes through the existing cart (Orders view) rather than being forwarded to the internal quote builder. `create_order` in `order_routes.py`: reseller orders land at `status: "quote"` (not `sale_order`) in the tickets collection, so pre-confirm reseller drafts are hidden from the staff Sales Tickets queue — staff only see them once confirmed. Commission record, `total_sales` increment, and order-placed email are all deferred from `create_order` to `confirm_order` (commission lookup is idempotent; no duplicate risk). New `_require_confirm_access` dependency in `order_routes.py` grants resellers access to `PUT /api/orders/{id}/confirm` for their own orders. New `_reseller_id_for_user`, `_assert_reseller_owns_ticket`, `_require_ticket_viewer`, `_require_ticket_driver` helpers in `ticket_routes.py` — every ticket endpoint gated so resellers can only read/drive tickets where `reseller_id` matches their own. Packing board reseller-name lookup at confirm time uses `_ticket_reseller_id` from the ticket (not the commission record, which is created at the same moment). Frontend: `SalesTickets.js` — `isReseller` flag gates "New Direct Inquiry" button, source filter, and "Assign to me" hidden for resellers; "My Quotes" added to `RESELLER_NAV` in `UI.js`; "Edit Quote" action now routes resellers to `/orders` with `editQuote` location state instead of opening the internal quote builder. `Views.js` (Orders component): detects `location.state?.editQuote` on mount, pre-populates cart, locks customer picker, routes submit to `PUT /api/tickets/{id}/update-order`, shows "Save Quote"/"Saving…" button labels, Cancel navigates back to `/tickets/sales`. `ResellerProfile.js` (admin view): pipeline section shows the reseller's tickets filtered by `reseller_id`.
@@ -2322,6 +2340,13 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 - [x] Amber warning banner when no printer is configured — links to Settings → Label Printers
 - [x] Amber notice when GTIN is not a valid GTIN-13/14 — instructs staff to update Odoo barcode field
 - [x] Dummy GTIN reminder shown at bottom of modal
+- [x] **Lot/batch combo field** — `GET /api/products/{product_id}/lots` loads in-stock lots on modal open; lot field is a combo: free-text input + dropdown of existing lots (filtered as user types); selecting a lot auto-populates expiry date, quantity (floor of on-hand qty), and qty label with UOM name (e.g. "Quantity (Units)")
+- [x] **GS1 AI fix** — carton label was using AI `(37)` (Count of Trade Items — SSCC-only, mutually exclusive with GTIN `(01)`); corrected to AI `(30)` (Variable count of items — valid alongside GTIN) in both `gs1.py` (backend ZPL builder) and `GS1LabelModal.js` (frontend bwip-js preview)
+
+**Products page lot drill-down (BUILT 2026-07-10 — `frontend/src/views/Views.js`):**
+- [x] Layers icon button added in the "On Hand" column alongside the existing History button; visible for all admin users
+- [x] Clicking "Layers" opens a lot breakdown modal: fetches `GET /api/products/{id}/lots`, shows lot name / qty + UOM / expiry date per row, total count + total on-hand qty in footer
+- [x] `GET /api/products/{product_id}/lots` backend endpoint — aggregates `stock.quant` across all internal locations per lot, fetches `stock.lot` for name + expiry date; returns `{lots: [{id, name, qty, uom_name, expiration_date}]}`
 
 **Frontend — Packing board "Print GS1 Labels" button (pending serial tracking build):**
 - [ ] Button appears on packing board entries in `packing` or `ready` state (after QA + RP approval, before collection) — gated by `can("labels.print")`

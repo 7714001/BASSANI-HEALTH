@@ -110,12 +110,15 @@ async def list_invoices(
             for inv in invoices:
                 origin = inv.get("invoice_origin")
                 so_id = so_name_to_id.get(origin) if origin else None
+                inv["sale_order_id"]  = so_id
                 inv["linked_ticket_id"] = so_id_to_ticket.get(so_id) if so_id else None
         except Exception:
             for inv in invoices:
+                inv["sale_order_id"]  = None
                 inv["linked_ticket_id"] = None
     else:
         for inv in invoices:
+            inv["sale_order_id"]  = None
             inv["linked_ticket_id"] = None
 
     return {"invoices": invoices, "total": total}
@@ -449,7 +452,7 @@ async def acknowledge_credit_note_request(
 @router.get("/{invoice_id}/pdf")
 def download_invoice_pdf(
     invoice_id: int,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
 ):
     """
     Render and stream the Odoo invoice PDF.
@@ -509,10 +512,47 @@ async def reset_invoice_to_draft(
     return {"success": True}
 
 
+# ── 8.29 — Standalone invoice send (no ticket required) ──────────────────────
+
+@router.post("/{invoice_id}/send")
+async def send_invoice_standalone(
+    invoice_id: int,
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
+):
+    """Send an invoice via Odoo mail template. Works without a linked Sales Ticket."""
+    odoo = get_odoo_client()
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id"])
+    if not records:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = records[0]
+    if inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Only posted invoices can be sent")
+
+    try:
+        templates = odoo.search_read(
+            "mail.template",
+            [("model", "=", "account.move"), ("name", "ilike", "invoice")],
+            fields=["id", "name"],
+            limit=5,
+        )
+        if not templates:
+            raise HTTPException(status_code=502, detail="Invoice email template not found in Odoo")
+        template_id = templates[0]["id"]
+        odoo.execute("mail.template", "send_mail", [template_id, invoice_id], {"force_send": True})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo send failed: {e}")
+
+    await audit_log("invoice.sent", "invoice", invoice_id,
+                    entity_label=inv["name"], user=current_user)
+    return {"success": True, "invoice_name": inv["name"]}
+
+
 # ── 8.26 — Credit notes ───────────────────────────────────────────────────────
 
 @router.get("/credit-note-journals")
-def list_credit_note_journals(current_user: dict = Depends(require_admin)):
+def list_credit_note_journals(current_user: dict = Depends(require_permission("tickets.finance_confirm"))):
     """Journals suitable for raising a credit note (sale or general type)."""
     odoo = get_odoo_client()
     journals = odoo.search_read(

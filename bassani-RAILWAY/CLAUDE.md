@@ -78,7 +78,7 @@ No new external services without an explicit decision. Approved additions: Resen
 - `backend/services/email_service.py` — all transactional email templates and send logic
 - `backend/services/warehouse_context.py` — `get_company_id()` and `company_context()` helpers
 - `backend/routes/order_routes.py` — order pipeline, stock-check endpoint (`invoice_policy_block` logic here)
-- `backend/routes/product_routes.py` — product list (`category_id` int param for picker drawer), categories endpoint
+- `backend/routes/product_routes.py` — product list (`category_id` int param for picker drawer), categories endpoint, `GET /{product_id}/lots` (in-stock lot list with qty aggregated from `stock.quant`, expiry from `stock.lot`)
 - `backend/routes/label_routes.py` — GS1 label printing: printer CRUD (`/api/labels/printers`) + ZPL print endpoint (`/api/labels/gs1/print`). Printers stored in MongoDB `portal_settings` `_id: "label_printers"`.
 - `backend/services/gs1.py` — `validate_gtin()`, `build_gs1_text()`, `build_zpl_unit_label()`, `build_zpl_carton_label()`, `send_zpl()` (TCP port 9100)
 - `frontend/src/AuthContext.js` — auth state, `can()` permission helper, `isAdmin` flag
@@ -106,7 +106,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.28 complete: invoice lifecycle actions (send, PDF, reset-to-draft), invoice type selection (fixed/percentage/delivered), credit notes, customer address management (add/edit/archive) on CustomerProfile + Invoice/Delivery address dropdowns in quote builder, payment terms (customer default + quote override). Staff account creation outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.29 complete: invoice lifecycle actions (send, PDF, reset-to-draft), invoice type selection (fixed/percentage/delivered), credit notes, customer address management (add/edit/archive) on CustomerProfile + Invoice/Delivery address dropdowns in quote builder, payment terms (customer default + quote override), full invoice lifecycle actions on Invoices page (no ticket required), "Create Ticket" from invoice. Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
