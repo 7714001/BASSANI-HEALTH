@@ -1,14 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type, datetime, timezone
-import httpx
 from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
-from config import get_settings
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -450,62 +448,6 @@ async def acknowledge_credit_note_request(
 
 
 # ── 8.24 — Invoice lifecycle actions ─────────────────────────────────────────
-
-@router.get("/{invoice_id}/pdf")
-async def download_invoice_pdf(
-    invoice_id: int,
-    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
-):
-    """
-    Render and stream the Odoo invoice PDF via the Odoo web session HTTP endpoint.
-    ir.actions.report.render_qweb_pdf is not exposed via XML-RPC on Odoo SaaS, so
-    we authenticate via /web/session/authenticate and fetch /report/pdf/ directly.
-    """
-    odoo = get_odoo_client()
-    records = odoo.read("account.move", [invoice_id], fields=["name", "state"])
-    if not records:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    inv_name = records[0].get("name", f"Invoice-{invoice_id}").replace("/", "-")
-
-    settings = get_settings()
-    base_url = settings.odoo_url.rstrip("/")
-
-    try:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            auth = await client.post(
-                f"{base_url}/web/session/authenticate",
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "call",
-                    "params": {
-                        "db":       settings.odoo_db,
-                        "login":    settings.odoo_username,
-                        "password": settings.odoo_password,
-                    },
-                },
-            )
-            auth.raise_for_status()
-            session_id = auth.cookies.get("session_id")
-            if not session_id:
-                raise HTTPException(status_code=502, detail="Odoo session auth failed — no session_id returned")
-
-            pdf_resp = await client.get(
-                f"{base_url}/report/pdf/account.report_move_full_lines/{invoice_id}",
-                cookies={"session_id": session_id},
-            )
-            pdf_resp.raise_for_status()
-            pdf_bytes = pdf_resp.content
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"PDF generation failed: {e}")
-
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{inv_name}.pdf"'},
-    )
-
 
 @router.post("/{invoice_id}/reset-to-draft")
 async def reset_invoice_to_draft(

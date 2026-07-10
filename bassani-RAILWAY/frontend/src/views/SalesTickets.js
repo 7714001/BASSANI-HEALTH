@@ -1566,9 +1566,7 @@ export default function SalesTickets() {
                               {sendingInvoice ? <Loader2 size={14} className="shrink-0 animate-spin" /> : <Send size={14} className="text-blue-500 shrink-0" />}
                               {detail.invoice_sent_at ? "Resend Invoice" : "Send Invoice"}
                             </button>
-                            <a href={`/api/invoices/${detail.invoice_id}/pdf`} target="_blank" rel="noreferrer" className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
-                              <Download size={14} className="text-blue-500 shrink-0" />Download Invoice PDF
-                            </a>
+
                             {!detail.payment_confirmed_at && (
                               <button onClick={() => setResetDraftConfirm(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition-colors text-left">
                                 <RotateCcw size={14} className="shrink-0" />Reset Invoice to Draft
