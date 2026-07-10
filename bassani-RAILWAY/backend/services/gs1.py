@@ -145,9 +145,9 @@ def build_zpl_carton_label(
     if lot:
         gs1 += f"10{lot}"
         if qty:
-            gs1 += f">837{qty}"
+            gs1 += f">830{qty}"
     elif qty:
-        gs1 += f"37{qty}"
+        gs1 += f"30{qty}"
 
     zpl = ["^XA", f"^PW{w}", f"^LL{h}", "^CI28"]
     zpl.append(f"^FO20,15^A0N,32,32^FD{name}^FS")

@@ -117,7 +117,7 @@ function UnitLabel({ productName, gtin, lot, expiryDisplay, expiryYYMMDD = "", s
 function CartonLabel({ productName, gtin, lot, expiryDisplay, expiryYYMMDD, qty }) {
   const [err, setErr] = useState(null);
   const onErr = useCallback(e => setErr(e), []);
-  const text  = buildGs1Text(gtin, lot, expiryYYMMDD) + (qty > 0 ? `(37)${qty}` : "");
+  const text  = buildGs1Text(gtin, lot, expiryYYMMDD) + (qty > 0 ? `(30)${qty}` : "");
   const g14   = gtin.padStart(14, "0");
 
   return (
