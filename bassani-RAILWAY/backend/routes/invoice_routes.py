@@ -316,7 +316,7 @@ class PaymentRegister(BaseModel):
 async def register_payment(
     invoice_id: int,
     body: PaymentRegister,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_permission("invoices.record_payment")),
 ):
     """
     Register a payment against an invoice using Odoo's account.payment.register wizard.

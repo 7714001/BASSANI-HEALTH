@@ -202,8 +202,9 @@ function InvoiceView({ invoice, onClose }) {
 
 export default function Invoices() {
   const { user, can } = useAuth();
-  const isAdmin    = user?.role === "admin";
-  const canFinance = can("tickets.finance_confirm");
+  const isAdmin          = user?.role === "admin";
+  const canFinance       = can("tickets.finance_confirm");
+  const canRecordPayment = can("invoices.record_payment");
   const location   = useLocation();
   const navigate   = useNavigate();
   const initialFilter = location.state?.filter || "unpaid";
@@ -226,6 +227,12 @@ export default function Invoices() {
   // Reset to draft confirm
   const [resetConfirm,  setResetConfirm ] = useState(null); // null | invoice
   const [resetting,     setResetting    ] = useState(false);
+
+  // Register payment modal
+  const [payModal,    setPayModal   ] = useState(null); // null | invoice
+  const [payJournals, setPayJournals] = useState([]);
+  const [payForm,     setPayForm    ] = useState({ amount: "", date: "", journal_id: "" });
+  const [paySaving,   setPaySaving  ] = useState(false);
 
   // Credit note modal
   const [cnModal,      setCnModal    ] = useState(null); // null | invoice
@@ -290,6 +297,41 @@ export default function Invoices() {
       toast.error(e.response?.data?.detail || "Reset failed");
     } finally {
       setResetting(false);
+    }
+  };
+
+  const openPayModal = async (inv) => {
+    setPayForm({
+      amount:     String(inv.amount_residual || inv.amount_total || ""),
+      date:       new Date().toISOString().split("T")[0],
+      journal_id: "",
+    });
+    setPayModal(inv);
+    try {
+      const r = await api.get("/api/invoices/payment-journals");
+      const journals = r.data.journals || [];
+      setPayJournals(journals);
+      if (journals.length > 0) setPayForm(f => ({ ...f, journal_id: String(journals[0].id) }));
+    } catch { setPayJournals([]); }
+  };
+
+  const registerPayment = async () => {
+    if (!payForm.journal_id) return toast.error("Select a payment journal");
+    if (!payForm.amount || Number(payForm.amount) <= 0) return toast.error("Enter a valid amount");
+    setPaySaving(true);
+    try {
+      await api.put(`/api/invoices/${payModal.id}/pay`, {
+        journal_id:   parseInt(payForm.journal_id),
+        payment_date: payForm.date || undefined,
+        amount:       parseFloat(payForm.amount),
+      });
+      toast.success(`Payment registered against ${payModal.name}`);
+      setPayModal(null);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Payment registration failed");
+    } finally {
+      setPaySaving(false);
     }
   };
 
@@ -447,6 +489,16 @@ export default function Invoices() {
                       </button>
                     )}
 
+                    {/* Register payment */}
+                    {isPosted && inv.payment_state !== "paid" && isOutInv && canRecordPayment && (
+                      <button
+                        onClick={() => openPayModal(inv)}
+                        className="flex items-center gap-0.5 text-xs text-green-700 hover:text-green-800 font-medium transition-colors"
+                        title="Register a payment against this invoice">
+                        Pay
+                      </button>
+                    )}
+
                     {/* Reset to draft */}
                     {isPosted && isUnpaid && isOutInv && canFinance && isAdmin && (
                       <button
@@ -493,6 +545,42 @@ export default function Invoices() {
 
       {/* Full-screen invoice viewer */}
       {viewInvoice && <InvoiceView invoice={viewInvoice} onClose={() => setViewInvoice(null)} />}
+
+      {/* Register payment modal */}
+      {payModal && (
+        <Modal title={`Register Payment — ${payModal.name}`} onClose={() => setPayModal(null)}>
+          <div className="space-y-3">
+            <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-2 gap-2 text-sm">
+              <span className="text-gray-500">Customer</span>
+              <span className="font-medium text-right">{payModal.partner_id?.[1]}</span>
+              <span className="text-gray-500">Outstanding</span>
+              <span className="font-semibold text-right text-red-600">{fmtR(payModal.amount_residual)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormGroup label="Amount" required>
+                <Input
+                  type="number" step="0.01" min="0.01"
+                  value={payForm.amount}
+                  onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                />
+              </FormGroup>
+              <FormGroup label="Payment date">
+                <Input type="date" value={payForm.date} onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))} />
+              </FormGroup>
+            </div>
+            <FormGroup label="Journal" required>
+              <Select value={payForm.journal_id} onChange={e => setPayForm(f => ({ ...f, journal_id: e.target.value }))}>
+                <option value="">Select journal…</option>
+                {payJournals.map(j => <option key={j.id} value={j.id}>{j.display_label || j.name}</option>)}
+              </Select>
+            </FormGroup>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setPayModal(null)} disabled={paySaving}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={registerPayment} loading={paySaving}>Register Payment</BtnPrimary>
+          </div>
+        </Modal>
+      )}
 
       {/* Reset to draft confirm */}
       {resetConfirm && (
