@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from "react";
 import { Printer, X, ChevronLeft, Truck } from "lucide-react";
 import { fmtDate } from "../components/UI";
 import api from "../api";
+import bwipjs from "bwip-js";
 
 // ── Static Bassani details (mirrored from Invoices.js) ─────────────────────────
 const BASSANI = {
@@ -48,6 +49,25 @@ const PICKING_STATE_COLOR = {
   cancel:    "bg-gray-100 text-gray-400",
   draft:     "bg-gray-100 text-gray-400",
 };
+
+// Renders a Code 128 barcode as a <img data:> so it survives the innerHTML → new window print copy.
+// Canvas pixel data is lost when innerHTML is serialised — converting to a PNG data URL preserves it.
+function BarcodeImg({ text, style }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    if (!text) return;
+    const canvas = document.createElement("canvas");
+    try {
+      bwipjs.toCanvas(canvas, {
+        bcid: "code128", text, scale: 2, height: 12,
+        includetext: true, textxalign: "center", padding: 2, backgroundcolor: "ffffff",
+      });
+      setSrc(canvas.toDataURL("image/png"));
+    } catch { /* non-fatal */ }
+  }, [text]);
+  if (!src) return null;
+  return <img src={src} alt={text} style={{ display: "block", maxHeight: 52, ...style }} />;
+}
 
 export default function OrderView({ order: o, onClose, onConfirm, onCancel, confirming, cancelling, isAdmin, canConfirmOrder = true, canCancelOrder = true }) {
   const printRef = useRef();
@@ -220,9 +240,12 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                 <p style={{ fontSize: 11, color: "#666" }}>VAT NO: {BASSANI.vat}</p>
               </div>
             </div>
-            <p style={{ fontSize: 11, fontStyle: "italic", color: "#0f6e56", textAlign: "right", paddingTop: 4 }}>
-              {BASSANI.tagline}
-            </p>
+            <div style={{ textAlign: "right" }}>
+              <p style={{ fontSize: 11, fontStyle: "italic", color: "#0f6e56", marginBottom: 8 }}>
+                {BASSANI.tagline}
+              </p>
+              {o.name && <BarcodeImg text={o.name} style={{ marginLeft: "auto" }} />}
+            </div>
           </div>
 
           {/* Customer address — right-aligned */}

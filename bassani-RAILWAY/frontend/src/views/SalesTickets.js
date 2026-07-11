@@ -24,6 +24,7 @@ import {
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
+import OrderView from "./OrderView";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -213,6 +214,7 @@ export default function SalesTickets() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailOrder, setDetailOrder]   = useState(null);
   const [detailOrderLoading, setDetailOrderLoading] = useState(false);
+  const [printOrderOpen, setPrintOrderOpen] = useState(false);
   const [inboxItem, setInboxItem]       = useState(null);
   const [showInboxPanel, setShowInboxPanel] = useState(true);
   const [deliveries,        setDeliveries       ] = useState([]);
@@ -1000,9 +1002,16 @@ export default function SalesTickets() {
               : ""
           }
           actions={
-            <BtnSecondary onClick={() => { setDetail(null); setDetailOrder(null); setView("list"); }}>
-              ← Back to Tickets
-            </BtnSecondary>
+            <div className="flex items-center gap-2">
+              {detailOrder && (
+                <BtnSecondary onClick={() => setPrintOrderOpen(true)}>
+                  <Download size={14} /> Print Order
+                </BtnSecondary>
+              )}
+              <BtnSecondary onClick={() => { setDetail(null); setDetailOrder(null); setView("list"); }}>
+                ← Back to Tickets
+              </BtnSecondary>
+            </div>
           }
         />
 
@@ -1754,6 +1763,17 @@ export default function SalesTickets() {
               </div>
             </div>
           </main>
+        )}
+
+        {/* Print order overlay — full OrderView with barcode */}
+        {printOrderOpen && detailOrder && (
+          <OrderView
+            order={detailOrder}
+            onClose={() => setPrintOrderOpen(false)}
+            isAdmin={isAdmin}
+            canConfirmOrder={false}
+            canCancelOrder={false}
+          />
         )}
 
         {/* Reseller pre-confirm stock-check modal */}

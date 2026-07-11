@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import bwipjs from "bwip-js";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -56,6 +57,24 @@ function PaymentBadge({ state }) {
 function fmt(n) {
   if (n == null) return "—";
   return new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+// canvas → PNG data URL so the barcode survives the innerHTML → new window print copy
+function BarcodeImg({ text, style }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    if (!text) return;
+    const canvas = document.createElement("canvas");
+    try {
+      bwipjs.toCanvas(canvas, {
+        bcid: "code128", text, scale: 2, height: 12,
+        includetext: true, textxalign: "center", padding: 2, backgroundcolor: "ffffff",
+      });
+      setSrc(canvas.toDataURL("image/png"));
+    } catch { /* non-fatal */ }
+  }, [text]);
+  if (!src) return null;
+  return <img src={src} alt={text} style={{ display: "block", maxHeight: 52, ...style }} />;
 }
 
 // ── Invoice print view ─────────────────────────────────────────────────────────
@@ -126,7 +145,10 @@ function InvoiceView({ invoice, onClose }) {
                 <p style={{ fontSize: 11, color: "#666" }}>VAT NO: {BASSANI.vat}</p>
               </div>
             </div>
-            <p style={{ fontSize: 11, fontStyle: "italic", color: "#0f6e56", textAlign: "right", paddingTop: 4 }}>{BASSANI.tagline}</p>
+            <div style={{ textAlign: "right" }}>
+              <p style={{ fontSize: 11, fontStyle: "italic", color: "#0f6e56", marginBottom: 8 }}>{BASSANI.tagline}</p>
+              {invoice.name && <BarcodeImg text={invoice.name} style={{ marginLeft: "auto" }} />}
+            </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 28 }}>
             <div style={{ textAlign: "right", fontSize: 11, lineHeight: 1.6, color: "#444" }}>

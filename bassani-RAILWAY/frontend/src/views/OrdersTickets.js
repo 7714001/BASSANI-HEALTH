@@ -6,18 +6,37 @@
 // responsible_pharmacist: RP Approve (when ready)
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
+import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
 } from "../components/UI";
+
+// canvas → PNG data URL so the barcode survives innerHTML → new window print copy
+function BarcodeImg({ text, style }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    if (!text) return;
+    const canvas = document.createElement("canvas");
+    try {
+      bwipjs.toCanvas(canvas, {
+        bcid: "code128", text, scale: 2, height: 12,
+        includetext: true, textxalign: "center", padding: 2, backgroundcolor: "ffffff",
+      });
+      setSrc(canvas.toDataURL("image/png"));
+    } catch { /* non-fatal */ }
+  }, [text]);
+  if (!src) return null;
+  return <img src={src} alt={text} style={{ display: "block", maxHeight: 52, ...style }} />;
+}
 
 const STATUS_LABEL = {
   queued:          "Queued",
@@ -181,6 +200,82 @@ export default function OrdersTickets() {
   };
 
 
+  // ── Packing slip print ──────────────────────────────────────────────────────
+  // Generates barcode inline (no DOM ref / timing dependency) by calling bwip-js
+  // directly and converting the canvas to a data URL before writing the window.
+  const printSlip = () => {
+    if (!detail) return;
+
+    let barcodeHtml = "";
+    if (detail.ps_num) {
+      const canvas = document.createElement("canvas");
+      try {
+        bwipjs.toCanvas(canvas, {
+          bcid: "code128", text: detail.ps_num, scale: 2, height: 12,
+          includetext: true, textxalign: "center", padding: 2, backgroundcolor: "ffffff",
+        });
+        barcodeHtml = `<img src="${canvas.toDataURL("image/png")}" alt="${detail.ps_num}" style="display:block;max-height:52px;margin-left:auto" />`;
+      } catch {}
+    }
+
+    const itemRows = (detail.items || []).map(item => `
+      <tr>
+        <td>${item.name || item.sku || ""}</td>
+        <td style="font-size:10px;color:#888;font-family:monospace">${item.sku || ""}</td>
+        <td class="r">${item.qty_ordered ?? item.qty ?? "—"}</td>
+        <td class="r">${item.qty_reserved ?? "—"}</td>
+        <td class="r">${detail.item_ticks?.[item.sku] ? "✓" : ""}</td>
+      </tr>`).join("");
+
+    const metaRows = [
+      ["Order Ref", detail.ps_num],
+      ["Invoice", detail.inv_num || "—"],
+      ["Delivery Note", detail.dn_num || "—"],
+      ["Warehouse", detail.warehouse_name || "—"],
+      ["Packer", detail.packer_name || "Unassigned"],
+      ["Status", STATUS_LABEL[detail.status] || detail.status],
+    ].map(([k, v]) => `<div style="margin-bottom:4px"><span style="font-size:9px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px">${k}</span><br/><span style="font-size:12px;font-weight:600">${v}</span></div>`).join("");
+
+    const win = window.open("", "_blank", "width=900,height=1200");
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+      <title>Packing Slip ${detail.ps_num || ""}</title>
+      <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:12px;color:#111;background:#fff}.page{width:794px;min-height:1123px;margin:0 auto;padding:48px;display:flex;flex-direction:column}table{width:100%;border-collapse:collapse}thead th{font-size:10px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid #e5e7eb;text-align:left}thead th.r,td.r{text-align:center}tbody td{padding:9px 6px;border-bottom:1px solid #f3f4f6;font-size:11.5px;color:#333}</style>
+      </head><body><div class="page">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px">
+          <div>
+            <img src="/logo.png" alt="Bassani Health" style="height:40px" onerror="this.style.display='none';this.nextSibling.style.display='block'" /><div style="display:none;font-size:20px;font-weight:800;color:#0f6e56">BASSANI HEALTH</div>
+            <div style="margin-top:8px"><p style="font-size:12px;font-weight:700">Bassani Health (PTY) LTD</p><p style="font-size:11px;color:#666">VAT NO: 4430323131</p></div>
+          </div>
+          <div style="text-align:right">
+            <p style="font-size:20px;font-weight:800;margin-bottom:8px">PACKING SLIP</p>
+            ${barcodeHtml}
+          </div>
+        </div>
+        <div style="margin-bottom:24px">
+          <p style="font-size:9px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px;margin-bottom:4px">Customer</p>
+          <p style="font-size:16px;font-weight:700">${detail.customer_name || "—"}</p>
+          ${detail.is_reseller && detail.reseller_name ? `<p style="font-size:11px;color:#0f6e56">via ${detail.reseller_name}</p>` : ""}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:12px 0;margin-bottom:28px">${metaRows}</div>
+        <table>
+          <thead><tr>
+            <th>Description</th>
+            <th>SKU</th>
+            <th class="r">Ordered</th>
+            <th class="r">Reserved</th>
+            <th class="r">Packed ✓</th>
+          </tr></thead>
+          <tbody>${itemRows}</tbody>
+        </table>
+        <div style="margin-top:auto;padding-top:24px;border-top:1px solid #e5e7eb;font-size:10px;color:#888">
+          <p>Payment is due upon collection. &nbsp; 4 days to collect orders once ready.</p>
+        </div>
+      </div></body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 400);
+  };
+
   // ── Detail — full-page view ─────────────────────────────────────────────────
   if (view === "detail") {
     const isTerminal   = detail ? TERMINAL.has(detail.status) : false;
@@ -192,9 +287,16 @@ export default function OrdersTickets() {
           title={detail?.customer_name || "Loading…"}
           subtitle={detail ? `${detail.ps_num} — ${STATUS_LABEL[detail.status] || detail.status}` : ""}
           actions={
-            <BtnSecondary onClick={() => { setDetail(null); setView("list"); }}>
-              ← Back to Tickets
-            </BtnSecondary>
+            <div className="flex items-center gap-2">
+              {detail && (
+                <BtnSecondary onClick={printSlip}>
+                  <Printer size={14} /> Print Packing Slip
+                </BtnSecondary>
+              )}
+              <BtnSecondary onClick={() => { setDetail(null); setView("list"); }}>
+                ← Back to Tickets
+              </BtnSecondary>
+            </div>
           }
         />
 
@@ -221,6 +323,7 @@ export default function OrdersTickets() {
                         <div className="text-right">
                           <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>
                           <p className="text-xs text-gray-400 mt-1.5">Queued {fmtDate(detail.queued_at)}</p>
+                          {detail.ps_num && <BarcodeImg text={detail.ps_num} style={{ marginLeft: "auto", marginTop: 8 }} />}
                         </div>
                       </div>
 
