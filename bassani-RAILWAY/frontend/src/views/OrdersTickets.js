@@ -86,6 +86,11 @@ export default function OrdersTickets() {
   const [incompleteModal, setIncompleteModal]   = useState(false);
   const [incompleteReason, setIncompleteReason] = useState("");
   const [overrideStatus, setOverrideStatus]     = useState("");
+  const [tickingSkus,  setTickingSkus ] = useState(new Set());
+  const [packerInput,  setPackerInput ] = useState("");
+  const [savingPacker, setSavingPacker] = useState(false);
+  const [itemLots,     setItemLots    ] = useState({});   // { product_id: [{ id, name, expiry }] }
+  const [lotSaving,    setLotSaving   ] = useState(null); // product_id being saved
 
   const openDetail = async (entry) => {
     setDetail(null);
@@ -108,6 +113,8 @@ export default function OrdersTickets() {
       const r = await api.get(`/api/packing/entry/${order_id}`);
       setDetail(r.data);
       setOverrideStatus(r.data.status);
+      setPackerInput("");
+      setItemLots({});
     } catch { toast.error("Failed to refresh order"); }
     load(); // silently refresh list in background
   };
@@ -199,11 +206,64 @@ export default function OrdersTickets() {
     finally { setBusyId(null); }
   };
 
+  // ── Item tick ───────────────────────────────────────────────────────────────
+  const toggleTick = async (sku, currentlyTicked) => {
+    if (!detail || tickingSkus.has(sku)) return;
+    setTickingSkus(s => new Set(s).add(sku));
+    // Optimistic update
+    setDetail(d => ({ ...d, item_ticks: { ...d.item_ticks, [sku]: !currentlyTicked } }));
+    try {
+      await api.put(`/api/packing/tick?order_id=${encodeURIComponent(detail.order_id)}&sku=${encodeURIComponent(sku)}&ticked=${!currentlyTicked}`);
+    } catch (e) {
+      // Revert on failure
+      setDetail(d => ({ ...d, item_ticks: { ...d.item_ticks, [sku]: currentlyTicked } }));
+      toast.error(e.response?.data?.detail || "Failed to update item");
+    } finally {
+      setTickingSkus(s => { const n = new Set(s); n.delete(sku); return n; });
+    }
+  };
+
+  // ── Packer assignment ───────────────────────────────────────────────────────
+  const savePacker = async () => {
+    if (!packerInput.trim() || !detail) return;
+    setSavingPacker(true);
+    try {
+      await api.put("/api/packing/assign-packer", { order_id: detail.order_id, packer_name: packerInput.trim() });
+      toast.success("Packer assigned");
+      await refreshDetail(detail.order_id);
+      setPackerInput("");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to assign packer"); }
+    finally { setSavingPacker(false); }
+  };
+
+  // ── Lot assignment per item ─────────────────────────────────────────────────
+  const fetchLotsForItem = async (productId) => {
+    if (!productId || itemLots[productId]) return;
+    try {
+      const { data } = await api.get(`/api/products/${productId}/lots`);
+      setItemLots(prev => ({ ...prev, [productId]: data.lots || [] }));
+    } catch { setItemLots(prev => ({ ...prev, [productId]: [] })); }
+  };
+  const assignLot = async (productId, lotId) => {
+    if (!lotId || !detail) return;
+    setLotSaving(productId);
+    try {
+      const { data } = await api.put("/api/packing/assign-lot", {
+        order_id: detail.order_id,
+        product_id: productId,
+        lot_id: parseInt(lotId),
+      });
+      toast.success(`Batch ${data.lot_name} assigned`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to assign lot"); }
+    finally { setLotSaving(null); }
+  };
+
 
   // ── Packing slip print ──────────────────────────────────────────────────────
   // Generates barcode inline (no DOM ref / timing dependency) by calling bwip-js
   // directly and converting the canvas to a data URL before writing the window.
-  const printSlip = () => {
+  // Async so we can fetch lot/batch assignments from Odoo before rendering.
+  const printSlip = async () => {
     if (!detail) return;
 
     let barcodeHtml = "";
@@ -218,14 +278,29 @@ export default function OrdersTickets() {
       } catch {}
     }
 
-    const itemRows = (detail.items || []).map(item => `
+    // Fetch lot/batch assignments — best-effort, non-blocking on failure
+    let lotMap = {};
+    if (detail.order_id) {
+      try {
+        const { data } = await api.get(`/api/orders/${detail.order_id}`);
+        lotMap = data.lot_map || {};
+      } catch {}
+    }
+
+    const itemRows = (detail.items || []).map(item => {
+      const lots = item.product_id && lotMap[item.product_id] ? lotMap[item.product_id] : [];
+      const lotHtml = lots.length > 0
+        ? `<div style="font-size:9.5px;color:#6b7280;font-family:monospace;margin-top:2px">Batch: ${lots.join(", ")}</div>`
+        : "";
+      return `
       <tr>
-        <td>${item.name || item.sku || ""}</td>
+        <td>${item.name || item.sku || ""}${lotHtml}</td>
         <td style="font-size:10px;color:#888;font-family:monospace">${item.sku || ""}</td>
         <td class="r">${item.qty_ordered ?? item.qty ?? "—"}</td>
         <td class="r">${item.qty_reserved ?? "—"}</td>
         <td class="r">${detail.item_ticks?.[item.sku] ? "✓" : ""}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
 
     const metaRows = [
       ["Order Ref", detail.ps_num],
@@ -351,12 +426,25 @@ export default function OrdersTickets() {
                               <span className="font-mono text-gray-700">{detail.dn_num}</span>
                             </div>
                           )}
-                          {detail.packer_name && (
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-400 uppercase font-semibold tracking-wide">Packer</span>
-                              <span className="font-medium text-gray-700">{detail.packer_name}</span>
-                            </div>
-                          )}
+                          <div className="flex justify-between items-center text-xs gap-2">
+                            <span className="text-gray-400 uppercase font-semibold tracking-wide shrink-0">Packer</span>
+                            {canOrders && !isTerminal ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  value={packerInput || detail.packer_name || ""}
+                                  onChange={e => setPackerInput(e.target.value)}
+                                  onBlur={savePacker}
+                                  onKeyDown={e => e.key === "Enter" && savePacker()}
+                                  placeholder="Assign packer…"
+                                  className="text-xs border border-gray-200 rounded px-2 py-0.5 w-28 focus:outline-none focus:ring-1 focus:ring-bassani-400 text-right"
+                                  disabled={savingPacker}
+                                />
+                                {savingPacker && <span className="text-[10px] text-gray-400">…</span>}
+                              </div>
+                            ) : (
+                              <span className="font-medium text-gray-700">{detail.packer_name || "—"}</span>
+                            )}
+                          </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-gray-400 uppercase font-semibold tracking-wide">Warehouse</span>
                             <span className="font-medium text-gray-700">{detail.warehouse_name || "—"}</span>
@@ -373,6 +461,9 @@ export default function OrdersTickets() {
                           <th className="text-left p-3 pl-6 text-xs font-semibold text-gray-400 uppercase tracking-wide">Item</th>
                           <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Ordered</th>
                           <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Reserved</th>
+                          {canOrders && !isTerminal && (
+                            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch / Lot</th>
+                          )}
                           <th className="text-center p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Packed</th>
                         </tr>
                       </thead>
@@ -380,6 +471,8 @@ export default function OrdersTickets() {
                         {(detail.items || []).map((item, i) => {
                           const ticked = detail.item_ticks?.[item.sku];
                           const isBackordered = item.is_backordered;
+                          const canTick = canOrders && !isTerminal && item.sku;
+                          const lots = item.product_id ? (itemLots[item.product_id] || null) : null;
                           return (
                             <tr key={i} className={`border-b border-gray-50 hover:bg-slate-50/30 ${isBackordered ? "bg-amber-50/40" : ""}`}>
                               <td className="p-3 pl-6">
@@ -401,10 +494,60 @@ export default function OrdersTickets() {
                                   ? <span className={item.is_backordered ? "text-amber-600 font-medium" : "text-gray-600"}>{item.qty_reserved}</span>
                                   : <span className="text-gray-300">—</span>}
                               </td>
+                              {canOrders && !isTerminal && (
+                                <td className="p-3 text-sm min-w-[160px]">
+                                  {item.product_id ? (
+                                    lots === null ? (
+                                      <button
+                                        onClick={() => fetchLotsForItem(item.product_id)}
+                                        className="text-[10px] text-bassani-600 hover:underline"
+                                      >
+                                        Load batches
+                                      </button>
+                                    ) : lots.length === 0 ? (
+                                      <span className="text-[10px] text-gray-300">No stock lots</span>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5">
+                                        <Select
+                                          value=""
+                                          onChange={e => assignLot(item.product_id, e.target.value)}
+                                          className="text-xs py-0.5 pr-6"
+                                          disabled={lotSaving === item.product_id}
+                                        >
+                                          <option value="">Select batch…</option>
+                                          {lots.map(l => (
+                                            <option key={l.id} value={l.id}>
+                                              {l.name}{l.expiry ? ` · ${l.expiry.split("T")[0]}` : ""}
+                                            </option>
+                                          ))}
+                                        </Select>
+                                        {lotSaving === item.product_id && (
+                                          <span className="text-[10px] text-gray-400">Saving…</span>
+                                        )}
+                                      </div>
+                                    )
+                                  ) : (
+                                    <span className="text-[10px] text-gray-300">—</span>
+                                  )}
+                                </td>
+                              )}
                               <td className="p-3 pr-6 text-center">
-                                {ticked
-                                  ? <CheckCircle2 size={16} className="text-green-500 mx-auto" />
-                                  : <XCircle size={16} className="text-gray-200 mx-auto" />}
+                                {canTick ? (
+                                  <button
+                                    onClick={() => toggleTick(item.sku, ticked)}
+                                    disabled={tickingSkus.has(item.sku)}
+                                    className="mx-auto block disabled:opacity-50"
+                                    title={ticked ? "Mark as not packed" : "Mark as packed"}
+                                  >
+                                    {ticked
+                                      ? <CheckCircle2 size={16} className="text-green-500" />
+                                      : <XCircle size={16} className="text-gray-300 hover:text-gray-400" />}
+                                  </button>
+                                ) : (
+                                  ticked
+                                    ? <CheckCircle2 size={16} className="text-green-500 mx-auto" />
+                                    : <XCircle size={16} className="text-gray-200 mx-auto" />
+                                )}
                               </td>
                             </tr>
                           );
@@ -504,7 +647,7 @@ export default function OrdersTickets() {
                       {canOrders && detail.status === "queued" && (
                         <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
                           <p className="text-xs text-blue-700 mb-3">
-                            Move this order to active packing — the packer will see it on the floor board.
+                            Assign a packer above, then move to active packing. The floor board will update.
                           </p>
                           <BtnPrimary
                             onClick={() => act("mark-packing", detail.order_id)}
@@ -520,7 +663,7 @@ export default function OrdersTickets() {
                       {canOrders && detail.status === "packing" && (
                         <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
                           <p className="text-xs text-amber-700 mb-3">
-                            Packing done? Move to Ready for Inspection — QA and RP will then review and sign off.
+                            Once the packer has reported back and all items are ticked, move to Ready for QA and RP inspection.
                           </p>
                           <BtnPrimary
                             onClick={() => act("mark-ready", detail.order_id)}

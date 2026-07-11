@@ -292,12 +292,20 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
               </tr>
             </thead>
             <tbody>
-              {(o.lines || []).map((line, i) => (
+              {(o.lines || []).map((line, i) => {
+                const pid = line.product_id?.[0];
+                const lots = pid && o.lot_map?.[pid] ? o.lot_map[pid] : [];
+                return (
                 <tr key={i}>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", fontSize: 11.5, color: "#333" }}>
                     {line.product_id?.[1] || line.name}
                     {line.name && line.product_id?.[1] && line.name !== line.product_id[1] && (
                       <span style={{ display: "block", fontSize: 10, color: "#999", marginTop: 1 }}>{line.name}</span>
+                    )}
+                    {lots.length > 0 && (
+                      <span style={{ display: "block", fontSize: 9.5, color: "#6b7280", marginTop: 2, fontFamily: "monospace", letterSpacing: 0.3 }}>
+                        Batch: {lots.join(", ")}
+                      </span>
                     )}
                   </td>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>
@@ -306,7 +314,8 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>{fmt(line.price_unit)}</td>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5, fontWeight: 600 }}>R {fmt(line.price_subtotal)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
 

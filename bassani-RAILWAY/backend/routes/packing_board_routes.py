@@ -960,7 +960,7 @@ async def adopt_order(
                             if m.get("product_id") else []
                         )
                         sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+                        items.append({"name": pname, "sku": sku, "product_id": m["product_id"][0] if m.get("product_id") else None, "qty": m["product_uom_qty"], "location": ""})
         except Exception as e:
             print(f"⚠️  adopt: could not read picking for order {body.order_id}: {e}")
 
@@ -1063,6 +1063,83 @@ async def override_status(
                     entity_label=body.order_id, user=current_user,
                     detail={"from": entry["status"], "to": body.status})
     return {"success": True}
+
+
+class AssignLotBody(BaseModel):
+    order_id: str
+    product_id: int   # Odoo product.product ID
+    lot_id: int       # Odoo stock.lot ID
+
+
+@router.put("/assign-lot")
+async def assign_lot(
+    body: AssignLotBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Assign a specific lot/batch to a product line on the active delivery order.
+
+    Writes lot_id to the matching stock.move.line in Odoo so the lot appears
+    on the validated delivery note. Must be called before mark-complete.
+    """
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on packing board")
+    if entry.get("status") not in ("queued", "packing", "ready"):
+        raise HTTPException(status_code=400, detail="Lot assignment is only allowed before the order is completed")
+
+    odoo = get_odoo_client()
+    try:
+        # Find all active (not done/cancelled) pickings for this sale order
+        pickings = odoo.search_read(
+            "stock.picking",
+            [("sale_id", "=", int(body.order_id)), ("state", "not in", ["done", "cancel"])],
+            fields=["id", "move_line_ids"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if not pickings:
+        raise HTTPException(status_code=404, detail="No active delivery order found in Odoo for this sale order")
+
+    all_ml_ids = [ml for p in pickings for ml in p.get("move_line_ids", [])]
+    if not all_ml_ids:
+        raise HTTPException(status_code=404, detail="No move lines found on the delivery order")
+
+    try:
+        move_lines = odoo.read(
+            "stock.move.line", all_ml_ids,
+            fields=["product_id", "lot_id"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading move lines: {str(e)}")
+
+    # Find the move line(s) for this product
+    target_ml_ids = [
+        ml["id"] for ml in move_lines
+        if (ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]) == body.product_id
+    ]
+    if not target_ml_ids:
+        raise HTTPException(status_code=404, detail=f"Product {body.product_id} not found on the delivery order")
+
+    try:
+        odoo.write("stock.move.line", target_ml_ids, {"lot_id": body.lot_id})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to assign lot in Odoo: {str(e)}")
+
+    # Fetch lot name for audit log
+    try:
+        lot_rows = odoo.read("stock.lot", [body.lot_id], fields=["name"])
+        lot_name = lot_rows[0]["name"] if lot_rows else str(body.lot_id)
+    except Exception:
+        lot_name = str(body.lot_id)
+
+    await audit_log(
+        "packing.assign_lot", "packing_board", body.order_id,
+        entity_label=body.order_id,
+        user=current_user,
+        detail={"product_id": body.product_id, "lot_id": body.lot_id, "lot_name": lot_name},
+    )
+    return {"success": True, "lot_name": lot_name}
 
 
 @router.get("/board")

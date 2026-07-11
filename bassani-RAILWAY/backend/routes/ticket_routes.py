@@ -538,7 +538,7 @@ async def get_ticket(
                                                 if m.get("product_id") else []
                                             )
                                             sku = (prods[0].get("default_code") or str(m["product_id"][0])) if prods else ""
-                                            items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+                                            items.append({"name": pname, "sku": sku, "product_id": m["product_id"][0] if m.get("product_id") else None, "qty": m["product_uom_qty"], "location": ""})
 
                             comm_data = await col("order_commissions").find_one(
                                 {"odoo_order_id": str(order_id)}, NO_ID
@@ -1729,7 +1729,7 @@ async def admin_override_payment(
                             if m.get("product_id") else []
                         )
                         sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+                        items.append({"name": pname, "sku": sku, "product_id": m["product_id"][0] if m.get("product_id") else None, "qty": m["product_uom_qty"], "location": ""})
         except Exception as e:
             logger.warning("admin_override_picking_read_error", extra={"order_id": order_id, "error": str(e)})
 

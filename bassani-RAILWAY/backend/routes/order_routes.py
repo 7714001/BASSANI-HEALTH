@@ -204,6 +204,35 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
             )
             order["lines"] = lines
 
+        # Lot/batch numbers — read from stock.move.line via the first outgoing picking.
+        # Lots are only assigned after packing, so this may be empty for un-packed orders.
+        order["lot_map"] = {}
+        try:
+            pick_rows = odoo.search_read(
+                "stock.picking",
+                domain=[("sale_id", "=", order_id), ("state", "=", "done")],
+                fields=["move_line_ids"],
+                limit=10,
+            )
+            all_ml_ids = [ml for p in pick_rows for ml in p.get("move_line_ids", [])]
+            if all_ml_ids:
+                move_lines = odoo.read(
+                    "stock.move.line", all_ml_ids,
+                    fields=["product_id", "lot_id"],
+                )
+                lot_map: dict = {}
+                for ml in move_lines:
+                    if not ml.get("lot_id"):
+                        continue
+                    pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                    lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
+                    lot_map.setdefault(pid, [])
+                    if lot_name not in lot_map[pid]:
+                        lot_map[pid].append(lot_name)
+                order["lot_map"] = lot_map
+        except Exception:
+            pass  # Non-fatal — lot display degrades gracefully
+
         # Overlay commission data
         comm_data = await col("order_commissions").find_one(
             {"odoo_order_id": str(order_id)}, NO_ID
