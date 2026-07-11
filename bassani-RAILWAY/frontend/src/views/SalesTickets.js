@@ -1134,6 +1134,8 @@ export default function SalesTickets() {
                           <tbody>
                             {(detailOrder.lines || []).map((line, i) => {
                               const { base, groups } = parseDisplayName(line.name || line.product_id?.[1] || "");
+                              const pid = line.product_id?.[0];
+                              const lots = pid && detailOrder.lot_map?.[pid] ? detailOrder.lot_map[pid] : [];
                               return (
                               <tr key={i} className="border-b border-gray-50 hover:bg-slate-50/30">
                                 <td className="p-3 pl-6">
@@ -1144,6 +1146,9 @@ export default function SalesTickets() {
                                         <span key={gi} className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
                                       ))}
                                     </div>
+                                  )}
+                                  {lots.length > 0 && (
+                                    <p className="font-mono text-[10px] text-bassani-600 mt-0.5">Batch: {lots.join(", ")}</p>
                                   )}
                                 </td>
                                 <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
@@ -1206,8 +1211,10 @@ export default function SalesTickets() {
                                   </div>
                                   {d.lines.length > 0 && (
                                     <div className="space-y-0.5 pl-1">
-                                      {d.lines.map((l, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-xs text-gray-500">
+                                      {d.lines.map((l, i) => {
+                                        const lineLots = detailOrder?.lot_map?.[l.product_id] || [];
+                                        return (
+                                        <div key={i} className="flex items-start gap-2 text-xs text-gray-500">
                                           <span className="flex-1 truncate">{l.product_name}</span>
                                           <span className="shrink-0 tabular-nums">
                                             {l.qty_done}/{l.qty_ordered} units
@@ -1215,8 +1222,12 @@ export default function SalesTickets() {
                                               <span className="text-orange-500 ml-1">({l.qty_ordered - l.qty_done} outstanding)</span>
                                             )}
                                           </span>
+                                          {lineLots.length > 0 && (
+                                            <span className="shrink-0 font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{lineLots.join(", ")}</span>
+                                          )}
                                         </div>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>

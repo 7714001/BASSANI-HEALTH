@@ -94,6 +94,7 @@ export default function OrdersTickets() {
   const [statusFilter, setStatusFilter] = useState(new Set());
   const [mos,        setMos       ] = useState([]);
   const [mosLoading, setMosLoading] = useState(false);
+  const [orderLotMap, setOrderLotMap] = useState({});
 
   // Fetch MOs when viewing a waiting_stock backorder entry
   useEffect(() => {
@@ -105,6 +106,14 @@ export default function OrdersTickets() {
       .catch(() => setMos([]))
       .finally(() => setMosLoading(false));
   }, [detail?.order_id, detail?.status]);
+
+  // Fetch confirmed lot assignments for on-screen display (done pickings only)
+  useEffect(() => {
+    if (!detail?.order_id) { setOrderLotMap({}); return; }
+    api.get(`/api/orders/${detail.order_id}`)
+      .then(r => setOrderLotMap(r.data.lot_map || {}))
+      .catch(() => {});
+  }, [detail?.order_id]);
 
   const openDetail = async (entry) => {
     setDetail(null);
@@ -498,6 +507,9 @@ export default function OrdersTickets() {
                                 </div>
                                 {item.sku && (
                                   <p className="text-[10px] font-mono text-gray-400 mt-0.5">{item.sku}</p>
+                                )}
+                                {item.product_id && orderLotMap[item.product_id]?.length > 0 && (
+                                  <p className="font-mono text-[10px] text-bassani-600 mt-0.5">Batch: {orderLotMap[item.product_id].join(", ")}</p>
                                 )}
                               </td>
                               <td className="p-3 text-center text-sm text-gray-600">
