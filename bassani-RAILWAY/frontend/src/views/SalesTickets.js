@@ -4,7 +4,8 @@
 // The detail page embeds the live Odoo order document alongside ticket actions,
 // keeping the sales clerk in one place for the entire inquiry-to-payment cycle.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import bwipjs from "bwip-js";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -26,6 +27,28 @@ import ProductPickerDrawer from "../components/ProductPickerDrawer";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Renders a compact Code 128 barcode for an Odoo order reference (e.g. "S00142").
+// Visible on screen and in print — lets warehouse staff scan the ticket on a tablet.
+function OrderBarcode({ orderRef }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    if (!canvasRef.current || !orderRef) return;
+    try {
+      bwipjs.toCanvas(canvasRef.current, {
+        bcid: "code128", text: orderRef, scale: 2, height: 8,
+        includetext: false, padding: 0, backgroundcolor: "ffffff",
+      });
+    } catch { /* non-fatal — barcode just won't render */ }
+  }, [orderRef]);
+  if (!orderRef) return null;
+  return (
+    <div className="flex flex-col items-end gap-0.5 print:items-start">
+      <canvas ref={canvasRef} className="block max-h-8" />
+      <span className="text-[9px] font-mono text-gray-400 tracking-wider">{orderRef}</span>
+    </div>
+  );
+}
 
 const STATUS_LABEL = {
   open: "Open (RFQ)", quote: "Quote", sale_order: "Sale Order", invoice: "Invoice",
@@ -1018,15 +1041,16 @@ export default function SalesTickets() {
                               </h2>
                               <p className="text-sm font-mono text-gray-400 mt-0.5">{detailOrder.name}</p>
                             </div>
-                            <div className="text-right">
+                            <div className="flex flex-col items-end gap-1.5">
                               <Badge color={orderStateColor}>{orderStateLabel}</Badge>
-                              <p className="text-xs text-gray-400 mt-1.5">
+                              <p className="text-xs text-gray-400">
                                 {detailOrder.date_order
                                   ? new Date(detailOrder.date_order).toLocaleDateString("en-ZA", {
                                       day: "2-digit", month: "short", year: "numeric",
                                     })
                                   : "—"}
                               </p>
+                              <OrderBarcode orderRef={detailOrder.name} />
                             </div>
                           </div>
                           <div className={`grid ${isReseller ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"} gap-6 pt-4 border-t border-gray-50`}>

@@ -39,10 +39,11 @@ const getVariantLabel = (p) => {
 
 export function Products() {
   const { user, can } = useAuth();
+  const { search: locationSearch } = useLocation();
   const [products,   setProducts  ] = useState([]);
   const [total,      setTotal     ] = useState(0);
   const [loading,    setLoading   ] = useState(true);
-  const [search,      setSearch     ] = useState("");
+  const [search,      setSearch     ] = useState(() => new URLSearchParams(locationSearch).get("q") || "");
   const [cat,         setCat        ] = useState("all");
   const [variant,     setVariant    ] = useState("all");
   const [stockFilter, setStockFilter] = useState("in_stock");

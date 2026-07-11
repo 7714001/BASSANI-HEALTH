@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, createContext, useContext } from "react";
+import { useRef, useState, useEffect, createContext, useContext, useCallback } from "react";
 import {
   useReactTable, getCoreRowModel, getPaginationRowModel,
   getSortedRowModel, flexRender,
@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -255,6 +255,67 @@ function NavGroup({ group, pathname, navigate }) {
   );
 }
 
+// ── Global barcode / reference search bar ─────────────────────────────────────
+// Press "/" from anywhere (when not in another input) to focus. Enter dispatches.
+function GlobalSearch() {
+  const inputRef  = useRef(null);
+  const navigate  = useNavigate();
+  const { isAdmin } = useAuth();
+  const [query,   setQuery  ] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const focus = useCallback((e) => {
+    if (e.key !== "/") return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    e.preventDefault();
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", focus);
+    return () => window.removeEventListener("keydown", focus);
+  }, [focus]);
+
+  if (!isAdmin) return null;
+
+  const dispatch = async () => {
+    const q = query.trim();
+    if (!q) return;
+    setLoading(true);
+    try {
+      const { data } = await api.get("/api/search/global", { params: { q } });
+      setQuery("");
+      inputRef.current?.blur();
+      navigate(data.navigate_to);
+    } catch (err) {
+      const msg = err.response?.data?.detail || "No match found";
+      // dynamic import keeps react-hot-toast out of the non-toast code path
+      import("react-hot-toast").then(({ default: toast }) => toast.error(msg));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="hidden sm:flex items-center relative">
+      <Search size={13} className="absolute left-2.5 text-gray-400 pointer-events-none z-10" />
+      {loading && <Loader2 size={13} className="absolute right-2.5 text-gray-400 animate-spin z-10" />}
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter") dispatch();
+          if (e.key === "Escape") { setQuery(""); e.target.blur(); }
+        }}
+        placeholder="/ Scan or search…"
+        className="pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-44 focus:w-56 transition-all duration-150"
+      />
+    </div>
+  );
+}
+
 // ── Top bar ───────────────────────────────────────────────────────────────────
 function WarehouseSwitcher() {
   const { user, isAdmin, setActiveWarehouse } = useAuth();
@@ -306,6 +367,7 @@ export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooCo
           <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
           {odooConnected ? "Odoo synced" : "Odoo offline"}
         </span>
+        <GlobalSearch />
         {onRefresh && (
           <button onClick={onRefresh} className="p-1.5 rounded-md border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all">
             <RefreshCw size={14} />

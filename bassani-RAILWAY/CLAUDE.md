@@ -81,6 +81,7 @@ No new external services without an explicit decision. Approved additions: Resen
 - `backend/routes/product_routes.py` — product list (`category_id` int param for picker drawer), categories endpoint, `GET /{product_id}/lots` (in-stock lot list with qty aggregated from `stock.quant`, expiry from `stock.lot`)
 - `backend/routes/label_routes.py` — GS1 label printing: printer CRUD (`/api/labels/printers`) + ZPL print endpoint (`/api/labels/gs1/print`). Printers stored in MongoDB `portal_settings` `_id: "label_printers"`.
 - `backend/routes/gtin_pool_routes.py` — GTIN Pool management: bulk-add, list, assign to Odoo product, unassign, delete. Collection: `gtin_pool`. Assignment writes to Odoo `product.template.barcode`.
+- `backend/routes/search_routes.py` — `GET /api/search/global?q=` — smart dispatch: 13–14 digit GTIN → product barcode lookup; sale.order name → ticket navigation; account.move name → invoice navigation. Requires `require_admin`.
 - `frontend/src/components/GTINPickerModal.js` — modal for assigning a pool GTIN to a product. Shows current assignment status, available GTIN list with search, assign/unassign actions. Opened from the "Pool" button in the Products table Barcode column.
 - `frontend/src/views/GTINPool.js` — Settings > GTIN Pool tab. Stats (total/available/assigned), bulk-upload textarea, full registry table with unassign/delete actions.
 - `backend/services/gs1.py` — `validate_gtin()`, `build_gs1_text()`, `build_zpl_unit_label()`, `build_zpl_carton_label()`, `send_zpl()` (TCP port 9100)
@@ -113,7 +114,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
-| 12 | Barcode Integration | In Progress — 12.0 backend done; 12.4 GS1 backend + Products-page label modal built; 12.5 GTIN Pool management complete; serial tracking + packing-board integration pending |
+| 12 | Barcode Integration | In Progress — 12.0 backend done; 12.4 GS1 backend + Products-page label modal built; 12.5 GTIN Pool management complete; 12.6 Global Barcode Search + Order Barcode complete; serial tracking + packing-board integration pending |
 | 13 | Production and Cultivation Module | Concept — needs SAHPRA scoping |
 | 19 | Per-User Document Signing | Complete — `signing_authority.sign` permission, My Profile setup, countersignature flow |
 | 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag, internal agents excluded from bulk runs |

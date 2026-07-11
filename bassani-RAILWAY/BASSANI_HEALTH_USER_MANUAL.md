@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 9 July 2026
+**Last Updated:** 11 July 2026
 
 ---
 
@@ -1142,12 +1142,23 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 **GS1 pharmaceutical labels:** Products with a valid GTIN barcode (set in Odoo's barcode field or assigned from the GTIN Pool) show a small **GS1** badge button in the Barcode column. Clicking it opens the label printing modal. You can enter the batch/lot number, expiry date, and starting serial number, choose Unit label (GS1 DataMatrix, 57×32mm), Carton label (GS1-128, 100×50mm), or both, set the quantity, select a Zebra printer, and click **Print to Zebra**. A live preview of the label renders in the modal as you type. If no Zebra printer is configured, use **Print via browser** to print to any connected printer. Printers are configured in **Settings → Label Printers**. Note: GTINs must be officially registered with GS1 South Africa before labels can be used on product dispatched to pharmacy — dummy GTINs may be used for setup and testing.
 
-**GTIN Pool:** The Barcode column also shows an indigo **Pool** button for every product. Clicking it opens the GTIN picker, which lets you assign a pre-purchased GS1 GTIN code directly to that product. The picker shows:
-- The product's current barcode with a status badge: green if the barcode came from the pool, amber if it was entered manually in Odoo (not tracked in the pool)
-- An "Unassign" button (pool-assigned barcodes only) to release the code back to available
-- A searchable list of all available GTINs from the pool — click "Assign" on any row to assign it to this product
+**Set GTIN / Barcode:** The Barcode column shows either the current barcode value or a **+ Set GTIN** link. Clicking it opens the barcode manager modal, which handles all barcode operations in one place:
+- Current barcode status: green badge if assigned from the pool; amber badge if entered manually
+- Unassign (pool barcodes) or Clear (manual barcodes) buttons with inline confirmation
+- A searchable list of available GTINs from your pool — click Assign to write it to Odoo immediately
+- A custom barcode entry field for non-pool barcodes (any format, including Code 128 or EAN-13)
 
 Assigning a GTIN from the picker writes the barcode field directly to Odoo and marks the code as assigned in the pool. The Products table barcode cell updates immediately. To manage the full GTIN pool (upload codes, view the registry, remove unused codes), go to **Settings → GTIN Pool**.
+
+**Global barcode search:** Every admin role sees a search bar in the top-right of the portal header on every page. Press `/` on your keyboard from anywhere to focus it (as long as you are not already typing in another field). Then scan any barcode or type a reference:
+
+- **Product GS1 barcode:** Scanning a product's GTIN (13 or 14 digits) takes you straight to the Products page filtered to that item's SKU. Use this when you have a physical product and want to check its stock, price, or lot details without browsing.
+- **Sale order reference:** Typing or scanning the Odoo order number (e.g. `S00142`) takes you directly to the sales ticket for that order — including its current status, invoice, and all actions.
+- **Invoice number:** Typing the invoice reference (e.g. `INV/2026/00043`) takes you directly to that invoice's detail page.
+
+If no match is found, a red toast appears. Press Escape to clear the search bar at any time.
+
+**Order barcodes on tickets:** Every sales ticket detail page shows a compact Code 128 barcode of the sale order reference in the top-right of the order document header. Warehouse staff can scan this from a tablet screen or a printed packing slip to pull up the order instantly via the global search bar.
 
 **Reseller catalog toggle:** The "Reseller / MOQ" column controls which products appear in the reseller catalog. The toggle switch adds or removes the product. When a product is toggled on, a small number input appears next to the toggle — enter a minimum order quantity (MOQ) and click away to save. Leave it blank for no minimum. If you toggle a product off and back on, any previously set MOQ is restored.
 

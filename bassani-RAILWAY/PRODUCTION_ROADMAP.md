@@ -2121,8 +2121,8 @@ Changes to the existing Sales Ticket system (Phase 8):
 **Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. The vault team leader scans finished goods batches in at the vault as they arrive from production, and scans them out at dispatch — creating the physical handoff record that bridges the Phase 13 production chain to the commercial order pipeline.
 
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 12.0 complete; 12.4 GS1 backend + Products-page label printing built; 12.5 GTIN Pool management complete; serial tracking + packing-board integration pending  
-**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29; Sub-deploy 2 (12.4 GS1 backend + Products page modal) — 2026-07-09; Sub-deploy 3 (12.5 GTIN Pool) — 2026-07-11
+**Status:** 🟡 In Progress — 12.0 complete; 12.4 GS1 backend + Products-page label printing built; 12.5 GTIN Pool management complete; 12.6 Global Barcode Search + Order Barcode complete; serial tracking + packing-board integration pending  
+**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29; Sub-deploy 2 (12.4 GS1 backend + Products page modal) — 2026-07-09; Sub-deploy 3 (12.5 GTIN Pool) — 2026-07-11; Sub-deploy 4 (12.6 Global search + order barcode) — 2026-07-11
 
 ### Context
 
@@ -2435,6 +2435,41 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 - [x] Removing a GTIN from the registry is blocked if it is currently assigned
 - [x] A GTIN that fails the GS1 check digit algorithm is rejected at upload time with a clear error
 - [x] All assign/unassign actions are audit-logged with actor, GTIN, product, and timestamp
+
+---
+
+### 12.6 — Global Barcode Search + Order Barcode
+
+> **Added 2026-07-11** — Physical barcode scanners (USB/Bluetooth) are now used in the warehouse. Staff need a way to scan any barcode — product GS1, sale order reference, or invoice number — and land on the correct portal page immediately without knowing which URL to navigate to.
+
+**Goal:** A global search bar in the TopBar (visible to all admin roles) accepts barcode scanner input and dispatches to the right page. Sale order tickets display a Code 128 barcode of the Odoo order reference so warehouse staff can scan a printed packing slip or tablet screen to pull up the ticket instantly.
+
+**How scanners work:** USB/Bluetooth scanners emulate keyboard input — they type the value and press Enter into whatever input is focused. No browser extension or special detection needed. Pressing `/` from anywhere on any page focuses the global search input.
+
+**Smart dispatch logic:**
+1. 13–14 digit string with valid GS1 check digit → product barcode lookup → navigate to `/products?q={sku}`
+2. Matches a `sale.order` name (exact or case-insensitive) → find linked sales ticket → navigate to ticket detail
+3. Matches an `account.move` name → navigate to invoice detail
+
+**Barcode format for orders:** Code 128 encoding the Odoo sale order name (e.g. `S00142`). GS1-128 with AI `(400)` is the formally correct standard for order references in regulated pharmaceutical supply chains; the current implementation uses plain Code 128 for simplicity. The scanner output is identical — the portal strips any AI prefix before dispatching.
+
+**Backend:** `GET /api/search/global?q=...` in `search_routes.py`. Requires `require_admin` (staff roles only — resellers don't use scanners). Returns `{ type, id, ref, name, navigate_to }`.
+
+**Frontend:**
+- `GlobalSearch` component in `UI.js` — compact expanding input in every TopBar; `/` shortcut to focus; Escape clears
+- `OrderBarcode` component in `SalesTickets.js` — `bwip-js` renders Code 128 canvas inline in the ticket detail header; print-safe
+- `Products` page reads `?q=` URL param on mount to pre-populate search when navigating from a scan result
+
+**Definition of Done for 12.6:**
+- [x] Scanning a product GTIN in the global search bar navigates to the Products page pre-filtered to that product's SKU
+- [x] Scanning a sale order reference (e.g. `S00142`) navigates directly to the sales ticket detail
+- [x] Scanning an invoice reference navigates to the invoice detail page
+- [x] Unrecognised barcode or reference shows a toast error ("No match found for: ...")
+- [x] Pressing `/` from any portal page focuses the search bar without interfering with other inputs
+- [x] Pressing Escape clears and blurs the search bar
+- [x] A Code 128 barcode of the Odoo order name renders in the ticket detail header
+- [x] The barcode is readable by a scanner from the screen and survives browser print (`@media print`)
+- [x] GlobalSearch is hidden from reseller-role users
 
 ---
 
