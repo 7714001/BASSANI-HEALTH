@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Search, X, Package, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import api from "../api";
-import { fmtR } from "./UI";
+import { fmtR, parseDisplayName } from "./UI";
 
 // ── Searchable dropdown select ────────────────────────────────────────────────
 function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled }) {
@@ -362,13 +362,10 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
           {!loading && displayed.length > 0 && (
             <div className="divide-y divide-gray-50">
               {displayed.map(p => {
-                const fullName   = p.display_name || p.name || "";
-                const bracketIdx = fullName.indexOf(" (");
-                const base       = bracketIdx !== -1 ? fullName.slice(0, bracketIdx) : fullName;
-                const variant    = bracketIdx !== -1 ? fullName.slice(bracketIdx + 2, -1) : null;
-                const stock      = Math.max(0, Math.floor(p.virtual_available || 0));
-                const inStock    = stock > 0;
-                const added      = addedIds.has(p.id);
+                const { base, groups } = parseDisplayName(p.display_name || p.name || "");
+                const stock            = Math.max(0, Math.floor(p.virtual_available || 0));
+                const inStock          = stock > 0;
+                const added            = addedIds.has(p.id);
 
                 return (
                   <div
@@ -378,11 +375,11 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
                     <div className="min-w-0 flex-1 pr-4">
                       <p className="text-sm font-semibold text-gray-900 leading-tight">{base}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {variant && (
-                          <span className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">
-                            {variant}
+                        {groups.map((g, i) => (
+                          <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">
+                            {g}
                           </span>
-                        )}
+                        ))}
                         {p.default_code && (
                           <span className="text-[10px] font-mono text-gray-400 leading-none">
                             {p.default_code}

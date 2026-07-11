@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import api from "../api";
-import { fmtR } from "./UI";
+import { fmtR, parseDisplayName } from "./UI";
 
 export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, warehouseId }) {
   const [prodSearch, setProdSearch]     = useState(line._product_label || "");
@@ -70,10 +70,9 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
   }, [prodSearch, warehouseId]); // eslint-disable-line
 
   const selectProduct = (p) => {
-    const label      = p.display_name || p.name;
-    const bracketIdx = label.indexOf(" (");
-    const baseName   = bracketIdx !== -1 ? label.slice(0, bracketIdx) : label;
-    const stock      = Math.max(0, Math.floor(p.virtual_available || 0));
+    const label    = p.display_name || p.name;
+    const baseName = parseDisplayName(label).base;
+    const stock    = Math.max(0, Math.floor(p.virtual_available || 0));
     setProdSearch(label);
     setDropdownOpen(false);
     onUpdate({
@@ -102,19 +101,16 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       {/* ── Product — search input until selected, then pill display ── */}
       <td className="p-2.5 relative">
         {line.product_id ? (() => {
-          const full       = line._product_label || line.name || "";
-          const bracketIdx = full.indexOf(" (");
-          const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
-          const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 2, -1) : null;
+          const { base, groups } = parseDisplayName(line._product_label || line.name || "");
           return (
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-gray-900 leading-tight">{base}</p>
-                {(variant || line._sku) && (
+                {(groups.length > 0 || line._sku) && (
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    {variant && (
-                      <span className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{variant}</span>
-                    )}
+                    {groups.map((g, i) => (
+                      <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                    ))}
                     {line._sku && (
                       <span className="text-[10px] font-mono text-gray-400 leading-none">{line._sku}</span>
                     )}
@@ -175,14 +171,17 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                     >
                       <div className="min-w-0">
                         {(() => {
-                          const full       = p.display_name || p.name;
-                          const bracketIdx = full.indexOf(" (");
-                          const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
-                          const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 1) : null;
+                          const { base, groups } = parseDisplayName(p.display_name || p.name || "");
                           return (
                             <>
                               <p className="text-sm font-medium text-gray-900">{base}</p>
-                              {variant && <p className="text-xs text-bassani-600 font-medium mt-0.5">{variant}</p>}
+                              {groups.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {groups.map((g, i) => (
+                                    <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                                  ))}
+                                </div>
+                              )}
                             </>
                           );
                         })()}

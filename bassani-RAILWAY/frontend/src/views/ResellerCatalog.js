@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+import { X } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, FilterPill, ChipRow, fmtR } from "../components/UI";
+import { TopBar, DataTable, SearchBar, FilterPill, ChipRow, fmtR, parseDisplayName } from "../components/UI";
 
 const stockColor = (qty) =>
   qty <= 0   ? "text-red-600 font-semibold"
@@ -9,8 +10,8 @@ const stockColor = (qty) =>
              : "text-bassani-700 font-semibold";
 
 const getVariantLabel = (p) => {
-  const m = ((p.display_name || p.name) || "").match(/\(([^)]+)\)$/);
-  return m ? m[1] : null;
+  const { groups } = parseDisplayName((p.display_name || p.name) || "");
+  return groups.length > 0 ? groups.join(" / ") : null;
 };
 
 export default function ResellerCatalog() {
@@ -77,27 +78,31 @@ export default function ResellerCatalog() {
             placeholder="Search products, SKU…"
           />
           <ChipRow>
-            {["all", ...categories.map(c => c.name)].map(c => (
-              <FilterPill
-                key={c}
-                label={c === "all" ? "All" : c}
-                active={cat === c}
-                onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
-              />
-            ))}
+            {cat === "all" ? (
+              ["all", ...categories.map(c => c.name)].map(c => (
+                <FilterPill key={c} label={c === "all" ? "All" : c} active={cat === c}
+                  onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }} />
+              ))
+            ) : (
+              <>
+                <button
+                  onClick={() => { setCat("all"); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
+                >
+                  {cat} <X size={11} className="opacity-80" />
+                </button>
+                {variantOpts.length > 0 && (
+                  <>
+                    <span className="text-gray-200 select-none self-center">|</span>
+                    <FilterPill key="__all__" label="All variants" active={variant === "all"} onClick={() => setVariant("all")} />
+                    {variantOpts.map(v => (
+                      <FilterPill key={v} label={v} active={variant === v} onClick={() => setVariant(v)} />
+                    ))}
+                  </>
+                )}
+              </>
+            )}
           </ChipRow>
-          {variantOpts.length > 0 && (
-            <ChipRow>
-              {["all", ...variantOpts].map(v => (
-                <FilterPill
-                  key={v}
-                  label={v === "all" ? "All Variants" : v}
-                  active={variant === v}
-                  onClick={() => setVariant(v)}
-                />
-              ))}
-            </ChipRow>
-          )}
         </div>
 
         <DataTable
@@ -107,9 +112,17 @@ export default function ResellerCatalog() {
               header: "Product / SKU",
               cell: ({ row: { original: p } }) => {
                 const minQty = moq[p.id] || 0;
+                const { base, groups } = parseDisplayName(p.display_name || p.name || "");
                 return (
                   <div>
-                    <p className="font-medium text-gray-900">{p.display_name || p.name}</p>
+                    <p className="font-medium text-gray-900">{base}</p>
+                    {groups.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {groups.map((g, i) => (
+                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 mt-0.5">
                       <p className="font-mono text-[10px] text-gray-400">{p.default_code || "—"}</p>
                       {minQty > 0 && (

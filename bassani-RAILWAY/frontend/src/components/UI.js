@@ -21,6 +21,20 @@ export const fmtR   = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minim
 export const fmtNum = (n) => Number(n || 0).toLocaleString("en-ZA");
 export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric" }) : "—";
 
+// Splits an Odoo display_name into base name + variant chips.
+// Odoo appends each attribute as a trailing "(Value)" group:
+// "Product (Weight: 1g) (Pack: 2)" → { base: "Product", groups: ["Weight: 1g", "Pack: 2"] }
+export const parseDisplayName = (full = "") => {
+  const groups = [];
+  let rest = full;
+  let m;
+  while ((m = rest.match(/\s*\(([^)]+)\)$/))) {
+    groups.unshift(m[1]);
+    rest = rest.slice(0, rest.length - m[0].length);
+  }
+  return { base: rest, groups };
+};
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV = [
   { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },

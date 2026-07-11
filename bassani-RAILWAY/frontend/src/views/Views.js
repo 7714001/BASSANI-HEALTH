@@ -13,7 +13,7 @@ import GTINPickerModal from "../components/GTINPickerModal";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
-  LoadingState, EmptyState, Badge, fmtR, fmtDate,
+  LoadingState, EmptyState, Badge, fmtR, fmtDate, parseDisplayName,
 } from "../components/UI";
 
 
@@ -31,12 +31,10 @@ const MOVE_TYPE_META = {
 };
 const MOVE_OUT_TYPES = new Set(["delivery", "adjustment_out", "consumed", "vendor_return"]);
 
-// Extracts the variant label from an Odoo display_name.
-// Odoo appends variant attribute values in parentheses: "Product Name (Variant)"
-// Returns the parenthetical string, or null for single-variant products.
+// Stable variant key for filter pill deduplication — joins all attribute groups.
 const getVariantLabel = (p) => {
-  const m = ((p.display_name || p.name) || "").match(/\(([^)]+)\)$/);
-  return m ? m[1] : null;
+  const { groups } = parseDisplayName((p.display_name || p.name) || "");
+  return groups.length > 0 ? groups.join(" / ") : null;
 };
 
 export function Products() {
@@ -318,14 +316,17 @@ export function Products() {
         <DataTable
           columns={[
             { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => {
-              const full = p.display_name || p.name || "";
-              const bi   = full.indexOf(" (");
-              const base = bi !== -1 ? full.slice(0, bi) : full;
-              const vari = bi !== -1 ? full.slice(bi + 2, -1) : null;
+              const { base, groups } = parseDisplayName(p.display_name || p.name || "");
               return (
                 <div>
                   <p className="font-medium text-gray-900">{base}</p>
-                  {vari && <span className="inline-block mt-0.5 text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{vari}</span>}
+                  {groups.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {groups.map((g, i) => (
+                        <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                      ))}
+                    </div>
+                  )}
                   <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code||"—"}</p>
                 </div>
               );
@@ -1388,20 +1389,34 @@ export function Orders() {
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
               />
               <ChipRow>
-                {cartProductCategories.map(c => (
-                  <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c} onClick={() => { setCartProdCat(c); setCartProdVariant("all"); }} />
-                ))}
+                {cartProdCat === "all" ? (
+                  cartProductCategories.map(c => (
+                    <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c}
+                      onClick={() => { setCartProdCat(c); setCartProdVariant("all"); }} />
+                  ))
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setCartProdCat("all"); setCartProdVariant("all"); }}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
+                    >
+                      {cartProdCat} <X size={11} className="opacity-80" />
+                    </button>
+                    {cartVariantOptions.length > 0 && (
+                      <>
+                        <span className="text-gray-200 select-none self-center">|</span>
+                        <FilterPill key="__all__" label="All" active={cartProdVariant === "all"} onClick={() => setCartProdVariant("all")} />
+                        {cartVariantOptions.map(v => (
+                          <FilterPill key={v} label={v} active={cartProdVariant === v} onClick={() => setCartProdVariant(v)} />
+                        ))}
+                      </>
+                    )}
+                  </>
+                )}
                 <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
                 <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
                 <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
               </ChipRow>
-              {cartVariantOptions.length > 0 && (
-                <ChipRow>
-                  {["all", ...cartVariantOptions].map(v => (
-                    <FilterPill key={v} label={v === "all" ? "All" : v} active={cartProdVariant === v} onClick={() => setCartProdVariant(v)} />
-                  ))}
-                </ChipRow>
-              )}
             </div>
             <div className="flex-1 overflow-y-auto p-6">
               {cartProdsLoading && <LoadingState />}

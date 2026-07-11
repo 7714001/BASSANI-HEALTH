@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import bwipjs from "bwip-js";
 import { Printer, Download, AlertTriangle, CheckCircle2, Tag } from "lucide-react";
 import api from "../api";
-import { Modal, BtnPrimary, BtnSecondary, FormGroup, Input } from "./UI";
+import { Modal, BtnPrimary, BtnSecondary, FormGroup, Input, parseDisplayName } from "./UI";
 import toast from "react-hot-toast";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -198,17 +198,8 @@ export default function GS1LabelModal({ product, onClose }) {
   const expiryYYMMDD  = toYYMMDD(expiry);
   const expiryDisplay = fmtExpiry(expiry);
 
-  const productName = (() => {
-    const full = product?.display_name || product?.name || "";
-    const bi   = full.indexOf(" (");
-    return bi !== -1 ? full.slice(0, bi) : full;
-  })();
-
-  const variantLabel = (() => {
-    const full = product?.display_name || product?.name || "";
-    const bi   = full.indexOf(" (");
-    return bi !== -1 ? full.slice(bi + 2, -1) : null;
-  })();
+  const { base: productName, groups: variantGroups } = parseDisplayName(product?.display_name || product?.name || "");
+  const variantLabel = variantGroups.length > 0 ? variantGroups.join(" / ") : null;
 
   useEffect(() => {
     api.get("/api/labels/printers")

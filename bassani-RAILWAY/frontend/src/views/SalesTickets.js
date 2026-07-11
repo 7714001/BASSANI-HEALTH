@@ -19,7 +19,7 @@ import {
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
-  SearchBar, ChipRow, FilterPill,
+  SearchBar, ChipRow, FilterPill, parseDisplayName,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -614,9 +614,8 @@ export default function SalesTickets() {
   });
 
   const handlePickerAdd = (product) => {
-    const label      = product.display_name || product.name;
-    const bracketIdx = label.indexOf(" (");
-    const baseName   = bracketIdx !== -1 ? label.slice(0, bracketIdx) : label;
+    const label    = product.display_name || product.name;
+    const baseName = parseDisplayName(label).base;
     const stock      = Math.max(0, Math.floor(product.virtual_available || 0));
     const populated  = {
       ...newLine(),
@@ -1073,16 +1072,17 @@ export default function SalesTickets() {
                           </thead>
                           <tbody>
                             {(detailOrder.lines || []).map((line, i) => {
-                              const full       = line.name || line.product_id?.[1] || "";
-                              const bracketIdx = full.indexOf(" (");
-                              const base       = bracketIdx !== -1 ? full.slice(0, bracketIdx) : full;
-                              const variant    = bracketIdx !== -1 ? full.slice(bracketIdx + 2, -1) : null;
+                              const { base, groups } = parseDisplayName(line.name || line.product_id?.[1] || "");
                               return (
                               <tr key={i} className="border-b border-gray-50 hover:bg-slate-50/30">
                                 <td className="p-3 pl-6">
                                   <p className="text-sm font-medium text-gray-900">{base}</p>
-                                  {variant && (
-                                    <span className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none mt-1 inline-block">{variant}</span>
+                                  {groups.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {groups.map((g, gi) => (
+                                        <span key={gi} className="text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                                      ))}
+                                    </div>
                                   )}
                                 </td>
                                 <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
