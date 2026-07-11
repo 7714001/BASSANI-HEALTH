@@ -161,13 +161,13 @@ async def graph_webhook(
     stored_client_state = await get_client_state(_MAILBOX)
 
     for notification in body.get("value", []):
-        if stored_client_state:
-            if notification.get("clientState", "") != stored_client_state:
-                logger.warning(
-                    "onboarding_inbox_webhook_invalid_state received=%s",
-                    notification.get("clientState"),
-                )
-                continue
+        notification_state = notification.get("clientState", "")
+        if not notification_state or notification_state != stored_client_state:
+            logger.warning(
+                "onboarding_inbox_webhook_invalid_state received=%s expected=%s",
+                notification_state, stored_client_state,
+            )
+            continue
 
         if notification.get("changeType") != "created":
             continue

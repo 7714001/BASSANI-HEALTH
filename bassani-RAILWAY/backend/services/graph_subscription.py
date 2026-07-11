@@ -39,6 +39,8 @@ def _webhook_url(mailbox: str) -> str:
     base = settings.portal_url.rstrip("/")
     if mailbox == "sales":
         return f"{base}/api/inbox/graph-webhook"
+    if mailbox == "orders":
+        return f"{base}/api/orders-inbox/graph-webhook"
     return f"{base}/api/onboarding-inbox/graph-webhook"
 
 

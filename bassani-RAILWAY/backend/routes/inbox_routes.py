@@ -136,7 +136,7 @@ async def _ingest_message(graph_message_id: str) -> None:
         return
 
     try:
-        msg = await get_message(graph_message_id)
+        msg = await get_message(graph_message_id, mailbox_address=_active_mailbox_address())
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             # Message was deleted/moved before we could fetch it — known Graph
@@ -413,14 +413,17 @@ async def graph_webhook(
     stored_client_state = await get_client_state()
 
     for notification in body.get("value", []):
-        # Verify the notification actually came from our subscription
-        if stored_client_state:
-            if notification.get("clientState", "") != stored_client_state:
-                logger.warning(
-                    "inbox_webhook_invalid_client_state received=%s",
-                    notification.get("clientState"),
-                )
-                continue
+        # Reject any notification that doesn't match our stored client_state.
+        # When stored_client_state is None (no subscription ever created), reject
+        # everything — accepting blindly allows cross-mailbox notifications to
+        # contaminate this collection if another subscription points here by mistake.
+        notification_state = notification.get("clientState", "")
+        if not notification_state or notification_state != stored_client_state:
+            logger.warning(
+                "inbox_webhook_invalid_client_state received=%s expected=%s",
+                notification_state, stored_client_state,
+            )
+            continue
 
         if notification.get("changeType") != "created":
             continue

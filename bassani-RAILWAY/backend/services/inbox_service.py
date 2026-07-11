@@ -114,6 +114,14 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
         return
 
     mailbox_address = get_graph_mailbox_address(mailbox)
+    if not mailbox_address:
+        # No Graph address for this mailbox — either it reverted to IMAP or was never
+        # configured. Never fall back to _default_mailbox() here: doing so fetches from
+        # whatever mailbox last called set_runtime_credentials, which can be a completely
+        # different account and would store that account's emails in the wrong collection.
+        logger.warning("ingest_graph_message_skipped mailbox=%s gid=%s — no Graph address",
+                       mailbox, graph_message_id)
+        return
 
     try:
         msg = await get_message(graph_message_id, mailbox_address=mailbox_address)
