@@ -545,6 +545,257 @@ async def get_order_manufacturing_orders(
     return {"manufacturing_orders": result}
 
 
+# ── Passport ──────────────────────────────────────────────────────────────────
+
+def _passport_status(order: dict, ticket: dict | None, invoice: dict | None, deliveries: list) -> dict:
+    """Derive a single human-readable overall status from all sources."""
+    state = order.get("state", "")
+
+    if state == "cancel":
+        return {"label": "Cancelled", "color": "red", "detail": "Order was cancelled in Odoo."}
+    if state == "draft":
+        return {"label": "Draft Quotation", "color": "gray", "detail": "Quotation not yet confirmed by customer."}
+    if state == "sent":
+        return {"label": "Quotation Sent", "color": "blue", "detail": "Awaiting customer acceptance."}
+
+    inv_note = ""
+    if invoice:
+        pstate = invoice.get("payment_state", "")
+        inv_name = invoice.get("name", "")
+        if pstate == "paid":
+            inv_note = f" Invoice {inv_name} is paid."
+        elif pstate in ("not_paid", "partial"):
+            inv_note = f" Invoice {inv_name} is outstanding."
+
+    if not ticket:
+        return {"label": "Confirmed — Not in Pipeline", "color": "amber",
+                "detail": f"Order confirmed but no portal ticket exists.{inv_note}"}
+
+    status = ticket.get("status", "open")
+    exit_status = ticket.get("exit_status") or ""
+
+    if exit_status == "complete":
+        return {"label": "Complete", "color": "green", "detail": f"Order fulfilled and completed.{inv_note}"}
+    if exit_status == "cancelled":
+        reason = ticket.get("incomplete_reason") or ""
+        return {"label": "Cancelled", "color": "red", "detail": f"Cancelled.{' ' + reason if reason else ''}"}
+    if exit_status == "not_interested":
+        return {"label": "Not Interested", "color": "gray", "detail": "Customer did not proceed."}
+
+    has_backorder = any(d.get("is_backorder") for d in deliveries)
+    _MAP = {
+        "open":                 ("Inquiry Open",          "blue",   "Sales team is working on this inquiry."),
+        "quote":                ("Building Quote",        "blue",   "Quotation is being prepared."),
+        "sale_order":           ("Awaiting Deposit",      "amber",  "Order confirmed — waiting for deposit payment."),
+        "invoice":              ("Deposit Invoice Raised","amber",  "Invoice raised — awaiting payment."),
+        "confirmed_wip":        ("Confirmed — In Progress","green", "Payment received. Order is in fulfilment."),
+        "ready_for_collection": ("Ready for Collection",  "green",  "Order packed and approved — ready for customer collection."),
+        "incomplete":           ("Marked Incomplete",     "orange", ticket.get("incomplete_reason") or "Order was marked incomplete."),
+        "queued":               ("Queued for Packing",   "blue",   "Sent to packing board — awaiting packer assignment."),
+        "packing":              ("Being Packed",          "blue",   "Packing in progress."),
+        "waiting_stock":        ("Awaiting Stock",        "orange", "Backorder — items will be dispatched when stock is available."),
+    }
+    label, color, detail = _MAP.get(status, (status, "gray", ""))
+    if has_backorder and status not in ("waiting_stock",):
+        detail += " Partial backorder exists."
+    return {"label": label, "color": color, "detail": detail + inv_note}
+
+
+@router.get("/{order_id}/passport")
+async def get_order_passport(order_id: int, current_user: dict = Depends(get_current_user)):
+    """Aggregated lifecycle view of a single order — order + ticket + invoice + deliveries + MOs."""
+    odoo = get_odoo_client()
+
+    # ── Sale order ────────────────────────────────────────────────────────────
+    try:
+        orders = odoo.read("sale.order", [order_id], fields=[
+            "name", "state", "partner_id", "date_order", "amount_total",
+            "amount_tax", "invoice_ids", "picking_ids", "payment_term_id",
+            "order_line",
+        ])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    if not orders:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order = orders[0]
+
+    # Reseller access check — same rule as GET /{order_id}
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1})
+        reseller_id = reseller["id"] if reseller else None
+        allowed = await col("order_commissions").find_one({"odoo_order_id": str(order_id), "reseller_id": reseller_id}, {"_id": 1})
+        if not allowed:
+            allowed = await col("tickets").find_one({"type": "sales", "order_id": order_id, "reseller_id": reseller_id}, {"_id": 1})
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Partner detail
+    if order.get("partner_id"):
+        try:
+            partners = odoo.read("res.partner", [order["partner_id"][0]],
+                fields=["name", "street", "city", "zip", "email", "phone", "vat"])
+            if partners:
+                order["partner_detail"] = partners[0]
+        except Exception:
+            pass
+
+    # Order lines
+    if order.get("order_line"):
+        try:
+            lines = odoo.read("sale.order.line", order["order_line"], fields=[
+                "product_id", "name", "product_uom_qty", "price_unit",
+                "price_subtotal", "qty_delivered", "qty_invoiced",
+            ])
+            order["lines"] = lines
+        except Exception:
+            order["lines"] = []
+
+    # ── Sales ticket ──────────────────────────────────────────────────────────
+    ticket = await col("tickets").find_one(
+        {"type": "sales", "order_id": order_id},
+        {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
+         "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1},
+    )
+    ticket_out = None
+    if ticket:
+        ticket_out = {
+            "ticket_id":  str(ticket["_id"]),
+            "ref":        f"TKT-{str(ticket['_id'])[-8:].upper()}",
+            "status":     ticket.get("status"),
+            "exit_status": ticket.get("exit_status"),
+            "assigned_to": ticket.get("assigned_to"),
+            "incomplete_reason": ticket.get("incomplete_reason"),
+            "created_at": ticket.get("created_at"),
+            "updated_at": ticket.get("updated_at"),
+            "source":     ticket.get("source"),
+        }
+
+    # ── Invoice ───────────────────────────────────────────────────────────────
+    invoice_out = None
+    invoice_ids = order.get("invoice_ids") or []
+    if invoice_ids:
+        try:
+            inv_rows = odoo.read("account.move", [invoice_ids[0]], fields=[
+                "name", "state", "payment_state", "amount_total",
+                "amount_residual", "invoice_date", "invoice_date_due",
+            ])
+            if inv_rows:
+                inv = inv_rows[0]
+                invoice_out = {
+                    "invoice_id":    inv["id"],
+                    "name":          inv["name"],
+                    "state":         inv["state"],
+                    "payment_state": inv["payment_state"],
+                    "amount_total":  inv["amount_total"],
+                    "amount_residual": inv.get("amount_residual", 0),
+                    "invoice_date":  inv.get("invoice_date"),
+                    "due_date":      inv.get("invoice_date_due"),
+                }
+        except Exception:
+            pass
+
+    # ── Deliveries ────────────────────────────────────────────────────────────
+    picking_ids = order.get("picking_ids") or []
+    deliveries = []
+    lot_map: dict = {}
+    if picking_ids:
+        try:
+            pickings = odoo_call("stock.picking", "read", [picking_ids], {"fields": [
+                "id", "name", "state", "scheduled_date", "date_done",
+                "backorder_id", "picking_type_code", "move_ids",
+            ]})
+            pickings = [p for p in pickings if p.get("picking_type_code") == "outgoing"]
+            all_move_ids = [mid for p in pickings for mid in p.get("move_ids", [])]
+            move_by_picking: dict = {}
+            if all_move_ids:
+                moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
+                    "id", "product_id", "product_uom_qty", "quantity_done", "picking_id",
+                ]})
+                for m in moves:
+                    pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
+                    move_by_picking.setdefault(pid, []).append({
+                        "product_id":   m["product_id"][0] if isinstance(m["product_id"], list) else m["product_id"],
+                        "product_name": m["product_id"][1] if isinstance(m["product_id"], list) else "",
+                        "qty_ordered":  m["product_uom_qty"],
+                        "qty_done":     m["quantity_done"],
+                    })
+
+            # Lot map from done pickings
+            done_picking_ids = [p["id"] for p in pickings if p.get("state") == "done"]
+            if done_picking_ids:
+                try:
+                    ml_rows = odoo_call("stock.picking", "read", [done_picking_ids], {"fields": ["move_line_ids"]})
+                    all_ml_ids = [ml for p in ml_rows for ml in p.get("move_line_ids", [])]
+                    if all_ml_ids:
+                        mls = odoo.read("stock.move.line", all_ml_ids, fields=["product_id", "lot_id"])
+                        for ml in mls:
+                            if not ml.get("lot_id"): continue
+                            pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                            lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
+                            lot_map.setdefault(pid, [])
+                            if lot_name not in lot_map[pid]:
+                                lot_map[pid].append(lot_name)
+                except Exception:
+                    pass
+
+            _STATE_LABEL = {
+                "draft": "Draft", "waiting": "Waiting for Stock",
+                "confirmed": "Confirmed", "assigned": "Ready to Pick",
+                "done": "Delivered", "cancel": "Cancelled",
+            }
+            for p in pickings:
+                deliveries.append({
+                    "id":           p["id"],
+                    "name":         p["name"],
+                    "state":        p["state"],
+                    "state_label":  _STATE_LABEL.get(p["state"], p["state"]),
+                    "scheduled_date": p.get("scheduled_date"),
+                    "date_done":    p.get("date_done"),
+                    "is_backorder": bool(p.get("backorder_id")),
+                    "backorder_ref": p["backorder_id"][1] if isinstance(p.get("backorder_id"), list) and p["backorder_id"] else None,
+                    "lines":        move_by_picking.get(p["id"], []),
+                })
+        except Exception:
+            pass
+
+    # ── Manufacturing orders ──────────────────────────────────────────────────
+    mos = []
+    has_backorder = any(d["is_backorder"] for d in deliveries)
+    if has_backorder:
+        try:
+            so_name = order["name"]
+            mo_rows = odoo.search_read(
+                "mrp.production",
+                domain=[("origin", "=", so_name), ("state", "not in", ["done", "cancel"])],
+                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "date_planned_finished"],
+                limit=50,
+            )
+            for mo in mo_rows:
+                mos.append({
+                    "mo_id":     mo["id"],
+                    "mo_name":   mo["name"],
+                    "state":     mo["state"],
+                    "product_name": mo["product_id"][1] if isinstance(mo.get("product_id"), list) else "",
+                    "product_qty":     mo.get("product_qty", 0),
+                    "qty_producing":   mo.get("qty_producing", 0),
+                    "date_planned_finished": mo.get("date_planned_finished"),
+                })
+        except Exception:
+            pass
+
+    overall_status = _passport_status(order, ticket_out, invoice_out, deliveries)
+
+    return {
+        "order":          order,
+        "ticket":         ticket_out,
+        "invoice":        invoice_out,
+        "deliveries":     deliveries,
+        "lot_map":        lot_map,
+        "manufacturing_orders": mos,
+        "overall_status": overall_status,
+    }
+
+
 @router.get("/{order_id}/stock-check")
 async def stock_check(order_id: int, current_user: dict = Depends(require_permission("orders.read"))):
     """Return per-line stock availability for a confirmed Odoo SO (before packing board entry is created).

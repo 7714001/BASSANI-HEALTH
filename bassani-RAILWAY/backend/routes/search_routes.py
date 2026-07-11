@@ -2,14 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import require_admin
 from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, get_company_id, odoo_context
-from database import col
 import re
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-_GTIN_RE    = re.compile(r"^\d{13,14}$")
-_ORDER_RE   = re.compile(r"^S\d+$", re.IGNORECASE)
-_INVOICE_RE = re.compile(r"^(INV|RINV)/", re.IGNORECASE)
+_GTIN_RE = re.compile(r"^\d{13,14}$")
 
 
 def _luhn_check(digits: str) -> bool:
@@ -92,26 +89,12 @@ async def global_search(
     if order_rows:
         order    = order_rows[0]
         order_id = order["id"]
-        ticket   = await col("tickets").find_one(
-            {"type": "sales", "order_id": order_id},
-            {"_id": 1},
-        )
-        if ticket:
-            return {
-                "type":        "ticket",
-                "id":          order_id,
-                "ref":         order["name"],
-                "name":        order.get("partner_id", [None, ""])[1] or "",
-                "navigate_to": "/tickets/sales",
-                "state":       {"openTicketId": str(ticket["_id"])},
-            }
         return {
             "type":        "order",
             "id":          order_id,
             "ref":         order["name"],
             "name":        order.get("partner_id", [None, ""])[1] or "",
-            "navigate_to": "/orders",
-            "state":       {"searchQuery": order["name"]},
+            "navigate_to": f"/orders/{order_id}/passport",
         }
 
     # ── 3. Invoice ref ────────────────────────────────────────────────────────
@@ -119,14 +102,14 @@ async def global_search(
         inv_rows = odoo.search_read(
             "account.move",
             domain=[("name", "=", q), ("move_type", "in", ["out_invoice", "out_refund"])],
-            fields=["id", "name", "partner_id", "payment_state", "amount_total"],
+            fields=["id", "name", "partner_id", "payment_state", "amount_total", "invoice_origin"],
             limit=1,
         )
         if not inv_rows:
             inv_rows = odoo.search_read(
                 "account.move",
                 domain=[("name", "=ilike", q), ("move_type", "in", ["out_invoice", "out_refund"])],
-                fields=["id", "name", "partner_id", "payment_state", "amount_total"],
+                fields=["id", "name", "partner_id", "payment_state", "amount_total", "invoice_origin"],
                 limit=1,
             )
     except Exception as e:
@@ -134,12 +117,22 @@ async def global_search(
 
     if inv_rows:
         inv = inv_rows[0]
+        # If invoice has a linked sale order, go straight to its passport
+        origin = inv.get("invoice_origin") or ""
+        nav = "/invoices"
+        if origin:
+            try:
+                so_rows = odoo.search_read("sale.order", domain=[("name", "=", origin)], fields=["id"], limit=1)
+                if so_rows:
+                    nav = f"/orders/{so_rows[0]['id']}/passport"
+            except Exception:
+                pass
         return {
             "type":        "invoice",
             "id":          inv["id"],
             "ref":         inv["name"],
             "name":        inv.get("partner_id", [None, ""])[1] or "",
-            "navigate_to": "/invoices",
+            "navigate_to": nav,
         }
 
     raise HTTPException(status_code=404, detail=f"No match found for: {q}")

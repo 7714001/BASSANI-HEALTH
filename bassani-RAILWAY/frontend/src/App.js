@@ -55,6 +55,7 @@ import MyProfile            from "./views/MyProfile";
 import Settings             from "./views/Settings";
 import BankReconciliation   from "./views/BankReconciliation";
 import Backorders           from "./views/Backorders";
+import OrderPassport        from "./views/OrderPassport";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -195,6 +196,9 @@ export default function App() {
         } />
         <Route path="/orders/backorders" element={
           <ProtectedRoute adminOnly><AppLayout><Backorders /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/orders/:orderId/passport" element={
+          <ProtectedRoute><AppLayout><OrderPassport /></AppLayout></ProtectedRoute>
         } />
         <Route path="/onboard" element={
           <ProtectedRoute><AppLayout><CustomerOnboarding /></AppLayout></ProtectedRoute>

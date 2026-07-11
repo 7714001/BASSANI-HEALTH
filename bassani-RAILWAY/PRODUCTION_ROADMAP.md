@@ -19,12 +19,12 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility — 2026-07-11 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
-| 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Needs Scoping | Architecture defined, SAHPRA requirements not yet obtained |
+| 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Scoping In Progress | Odoo architecture confirmed (separate legal entities, intercompany PO correct, BoMs not yet built, sub-locations not yet configured). Track A (batch ID generation, GACP logbook, intercompany visibility) can start immediately. Track B gated on Odoo BoM + location setup. SAHPRA reporting requirements not yet obtained. |
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
@@ -1413,6 +1413,7 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Dedicated Backorders view at `/orders/backorders` — all pending Odoo backorder pickings with outstanding product quantities, linked tickets, MO status, and By Order / By Product toggle (8.30)
 - [x] Batch/lot numbers displayed on order A4 view, packing slip, and invoice print view — sourced from `stock.move.line.lot_id` on done pickings linked to the sale order (8.31)
 - [x] Manufacturing order (MO) status visible on Sales Ticket detail (Production Status card, shown when any delivery is a backorder), Orders Ticket waiting_stock panel, and Backorders admin view MO chip — sourced from `mrp.production` via origin field match on sale order name (8.32)
+- [x] Order Passport — unified lifecycle view at `/orders/{id}/passport` showing overall status, pipeline stepper, ticket, invoice, deliveries, batch/lot numbers, and MOs on one page; barcode scan and invoice scan navigate here directly (8.33)
 
 #### 8.32 — Manufacturing Order Visibility — Complete 2026-07-11
 
@@ -1425,6 +1426,19 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] MO state colour scheme: `draft` → grey, `confirmed` → amber, `progress` → green, `to_close` → blue
 
 **State propagation:** `detail?.order_id + deliveries.some(d => d.is_backorder)` triggers MO fetch in SalesTickets; `detail?.status === "waiting_stock"` triggers MO fetch in OrdersTickets. Both degrade gracefully when no MOs exist.
+
+---
+
+#### 8.33 — Order Passport — Complete 2026-07-11
+
+**Goal:** Any staff member scanning a barcode, typing an order ref, or typing an invoice ref gets a single page showing the complete lifecycle of that order — ticket stage, invoice status, delivery state, batch/lot numbers, and any active MOs — without having to navigate between three separate views.
+
+- [x] `GET /api/orders/{order_id}/passport` — aggregates sale order, partner detail, order lines, MongoDB sales ticket, first linked invoice, outgoing pickings, lot map from done pickings, and MOs (if backorder); derives single `overall_status` object (`label`, `color`, `detail`) from all sources combined; enforces same reseller access check as `GET /{order_id}`
+- [x] `OrderPassport.js` — full-page view at `/orders/:orderId/passport`; pipeline stepper (Quote → Order → Deposit → Packing → Complete) reflects active ticket stage; overall status badge with colour-coded pill; two-column grid for ticket + invoice cards; delivery section with per-line qty and batch chips; backorder + MO panel (amber); order lines table with batch references; quick-link footer buttons
+- [x] `App.js` — route `/orders/:orderId/passport` added (no `adminOnly` — accessible to any authenticated role that can access orders)
+- [x] `search_routes.py` — order scan navigates directly to `/orders/{id}/passport`; invoice scan resolves linked sale order via `invoice_origin` and navigates to that order's passport; removed now-unused `col`, `_ORDER_RE`, `_INVOICE_RE`
+
+**Overall status derivation:** Reads `order.state`, `ticket.status`, `ticket.exit_status`, `invoice.payment_state`, and `deliveries.is_backorder` in priority order to produce one human-readable label + detail string — e.g. "Awaiting Stock · Invoice INV/2026/00042 is outstanding."
 
 ---
 
@@ -2557,6 +2571,51 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 > **Origin:** Bassani Health attended a meeting with GrowerIQ (June 2026) to evaluate their platform. Decision is to build the equivalent in-house, retaining full data ownership and tight integration with the existing commercial portal. The commercial portal already covers the downstream (vault → sales); this phase covers the upstream (cultivation → vault).
 
 > **Compliance standard:** GrowerIQ provided their EU GMP Annex 11 (Computerised Systems) compliance mapping in June 2026. EU GMP Annex 11 is the pharmaceutical industry standard governing how software managing medicinal product manufacturing must behave — covering audit trails, access control, electronic signatures, data integrity, and batch release. SAHPRA aligns with EU GMP for medicinal cannabis in South Africa, making this the most likely standard Bassani must satisfy. Building against Annex 11 from the start is the correct design target. Confirm explicitly with Bassani's compliance officer before scoping begins.
+
+---
+
+### Confirmed Odoo Architecture (2026-07-11)
+
+These facts are confirmed from conversation with the product owner and must not be re-derived during Phase 13 design.
+
+**Legal entity structure:**
+- GACP (cultivation/manufacturing facility) and La Farmacia (finished goods distribution) are **separate legal entities** registered in Odoo as separate companies.
+- The intercompany transfer mechanism is correct as currently configured: La Farmacia raises a **Purchase Order** against the GACP vault. Odoo's intercompany rules auto-generate a corresponding Sales Order on the GACP side. This is industry-standard Odoo for regulated multi-entity cannabis operations.
+- Do not replace this with internal transfers. The PO/SO pair is the correct commercial record between two legal entities.
+
+**Current state of Odoo inventory:**
+- `stock.lot` records exist in Odoo for cultivation batches — the lot tracking model is already in use.
+- Batch ID generation is **still manual via spreadsheet**. Staff generate IDs in a spreadsheet and then enter them into Odoo. This is the primary source of the format inconsistency already observed (confirmed live in logbook data). The portal batch ID generator (Track A below) eliminates this immediately.
+- Bills of Materials (`mrp.bom`) for the transformation steps (flower → manicured/pops/trim → crushed → pre-roll) have **not yet been built** in Odoo. This is a hard dependency for any MO-driven portal work.
+- Odoo sub-locations within the GACP warehouse (grow rooms, drying room, processing room, vault) **have not yet been configured**. These are required before internal transfers between stages can be tracked.
+
+**Intercompany rules:**
+- Confirm with Luca/Tristan whether Odoo's intercompany automation is active (La Farmacia PO auto-creating GACP SO). If not yet active, this is a one-time Odoo configuration task, not portal development.
+
+---
+
+### Phase 13 Delivery — Track A vs Track B
+
+Work splits into two tracks based on Odoo prerequisites. Track A can start immediately. Track B is gated on Odoo configuration being complete.
+
+**Track A — No Odoo prerequisites, can start now:**
+
+| Deliverable | What it does |
+|---|---|
+| Batch ID generation form | Portal generates the batch ID from strain code, sequence, and date; creates `stock.lot` in Odoo (GACP company) via XML-RPC; eliminates spreadsheet entry entirely |
+| Intercompany transfer visibility | Portal surfaces GACP → La Farmacia PO/SO pairs so staff can see pending and completed vault transfers without opening Odoo |
+| GACP logbook (plant tracking) | Grow room, row, strain, plant count, expected harvest — MongoDB `cultivation_batches`; no Odoo object at this stage (plants are not Odoo inventory until harvest) |
+
+**Track B — Gated on Odoo configuration:**
+
+| Deliverable | Odoo prerequisite |
+|---|---|
+| MO progression through stages | BoMs must exist for each transformation (harvest → dry, dry → manicure, manicure → crush, etc.) |
+| Yield capture vs expected bands | BoMs define expected yield ratios; portal compares actual MO output vs BoM-defined band |
+| Stage-to-stage internal transfers | Sub-locations must be configured in the GACP warehouse (grow room, drying, processing, vault) |
+| Full traceability chain | All of the above + vault IN scan linking lot to production session |
+
+**Recommended sequencing:** Deliver Track A first — it provides immediate value (eliminates spreadsheet, stops format drift) and has no Odoo configuration dependency. While Track A is being built, agree the BoM structure and sub-location setup with Luca/Tristan so Track B can proceed without delay.
 
 ---
 
