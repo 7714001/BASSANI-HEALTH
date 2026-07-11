@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { X } from "lucide-react";
+import { X, Loader2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, DataTable, SearchBar, FilterPill, ChipRow, fmtR, parseDisplayName } from "../components/UI";
@@ -91,7 +91,9 @@ export default function ResellerCatalog() {
                 >
                   {cat} <X size={11} className="opacity-80" />
                 </button>
-                {variantOpts.length > 0 && (
+                {loading ? (
+                  <Loader2 size={14} className="animate-spin text-gray-400 self-center ml-1" />
+                ) : variantOpts.length > 0 ? (
                   <>
                     <span className="text-gray-200 select-none self-center">|</span>
                     <FilterPill key="__all__" label="All variants" active={variant === "all"} onClick={() => setVariant("all")} />
@@ -99,7 +101,7 @@ export default function ResellerCatalog() {
                       <FilterPill key={v} label={v} active={variant === v} onClick={() => setVariant(v)} />
                     ))}
                   </>
-                )}
+                ) : null}
               </>
             )}
           </ChipRow>
