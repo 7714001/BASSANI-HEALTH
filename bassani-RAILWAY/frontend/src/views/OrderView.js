@@ -281,19 +281,12 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
           </div>
 
           {/* Line items
-              backorderMap: product_id → qty still outstanding across all pickings.
-              Built from delivery move lines: sum(qty_ordered) - sum(qty_done) per product.
-              Only considers primary (non-backorder) pickings so we don't double-count. */}
+              hasAnyBackorder: true when Odoo has created at least one backorder picking.
+              Per-line outstanding = product_uom_qty - qty_delivered (from sale.order.line,
+              which Odoo keeps accurate). Only show the column when a backorder exists —
+              a shortfall before first delivery would otherwise show all lines as outstanding. */}
           {(() => {
-            const backorderMap = {};
-            deliveries.filter(d => !d.is_backorder).forEach(d => {
-              (d.lines || []).forEach(l => {
-                if (!l.product_id) return;
-                const outstanding = (l.qty_ordered || 0) - (l.qty_done || 0);
-                if (outstanding > 0) backorderMap[l.product_id] = (backorderMap[l.product_id] || 0) + outstanding;
-              });
-            });
-            const hasAnyBackorder = Object.keys(backorderMap).length > 0;
+            const hasAnyBackorder = deliveries.some(d => d.is_backorder);
             return (
           <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
             <thead>
@@ -314,7 +307,7 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
               {(o.lines || []).map((line, i) => {
                 const pid = line.product_id?.[0];
                 const lots = pid && o.lot_map?.[pid] ? o.lot_map[pid] : [];
-                const backordered = pid ? (backorderMap[pid] || 0) : 0;
+                const backordered = Math.max(0, (line.product_uom_qty || 0) - (line.qty_delivered || 0));
                 return (
                 <tr key={i}>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", fontSize: 11.5, color: "#333" }}>
