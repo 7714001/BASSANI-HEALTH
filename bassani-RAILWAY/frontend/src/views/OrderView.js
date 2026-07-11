@@ -280,7 +280,21 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
             ))}
           </div>
 
-          {/* Line items */}
+          {/* Line items
+              backorderMap: product_id → qty still outstanding across all pickings.
+              Built from delivery move lines: sum(qty_ordered) - sum(qty_done) per product.
+              Only considers primary (non-backorder) pickings so we don't double-count. */}
+          {(() => {
+            const backorderMap = {};
+            deliveries.filter(d => !d.is_backorder).forEach(d => {
+              (d.lines || []).forEach(l => {
+                if (!l.product_id) return;
+                const outstanding = (l.qty_ordered || 0) - (l.qty_done || 0);
+                if (outstanding > 0) backorderMap[l.product_id] = (backorderMap[l.product_id] || 0) + outstanding;
+              });
+            });
+            const hasAnyBackorder = Object.keys(backorderMap).length > 0;
+            return (
           <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
             <thead>
               <tr>
@@ -289,12 +303,18 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                     {h}
                   </th>
                 ))}
+                {hasAnyBackorder && (
+                  <th style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "#f97316", letterSpacing: 0.5, padding: "8px 6px", borderBottom: "2px solid #e5e7eb", textAlign: "right" }}>
+                    Backorder
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {(o.lines || []).map((line, i) => {
                 const pid = line.product_id?.[0];
                 const lots = pid && o.lot_map?.[pid] ? o.lot_map[pid] : [];
+                const backordered = pid ? (backorderMap[pid] || 0) : 0;
                 return (
                 <tr key={i}>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", fontSize: 11.5, color: "#333" }}>
@@ -313,11 +333,20 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                   </td>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>{fmt(line.price_unit)}</td>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5, fontWeight: 600 }}>R {fmt(line.price_subtotal)}</td>
+                  {hasAnyBackorder && (
+                    <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11 }}>
+                      {backordered > 0
+                        ? <span style={{ color: "#f97316", fontWeight: 600 }}>{backordered % 1 === 0 ? backordered : backordered.toFixed(2)} outstanding</span>
+                        : <span style={{ color: "#d1d5db" }}>—</span>}
+                    </td>
+                  )}
                 </tr>
                 );
               })}
             </tbody>
           </table>
+            );
+          })()}
 
           {/* Totals + notes */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 8 }}>
