@@ -1581,9 +1581,10 @@ async def create_ticket_from_order(
     body: TicketFromOrder,
     current_user: dict = Depends(require_permission("tickets.sales")),
 ):
-    """Onboard an existing Odoo draft order into the Sales Ticket pipeline.
-    Creates a Sales Ticket at 'quote' stage with the order already linked.
-    Used by sales reps/admins to claim pre-portal orders during system migration."""
+    """Onboard an existing Odoo order into the Sales Ticket pipeline.
+    Draft/sent orders start at 'quote' stage. Confirmed orders (state=sale)
+    start at 'sale_order' stage — Finance still needs to confirm payment before
+    the order reaches the packing board."""
     odoo = get_odoo_client()
     try:
         orders = odoo.read(
@@ -1596,13 +1597,10 @@ async def create_ticket_from_order(
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found in Odoo")
     order = orders[0]
-    if order["state"] not in ("draft", "sent"):
+    if order["state"] in ("done", "cancel"):
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Order {order['name']} is already confirmed (state: {order['state']}) — "
-                "use 'Queue for Packing' to adopt it instead"
-            ),
+            detail=f"Order {order['name']} is {order['state']} and cannot be brought into the pipeline",
         )
     existing = await col("tickets").find_one({"order_id": body.order_id, "type": "sales", "exit_status": None})
     if existing:
@@ -1611,6 +1609,15 @@ async def create_ticket_from_order(
     partner = order.get("partner_id")
     customer_id = partner[0] if partner and partner is not False else None
     customer_name = partner[1] if partner and partner is not False else "Unknown"
+
+    # Confirmed orders enter at sale_order stage — quote stage is for drafts only
+    is_confirmed = order["state"] == "sale"
+    initial_status = "sale_order" if is_confirmed else "quote"
+    note = (
+        f"Ticket created from confirmed Odoo order {order['name']} — awaiting Finance payment confirmation"
+        if is_confirmed
+        else f"Ticket created from existing Odoo order {order['name']}"
+    )
 
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
@@ -1622,7 +1629,7 @@ async def create_ticket_from_order(
         "order_id": body.order_id,
         "invoice_id": None,
         "orders_ticket_ref": None,
-        "status": "quote",
+        "status": initial_status,
         "exit_status": None,
         "assigned_to": current_user["id"],
         "assigned_to_name": actor,
@@ -1631,10 +1638,10 @@ async def create_ticket_from_order(
         "payment_confirmed_at": None,
         "incomplete_reason": None,
         "stage_history": [{
-            "status": "quote", "exit_status": None,
+            "status": initial_status, "exit_status": None,
             "actor_id": current_user["id"], "actor_name": actor,
             "at": now,
-            "note": f"Ticket created from existing Odoo order {order['name']}",
+            "note": note,
         }],
         "created_at": now,
         "updated_at": now,
@@ -1644,10 +1651,142 @@ async def create_ticket_from_order(
         "ticket.create_from_order", "ticket", str(result.inserted_id),
         entity_label=customer_name,
         user=current_user,
-        after={"status": "quote", "order_id": body.order_id, "order_name": order["name"]},
+        after={"status": initial_status, "order_id": body.order_id, "order_name": order["name"]},
     )
     await notify_ticket_assigned("sales", customer_name, current_user["id"])
-    return {"success": True, "ticket_id": str(result.inserted_id)}
+    return {"success": True, "ticket_id": str(result.inserted_id), "status": initial_status}
+
+
+@router.post("/{ticket_id}/admin-override-payment")
+async def admin_override_payment(
+    ticket_id: str,
+    current_user: dict = Depends(require_permission("tickets.manage")),
+):
+    """Admin shortcut for confirmed Odoo orders where payment is known to have been received
+    but hasn't gone through the standard Finance deposit registration flow (e.g. legacy orders,
+    pre-portal payments, or cases where Odoo already reflects payment).
+
+    Marks payment confirmed at the portal layer and creates the packing board entry.
+    Does NOT write to Odoo — the financial record must already exist in Odoo separately.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order on this ticket")
+    if ticket.get("payment_confirmed_at"):
+        raise HTTPException(status_code=400, detail="Payment already confirmed on this ticket")
+    if ticket.get("orders_ticket_ref"):
+        raise HTTPException(status_code=400, detail="Order is already in the packing queue")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read(
+            "sale.order", [order_id],
+            fields=["name", "partner_id", "state", "warehouse_id", "picking_ids", "note", "invoice_ids"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order_data = rows[0]
+    if order_data["state"] != "sale":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order {order_data['name']} is not confirmed in Odoo (state: {order_data['state']}). Confirm the order in Odoo first.",
+        )
+
+    # Build packing board entry from Odoo picking data
+    items: list = []
+    dn_num = ""
+    inv_name = ""
+    if order_data.get("invoice_ids"):
+        try:
+            inv_rows = odoo.read("account.move", [order_data["invoice_ids"][0]], fields=["name"])
+            inv_name = inv_rows[0]["name"] if inv_rows else ""
+        except Exception:
+            pass
+    if order_data.get("picking_ids"):
+        try:
+            picking_id = order_data["picking_ids"][0]
+            pickings = odoo.read("stock.picking", [picking_id], fields=["name", "move_ids"])
+            picking = pickings[0] if pickings else None
+            if picking:
+                dn_num = picking["name"]
+                if picking.get("move_ids"):
+                    moves = odoo.read("stock.move", picking["move_ids"], fields=["product_id", "product_uom_qty"])
+                    for m in moves:
+                        pname = m["product_id"][1] if m.get("product_id") else "Unknown"
+                        prod = (
+                            odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
+                            if m.get("product_id") else []
+                        )
+                        sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
+                        items.append({"name": pname, "sku": sku, "qty": m["product_uom_qty"], "location": ""})
+        except Exception as e:
+            logger.warning("admin_override_picking_read_error", extra={"order_id": order_id, "error": str(e)})
+
+    comm_data = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
+    now = datetime.now(timezone.utc)
+    actor = _actor(current_user)
+
+    pb_doc = {
+        "order_id":       str(order_id),
+        "warehouse_id":   order_data["warehouse_id"][0]  if order_data.get("warehouse_id") else None,
+        "warehouse_name": order_data["warehouse_id"][1]  if order_data.get("warehouse_id") else None,
+        "customer_name":  order_data["partner_id"][1]    if order_data.get("partner_id")   else "",
+        "customer_city":  "",
+        "items":          items,
+        "total_units":    int(sum(i["qty"] for i in items)),
+        "inv_num":        inv_name,
+        "dn_num":         dn_num,
+        "ps_num":         order_data.get("name", ""),
+        "notes":          order_data.get("note") or "",
+        "is_reseller":    bool(comm_data),
+        "reseller_name":  comm_data.get("reseller_name") if comm_data else None,
+        "packer_name": None, "status": "queued", "queued_at": now,
+        "packed_at": None, "ready_at": None, "collected_at": None,
+        "cancelled_at": None, "incomplete_at": None, "completed_at": None,
+        "incomplete_reason": None,
+        "qa_approved_by": None, "qa_approved_at": None,
+        "rp_approved_by": None, "rp_approved_at": None,
+        "item_ticks": {i["sku"]: False for i in items},
+    }
+    await col("packing_board").replace_one({"order_id": str(order_id)}, pb_doc, upsert=True)
+
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_confirmed_by": current_user["id"],
+                "payment_confirmed_at": now,
+                "orders_ticket_ref": str(order_id),
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": actor,
+                "at": now,
+                "note": f"Admin override by {actor}: payment marked confirmed, order queued for packing. Financial record must be confirmed in Odoo separately.",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.admin_override_payment", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"order_id": order_id, "order_name": order_data.get("name"), "override_by": actor},
+    )
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    return {"success": True}
 
 
 @router.post("/{ticket_id}/link-order")

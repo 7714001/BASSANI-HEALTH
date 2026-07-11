@@ -864,6 +864,18 @@ export default function SalesTickets() {
     finally { setDepositSaving(false); }
   };
 
+  // ── Admin payment override ────────────────────────────────────────────────
+  const adminOverridePayment = async () => {
+    setPaymentOverrideSaving(true);
+    try {
+      await api.post(`/api/tickets/${detail.id}/admin-override-payment`);
+      toast.success("Payment marked confirmed — order queued for packing");
+      setPaymentOverrideConfirm(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Override failed"); }
+    finally { setPaymentOverrideSaving(false); }
+  };
+
   // ── Invoice lifecycle actions (8.24) ─────────────────────────────────────
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [resetDraftConfirm, setResetDraftConfirm] = useState(false);
@@ -1674,6 +1686,17 @@ export default function SalesTickets() {
                                   />
                                 </FormGroup>
                                 <BtnPrimary onClick={advance} loading={saving} className="w-full justify-center">Save</BtnPrimary>
+
+                                {detailOrder?.state === "sale" && !detail.payment_confirmed_at && !detail.orders_ticket_ref && (
+                                  <>
+                                    <div className="border-t border-gray-100 pt-3 mt-1">
+                                      <p className="text-[10px] text-gray-400 mb-2">Use this only for orders where payment is confirmed in Odoo but the standard Finance deposit flow was not used (e.g. legacy or pre-portal orders).</p>
+                                      <BtnDanger onClick={() => setPaymentOverrideConfirm(true)} className="w-full justify-center">
+                                        Mark Payment Received
+                                      </BtnDanger>
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             )}
                           </>
@@ -1937,6 +1960,21 @@ export default function SalesTickets() {
         )}
 
         {/* 8.24 — Reset to draft confirm */}
+        {paymentOverrideConfirm && (
+          <Modal title="Mark Payment Received" onClose={() => setPaymentOverrideConfirm(false)}>
+            <p className="text-sm text-gray-600 mb-2">
+              This will mark payment as confirmed and immediately queue the order for packing — <strong>without</strong> going through the standard Finance deposit registration.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              Only use this for orders where payment has already been received and confirmed in Odoo separately (e.g. pre-portal or legacy orders). You are responsible for ensuring the financial record exists in Odoo.
+            </p>
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => setPaymentOverrideConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={adminOverridePayment} loading={paymentOverrideSaving} disabled={paymentOverrideSaving}>Confirm Override</BtnDanger>
+            </div>
+          </Modal>
+        )}
+
         {resetDraftConfirm && (
           <Modal title="Reset Invoice to Draft" onClose={() => setResetDraftConfirm(false)}>
             <p className="text-sm text-gray-600 mb-4">

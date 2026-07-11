@@ -1044,7 +1044,6 @@ export function Orders() {
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });
   const [orderSort,   setOrderSort  ] = useState([{ id: "date_order", desc: true }]);
 
-  const [adopting,       setAdopting      ] = useState(new Set());
   const [creatingTicket, setCreatingTicket] = useState(new Set());
 
   // ── Reseller order cart (place a new order) ──────────────────────────────
@@ -1266,21 +1265,7 @@ export function Orders() {
     } catch { /* keep showing basic data */ }
   };
 
-  // ── Adopt existing Odoo order into packing pipeline ──────────────────────
-  const adoptOrder = async (id) => {
-    setAdopting(s => new Set(s).add(id));
-    try {
-      await api.post("/api/packing/adopt", { order_id: id });
-      toast.success("Order queued for packing");
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to queue order");
-    } finally {
-      setAdopting(s => { const n = new Set(s); n.delete(id); return n; });
-    }
-  };
-
-  // ── Create a Sales Ticket for an existing draft order ────────────────────
+  // ── Create a Sales Ticket for an existing Odoo order ────────────────────
   const createTicketFromOrder = async (orderId) => {
     setCreatingTicket(s => new Set(s).add(orderId));
     try {
@@ -1565,7 +1550,7 @@ export function Orders() {
         {!isReseller && (
           <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">
             <span className="font-semibold shrink-0">New orders:</span>
-            <span>All new orders must follow the <strong>Sales Tickets</strong> pipeline (Quote → Deposit → Confirm). Draft orders without a ticket can be linked using <em>Create Sales Ticket</em> below. Confirmed orders that pre-date the pipeline can be adopted directly into packing.</span>
+            <span>All orders — whether placed through the portal or created directly in Odoo — must flow through the <strong>Sales Tickets</strong> pipeline. Use <em>Create Sales Ticket</em> to bring any unlinked order into the pipeline. Finance must confirm payment before an order reaches the packing board.</span>
           </div>
         )}
         <div className="mb-4 space-y-2">
@@ -1603,11 +1588,8 @@ export function Orders() {
             }}]:[]),
             ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
               <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                {(o.state==="draft" || o.state==="sent") && !o.linked_ticket && can("tickets.sales") && (
+                {!o.linked_ticket && !o.packing_status && o.state !== "done" && o.state !== "cancel" && can("tickets.sales") && (
                   <BtnPrimary size="sm" onClick={()=>createTicketFromOrder(o.id)} loading={creatingTicket.has(o.id)} disabled={creatingTicket.has(o.id)}>Create Sales Ticket</BtnPrimary>
-                )}
-                {o.state==="sale" && !o.packing_status && can("tickets.manage") && (
-                  <BtnPrimary size="sm" onClick={()=>adoptOrder(o.id)} loading={adopting.has(o.id)} disabled={adopting.has(o.id)}>Queue for Packing</BtnPrimary>
                 )}
               </div>
             )}]:[]),
