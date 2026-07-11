@@ -1038,7 +1038,7 @@ export function Orders() {
   const [orders,      setOrders     ] = useState([]);
   const [orderTotal,  setOrderTotal ] = useState(0);
   const [loading,     setLoading    ] = useState(true);
-  const [search,      setSearch     ] = useState("");
+  const [search,      setSearch     ] = useState(location.state?.searchQuery || "");
   const [status,      setStatus     ] = useState("all");
   const [detail,         setDetail        ] = useState(null);
   const [orderPag,    setOrderPag   ] = useState({ pageIndex: 0, pageSize: 25 });

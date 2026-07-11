@@ -111,6 +111,7 @@ async def global_search(
             "ref":         order["name"],
             "name":        order.get("partner_id", [None, ""])[1] or "",
             "navigate_to": "/orders",
+            "state":       {"searchQuery": order["name"]},
         }
 
     # ── 3. Invoice ref ────────────────────────────────────────────────────────
