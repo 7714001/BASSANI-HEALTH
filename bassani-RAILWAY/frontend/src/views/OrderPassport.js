@@ -5,39 +5,92 @@ import api from "../api";
 import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, AlertTriangle,
-  CheckCircle2, Clock, ExternalLink, RefreshCw,
+  CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
 } from "lucide-react";
 import {
-  fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
+  fmtDate, BtnSecondary, BtnPrimary, Modal,
   FormGroup, Input, Select, LoadingState,
 } from "../components/UI";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-// ── Overall status colour mapping ─────────────────────────────────────────────
+// ── Colour maps ───────────────────────────────────────────────────────────────
 const STATUS_COLOURS = {
-  green:  { bg: "bg-green-50",  border: "border-green-200", text: "text-green-800",  dot: "bg-green-500"  },
-  blue:   { bg: "bg-blue-50",   border: "border-blue-200",  text: "text-blue-800",   dot: "bg-blue-500"   },
-  amber:  { bg: "bg-amber-50",  border: "border-amber-200", text: "text-amber-800",  dot: "bg-amber-500"  },
-  orange: { bg: "bg-orange-50", border: "border-orange-200",text: "text-orange-800", dot: "bg-orange-500" },
-  red:    { bg: "bg-red-50",    border: "border-red-200",   text: "text-red-800",    dot: "bg-red-500"    },
-  gray:   { bg: "bg-gray-50",   border: "border-gray-200",  text: "text-gray-600",   dot: "bg-gray-400"   },
+  green:  { bg: "bg-green-50",  border: "border-green-200",  text: "text-green-800",  dot: "bg-green-500"  },
+  blue:   { bg: "bg-blue-50",   border: "border-blue-200",   text: "text-blue-800",   dot: "bg-blue-500"   },
+  amber:  { bg: "bg-amber-50",  border: "border-amber-200",  text: "text-amber-800",  dot: "bg-amber-500"  },
+  orange: { bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-800", dot: "bg-orange-500" },
+  red:    { bg: "bg-red-50",    border: "border-red-200",    text: "text-red-800",    dot: "bg-red-500"    },
+  gray:   { bg: "bg-gray-50",   border: "border-gray-200",   text: "text-gray-600",   dot: "bg-gray-400"   },
+  purple: { bg: "bg-purple-50", border: "border-purple-200", text: "text-purple-800", dot: "bg-purple-500" },
 };
 
-// ── Pipeline steps ────────────────────────────────────────────────────────────
+const PICKING_COLOUR = {
+  done:      "bg-green-50 text-green-700",
+  assigned:  "bg-blue-50 text-blue-700",
+  confirmed: "bg-amber-50 text-amber-700",
+  waiting:   "bg-orange-50 text-orange-700",
+  cancel:    "bg-gray-100 text-gray-400",
+};
+
+const PAYMENT_COLOUR = {
+  paid:       "bg-green-50 text-green-700",
+  not_paid:   "bg-red-50 text-red-700",
+  partial:    "bg-amber-50 text-amber-700",
+  in_payment: "bg-blue-50 text-blue-700",
+  reversed:   "bg-gray-100 text-gray-500",
+};
+const PAYMENT_LABEL = {
+  paid: "Paid", not_paid: "Outstanding", partial: "Partially Paid",
+  in_payment: "In Payment", reversed: "Reversed",
+};
+
+const PACK_COLOUR = {
+  queued:    "bg-blue-50 text-blue-700",
+  packing:   "bg-amber-50 text-amber-700",
+  ready:     "bg-indigo-50 text-indigo-700",
+  complete:  "bg-green-50 text-green-700",
+  incomplete:"bg-orange-50 text-orange-700",
+  cancelled: "bg-red-50 text-red-600",
+  collected: "bg-teal-50 text-teal-700",
+  cleared:   "bg-gray-100 text-gray-500",
+  waiting_stock: "bg-orange-50 text-orange-700",
+};
+const PACK_LABEL = {
+  queued: "Queued", packing: "Packing", ready: "Ready for Collection",
+  complete: "Complete", incomplete: "Incomplete", cancelled: "Cancelled",
+  collected: "Collected", cleared: "Cleared", waiting_stock: "Awaiting Stock",
+};
+
+const MO_COLOURS = {
+  draft: "bg-gray-100 text-gray-500",
+  confirmed: "bg-amber-50 text-amber-700",
+  progress: "bg-green-50 text-green-700",
+  to_close: "bg-blue-50 text-blue-700",
+};
+const MO_LABELS = { draft: "Draft", confirmed: "Confirmed", progress: "In Progress", to_close: "To Close" };
+
+const TICKET_STATUS_LABEL = {
+  open: "Inquiry Open", quote: "Building Quote", sale_order: "Awaiting Deposit",
+  invoice: "Invoice Raised", confirmed_wip: "In Progress",
+  ready_for_collection: "Ready for Collection", incomplete: "Incomplete",
+  queued: "Queued for Packing", packing: "Being Packed", waiting_stock: "Awaiting Stock",
+};
+
+// ── Pipeline stepper ──────────────────────────────────────────────────────────
 const PIPELINE_STEPS = [
-  { key: "quote",     label: "Quote",     statuses: ["open", "quote"] },
-  { key: "order",     label: "Order",     statuses: ["sale_order"] },
-  { key: "deposit",   label: "Deposit",   statuses: ["invoice", "confirmed_wip"] },
-  { key: "packing",   label: "Packing",   statuses: ["queued", "packing", "ready_for_collection"] },
-  { key: "complete",  label: "Complete",  statuses: [] }, // reached via exit_status
+  { key: "quote",    label: "Quote",    statuses: ["open", "quote"] },
+  { key: "order",    label: "Order",    statuses: ["sale_order"] },
+  { key: "deposit",  label: "Deposit",  statuses: ["invoice", "confirmed_wip"] },
+  { key: "packing",  label: "Packing",  statuses: ["queued", "packing", "ready_for_collection"] },
+  { key: "complete", label: "Complete", statuses: [] },
 ];
 
 function pipelineStep(ticket) {
   if (!ticket) return -1;
   if (ticket.exit_status === "complete") return 4;
-  if (ticket.exit_status) return -1; // cancelled/not_interested — no active step
+  if (ticket.exit_status) return -1;
   const status = ticket.status || "open";
   for (let i = 0; i < PIPELINE_STEPS.length; i++) {
     if (PIPELINE_STEPS[i].statuses.includes(status)) return i;
@@ -47,10 +100,10 @@ function pipelineStep(ticket) {
 
 function PipelineBar({ ticket, orderState }) {
   if (!ticket || orderState === "cancel" || orderState === "draft") return null;
-  const active = pipelineStep(ticket);
+  const active    = pipelineStep(ticket);
   const cancelled = ticket.exit_status && ticket.exit_status !== "complete";
   return (
-    <div className="flex items-center gap-0 w-full">
+    <div className="flex items-center w-full mt-2">
       {PIPELINE_STEPS.map((step, i) => {
         const done    = active > i;
         const current = active === i && !cancelled;
@@ -58,7 +111,7 @@ function PipelineBar({ ticket, orderState }) {
         return (
           <div key={step.key} className="flex items-center flex-1 min-w-0">
             <div className="flex flex-col items-center">
-              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold
                 ${done || current ? "bg-bassani-600 text-white" : "bg-gray-100 text-gray-400"}
                 ${cancelled ? "!bg-red-100 !text-red-400" : ""}`}>
                 {done ? <CheckCircle2 size={14} /> : i + 1}
@@ -70,8 +123,7 @@ function PipelineBar({ ticket, orderState }) {
               </span>
             </div>
             {!isLast && (
-              <div className={`flex-1 h-0.5 mx-1 mb-4 transition-colors
-                ${done ? "bg-bassani-600" : "bg-gray-200"}`} />
+              <div className={`flex-1 h-0.5 mx-1 mb-4 ${done ? "bg-bassani-600" : "bg-gray-200"}`} />
             )}
           </div>
         );
@@ -90,41 +142,87 @@ function StatusBadge({ overall }) {
   );
 }
 
-const PICKING_COLOUR = {
-  done:      "bg-green-50 text-green-700",
-  assigned:  "bg-blue-50 text-blue-700",
-  confirmed: "bg-amber-50 text-amber-700",
-  waiting:   "bg-orange-50 text-orange-700",
-  cancel:    "bg-gray-100 text-gray-400",
-};
+// ── Status rail — all signals at a glance ─────────────────────────────────────
+function StatusRail({ order, ticket, packing, invoices }) {
+  const pills = [];
 
-const PAYMENT_COLOUR = {
-  paid:         "bg-green-50 text-green-700",
-  not_paid:     "bg-red-50 text-red-700",
-  partial:      "bg-amber-50 text-amber-700",
-  in_payment:   "bg-blue-50 text-blue-700",
-  reversed:     "bg-gray-100 text-gray-500",
-};
-const PAYMENT_LABEL = {
-  paid: "Paid", not_paid: "Outstanding", partial: "Partially Paid",
-  in_payment: "In Payment", reversed: "Reversed",
-};
+  const ORDER_MAP = {
+    draft: ["Quotation", "gray"], sent: ["Quote Sent", "blue"],
+    sale: ["Confirmed", "green"], done: ["Locked", "gray"], cancel: ["Cancelled", "red"],
+  };
+  const [oLabel, oColor] = ORDER_MAP[order.state] || [order.state, "gray"];
+  pills.push({ label: `Order: ${oLabel}`, color: oColor });
 
-const MO_COLOURS = {
-  draft: "bg-gray-100 text-gray-500",
-  confirmed: "bg-amber-50 text-amber-700",
-  progress: "bg-green-50 text-green-700",
-  to_close: "bg-blue-50 text-blue-700",
-};
-const MO_LABELS = { draft: "Draft", confirmed: "Confirmed", progress: "In Progress", to_close: "To Close" };
+  if (ticket) {
+    const tLabel = ticket.exit_status
+      ? ticket.exit_status.charAt(0).toUpperCase() + ticket.exit_status.slice(1).replace(/_/g, " ")
+      : (TICKET_STATUS_LABEL[ticket.status] || ticket.status || "");
+    const tColor = ticket.exit_status === "complete" ? "green"
+      : ticket.exit_status ? "red"
+      : ["confirmed_wip", "ready_for_collection"].includes(ticket.status) ? "green"
+      : ["queued", "packing"].includes(ticket.status) ? "blue"
+      : "amber";
+    pills.push({ label: `Ticket: ${tLabel}`, color: tColor });
+  }
 
-const TICKET_STATUS_LABEL = {
-  open: "Inquiry Open", quote: "Building Quote", sale_order: "Awaiting Deposit",
-  invoice: "Invoice Raised", confirmed_wip: "In Progress",
-  ready_for_collection: "Ready for Collection", incomplete: "Incomplete",
-  queued: "Queued for Packing", packing: "Being Packed", waiting_stock: "Awaiting Stock",
-};
+  if (packing) {
+    pills.push({
+      label: `Packing: ${PACK_LABEL[packing.status] || packing.status}`,
+      color: packing.status === "complete" || packing.status === "collected" ? "green"
+           : packing.status === "ready" ? "blue"
+           : packing.status === "packing" ? "amber"
+           : packing.status === "incomplete" || packing.status === "waiting_stock" ? "orange"
+           : "gray",
+    });
+    pills.push({ label: packing.qa_approved_at ? "QA: Approved" : "QA: Pending",   color: packing.qa_approved_at ? "green" : "amber" });
+    pills.push({ label: packing.rp_approved_at ? "RP: Approved" : "RP: Pending",   color: packing.rp_approved_at ? "green" : "amber" });
+  }
 
+  if (invoices.length > 0) {
+    const inv = invoices[0];
+    const INV_MAP = {
+      paid: ["Payment: Paid", "green"], not_paid: ["Payment: Outstanding", "red"],
+      partial: ["Payment: Partial", "amber"], in_payment: ["Payment: In Payment", "blue"],
+    };
+    const [iLabel, iColor] = INV_MAP[inv.payment_state] || [`Payment: ${inv.payment_state}`, "gray"];
+    pills.push({ label: iLabel, color: iColor });
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5 pt-3 border-t border-gray-50">
+      {pills.map((p, i) => {
+        const c = STATUS_COLOURS[p.color] || STATUS_COLOURS.gray;
+        return (
+          <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${c.bg} ${c.border} ${c.text}`}>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
+            {p.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── QA / RP approval row ──────────────────────────────────────────────────────
+function ApprovalRow({ label, by, at }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0 gap-2">
+      <span className="text-xs text-gray-500 shrink-0">{label}</span>
+      {at ? (
+        <div className="text-right min-w-0">
+          <span className="flex items-center gap-1 text-xs text-green-700 font-medium justify-end">
+            <Check size={10} />Approved
+          </span>
+          {by && <p className="text-[10px] text-gray-400 truncate">{by}</p>}
+        </div>
+      ) : (
+        <span className="text-xs text-amber-600 font-medium shrink-0">Pending</span>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function OrderPassport() {
   const { orderId } = useParams();
   const navigate    = useNavigate();
@@ -134,7 +232,7 @@ export default function OrderPassport() {
   const [data,    setData   ] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ── Create ticket ─────────────────────────────────────────────────────────
+  // Create ticket
   const [creatingTicket, setCreatingTicket] = useState(false);
   const createTicket = async () => {
     setCreatingTicket(true);
@@ -149,21 +247,19 @@ export default function OrderPassport() {
     }
   };
 
-  // ── Register payment ──────────────────────────────────────────────────────
-  const [payModal,    setPayModal   ] = useState(false);
-  const [payJournals, setPayJournals] = useState([]);
-  const [payForm,     setPayForm    ] = useState({ amount: "", date: "", journal_id: "" });
-  const [paySaving,   setPaySaving  ] = useState(false);
+  // Register payment — tracks which invoice is being paid
+  const [payingInvoice, setPayingInvoice] = useState(null);
+  const [payJournals,   setPayJournals  ] = useState([]);
+  const [payForm,       setPayForm      ] = useState({ amount: "", date: "", journal_id: "" });
+  const [paySaving,     setPaySaving    ] = useState(false);
 
-  const openPayModal = async () => {
-    const inv = data?.invoice;
-    if (!inv) return;
+  const openPayModal = async (inv) => {
+    setPayingInvoice(inv);
     setPayForm({
       amount:     String(inv.amount_residual || inv.amount_total || ""),
       date:       new Date().toISOString().split("T")[0],
       journal_id: "",
     });
-    setPayModal(true);
     try {
       const r = await api.get("/api/invoices/payment-journals");
       const journals = r.data.journals || [];
@@ -173,17 +269,18 @@ export default function OrderPassport() {
   };
 
   const registerPayment = async () => {
+    if (!payingInvoice) return;
     if (!payForm.journal_id) return toast.error("Select a payment journal");
     if (!payForm.amount || Number(payForm.amount) <= 0) return toast.error("Enter a valid amount");
     setPaySaving(true);
     try {
-      await api.put(`/api/invoices/${data.invoice.invoice_id}/pay`, {
+      await api.put(`/api/invoices/${payingInvoice.invoice_id}/pay`, {
         journal_id:   parseInt(payForm.journal_id),
         payment_date: payForm.date || undefined,
         amount:       parseFloat(payForm.amount),
       });
       toast.success("Payment registered");
-      setPayModal(false);
+      setPayingInvoice(null);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Payment failed");
@@ -204,7 +301,7 @@ export default function OrderPassport() {
     }
   };
 
-  useEffect(() => { load(); }, [orderId]);
+  useEffect(() => { load(); }, [orderId]); // eslint-disable-line
 
   const goBack = () => {
     if (location.key !== "default") navigate(-1);
@@ -224,9 +321,12 @@ export default function OrderPassport() {
 
   if (!data) return null;
 
-  const { order, ticket, invoice, deliveries, lot_map, manufacturing_orders, overall_status } = data;
-  const partner = order.partner_detail || {};
-  const hasBackorder = deliveries.some(d => d.is_backorder);
+  const { order, ticket, packing, invoices = [], deliveries, lot_map, manufacturing_orders, overall_status } = data;
+  const partner        = order.partner_detail || {};
+  const hasBackorder   = deliveries.some(d => d.is_backorder);
+  const outstandingLines = (order.lines || []).filter(
+    l => (l.qty_delivered || 0) < (l.product_uom_qty || 0)
+  );
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -236,11 +336,9 @@ export default function OrderPassport() {
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
           <ChevronLeft size={14} />Back
         </button>
-        <div className="flex items-center gap-2">
-          <BtnSecondary onClick={load}>
-            <RefreshCw size={13} />Refresh
-          </BtnSecondary>
-        </div>
+        <BtnSecondary onClick={load}>
+          <RefreshCw size={13} />Refresh
+        </BtnSecondary>
       </div>
 
       {/* Body */}
@@ -265,21 +363,25 @@ export default function OrderPassport() {
             </div>
 
             {/* Meta row */}
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 mb-5 border-t border-gray-50 pt-3">
-              {order.date_order && <span>Order date: <span className="text-gray-700 font-medium">{fmtDate(order.date_order)}</span></span>}
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 mb-4 border-t border-gray-50 pt-3">
+              {order.date_order   && <span>Date: <span className="text-gray-700 font-medium">{fmtDate(order.date_order)}</span></span>}
               <span>Total: <span className="text-gray-700 font-medium">{fmtR(order.amount_total)}</span></span>
               {order.payment_term_id && <span>Terms: <span className="text-gray-700 font-medium">{order.payment_term_id[1]}</span></span>}
-              {partner.phone && <span>Phone: <span className="text-gray-700 font-medium">{partner.phone}</span></span>}
+              {partner.phone     && <span>Phone: <span className="text-gray-700 font-medium">{partner.phone}</span></span>}
+              {partner.vat       && <span>VAT: <span className="text-gray-700 font-medium">{partner.vat}</span></span>}
             </div>
 
             {/* Pipeline bar */}
             <PipelineBar ticket={ticket} orderState={order.state} />
+
+            {/* Status rail — all signals at a glance */}
+            <StatusRail order={order} ticket={ticket} packing={packing} invoices={invoices} />
           </div>
 
-          {/* ── Two-column grid ──────────────────────────────────────────────── */}
+          {/* ── Ticket + Packing grid ────────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-            {/* Sales Ticket */}
+            {/* Sales Ticket card */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
@@ -303,7 +405,7 @@ export default function OrderPassport() {
                     <span className="text-gray-500">Stage</span>
                     <span className="text-gray-800 font-medium">
                       {ticket.exit_status
-                        ? ticket.exit_status.charAt(0).toUpperCase() + ticket.exit_status.slice(1)
+                        ? ticket.exit_status.charAt(0).toUpperCase() + ticket.exit_status.slice(1).replace(/_/g, " ")
                         : (TICKET_STATUS_LABEL[ticket.status] || ticket.status)}
                     </span>
                   </div>
@@ -311,6 +413,12 @@ export default function OrderPassport() {
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Assigned to</span>
                       <span className="text-gray-700">{ticket.assigned_to}</span>
+                    </div>
+                  )}
+                  {ticket.source && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Source</span>
+                      <span className="text-gray-600 capitalize text-xs">{ticket.source}</span>
                     </div>
                   )}
                   {ticket.incomplete_reason && (
@@ -334,64 +442,129 @@ export default function OrderPassport() {
               )}
             </div>
 
-            {/* Invoice */}
+            {/* Packing card */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                  <FileText size={12} />Invoice
+                  <Package size={12} />Packing
                 </p>
-                {invoice && (
+                {packing && (
                   <button
-                    onClick={() => navigate("/invoices")}
+                    onClick={() => navigate("/tickets/orders")}
                     className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium">
-                    View invoices <ExternalLink size={11} />
+                    Open board <ExternalLink size={11} />
                   </button>
                 )}
               </div>
-              {invoice ? (
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Reference</span>
-                    <span className="font-mono font-medium text-gray-700">{invoice.name}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Amount</span>
-                    <span className="font-medium text-gray-800">{fmtR(invoice.amount_total)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Status</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PAYMENT_COLOUR[invoice.payment_state] || "bg-gray-100 text-gray-500"}`}>
-                      {PAYMENT_LABEL[invoice.payment_state] || invoice.payment_state}
+              {packing ? (
+                <div className="space-y-0">
+                  <div className="flex items-center justify-between pb-2 border-b border-gray-50 mb-2">
+                    <span className="text-xs text-gray-500">Status</span>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${PACK_COLOUR[packing.status] || "bg-gray-100 text-gray-500"}`}>
+                      {PACK_LABEL[packing.status] || packing.status}
                     </span>
                   </div>
-                  {invoice.payment_state === "not_paid" && invoice.amount_residual > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Outstanding</span>
-                      <span className="font-medium text-red-700">{fmtR(invoice.amount_residual)}</span>
+                  {packing.packer_name && (
+                    <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
+                      <span className="text-xs text-gray-500">Packer</span>
+                      <span className="font-mono text-xs text-gray-700">{packing.packer_name}</span>
                     </div>
                   )}
-                  {invoice.due_date && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Due date</span>
-                      <span className="text-gray-700">{fmtDate(invoice.due_date)}</span>
+                  {packing.ps_num && (
+                    <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
+                      <span className="text-xs text-gray-500">Packing Slip</span>
+                      <span className="font-mono text-xs text-gray-700">{packing.ps_num}</span>
                     </div>
                   )}
-                  {["not_paid", "partial"].includes(invoice.payment_state) && can("invoices.record_payment") && (
-                    <BtnPrimary onClick={openPayModal} className="w-full justify-center mt-2">
-                      Register Payment
-                    </BtnPrimary>
+                  <div className="pt-2 space-y-0">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Approvals</p>
+                    <ApprovalRow label="QA Manager" by={packing.qa_approved_by} at={packing.qa_approved_at} />
+                    <ApprovalRow label="Responsible Pharmacist" by={packing.rp_approved_by} at={packing.rp_approved_at} />
+                  </div>
+                  {packing.collected_at && (
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-50 text-xs">
+                      <span className="text-gray-500">Collected by</span>
+                      <span className="text-gray-700">
+                        {packing.collected_by || "—"}
+                        {packing.collected_at && <span className="text-gray-400 ml-1">· {fmtDate(packing.collected_at)}</span>}
+                      </span>
+                    </div>
+                  )}
+                  {packing.incomplete_reason && (
+                    <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-2 py-1.5 mt-1">
+                      {packing.incomplete_reason}
+                    </p>
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-gray-400 py-4 text-center">No invoice raised yet.</p>
+                <div className="text-center py-4">
+                  <p className="text-xs text-gray-400">
+                    {order.state === "sale" ? "Not yet queued for packing." : "No packing entry."}
+                  </p>
+                </div>
               )}
             </div>
           </div>
 
-          {/* ── Delivery & Batches ───────────────────────────────────────────── */}
+          {/* ── Invoice(s) ───────────────────────────────────────────────────── */}
+          {invoices.length > 0 ? (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                <FileText size={12} />Invoice{invoices.length > 1 ? `s (${invoices.length})` : ""}
+              </p>
+              <div className="space-y-3">
+                {invoices.map(inv => (
+                  <div key={inv.invoice_id} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-mono text-sm font-semibold text-gray-800">{inv.name}</span>
+                        {inv.move_type === "out_refund" && (
+                          <span className="ml-2 text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">
+                            Credit Note
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${PAYMENT_COLOUR[inv.payment_state] || "bg-gray-100 text-gray-500"}`}>
+                        {PAYMENT_LABEL[inv.payment_state] || inv.payment_state}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                      <span>Amount: <span className="font-medium text-gray-800">{fmtR(inv.amount_total)}</span></span>
+                      {inv.payment_state !== "paid" && inv.amount_residual > 0 && (
+                        <span className="text-red-600 font-medium">Outstanding: {fmtR(inv.amount_residual)}</span>
+                      )}
+                      {inv.invoice_date && <span>Issued: <span className="text-gray-700">{fmtDate(inv.invoice_date)}</span></span>}
+                      {inv.due_date && <span>Due: <span className="font-medium text-gray-700">{fmtDate(inv.due_date)}</span></span>}
+                    </div>
+                    {["not_paid", "partial"].includes(inv.payment_state) && inv.move_type !== "out_refund" && can("invoices.record_payment") && (
+                      <BtnPrimary onClick={() => openPayModal(inv)} className="w-full justify-center mt-1">
+                        Register Payment
+                      </BtnPrimary>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            order.state === "sale" && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <FileText size={12} />Invoice
+                </p>
+                <p className="text-xs text-gray-400">No invoice raised yet.</p>
+              </div>
+            )
+          )}
+
+          {/* ── Delivery & Fulfilment ────────────────────────────────────────── */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
               <Truck size={12} />Delivery & Fulfilment
+              {hasBackorder && (
+                <span className="ml-auto text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold normal-case tracking-normal">
+                  Backorders present
+                </span>
+              )}
             </p>
             {deliveries.length === 0 ? (
               <p className="text-xs text-gray-400 py-2">No deliveries created yet.</p>
@@ -408,28 +581,30 @@ export default function OrderPassport() {
                             Backorder
                           </span>
                         )}
+                        {d.backorder_ref && (
+                          <span className="text-[10px] text-gray-400">of {d.backorder_ref}</span>
+                        )}
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${colour}`}>
                           {d.state_label}
                         </span>
                         {d.date_done && (
-                          <span className="text-xs text-gray-400">Delivered {fmtDate(d.date_done)}</span>
+                          <span className="text-xs text-gray-400 ml-auto">Delivered {fmtDate(d.date_done)}</span>
                         )}
                         {d.scheduled_date && d.state !== "done" && (
-                          <span className="text-xs text-gray-400">Expected {fmtDate(d.scheduled_date)}</span>
+                          <span className="text-xs text-gray-400 ml-auto">Expected {fmtDate(d.scheduled_date)}</span>
                         )}
                       </div>
                       {d.lines.length > 0 && (
                         <div className="space-y-0.5 border-t border-gray-50 pt-2">
                           {d.lines.map((l, i) => {
                             const lots = lot_map[l.product_id] || [];
+                            const outstanding = l.qty_done < l.qty_ordered;
                             return (
                               <div key={i} className="flex items-start gap-2 text-xs text-gray-500">
                                 <span className="flex-1 truncate">{l.product_name}</span>
-                                <span className="shrink-0 tabular-nums">
-                                  {l.qty_done}/{l.qty_ordered} units
-                                  {l.qty_done < l.qty_ordered && (
-                                    <span className="text-orange-500 ml-1">({l.qty_ordered - l.qty_done} outstanding)</span>
-                                  )}
+                                <span className={`shrink-0 tabular-nums ${outstanding ? "text-orange-600 font-medium" : ""}`}>
+                                  {l.qty_done}/{l.qty_ordered}
+                                  {outstanding && <span className="ml-1 text-[10px]">({l.qty_ordered - l.qty_done} outstanding)</span>}
                                 </span>
                                 {lots.length > 0 && (
                                   <span className="shrink-0 font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">
@@ -448,26 +623,50 @@ export default function OrderPassport() {
             )}
           </div>
 
-          {/* ── Backorder / Production ───────────────────────────────────────── */}
+          {/* ── Backorder & Production ───────────────────────────────────────── */}
           {(hasBackorder || manufacturing_orders.length > 0) && (
             <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3">
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1.5">
                 <AlertTriangle size={12} />Backorder & Production
               </p>
-              <p className="text-xs text-amber-700">
-                This order has outstanding items on backorder. They will be dispatched when stock becomes available.
-              </p>
+
+              {/* Outstanding items — exactly which lines and quantities */}
+              {outstandingLines.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Outstanding items</p>
+                  {outstandingLines.map((line, i) => {
+                    const ordered   = line.product_uom_qty || 0;
+                    const delivered = line.qty_delivered   || 0;
+                    const outstanding = ordered - delivered;
+                    return (
+                      <div key={i} className="flex items-center justify-between text-xs bg-white/60 rounded-lg px-3 py-2 gap-2">
+                        <span className="text-amber-900 font-medium truncate flex-1">
+                          {line.name || line.product_id?.[1]}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-amber-800">
+                          {delivered}/{ordered} delivered
+                        </span>
+                        <span className="shrink-0 text-[10px] font-bold text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded-full">
+                          {outstanding} outstanding
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Manufacturing orders replenishing this backorder */}
               {manufacturing_orders.length > 0 && (
                 <div className="space-y-2 border-t border-amber-100 pt-3">
                   <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1">
-                    <Package size={10} />Production orders replenishing this backorder
+                    <Package size={10} />Production orders
                   </p>
                   {manufacturing_orders.map(mo => {
                     const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
                     return (
-                      <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
+                      <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs bg-white/60 rounded-lg px-3 py-2">
                         <div className="min-w-0">
-                          <span className="font-mono font-medium text-amber-900">{mo.mo_name}</span>
+                          <span className="font-mono font-semibold text-amber-900">{mo.mo_name}</span>
                           <span className="ml-1.5 text-amber-700">{mo.product_name}</span>
                           {mo.qty_producing > 0 && (
                             <span className="ml-1.5 text-green-700">{mo.qty_producing}/{mo.product_qty} producing</span>
@@ -490,31 +689,50 @@ export default function OrderPassport() {
           {/* ── Order lines ──────────────────────────────────────────────────── */}
           {order.lines?.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Order Lines</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <ClipboardCheck size={12} />Order Lines
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-gray-100">
                       <th className="text-left text-gray-400 font-semibold pb-2 uppercase tracking-wide">Product</th>
-                      <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide">Qty</th>
-                      <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide">Unit Price</th>
+                      <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide w-16">Ordered</th>
+                      <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide w-20">Delivered</th>
+                      <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide hidden sm:table-cell">Unit Price</th>
                       <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {order.lines.map((line, i) => {
-                      const pid = line.product_id?.[0];
-                      const lots = pid && lot_map[pid] ? lot_map[pid] : [];
+                      const pid         = line.product_id?.[0];
+                      const lots        = pid && lot_map[pid] ? lot_map[pid] : [];
+                      const ordered     = line.product_uom_qty || 0;
+                      const delivered   = line.qty_delivered   || 0;
+                      const isOutstanding = delivered < ordered;
                       return (
-                        <tr key={i}>
-                          <td className="py-2 pr-4">
-                            <p className="text-gray-800 font-medium">{line.name || line.product_id?.[1]}</p>
+                        <tr key={i} className={isOutstanding ? "bg-orange-50/40" : ""}>
+                          <td className="py-2 pr-3">
+                            <p className="text-gray-800 font-medium leading-snug">{line.name || line.product_id?.[1]}</p>
                             {lots.length > 0 && (
                               <p className="font-mono text-[10px] text-bassani-600 mt-0.5">Batch: {lots.join(", ")}</p>
                             )}
+                            {isOutstanding && (
+                              <span className="inline-block mt-0.5 text-[10px] font-semibold text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded-full">
+                                {ordered - delivered} outstanding
+                              </span>
+                            )}
                           </td>
-                          <td className="py-2 text-right tabular-nums text-gray-700">{line.product_uom_qty}</td>
-                          <td className="py-2 text-right tabular-nums text-gray-700">{fmtR(line.price_unit)}</td>
+                          <td className="py-2 text-right tabular-nums text-gray-700">{ordered}</td>
+                          <td className="py-2 text-right tabular-nums">
+                            <span className={delivered >= ordered ? "text-green-700 font-medium" : "text-orange-600 font-medium"}>
+                              {delivered}
+                            </span>
+                            {delivered >= ordered && ordered > 0 && (
+                              <Check size={10} className="inline ml-1 text-green-500" />
+                            )}
+                          </td>
+                          <td className="py-2 text-right tabular-nums text-gray-600 hidden sm:table-cell">{fmtR(line.price_unit)}</td>
                           <td className="py-2 text-right tabular-nums font-medium text-gray-800">{fmtR(line.price_subtotal)}</td>
                         </tr>
                       );
@@ -522,7 +740,8 @@ export default function OrderPassport() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-gray-200">
-                      <td colSpan={3} className="pt-2 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-4">Total</td>
+                      <td colSpan={4} className="pt-2 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 hidden sm:table-cell">Total</td>
+                      <td colSpan={2} className="pt-2 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 sm:hidden">Total</td>
                       <td className="pt-2 text-right tabular-nums font-bold text-gray-900">{fmtR(order.amount_total)}</td>
                     </tr>
                   </tfoot>
@@ -541,7 +760,12 @@ export default function OrderPassport() {
                 <FileText size={13} />Open Ticket
               </BtnSecondary>
             )}
-            {invoice && (
+            {packing && (
+              <BtnSecondary onClick={() => navigate("/tickets/orders")}>
+                <Package size={13} />Packing Board
+              </BtnSecondary>
+            )}
+            {invoices.length > 0 && (
               <BtnSecondary onClick={() => navigate("/invoices")}>
                 <FileText size={13} />Invoices
               </BtnSecondary>
@@ -557,8 +781,8 @@ export default function OrderPassport() {
       </div>
 
       {/* ── Register Payment modal ─────────────────────────────────────────── */}
-      {payModal && data?.invoice && (
-        <Modal title={`Register Payment — ${data.invoice.name}`} onClose={() => setPayModal(false)}>
+      {payingInvoice && (
+        <Modal title={`Register Payment — ${payingInvoice.name}`} onClose={() => setPayingInvoice(null)}>
           <div className="space-y-3">
             <FormGroup label="Journal">
               <Select
@@ -573,9 +797,7 @@ export default function OrderPassport() {
             </FormGroup>
             <FormGroup label="Amount (R)">
               <Input
-                type="number"
-                step="0.01"
-                min="0"
+                type="number" step="0.01" min="0"
                 value={payForm.amount}
                 onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
               />
@@ -588,7 +810,7 @@ export default function OrderPassport() {
               />
             </FormGroup>
             <div className="flex justify-end gap-2 pt-2">
-              <BtnSecondary onClick={() => setPayModal(false)} disabled={paySaving}>Cancel</BtnSecondary>
+              <BtnSecondary onClick={() => setPayingInvoice(null)} disabled={paySaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerPayment} loading={paySaving} disabled={paySaving}>
                 Register Payment
               </BtnPrimary>

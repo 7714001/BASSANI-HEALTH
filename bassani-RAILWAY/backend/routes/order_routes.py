@@ -670,29 +670,59 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
             "source":     ticket.get("source"),
         }
 
-    # ── Invoice ───────────────────────────────────────────────────────────────
-    invoice_out = None
+    # ── Packing board entry ───────────────────────────────────────────────────
+    packing_entry = await col("packing_board").find_one(
+        {"order_id": str(order_id)},
+        {"_id": 0, "status": 1, "packer_name": 1, "ps_num": 1,
+         "qa_approved_by": 1, "qa_approved_at": 1,
+         "rp_approved_by": 1, "rp_approved_at": 1,
+         "collected_by": 1, "collected_at": 1,
+         "completed_at": 1, "incomplete_reason": 1, "updated_at": 1},
+    )
+    packing_out = None
+    if packing_entry:
+        def _dt(v):
+            if v is None: return None
+            return v.isoformat() if hasattr(v, "isoformat") else str(v)
+        packing_out = {
+            "status":         packing_entry.get("status"),
+            "packer_name":    packing_entry.get("packer_name"),
+            "ps_num":         packing_entry.get("ps_num"),
+            "qa_approved_by": packing_entry.get("qa_approved_by"),
+            "qa_approved_at": _dt(packing_entry.get("qa_approved_at")),
+            "rp_approved_by": packing_entry.get("rp_approved_by"),
+            "rp_approved_at": _dt(packing_entry.get("rp_approved_at")),
+            "collected_by":   packing_entry.get("collected_by"),
+            "collected_at":   _dt(packing_entry.get("collected_at")),
+            "completed_at":   _dt(packing_entry.get("completed_at")),
+            "incomplete_reason": packing_entry.get("incomplete_reason"),
+            "updated_at":     _dt(packing_entry.get("updated_at")),
+        }
+
+    # ── Invoices (all, not just first) ────────────────────────────────────────
+    invoices_out = []
     invoice_ids = order.get("invoice_ids") or []
     if invoice_ids:
         try:
-            inv_rows = odoo.read("account.move", [invoice_ids[0]], fields=[
+            inv_rows = odoo.read("account.move", invoice_ids, fields=[
                 "name", "state", "payment_state", "amount_total",
-                "amount_residual", "invoice_date", "invoice_date_due",
+                "amount_residual", "invoice_date", "invoice_date_due", "move_type",
             ])
-            if inv_rows:
-                inv = inv_rows[0]
-                invoice_out = {
-                    "invoice_id":    inv["id"],
-                    "name":          inv["name"],
-                    "state":         inv["state"],
-                    "payment_state": inv["payment_state"],
-                    "amount_total":  inv["amount_total"],
+            for inv in inv_rows:
+                invoices_out.append({
+                    "invoice_id":      inv["id"],
+                    "name":            inv["name"],
+                    "state":           inv["state"],
+                    "move_type":       inv.get("move_type"),
+                    "payment_state":   inv["payment_state"],
+                    "amount_total":    inv["amount_total"],
                     "amount_residual": inv.get("amount_residual", 0),
-                    "invoice_date":  inv.get("invoice_date"),
-                    "due_date":      inv.get("invoice_date_due"),
-                }
+                    "invoice_date":    inv.get("invoice_date"),
+                    "due_date":        inv.get("invoice_date_due"),
+                })
         except Exception:
             pass
+    invoice_out = invoices_out[0] if invoices_out else None  # kept for backwards compat
 
     # ── Deliveries ────────────────────────────────────────────────────────────
     picking_ids = order.get("picking_ids") or []
@@ -788,7 +818,9 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     return {
         "order":          order,
         "ticket":         ticket_out,
+        "packing":        packing_out,
         "invoice":        invoice_out,
+        "invoices":       invoices_out,
         "deliveries":     deliveries,
         "lot_map":        lot_map,
         "manufacturing_orders": mos,
