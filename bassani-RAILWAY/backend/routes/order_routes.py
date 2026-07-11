@@ -154,101 +154,42 @@ async def list_orders(
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
-@router.get("/{order_id}")
-async def get_order(order_id: int, current_user: dict = Depends(get_current_user)):
-    """Get a single order with line items and commission breakdown."""
+# ── Literal-path routes — MUST stay before /{order_id} ──────────────────────
+# FastAPI matches routes top-down. Any literal segment (e.g. /backorders,
+# /stats/summary) must be registered before /{order_id} or it will be swallowed
+# and FastAPI will 422 when it tries to cast the segment to int.
+
+@router.get("/stats/summary")
+async def order_stats(_: dict = Depends(get_current_user)):
+    """Dashboard stats — order counts and revenue from Odoo."""
     odoo = get_odoo_client()
     try:
-        # Reseller access check — must own this order.
-        # Commission records only exist post-confirmation, so for draft quotes
-        # we fall back to checking the sales ticket's reseller_id.
-        if current_user.get("role") == "reseller":
-            reseller = await col("resellers").find_one(
-                {"user_id": current_user["id"]}, NO_ID
-            )
-            reseller_id = reseller["id"] if reseller else None
-            comm_check = await col("order_commissions").find_one(
-                {"odoo_order_id": str(order_id), "reseller_id": reseller_id}, NO_ID
-            )
-            if not comm_check:
-                ticket_check = await col("tickets").find_one(
-                    {"type": "sales", "order_id": order_id, "reseller_id": reseller_id},
-                    {"_id": 1},
-                )
-                if not ticket_check:
-                    raise HTTPException(status_code=403, detail="Access denied")
+        total     = odoo.count("sale.order", [])
+        draft     = odoo.count("sale.order", [("state", "=", "draft")])
+        confirmed = odoo.count("sale.order", [("state", "=", "sale")])
+        done      = odoo.count("sale.order", [("state", "=", "done")])
+        cancelled = odoo.count("sale.order", [("state", "=", "cancel")])
 
-        records = odoo.read("sale.order", [order_id], fields=ORDER_FIELDS)
-        if not records:
-            raise HTTPException(status_code=404, detail="Order not found")
-        order = records[0]
-
-        # Fetch partner address + VAT for order view header
-        if order.get("partner_id"):
-            partners = odoo.read(
-                "res.partner", [order["partner_id"][0]],
-                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat"],
-            )
-            if partners:
-                order["partner_detail"] = partners[0]
-
-        # Get line items
-        if order.get("order_line"):
-            lines = odoo.read(
-                "sale.order.line",
-                order["order_line"],
-                fields=[
-                    "product_id", "name", "product_uom_qty",
-                    "price_unit", "price_subtotal", "qty_delivered", "qty_invoiced",
-                ],
-            )
-            order["lines"] = lines
-
-        # Lot/batch numbers — read from stock.move.line via the first outgoing picking.
-        # Lots are only assigned after packing, so this may be empty for un-packed orders.
-        order["lot_map"] = {}
-        try:
-            pick_rows = odoo.search_read(
-                "stock.picking",
-                domain=[("sale_id", "=", order_id), ("state", "=", "done")],
-                fields=["move_line_ids"],
-                limit=10,
-            )
-            all_ml_ids = [ml for p in pick_rows for ml in p.get("move_line_ids", [])]
-            if all_ml_ids:
-                move_lines = odoo.read(
-                    "stock.move.line", all_ml_ids,
-                    fields=["product_id", "lot_id"],
-                )
-                lot_map: dict = {}
-                for ml in move_lines:
-                    if not ml.get("lot_id"):
-                        continue
-                    pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
-                    lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
-                    lot_map.setdefault(pid, [])
-                    if lot_name not in lot_map[pid]:
-                        lot_map[pid].append(lot_name)
-                order["lot_map"] = lot_map
-        except Exception:
-            pass  # Non-fatal — lot display degrades gracefully
-
-        # Overlay commission data
-        comm_data = await col("order_commissions").find_one(
-            {"odoo_order_id": str(order_id)}, NO_ID
+        # Revenue — sum amount_total on confirmed + done orders
+        revenue_orders = odoo.search_read(
+            "sale.order",
+            domain=[("state", "in", ["sale", "done"])],
+            fields=["amount_total"],
+            limit=10000,
         )
-        order["commission_total"] = comm_data["commission_total"] if comm_data else 0
-        order["reseller_id"] = comm_data["reseller_id"] if comm_data else None
-        order["reseller_name"] = comm_data.get("reseller_name", "") if comm_data else ""
+        total_revenue = sum(o["amount_total"] for o in revenue_orders)
 
-        return order
-    except HTTPException:
-        raise
+        return {
+            "total": total,
+            "draft": draft,
+            "confirmed": confirmed,
+            "done": done,
+            "cancelled": cancelled,
+            "total_revenue": total_revenue,
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
-
-# ── Backorders ────────────────────────────────────────────────────────────────
 
 @router.get("/backorders")
 async def list_backorders(current_user: dict = Depends(require_permission("orders.view"))):
@@ -378,6 +319,100 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
         })
 
     return {"backorders": result, "total": len(result)}
+
+
+@router.get("/{order_id}")
+async def get_order(order_id: int, current_user: dict = Depends(get_current_user)):
+    """Get a single order with line items and commission breakdown."""
+    odoo = get_odoo_client()
+    try:
+        # Reseller access check — must own this order.
+        # Commission records only exist post-confirmation, so for draft quotes
+        # we fall back to checking the sales ticket's reseller_id.
+        if current_user.get("role") == "reseller":
+            reseller = await col("resellers").find_one(
+                {"user_id": current_user["id"]}, NO_ID
+            )
+            reseller_id = reseller["id"] if reseller else None
+            comm_check = await col("order_commissions").find_one(
+                {"odoo_order_id": str(order_id), "reseller_id": reseller_id}, NO_ID
+            )
+            if not comm_check:
+                ticket_check = await col("tickets").find_one(
+                    {"type": "sales", "order_id": order_id, "reseller_id": reseller_id},
+                    {"_id": 1},
+                )
+                if not ticket_check:
+                    raise HTTPException(status_code=403, detail="Access denied")
+
+        records = odoo.read("sale.order", [order_id], fields=ORDER_FIELDS)
+        if not records:
+            raise HTTPException(status_code=404, detail="Order not found")
+        order = records[0]
+
+        # Fetch partner address + VAT for order view header
+        if order.get("partner_id"):
+            partners = odoo.read(
+                "res.partner", [order["partner_id"][0]],
+                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat"],
+            )
+            if partners:
+                order["partner_detail"] = partners[0]
+
+        # Get line items
+        if order.get("order_line"):
+            lines = odoo.read(
+                "sale.order.line",
+                order["order_line"],
+                fields=[
+                    "product_id", "name", "product_uom_qty",
+                    "price_unit", "price_subtotal", "qty_delivered", "qty_invoiced",
+                ],
+            )
+            order["lines"] = lines
+
+        # Lot/batch numbers — read from stock.move.line via the first outgoing picking.
+        # Lots are only assigned after packing, so this may be empty for un-packed orders.
+        order["lot_map"] = {}
+        try:
+            pick_rows = odoo.search_read(
+                "stock.picking",
+                domain=[("sale_id", "=", order_id), ("state", "=", "done")],
+                fields=["move_line_ids"],
+                limit=10,
+            )
+            all_ml_ids = [ml for p in pick_rows for ml in p.get("move_line_ids", [])]
+            if all_ml_ids:
+                move_lines = odoo.read(
+                    "stock.move.line", all_ml_ids,
+                    fields=["product_id", "lot_id"],
+                )
+                lot_map: dict = {}
+                for ml in move_lines:
+                    if not ml.get("lot_id"):
+                        continue
+                    pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                    lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
+                    lot_map.setdefault(pid, [])
+                    if lot_name not in lot_map[pid]:
+                        lot_map[pid].append(lot_name)
+                order["lot_map"] = lot_map
+        except Exception:
+            pass  # Non-fatal — lot display degrades gracefully
+
+        # Overlay commission data
+        comm_data = await col("order_commissions").find_one(
+            {"odoo_order_id": str(order_id)}, NO_ID
+        )
+        order["commission_total"] = comm_data["commission_total"] if comm_data else 0
+        order["reseller_id"] = comm_data["reseller_id"] if comm_data else None
+        order["reseller_name"] = comm_data.get("reseller_name", "") if comm_data else ""
+
+        return order
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
 # ── Deliveries (7.1 + 7.5) ───────────────────────────────────────────────────
@@ -1254,35 +1289,3 @@ async def cancel_order(order_id: int, background_tasks: BackgroundTasks, current
             )
 
     return {"success": True}
-
-
-@router.get("/stats/summary")
-async def order_stats(current_user: dict = Depends(get_current_user)):
-    """Dashboard stats — order counts and revenue from Odoo."""
-    odoo = get_odoo_client()
-    try:
-        total     = odoo.count("sale.order", [])
-        draft     = odoo.count("sale.order", [("state", "=", "draft")])
-        confirmed = odoo.count("sale.order", [("state", "=", "sale")])
-        done      = odoo.count("sale.order", [("state", "=", "done")])
-        cancelled = odoo.count("sale.order", [("state", "=", "cancel")])
-
-        # Revenue — sum amount_total on confirmed + done orders
-        revenue_orders = odoo.search_read(
-            "sale.order",
-            domain=[("state", "in", ["sale", "done"])],
-            fields=["amount_total"],
-            limit=10000,
-        )
-        total_revenue = sum(o["amount_total"] for o in revenue_orders)
-
-        return {
-            "total": total,
-            "draft": draft,
-            "confirmed": confirmed,
-            "done": done,
-            "cancelled": cancelled,
-            "total_revenue": total_revenue,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
