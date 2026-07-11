@@ -91,6 +91,7 @@ export default function OrdersTickets() {
   const [savingPacker, setSavingPacker] = useState(false);
   const [itemLots,     setItemLots    ] = useState({});   // { product_id: [{ id, name, expiry }] }
   const [lotSaving,    setLotSaving   ] = useState(null); // product_id being saved
+  const [statusFilter, setStatusFilter] = useState(new Set());
 
   const openDetail = async (entry) => {
     setDetail(null);
@@ -865,7 +866,6 @@ export default function OrdersTickets() {
 
 
   // ── List view ───────────────────────────────────────────────────────────────
-  const [statusFilter, setStatusFilter] = useState(new Set());
   const toggleStatus = (s) => setStatusFilter(prev => {
     const next = new Set(prev); next.has(s) ? next.delete(s) : next.add(s); return next;
   });
