@@ -5,7 +5,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
-  TopBar, SearchBar, DataTable, LoadingState, Badge,
+  TopBar, SearchBar, DataTable, Badge,
   Modal, FormGroup, Input, BtnPrimary, BtnSecondary,
 } from "../components/UI";
 
@@ -21,17 +21,16 @@ export default function PartnerDirectory() {
   const { can }    = useAuth();
   const canManage  = can("customers.manage");
 
-  const [filter,   setFilter  ] = useState("all");
-  const [search,   setSearch  ] = useState("");
-  const [partners, setPartners] = useState([]);
-  const [total,    setTotal   ] = useState(0);
-  const [loading,  setLoading ] = useState(true);
-  const [counts,   setCounts  ] = useState({ all: 0, company: 0, linked: 0, unlinked: 0 });
-  const [page,     setPage    ] = useState(0);
-  const PAGE_SIZE = 50;
+  const [filter,     setFilter    ] = useState("all");
+  const [search,     setSearch    ] = useState("");
+  const [partners,   setPartners  ] = useState([]);
+  const [total,      setTotal     ] = useState(0);
+  const [loading,    setLoading   ] = useState(true);
+  const [counts,     setCounts    ] = useState({ all: 0, company: 0, linked: 0, unlinked: 0 });
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
 
   // ── Link to company modal ───────────────────────────────────────────────────
-  const [linking,        setLinking       ] = useState(null); // the partner being linked
+  const [linking,        setLinking       ] = useState(null);
   const [companyQuery,   setCompanyQuery  ] = useState("");
   const [companyResults, setCompanyResults] = useState([]);
   const [companySearch,  setCompanySearch ] = useState(false);
@@ -45,11 +44,15 @@ export default function PartnerDirectory() {
     } catch { /* non-fatal */ }
   }, []);
 
-  const load = useCallback(async (f, q, p) => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { filter: f, limit: PAGE_SIZE, offset: p * PAGE_SIZE };
-      if (q) params.search = q;
+      const params = {
+        filter,
+        limit:  pagination.pageSize,
+        offset: pagination.pageIndex * pagination.pageSize,
+      };
+      if (search) params.search = search;
       const r = await api.get("/api/partners/", { params });
       setPartners(r.data.partners || []);
       setTotal(r.data.total || 0);
@@ -58,19 +61,10 @@ export default function PartnerDirectory() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filter, search, pagination]);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
-
-  useEffect(() => {
-    setPage(0);
-    const t = setTimeout(() => load(filter, search, 0), search ? 300 : 0);
-    return () => clearTimeout(t);
-  }, [filter, search, load]);
-
-  useEffect(() => {
-    if (page > 0) load(filter, search, page);
-  }, [page]); // eslint-disable-line
+  useEffect(() => { load(); }, [load]);
 
   // company search inside link modal
   useEffect(() => {
@@ -100,7 +94,7 @@ export default function PartnerDirectory() {
       toast.success(`${linking.name} linked to ${selected.name}`);
       setLinking(null);
       loadCounts();
-      load(filter, search, page);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to link contact");
     } finally {
@@ -203,12 +197,12 @@ export default function PartnerDirectory() {
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-100 bg-white flex-wrap">
         <div className="flex gap-1.5">
           {FILTERS.map(f => {
-            const count = counts[f.key];
+            const count  = counts[f.key];
             const active = filter === f.key;
             return (
               <button
                 key={f.key}
-                onClick={() => setFilter(f.key)}
+                onClick={() => { setFilter(f.key); setPagination(p => ({ ...p, pageIndex: 0 })); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   active
                     ? "bg-bassani-600 text-white"
@@ -226,25 +220,23 @@ export default function PartnerDirectory() {
           })}
         </div>
         <div className="flex-1 max-w-xs">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search name or email…" />
+          <SearchBar
+            value={search}
+            onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+            placeholder="Search name or email…"
+          />
         </div>
       </div>
 
-      {loading
-        ? <LoadingState />
-        : <DataTable columns={columns} data={partners} />
-      }
-
-      {/* Pagination */}
-      {!loading && total > PAGE_SIZE && (
-        <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100 bg-white text-xs text-gray-500">
-          <span>Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total.toLocaleString()}</span>
-          <div className="flex gap-2">
-            <BtnSecondary size="sm" onClick={() => setPage(p => p - 1)} disabled={page === 0}>Previous</BtnSecondary>
-            <BtnSecondary size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total}>Next</BtnSecondary>
-          </div>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        data={partners}
+        loading={loading}
+        total={total}
+        pagination={pagination}
+        onPaginationChange={setPagination}
+        manualPagination
+      />
 
       {/* Link to company modal */}
       {linking && (
