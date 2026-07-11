@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { Printer, X, ChevronLeft, Truck } from "lucide-react";
+import { Printer, X, ChevronLeft, Truck, Package } from "lucide-react";
 import { fmtDate } from "../components/UI";
 import api from "../api";
 import bwipjs from "bwip-js";
@@ -74,6 +74,8 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
   const [deliveries,        setDeliveries       ] = useState([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [deliveriesOpen,    setDeliveriesOpen   ] = useState(true);
+  const [mos,        setMos       ] = useState([]);
+  const [mosLoading, setMosLoading] = useState(false);
 
   useEffect(() => {
     if (!o?.id) return;
@@ -83,6 +85,16 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
       .catch(() => {})
       .finally(() => setDeliveriesLoading(false));
   }, [o?.id]);
+
+  useEffect(() => {
+    const hasBackorder = deliveries.some(d => d.is_backorder);
+    if (!o?.id || !hasBackorder) { setMos([]); return; }
+    setMosLoading(true);
+    api.get(`/api/orders/${o.id}/manufacturing-orders`)
+      .then(r => setMos(r.data.manufacturing_orders || []))
+      .catch(() => setMos([]))
+      .finally(() => setMosLoading(false));
+  }, [o?.id, deliveries]);
 
   const print = () => {
     const content = printRef.current?.innerHTML;
@@ -220,6 +232,51 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                 ))}
               </div>
             )
+          )}
+        </div>
+      )}
+
+      {/* Production Status strip — non-printable, only when MOs exist */}
+      {(mosLoading || mos.length > 0) && (
+        <div className="bg-blue-50 border-b border-blue-100 px-6 py-3 space-y-2">
+          <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+            <Package size={12} />Production Status
+          </p>
+          {mosLoading ? (
+            <p className="text-xs text-blue-500">Loading production orders…</p>
+          ) : (
+            <div className="space-y-1.5">
+              {mos.map(mo => {
+                const MO_COLOURS = {
+                  draft:     "bg-gray-100 text-gray-500",
+                  confirmed: "bg-amber-50 text-amber-700",
+                  progress:  "bg-green-50 text-green-700",
+                  to_close:  "bg-blue-100 text-blue-800",
+                };
+                const MO_LABELS = {
+                  draft: "Draft", confirmed: "Confirmed",
+                  progress: "In Progress", to_close: "To Close",
+                };
+                const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
+                return (
+                  <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
+                    <div className="min-w-0">
+                      <span className="font-mono font-medium text-blue-800">{mo.mo_name}</span>
+                      <span className="ml-1.5 text-blue-600">{mo.product_name}</span>
+                      {mo.qty_producing > 0 && (
+                        <span className="ml-1.5 text-green-700">{mo.qty_producing}/{mo.product_qty} producing</span>
+                      )}
+                      {mo.date_planned_finished && (
+                        <span className="ml-1.5 text-blue-400">· due {fmtDate(mo.date_planned_finished)}</span>
+                      )}
+                    </div>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
+                      {MO_LABELS[mo.state] || mo.state}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}

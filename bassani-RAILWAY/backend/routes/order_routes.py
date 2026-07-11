@@ -325,7 +325,7 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
                     ("origin", "in", sale_names),
                     ("state", "not in", ["done", "cancel"]),
                 ],
-                fields=["id", "name", "product_id", "product_qty", "state", "origin", "date_planned_start"],
+                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "origin", "date_planned_start", "date_planned_finished"],
                 limit=500,
             )
             for mo in mrp_orders:
@@ -336,8 +336,10 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
                     "state":       mo["state"],
                     "product_id":  mo["product_id"][0] if isinstance(mo.get("product_id"), list) else None,
                     "product_name": mo["product_id"][1] if isinstance(mo.get("product_id"), list) else "",
-                    "qty":         mo["product_qty"],
+                    "qty":            mo["product_qty"],
+                    "qty_producing":  mo.get("qty_producing", 0),
                     "date":        mo.get("date_planned_start"),
+                    "date_planned_finished": mo.get("date_planned_finished"),
                 })
         except Exception:
             pass  # mrp module may not be installed
@@ -461,6 +463,51 @@ async def get_order_deliveries(
         })
 
     return {"deliveries": result, "has_backorder": has_backorder, "count": len(result)}
+
+
+@router.get("/{order_id}/manufacturing-orders")
+async def get_order_manufacturing_orders(
+    order_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return active mrp.production records linked to a sale order (via origin field)."""
+    odoo = get_odoo_client()
+    try:
+        orders = odoo.read("sale.order", [order_id], fields=["name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not orders:
+        return {"manufacturing_orders": []}
+
+    so_name = orders[0]["name"]
+    try:
+        mos = odoo.search_read(
+            "mrp.production",
+            domain=[("origin", "=", so_name), ("state", "not in", ["done", "cancel"])],
+            fields=[
+                "id", "name", "product_id", "product_qty", "qty_producing",
+                "state", "origin", "date_planned_start", "date_planned_finished",
+            ],
+            limit=100,
+        )
+    except Exception:
+        mos = []  # mrp module may not be installed
+
+    result = []
+    for mo in mos:
+        result.append({
+            "mo_id":     mo["id"],
+            "mo_name":   mo["name"],
+            "state":     mo["state"],
+            "product_id":   mo["product_id"][0] if isinstance(mo["product_id"], list) else mo["product_id"],
+            "product_name": mo["product_id"][1] if isinstance(mo["product_id"], list) else "",
+            "product_qty":         mo.get("product_qty", 0),
+            "qty_producing":       mo.get("qty_producing", 0),
+            "date_planned_start":    mo.get("date_planned_start"),
+            "date_planned_finished": mo.get("date_planned_finished"),
+        })
+
+    return {"manufacturing_orders": result}
 
 
 @router.get("/{order_id}/stock-check")

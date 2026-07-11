@@ -1153,8 +1153,8 @@ Assigning a GTIN from the picker writes the barcode field directly to Odoo and m
 **Global barcode search:** Every admin role sees a search bar in the top-right of the portal header on every page. Press `/` on your keyboard from anywhere to focus it (as long as you are not already typing in another field). Then scan any barcode or type a reference:
 
 - **Product GS1 barcode:** Scanning a product's GTIN (13 or 14 digits) takes you straight to the Products page filtered to that item's SKU. Use this when you have a physical product and want to check its stock, price, or lot details without browsing.
-- **Sale order reference:** Typing or scanning the Odoo order number (e.g. `S00142`) takes you directly to the sales ticket for that order — including its current status, invoice, and all actions.
-- **Invoice number:** Typing the invoice reference (e.g. `INV/2026/00043`) takes you directly to that invoice's detail page.
+- **Sale order reference:** Typing or scanning the Odoo order number (e.g. `S00142`) opens the sales ticket for that order if one exists — including its current status, invoice, and all actions. For orders that have not yet been pulled into the portal pipeline, the Orders list opens pre-filtered to that order reference so you can create a ticket from there.
+- **Invoice number:** Typing the invoice reference (e.g. `INV/2026/00043`) navigates to the Invoices page.
 
 If no match is found, a red toast appears. Press Escape to clear the search bar at any time.
 
@@ -1325,13 +1325,21 @@ A backorder exists when an order was partially delivered — some products shipp
 
 **By Product view:** Aggregates by product across all waiting orders. Shows total units outstanding and how many orders are waiting. Useful for production planning — tells you the aggregate demand for each product before raising a manufacturing order. Click any row to expand and see which specific orders are waiting.
 
-**Manufacturing Orders:** When Odoo has created an `mrp.production` record linked to the same sale order, the MO name and state appear inline on the relevant product line. Phase 13 will add the ability to schedule and drive production directly from this view.
+**Manufacturing Orders:** When Odoo has created an `mrp.production` record linked to the same sale order, the MO name and state appear inline on the relevant product line. The chip shows the MO reference, its state (Confirmed / In Progress / To Close), how many units are currently being produced (e.g. "5/10 producing"), and the planned finish date when set. Phase 13 will add the ability to schedule and drive production directly from this view.
+
+**MO visibility on tickets:** The same production status information appears in two other places:
+- **Sales Ticket detail** — a "Production Status" card appears below the Delivery and Fulfilment section whenever any delivery on the order is a backorder. It auto-loads without refreshing the page.
+- **Orders Ticket waiting_stock panel** — when an order is in Awaiting Stock state (a backorder entry), a "Production orders" section appears inside the amber panel, showing the same MO detail.
+
+If no MOs exist (Odoo has not yet created a replenishment manufacturing order), neither the card nor the section appears.
 
 ### Invoices
 
 *Requires `invoices.view` permission*
 
 Go to **Invoices** to see all customer invoices from Odoo. Click any row to open the print-ready invoice view (portal format with bank details and payment terms).
+
+**Batch/lot numbers on invoices:** The invoice print view shows the batch/lot number(s) next to each line item, sourced directly from the Odoo delivery picking linked to the sale order. This ensures the dispatched batch is identifiable from the invoice document — a medicinal cannabis compliance requirement. Batch numbers only appear once the order has been packed and the delivery validated; they are blank on invoices for orders not yet dispatched.
 
 **Filter chips:**
 - **Outstanding** — invoices with an unpaid or partially paid balance

@@ -219,6 +219,8 @@ export default function SalesTickets() {
   const [showInboxPanel, setShowInboxPanel] = useState(true);
   const [deliveries,        setDeliveries       ] = useState([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [mos,        setMos       ] = useState([]);
+  const [mosLoading, setMosLoading] = useState(false);
   const [packingEntry,   setPackingEntry  ] = useState(null);
   const [packingLoading, setPackingLoading] = useState(false);
 
@@ -481,6 +483,18 @@ export default function SalesTickets() {
       .catch(() => setDeliveries([]))
       .finally(() => setDeliveriesLoading(false));
   }, [detail?.order_id]);
+
+  // Fetch MOs when any delivery is a backorder
+  useEffect(() => {
+    const orderId = detail?.order_id;
+    const hasBackorder = deliveries.some(d => d.is_backorder);
+    if (!orderId || !hasBackorder) { setMos([]); return; }
+    setMosLoading(true);
+    api.get(`/api/orders/${orderId}/manufacturing-orders`)
+      .then(r => setMos(r.data.manufacturing_orders || []))
+      .catch(() => setMos([]))
+      .finally(() => setMosLoading(false));
+  }, [detail?.order_id, deliveries]);
 
   const advance = async () => {
     if (stageForm.status === "incomplete" && !stageForm.incomplete_reason)
@@ -1205,6 +1219,51 @@ export default function SalesTickets() {
                                   )}
                                 </div>
                               ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Production Status — MOs linked to this order (backorder replenishment) */}
+                      {(mosLoading || mos.length > 0) && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                            <Package size={12} />Production Status
+                          </p>
+                          {mosLoading ? (
+                            <p className="text-xs text-gray-400">Loading production orders...</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {mos.map(mo => {
+                                const MO_COLOURS = {
+                                  draft:     "bg-gray-100 text-gray-500",
+                                  confirmed: "bg-amber-50 text-amber-700",
+                                  progress:  "bg-green-50 text-green-700",
+                                  to_close:  "bg-blue-50 text-blue-700",
+                                };
+                                const MO_LABELS = {
+                                  draft: "Draft", confirmed: "Confirmed",
+                                  progress: "In Progress", to_close: "To Close",
+                                };
+                                const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
+                                return (
+                                  <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
+                                    <div className="min-w-0">
+                                      <span className="font-mono font-medium text-gray-700">{mo.mo_name}</span>
+                                      <span className="ml-1.5 text-gray-500 truncate">{mo.product_name}</span>
+                                      {mo.qty_producing > 0 && (
+                                        <span className="ml-1.5 text-green-600">{mo.qty_producing}/{mo.product_qty} producing</span>
+                                      )}
+                                      {mo.date_planned_finished && (
+                                        <span className="ml-1.5 text-gray-400">· due {fmtDate(mo.date_planned_finished)}</span>
+                                      )}
+                                    </div>
+                                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
+                                      {MO_LABELS[mo.state] || mo.state}
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>

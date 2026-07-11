@@ -40,6 +40,8 @@ function ProductRow({ line }) {
       {mo && (
         <span className="text-[11px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium whitespace-nowrap shrink-0">
           {mo.mo_name} · {MO_STATE_LABEL[mo.state] || mo.state}
+          {mo.qty_producing > 0 && ` · ${mo.qty_producing}/${mo.qty} producing`}
+          {mo.date_planned_finished && ` · due ${fmtDate(mo.date_planned_finished)}`}
         </span>
       )}
     </div>

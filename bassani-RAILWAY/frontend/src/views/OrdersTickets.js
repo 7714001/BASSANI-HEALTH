@@ -92,6 +92,19 @@ export default function OrdersTickets() {
   const [itemLots,     setItemLots    ] = useState({});   // { product_id: [{ id, name, expiry }] }
   const [lotSaving,    setLotSaving   ] = useState(null); // product_id being saved
   const [statusFilter, setStatusFilter] = useState(new Set());
+  const [mos,        setMos       ] = useState([]);
+  const [mosLoading, setMosLoading] = useState(false);
+
+  // Fetch MOs when viewing a waiting_stock backorder entry
+  useEffect(() => {
+    const orderId = detail?.order_id;
+    if (!orderId || detail?.status !== "waiting_stock") { setMos([]); return; }
+    setMosLoading(true);
+    api.get(`/api/orders/${orderId}/manufacturing-orders`)
+      .then(r => setMos(r.data.manufacturing_orders || []))
+      .catch(() => setMos([]))
+      .finally(() => setMosLoading(false));
+  }, [detail?.order_id, detail?.status]);
 
   const openDetail = async (entry) => {
     setDetail(null);
@@ -792,6 +805,46 @@ export default function OrdersTickets() {
                             >
                               <RefreshCw size={13} />Check stock availability
                             </BtnSecondary>
+                          )}
+                          {/* Production orders replenishing this backorder */}
+                          {(mosLoading || mos.length > 0) && (
+                            <div className="border-t border-amber-100 pt-3 space-y-2">
+                              <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1">
+                                <Package size={10} />Production orders
+                              </p>
+                              {mosLoading ? (
+                                <p className="text-xs text-amber-600">Loading...</p>
+                              ) : mos.map(mo => {
+                                const MO_COLOURS = {
+                                  draft:     "bg-gray-100 text-gray-500",
+                                  confirmed: "bg-amber-100 text-amber-800",
+                                  progress:  "bg-green-50 text-green-700",
+                                  to_close:  "bg-blue-50 text-blue-700",
+                                };
+                                const MO_LABELS = {
+                                  draft: "Draft", confirmed: "Confirmed",
+                                  progress: "In Progress", to_close: "To Close",
+                                };
+                                const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
+                                return (
+                                  <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
+                                    <div className="min-w-0">
+                                      <span className="font-mono font-medium text-amber-900">{mo.mo_name}</span>
+                                      <span className="ml-1.5 text-amber-700 truncate">{mo.product_name}</span>
+                                      {mo.qty_producing > 0 && (
+                                        <span className="ml-1.5 text-green-700">{mo.qty_producing}/{mo.product_qty} producing</span>
+                                      )}
+                                      {mo.date_planned_finished && (
+                                        <span className="ml-1.5 text-amber-600">· due {fmtDate(mo.date_planned_finished)}</span>
+                                      )}
+                                    </div>
+                                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
+                                      {MO_LABELS[mo.state] || mo.state}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
                       )}

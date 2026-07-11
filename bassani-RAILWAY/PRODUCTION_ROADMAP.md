@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view — 2026-07-11 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility — 2026-07-11 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1411,6 +1411,36 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Finance can perform all invoice lifecycle actions (Send, PDF, Reset to Draft, Credit Note) directly from the Invoices page without requiring a linked Sales Ticket (8.29)
 - [x] Invoices with a linked Odoo sale order but no portal ticket show a "Create Ticket" action on the Invoices page (8.29)
 - [x] Dedicated Backorders view at `/orders/backorders` — all pending Odoo backorder pickings with outstanding product quantities, linked tickets, MO status, and By Order / By Product toggle (8.30)
+- [x] Batch/lot numbers displayed on order A4 view, packing slip, and invoice print view — sourced from `stock.move.line.lot_id` on done pickings linked to the sale order (8.31)
+- [x] Manufacturing order (MO) status visible on Sales Ticket detail (Production Status card, shown when any delivery is a backorder), Orders Ticket waiting_stock panel, and Backorders admin view MO chip — sourced from `mrp.production` via origin field match on sale order name (8.32)
+
+#### 8.32 — Manufacturing Order Visibility — Complete 2026-07-11
+
+**Goal:** Staff can see whether a replenishment manufacturing order exists for a backordered product and what its current state is, without opening Odoo. This closes the "do it in Odoo" gap for backorder tracking.
+
+- [x] `GET /api/orders/{order_id}/manufacturing-orders` — reads `mrp.production` records where `origin = SO name`, excludes done/cancelled; returns `mo_id`, `mo_name`, `state`, `product_id`, `product_name`, `product_qty`, `qty_producing`, `date_planned_start`, `date_planned_finished`; non-fatal (degrades to empty array if mrp module not installed)
+- [x] Backorders view MO chip (`Backorders.js`) — enhanced with `qty_producing/total` and `due {date}` from `date_planned_finished`
+- [x] Sales Ticket detail (`SalesTickets.js`) — "Production Status" card appears below Delivery & Fulfilment section when any delivery is a backorder; auto-fetches MOs; shows MO name, product, qty_producing, due date, and colour-coded state badge
+- [x] Orders Ticket waiting_stock panel (`OrdersTickets.js`) — "Production orders" sub-section appears inside the amber waiting_stock card when MOs are found; same fields + state colours
+- [x] MO state colour scheme: `draft` → grey, `confirmed` → amber, `progress` → green, `to_close` → blue
+
+**State propagation:** `detail?.order_id + deliveries.some(d => d.is_backorder)` triggers MO fetch in SalesTickets; `detail?.status === "waiting_stock"` triggers MO fetch in OrdersTickets. Both degrade gracefully when no MOs exist.
+
+---
+
+#### 8.31 — Batch/Lot Numbers on Print Documents — Complete 2026-07-11
+
+**Goal:** Every A4 document the portal generates (order view, packing slip, invoice) shows the batch/lot number(s) that were physically dispatched with that order. Required for medicinal cannabis compliance traceability — the dispensed batch must be identifiable from the paper document.
+
+- [x] `GET /api/orders/{id}` — builds `lot_map: {product_id: [lot_name, ...]}` from `stock.move.line` records on all done pickings for the sale order; non-fatal (degrades to empty if not yet packed); overlaid onto order response
+- [x] `OrderView.js` — batch names rendered in monospace below each product description in the line items table
+- [x] Packing slip (print HTML in `OrdersTickets.js`) — lot map fetched from order API before printing; batch names included per line item
+- [x] `GET /api/invoices/{id}` — builds same `lot_map` structure via `invoice_origin → sale.order → stock.picking (done) → stock.move.line`; non-fatal; returned alongside invoice data
+- [x] `InvoiceView` in `Invoices.js` — batch names rendered in same monospace style below each line description; only shown when picking has been validated (lots assigned)
+
+**Traceability chain:** Picking → `stock.move.line.lot_id` → `stock.lot.name` (Bassani batch ID scheme) → rendered on both order and invoice documents, identical to what is physically labelled on the dispatched product.
+
+---
 
 #### 8.30 — Backorders Admin View — Complete 2026-07-11
 
