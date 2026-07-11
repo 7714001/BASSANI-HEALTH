@@ -245,6 +245,44 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
 
             invoice["lines"] = lines
 
+        # Lot/batch numbers — resolve via linked sale order (invoice_origin → sale.order → stock.picking → stock.move.line)
+        invoice["lot_map"] = {}
+        try:
+            origin = invoice.get("invoice_origin")
+            if origin:
+                so_rows = odoo.search_read(
+                    "sale.order",
+                    domain=[("name", "=", origin)],
+                    fields=["id"],
+                    limit=1,
+                )
+                if so_rows:
+                    so_id = so_rows[0]["id"]
+                    pick_rows = odoo.search_read(
+                        "stock.picking",
+                        domain=[("sale_id", "=", so_id), ("state", "=", "done")],
+                        fields=["move_line_ids"],
+                        limit=10,
+                    )
+                    all_ml_ids = [ml for p in pick_rows for ml in p.get("move_line_ids", [])]
+                    if all_ml_ids:
+                        move_lines = odoo.read(
+                            "stock.move.line", all_ml_ids,
+                            fields=["product_id", "lot_id"],
+                        )
+                        lot_map: dict = {}
+                        for ml in move_lines:
+                            if not ml.get("lot_id"):
+                                continue
+                            pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                            lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
+                            lot_map.setdefault(pid, [])
+                            if lot_name not in lot_map[pid]:
+                                lot_map[pid].append(lot_name)
+                        invoice["lot_map"] = lot_map
+        except Exception:
+            pass  # Non-fatal — lot display degrades gracefully
+
         return invoice
     except HTTPException:
         raise
