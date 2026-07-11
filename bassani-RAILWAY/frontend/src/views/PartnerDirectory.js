@@ -228,15 +228,17 @@ export default function PartnerDirectory() {
         </div>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={partners}
-        loading={loading}
-        total={total}
-        pagination={pagination}
-        onPaginationChange={setPagination}
-        manualPagination
-      />
+      <main className="flex-1 overflow-y-auto">
+        <DataTable
+          columns={columns}
+          data={partners}
+          loading={loading}
+          total={total}
+          pagination={pagination}
+          onPaginationChange={setPagination}
+          manualPagination
+        />
+      </main>
 
       {/* Link to company modal */}
       {linking && (
