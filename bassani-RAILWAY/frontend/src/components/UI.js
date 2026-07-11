@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -59,6 +59,7 @@ const NAV = [
   { label: "Sales Tickets",      path: "/tickets/sales",    icon: Ticket, section: "Sales",   permissions: ["tickets.sales", "tickets.finance_confirm"] },
   { label: "Orders Inbox",       path: "/orders-inbox",     icon: Mail,   section: "Orders",  permission: "orders_inbox.view",       showOrdersInboxBadge: true },
   { label: "Orders Tickets",     path: "/tickets/orders",   icon: Ticket, section: "Orders",  permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
+  { label: "Backorders",         path: "/orders/backorders", icon: Clock,  section: "Orders",  permission: "orders.view", adminOnly: true },
   { label: "Partner Directory", path: "/partners",            icon: Users,    section: "Admin", permission: "customers.manage"    },
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
@@ -287,7 +288,7 @@ function GlobalSearch() {
       const { data } = await api.get("/api/search/global", { params: { q } });
       setQuery("");
       inputRef.current?.blur();
-      navigate(data.navigate_to);
+      navigate(data.navigate_to, { state: data.state || {} });
     } catch (err) {
       const msg = err.response?.data?.detail || "No match found";
       // dynamic import keeps react-hot-toast out of the non-toast code path

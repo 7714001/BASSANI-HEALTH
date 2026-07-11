@@ -1308,6 +1308,25 @@ What you can do here:
 - For confirmed orders not yet in the packing queue: click **Queue for Packing** (requires `tickets.manage`)
 - For old draft orders without a Sales Ticket: click **Create Sales Ticket** to bring them into the pipeline
 
+### Backorders
+
+Go to **Backorders** (under the Orders section in the sidebar) to see a consolidated view of all outstanding backorder demand across every customer order.
+
+A backorder exists when an order was partially delivered — some products shipped, but others could not because stock was unavailable. Odoo creates a separate delivery picking for the shortfall, which sits in this view until the stock is received and the delivery is completed.
+
+**Stats row:** Total backorder pickings, distinct products affected, and a breakdown by state (Confirmed vs Ready).
+
+**State meanings:**
+- **Confirmed** — the backorder picking is confirmed but stock has not yet been reserved to it.
+- **Ready** — Odoo has reserved stock to this backorder; the order clerk can action it on the packing board.
+- **Waiting** — the backorder is blocked, waiting on an upstream picking or manufacturing order.
+
+**By Order view (default):** One row per backorder picking. Rows with multiple products collapse to show the first product with a "+N more" link — click to expand. Each row links to the portal Sales Ticket if one exists.
+
+**By Product view:** Aggregates by product across all waiting orders. Shows total units outstanding and how many orders are waiting. Useful for production planning — tells you the aggregate demand for each product before raising a manufacturing order. Click any row to expand and see which specific orders are waiting.
+
+**Manufacturing Orders:** When Odoo has created an `mrp.production` record linked to the same sale order, the MO name and state appear inline on the relevant product line. Phase 13 will add the ability to schedule and drive production directly from this view.
+
 ### Invoices
 
 *Requires `invoices.view` permission*

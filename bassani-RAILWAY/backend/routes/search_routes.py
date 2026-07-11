@@ -102,14 +102,15 @@ async def global_search(
                 "id":          order_id,
                 "ref":         order["name"],
                 "name":        order.get("partner_id", [None, ""])[1] or "",
-                "navigate_to": f"/tickets/sales/{ticket['_id']}",
+                "navigate_to": "/tickets/sales",
+                "state":       {"openTicketId": str(ticket["_id"])},
             }
         return {
             "type":        "order",
             "id":          order_id,
             "ref":         order["name"],
             "name":        order.get("partner_id", [None, ""])[1] or "",
-            "navigate_to": f"/orders/{order_id}",
+            "navigate_to": "/orders",
         }
 
     # ── 3. Invoice ref ────────────────────────────────────────────────────────
@@ -137,7 +138,7 @@ async def global_search(
             "id":          inv["id"],
             "ref":         inv["name"],
             "name":        inv.get("partner_id", [None, ""])[1] or "",
-            "navigate_to": f"/invoices/{inv['id']}",
+            "navigate_to": "/invoices",
         }
 
     raise HTTPException(status_code=404, detail=f"No match found for: {q}")

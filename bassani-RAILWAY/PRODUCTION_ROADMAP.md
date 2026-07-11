@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view — 2026-07-11 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1410,6 +1410,20 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Product line descriptions auto-populate from Odoo's sales description field when a product is added to a quote (8.28)
 - [x] Finance can perform all invoice lifecycle actions (Send, PDF, Reset to Draft, Credit Note) directly from the Invoices page without requiring a linked Sales Ticket (8.29)
 - [x] Invoices with a linked Odoo sale order but no portal ticket show a "Create Ticket" action on the Invoices page (8.29)
+- [x] Dedicated Backorders view at `/orders/backorders` — all pending Odoo backorder pickings with outstanding product quantities, linked tickets, MO status, and By Order / By Product toggle (8.30)
+
+#### 8.30 — Backorders Admin View — Complete 2026-07-11
+
+**Goal:** Admin and warehouse supervisor can see all outstanding backorder demand across every customer order in one place, with links to the relevant sales ticket and any linked manufacturing orders.
+
+- [x] `GET /api/orders/backorders` — searches `stock.picking` where `backorder_id != False` and `state in (confirmed, assigned, waiting)` and `picking_type_code = outgoing`; reads `stock.move` per picking for per-product outstanding qty; cross-references `tickets` MongoDB collection for linked portal ticket ref; non-fatal MRP lookup via `mrp.production.origin` match for any linked manufacturing orders; gated by `orders.view`
+- [x] `Backorders.js` — new view at `/orders/backorders`; stats row (total pickings, products affected, Confirmed count, Ready count); By Order / By Product toggle; state filter pills; expandable multi-product rows in By Order view; By Product view aggregates total outstanding qty and order count per product with MO status; click-through link to linked sales ticket; `adminOnly: true` route
+- [x] "Backorders" nav item added under Orders section in sidebar (`Clock` icon, `orders.view` + `adminOnly`); `Clock` added to lucide-react import in `UI.js`
+- [x] Route `/orders/backorders` registered in `App.js` with `adminOnly`
+
+**Phase 13 integration point:** Once Phase 13 production scheduling is built, this view will gain write actions — allocating stock from a completed manufacturing batch to the waiting backorder picking, which auto-advances the backorder on the packing board.
+
+---
 
 #### 8.29 — Invoice Page Enhancements — Complete 2026-07-10
 

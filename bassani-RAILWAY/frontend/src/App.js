@@ -54,6 +54,7 @@ import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
 import Settings             from "./views/Settings";
 import BankReconciliation   from "./views/BankReconciliation";
+import Backorders           from "./views/Backorders";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -191,6 +192,9 @@ export default function App() {
         } />
         <Route path="/orders" element={
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/orders/backorders" element={
+          <ProtectedRoute adminOnly><AppLayout><Backorders /></AppLayout></ProtectedRoute>
         } />
         <Route path="/onboard" element={
           <ProtectedRoute><AppLayout><CustomerOnboarding /></AppLayout></ProtectedRoute>

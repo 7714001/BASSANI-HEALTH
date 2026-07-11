@@ -248,6 +248,136 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+# ── Backorders ────────────────────────────────────────────────────────────────
+
+@router.get("/backorders")
+async def list_backorders(current_user: dict = Depends(require_permission("orders.view"))):
+    """All pending backorder delivery pickings, with per-line outstanding qty and linked ticket/MO."""
+    odoo = get_odoo_client()
+    try:
+        pickings = odoo.search_read(
+            "stock.picking",
+            domain=[
+                ("backorder_id", "!=", False),
+                ("state", "in", ["confirmed", "assigned", "waiting"]),
+                ("picking_type_code", "=", "outgoing"),
+            ],
+            fields=["id", "name", "origin", "state", "scheduled_date", "partner_id", "move_ids", "sale_id"],
+            order="scheduled_date asc",
+            limit=200,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if not pickings:
+        return {"backorders": [], "total": 0}
+
+    # Read move lines for outstanding quantities
+    all_move_ids = [mid for p in pickings for mid in (p.get("move_ids") or [])]
+    move_by_picking: dict = {}
+    if all_move_ids:
+        try:
+            moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
+                "id", "product_id", "product_uom_qty", "picking_id",
+            ]})
+            for m in moves:
+                pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
+                move_by_picking.setdefault(pid, []).append({
+                    "product_id":   m["product_id"][0] if isinstance(m["product_id"], list) else m["product_id"],
+                    "product_name": m["product_id"][1] if isinstance(m["product_id"], list) else "",
+                    "qty_outstanding": m["product_uom_qty"],
+                })
+        except Exception:
+            pass
+
+    # Look up linked portal tickets by Odoo order ID
+    sale_order_ids = list({
+        (p["sale_id"][0] if isinstance(p.get("sale_id"), list) and p["sale_id"] else None)
+        for p in pickings if p.get("sale_id")
+    } - {None})
+    ticket_map: dict = {}
+    if sale_order_ids:
+        try:
+            tickets_cur = col("tickets").find(
+                {"order_id": {"$in": [str(s) for s in sale_order_ids]}},
+                {"_id": 1, "order_id": 1},
+            )
+            async for t in tickets_cur:
+                tid = str(t["_id"])
+                ticket_map[str(t["order_id"])] = {
+                    "ticket_id": tid,
+                    "ref": f"TKT-{tid[-8:].upper()}",
+                }
+        except Exception:
+            pass
+
+    # Look up MRP production orders via sale order name in origin field
+    sale_names = list({
+        (p["sale_id"][1] if isinstance(p.get("sale_id"), list) and p["sale_id"] else p.get("origin", ""))
+        for p in pickings if p.get("sale_id") or p.get("origin")
+    } - {""})
+    mrp_by_sale: dict = {}
+    if sale_names:
+        try:
+            mrp_orders = odoo.search_read(
+                "mrp.production",
+                domain=[
+                    ("origin", "in", sale_names),
+                    ("state", "not in", ["done", "cancel"]),
+                ],
+                fields=["id", "name", "product_id", "product_qty", "state", "origin", "date_planned_start"],
+                limit=500,
+            )
+            for mo in mrp_orders:
+                origin = mo.get("origin") or ""
+                mrp_by_sale.setdefault(origin, []).append({
+                    "mo_id":       mo["id"],
+                    "mo_name":     mo["name"],
+                    "state":       mo["state"],
+                    "product_id":  mo["product_id"][0] if isinstance(mo.get("product_id"), list) else None,
+                    "product_name": mo["product_id"][1] if isinstance(mo.get("product_id"), list) else "",
+                    "qty":         mo["product_qty"],
+                    "date":        mo.get("date_planned_start"),
+                })
+        except Exception:
+            pass  # mrp module may not be installed
+
+    _BACKORDER_STATE_LABELS = {
+        "confirmed": "Confirmed",
+        "assigned":  "Ready",
+        "waiting":   "Waiting",
+    }
+
+    result = []
+    for p in pickings:
+        sale_raw = p.get("sale_id")
+        sale_order_id   = sale_raw[0] if isinstance(sale_raw, list) and sale_raw else None
+        sale_order_name = sale_raw[1] if isinstance(sale_raw, list) and sale_raw else p.get("origin", "")
+        partner = p.get("partner_id")
+        customer_name = partner[1] if isinstance(partner, list) and partner else ""
+
+        lines = move_by_picking.get(p["id"], [])
+        sale_mos = mrp_by_sale.get(sale_order_name, [])
+        mo_by_product = {mo["product_id"]: mo for mo in sale_mos}
+        for line in lines:
+            line["manufacturing_order"] = mo_by_product.get(line["product_id"])
+
+        result.append({
+            "picking_id":       p["id"],
+            "picking_name":     p["name"],
+            "sale_order_id":    sale_order_id,
+            "sale_order_name":  sale_order_name,
+            "customer_name":    customer_name,
+            "state":            p["state"],
+            "state_label":      _BACKORDER_STATE_LABELS.get(p["state"], p["state"]),
+            "scheduled_date":   p.get("scheduled_date"),
+            "lines":            lines,
+            "ticket":           ticket_map.get(str(sale_order_id)) if sale_order_id else None,
+        })
+
+    return {"backorders": result, "total": len(result)}
+
+
 # ── Deliveries (7.1 + 7.5) ───────────────────────────────────────────────────
 
 _PICKING_STATE_LABEL = {
