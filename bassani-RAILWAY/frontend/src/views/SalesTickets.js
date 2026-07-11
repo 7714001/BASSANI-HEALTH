@@ -837,6 +837,8 @@ export default function SalesTickets() {
   const [depositJournals, setDepositJournals] = useState([]);
   const [depositForm, setDepositForm]       = useState({ invoice_type: "fixed", amount: "", percentage: "", date: "", journal_id: "", note: "" });
   const [depositSaving, setDepositSaving]   = useState(false);
+  const [paymentOverrideConfirm, setPaymentOverrideConfirm] = useState(false);
+  const [paymentOverrideSaving,  setPaymentOverrideSaving ] = useState(false);
 
   const openDepositModal = async () => {
     const today = new Date().toISOString().split("T")[0];
