@@ -7,7 +7,10 @@ import {
   ChevronLeft, Package, FileText, Truck, AlertTriangle,
   CheckCircle2, Clock, ExternalLink, RefreshCw,
 } from "lucide-react";
-import { fmtDate, BtnSecondary, LoadingState } from "../components/UI";
+import {
+  fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
+  FormGroup, Input, Select, LoadingState,
+} from "../components/UI";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -130,6 +133,64 @@ export default function OrderPassport() {
 
   const [data,    setData   ] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // ── Create ticket ─────────────────────────────────────────────────────────
+  const [creatingTicket, setCreatingTicket] = useState(false);
+  const createTicket = async () => {
+    setCreatingTicket(true);
+    try {
+      const r = await api.post("/api/tickets/from-order", { order_id: parseInt(orderId) });
+      toast.success("Sales ticket created");
+      navigate("/tickets/sales", { state: { openTicketId: r.data.ticket_id } });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
+  // ── Register payment ──────────────────────────────────────────────────────
+  const [payModal,    setPayModal   ] = useState(false);
+  const [payJournals, setPayJournals] = useState([]);
+  const [payForm,     setPayForm    ] = useState({ amount: "", date: "", journal_id: "" });
+  const [paySaving,   setPaySaving  ] = useState(false);
+
+  const openPayModal = async () => {
+    const inv = data?.invoice;
+    if (!inv) return;
+    setPayForm({
+      amount:     String(inv.amount_residual || inv.amount_total || ""),
+      date:       new Date().toISOString().split("T")[0],
+      journal_id: "",
+    });
+    setPayModal(true);
+    try {
+      const r = await api.get("/api/invoices/payment-journals");
+      const journals = r.data.journals || [];
+      setPayJournals(journals);
+      if (journals.length > 0) setPayForm(f => ({ ...f, journal_id: String(journals[0].id) }));
+    } catch { setPayJournals([]); }
+  };
+
+  const registerPayment = async () => {
+    if (!payForm.journal_id) return toast.error("Select a payment journal");
+    if (!payForm.amount || Number(payForm.amount) <= 0) return toast.error("Enter a valid amount");
+    setPaySaving(true);
+    try {
+      await api.put(`/api/invoices/${data.invoice.invoice_id}/pay`, {
+        journal_id:   parseInt(payForm.journal_id),
+        payment_date: payForm.date || undefined,
+        amount:       parseFloat(payForm.amount),
+      });
+      toast.success("Payment registered");
+      setPayModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Payment failed");
+    } finally {
+      setPaySaving(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -262,10 +323,12 @@ export default function OrderPassport() {
                   )}
                 </div>
               ) : (
-                <div className="text-center py-4">
+                <div className="text-center py-4 space-y-3">
                   <p className="text-xs text-gray-400">No portal ticket for this order.</p>
-                  {can("tickets.manage") && (
-                    <p className="text-xs text-gray-400 mt-1">Create one from the Sales Tickets page.</p>
+                  {can("tickets.sales") && order.state === "sale" && (
+                    <BtnPrimary onClick={createTicket} loading={creatingTicket} className="w-full justify-center">
+                      Create Sales Ticket
+                    </BtnPrimary>
                   )}
                 </div>
               )}
@@ -312,6 +375,11 @@ export default function OrderPassport() {
                       <span className="text-gray-500">Due date</span>
                       <span className="text-gray-700">{fmtDate(invoice.due_date)}</span>
                     </div>
+                  )}
+                  {["not_paid", "partial"].includes(invoice.payment_state) && can("invoices.record_payment") && (
+                    <BtnPrimary onClick={openPayModal} className="w-full justify-center mt-2">
+                      Register Payment
+                    </BtnPrimary>
                   )}
                 </div>
               ) : (
@@ -487,6 +555,47 @@ export default function OrderPassport() {
 
         </div>
       </div>
+
+      {/* ── Register Payment modal ─────────────────────────────────────────── */}
+      {payModal && data?.invoice && (
+        <Modal title={`Register Payment — ${data.invoice.name}`} onClose={() => setPayModal(false)}>
+          <div className="space-y-3">
+            <FormGroup label="Journal">
+              <Select
+                value={payForm.journal_id}
+                onChange={e => setPayForm(f => ({ ...f, journal_id: e.target.value }))}
+              >
+                <option value="">Select journal…</option>
+                {payJournals.map(j => (
+                  <option key={j.id} value={String(j.id)}>{j.name}</option>
+                ))}
+              </Select>
+            </FormGroup>
+            <FormGroup label="Amount (R)">
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={payForm.amount}
+                onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
+              />
+            </FormGroup>
+            <FormGroup label="Payment Date">
+              <Input
+                type="date"
+                value={payForm.date}
+                onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))}
+              />
+            </FormGroup>
+            <div className="flex justify-end gap-2 pt-2">
+              <BtnSecondary onClick={() => setPayModal(false)} disabled={paySaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={registerPayment} loading={paySaving} disabled={paySaving}>
+                Register Payment
+              </BtnPrimary>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
