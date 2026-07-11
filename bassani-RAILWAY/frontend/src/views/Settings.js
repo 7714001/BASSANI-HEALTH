@@ -5,6 +5,7 @@ import EmailSettings from "./EmailSettings";
 import ConnectedMailboxes from "./ConnectedMailboxes";
 import DocumentTemplates from "./DocumentTemplates";
 import LabelPrinters from "./LabelPrinters";
+import GTINPool from "./GTINPool";
 
 const TABS = [
   { key: "warehouses",     label: "Warehouses" },
@@ -12,6 +13,7 @@ const TABS = [
   { key: "mailboxes",      label: "Connected Mailboxes" },
   { key: "doc-templates",  label: "Document Templates" },
   { key: "label-printers", label: "Label Printers" },
+  { key: "gtin-pool",      label: "GTIN Pool" },
 ];
 
 export default function Settings() {
@@ -47,6 +49,7 @@ export default function Settings() {
       {active === "mailboxes"      && <ConnectedMailboxes embedded />}
       {active === "doc-templates"  && <DocumentTemplates embedded />}
       {active === "label-printers" && <LabelPrinters embedded />}
+      {active === "gtin-pool"      && <GTINPool embedded />}
     </div>
   );
 }

@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-08  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 backend foundation complete); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
+**Last Updated:** 2026-07-11  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
 
 ---
 
@@ -2121,8 +2121,8 @@ Changes to the existing Sales Ticket system (Phase 8):
 **Goal:** Every product in the system has a scannable barcode. Staff can scan a barcode in the quote builder to instantly add a product line without typing. Admins can print professional barcode labels directly from the Products page. The vault team leader scans finished goods batches in at the vault as they arrive from production, and scans them out at dispatch — creating the physical handoff record that bridges the Phase 13 production chain to the commercial order pipeline.
 
 **Estimate:** 2–3 weeks  
-**Status:** 🟡 In Progress — 12.0 complete; 12.4 backend + Products-page label printing built, serial tracking + packing-board integration pending  
-**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29; Sub-deploy 2 (12.4 GS1 backend + Products page modal) — 2026-07-09
+**Status:** 🟡 In Progress — 12.0 complete; 12.4 GS1 backend + Products-page label printing built; 12.5 GTIN Pool management complete; serial tracking + packing-board integration pending  
+**Completed:** Sub-deploy 1 (12.0 Backend foundation) — 2026-06-29; Sub-deploy 2 (12.4 GS1 backend + Products page modal) — 2026-07-09; Sub-deploy 3 (12.5 GTIN Pool) — 2026-07-11
 
 ### Context
 
@@ -2386,6 +2386,55 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 - [ ] PDF fallback produces a correctly tiled A4 PDF that prints readable labels on a standard laser printer
 - [ ] "Test Printer" in Settings confirms connectivity before a real print job is attempted
 - [ ] All print actions are audit-logged with actor, order reference, printer IP, serial ranges, and timestamp
+
+---
+
+### 12.5 — GTIN Pool Management ✅
+
+**Goal:** Bassani purchases a block of GTIN codes from GS1 South Africa and needs to track which codes are available and which are assigned to which product. This replaces ad-hoc GTIN tracking in spreadsheets and ensures no GTIN is accidentally used twice.
+
+**Status:** Complete — 2026-07-11
+
+**Backend (`backend/routes/gtin_pool_routes.py` — NEW):**
+- [x] MongoDB `gtin_pool` collection: `{ gtin, status: "available"|"assigned", odoo_product_id, product_name, assigned_at, assigned_by, created_at }`; unique index on `gtin`, index on `status`
+- [x] `GET /api/gtin-pool/stats` — `{ total, available, assigned }` counts (`require_admin`)
+- [x] `GET /api/gtin-pool` — list with optional `?status=available|assigned` filter and `limit` param (`require_admin`)
+- [x] `POST /api/gtin-pool/bulk-add` — accepts `{ gtins: [...] }`, validates each via `validate_gtin()` from `gs1.py`, inserts new entries, skips duplicates; returns `{ added, skipped, invalid: [...] }` (`settings.manage`)
+- [x] `GET /api/gtin-pool/{gtin}` — single GTIN lookup, returns pool record or 404 (`require_admin`)
+- [x] `DELETE /api/gtin-pool/{gtin}` — removes from pool; blocked if status is `assigned` (`settings.manage`)
+- [x] `POST /api/gtin-pool/{gtin}/assign` — body `{ odoo_product_id, product_name }`: marks GTIN assigned and writes `product.template.barcode` in Odoo via XML-RPC; audit-logged (`require_admin`)
+- [x] `POST /api/gtin-pool/{gtin}/unassign` — clears Odoo barcode field and returns GTIN to `available`; audit-logged (`require_admin`)
+- [x] Route ordering: `/stats` and `/bulk-add` registered before `/{gtin}` to prevent literal strings being captured by the path parameter
+- [x] Registered in `server.py`; MongoDB indexes created on startup
+
+**Frontend — Settings > GTIN Pool (`frontend/src/views/GTINPool.js` — NEW):**
+- [x] New "GTIN Pool" tab in `Settings.js`
+- [x] Stats row: Total / Available / Assigned cards
+- [x] Upload panel: paste textarea (one per line or comma-separated), "Add to Pool" button → `POST /api/gtin-pool/bulk-add`; result summary shows added count, skipped count, and any invalid GTINs
+- [x] GTIN Registry table: GTIN | Status (badge) | Product | Assigned date | Actions
+  - Available GTINs: "Remove" action with confirmation modal
+  - Assigned GTINs: "Unassign" action with confirmation modal (shows product name + GTIN, explains Odoo barcode will be cleared)
+- [x] Filter pills: All / Available / Assigned
+- [x] Standard `max-w-4xl mx-auto w-full` container; no `window.confirm` — all destructive actions use `Modal` + `pendingState` pattern
+
+**Frontend — Products page "Pool" button + picker modal:**
+- [x] Indigo "Pool" badge button added in the Barcode column of the Products table (before the GS1 button); visible to all admin users; clicking opens `GTINPickerModal`
+- [x] `frontend/src/components/GTINPickerModal.js` — modal (`width="max-w-xl"`) showing:
+  - Product context block (name + SKU)
+  - Current barcode status: green badge if GTIN is in the pool as assigned; amber badge if barcode is set but not from the pool; nothing if no barcode set
+  - Unassign action (pool-assigned barcodes only): inline confirm block, calls `POST /api/gtin-pool/{gtin}/unassign`
+  - Available GTINs list (max-h-64 scrollable): real-time search filter; each row has "Assign" button calling `POST /api/gtin-pool/{gtin}/assign`; spinner on in-flight row; empty state distinguishes "pool empty" from "no search match"
+  - On assign/unassign: `onAssigned(gtin)` callback updates the Products table row in-place without a full reload
+
+**Definition of Done for 12.5:**
+- [x] Uploading a list of GTINs via the Settings > GTIN Pool textarea adds all valid codes, skips duplicates, and reports invalid ones
+- [x] Stats cards reflect current pool state accurately
+- [x] Clicking "Pool" on a product row opens the picker; selecting a GTIN assigns it in the portal AND writes the barcode field in Odoo
+- [x] The Products table barcode cell updates immediately on assignment without a page reload
+- [x] Unassigning a GTIN from the picker (or from the registry) clears the Odoo barcode and returns the code to available
+- [x] Removing a GTIN from the registry is blocked if it is currently assigned
+- [x] A GTIN that fails the GS1 check digit algorithm is rejected at upload time with a clear error
+- [x] All assign/unassign actions are audit-logged with actor, GTIN, product, and timestamp
 
 ---
 

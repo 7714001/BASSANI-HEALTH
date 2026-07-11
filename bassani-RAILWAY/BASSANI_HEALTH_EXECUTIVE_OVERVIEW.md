@@ -3,7 +3,7 @@
 
 **Prepared by:** DynamicTech SA  
 **Date:** 9 July 2026  
-**Status:** Phases 1–9 + Phase 11 + Phase 15–21 live at portal.bassanihealth.com · Phase 12 (Barcode Integration) in progress · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
+**Status:** Phases 1–9 + Phase 11 + Phase 15–21 live at portal.bassanihealth.com · Phase 12 in progress (12.4 GS1 label printing + 12.5 GTIN Pool live) · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
 
 ---
 
@@ -310,6 +310,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Sales agent accounts — internal Bassani staff can hold sales agent accounts (managing customer portfolios) without appearing in commission statements; `commission_eligible` flag controls visibility and inclusion | Live |
 | My Profile — all users manage their display name, password, and (if authorised) personal signature from a single profile page accessible via the top bar | Live |
 | Phase 12 (partial): GS1 pharmaceutical label printing — warehouse staff can print GS1 DataMatrix unit labels and GS1-128 carton labels directly from the Products page to a Zebra ZT411 printer with one click. Live preview in the browser. Requires official GTINs from GS1 South Africa (registration process initiated). | In progress |
+| Phase 12.5: GTIN Pool management — Bassani's purchased block of GS1 GTIN codes is tracked centrally in the portal. Staff can see at a glance how many codes are available versus assigned, upload new codes in bulk, and assign a code to a product directly from the Products page. Assignment writes the barcode field in Odoo automatically. No more spreadsheet tracking or risk of assigning the same GTIN twice. | Live |
 | Phase 13: Production and cultivation module | Proposal stage |
 | Phase 14: External ecommerce API — WooCommerce product sync and order intake for third-party online stores | Concept stage |
 

@@ -186,6 +186,9 @@ async def initialise_users():
     await col("warehouse_display_tokens").create_index([("token", 1)], unique=True)
     await col("packing_board").create_index([("warehouse_id", 1)])
 
+    await col("gtin_pool").create_index([("gtin", 1)], unique=True)
+    await col("gtin_pool").create_index([("status", 1)])
+
     await col("tickets").create_index([("type", 1), ("status", 1)])
     await col("tickets").create_index([("assigned_to", 1)])
     await col("tickets").create_index([("order_id", 1)])
@@ -555,6 +558,7 @@ from routes.signing_authority_routes  import router as signing_authority_router
 from routes.profile_routes            import router as profile_router
 from routes.label_routes              import router as label_router
 from routes.bank_recon_routes         import router as bank_recon_router
+from routes.gtin_pool_routes          import router as gtin_pool_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -567,7 +571,7 @@ for router in [
     reseller_catalog_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,
-    label_router, bank_recon_router,
+    label_router, bank_recon_router, gtin_pool_router,
 ]:
     app.include_router(router)
 

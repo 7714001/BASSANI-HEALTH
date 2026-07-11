@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Check, Pencil, Layers } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
+import GTINPickerModal from "../components/GTINPickerModal";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
@@ -58,7 +59,8 @@ export function Products() {
   const [saving,      setSaving     ] = useState(false);
   const [archivingId,    setArchivingId   ] = useState(null);
   const [archiveConfirm, setArchiveConfirm] = useState(null);
-  const [gs1Product,     setGs1Product    ] = useState(null);
+  const [gs1Product,      setGs1Product     ] = useState(null);
+  const [gtinPickerProduct, setGtinPickerProduct] = useState(null);
   const [editingBarcode, setEditingBarcode] = useState(null); // product id being edited
   const [barcodeInput,   setBarcodeInput  ] = useState("");
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -366,6 +368,13 @@ export function Products() {
                         <Pencil size={11} />
                       </button>
                     )}
+                    <button
+                      onClick={() => setGtinPickerProduct(p)}
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-colors leading-none dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700"
+                      title="Assign GTIN from pool"
+                    >
+                      Pool
+                    </button>
                     {isGtin && can("labels.print") && (
                       <button
                         onClick={() => setGs1Product(p)}
@@ -601,6 +610,18 @@ export function Products() {
         </Modal>
       )}
       {gs1Product && <GS1LabelModal product={gs1Product} onClose={() => setGs1Product(null)} />}
+      {gtinPickerProduct && (
+        <GTINPickerModal
+          product={gtinPickerProduct}
+          onClose={() => setGtinPickerProduct(null)}
+          onAssigned={(gtin) => {
+            setProducts(prev => prev.map(p =>
+              p.id === gtinPickerProduct.id ? { ...p, barcode: gtin || "" } : p
+            ));
+            setGtinPickerProduct(null);
+          }}
+        />
+      )}
     </div>
   );
 }
