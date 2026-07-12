@@ -1398,11 +1398,23 @@ export default function SalesTickets() {
                         ? <Badge color={EXIT_COLOR[detail.exit_status]}>{isReseller ? (R_EXIT_LABEL[detail.exit_status] || detail.exit_status) : EXIT_LABEL[detail.exit_status]}</Badge>
                         : <Badge color={isReseller ? (R_STATUS_COLOR[detail.status] || "gray") : (STATUS_COLOR[detail.status])}>{isReseller ? (R_STATUS_LABEL[detail.status] || detail.status) : (STATUS_LABEL[detail.status] || detail.status)}</Badge>}
                       {!isReseller && (
-                        <Badge color={detail.source === "portal" ? "blue" : "gray"}>
-                          {detail.source === "portal" ? "Portal Order" : detail.source === "email" ? "Email Inquiry" : "Direct Inquiry"}
-                        </Badge>
+                        detail.source === "reseller" ? (
+                          <Badge color="purple">Reseller Order</Badge>
+                        ) : detail.source === "portal" ? (
+                          <Badge color="blue">Portal Order</Badge>
+                        ) : detail.source === "email" ? (
+                          <Badge color="gray">Email Inquiry</Badge>
+                        ) : (
+                          <Badge color="gray">Direct Inquiry</Badge>
+                        )
                       )}
                     </div>
+                    {!isReseller && detail.reseller_name && (
+                      <div className="flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50 border border-purple-100 rounded-lg px-2.5 py-1.5">
+                        <span className="font-semibold">Via reseller:</span>
+                        <span>{detail.reseller_name}</span>
+                      </div>
+                    )}
                     <div className="space-y-2">
                       {detail.customer_company_id ? (
                         <>
@@ -2673,9 +2685,20 @@ export default function SalesTickets() {
                       <span className="font-normal text-gray-400 ml-1">({t.customer_company_name})</span>
                     )}
                   </p>
-                  <Badge color={t.source === "portal" ? "blue" : "gray"} className="mt-0.5">
-                    {t.source === "portal" ? "Portal Order" : "Direct Inquiry"}
-                  </Badge>
+                  <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                    {t.source === "reseller" ? (
+                      <Badge color="purple">Reseller Order</Badge>
+                    ) : t.source === "portal" ? (
+                      <Badge color="blue">Portal Order</Badge>
+                    ) : t.source === "email" ? (
+                      <Badge color="gray">Email Inquiry</Badge>
+                    ) : (
+                      <Badge color="gray">Direct Inquiry</Badge>
+                    )}
+                    {t.reseller_name && (
+                      <span className="text-[11px] text-purple-600 font-medium">{t.reseller_name}</span>
+                    )}
+                  </div>
                 </div>
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>

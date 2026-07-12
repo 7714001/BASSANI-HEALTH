@@ -362,6 +362,25 @@ async def list_tickets(
         ]
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)
+
+    # Backfill reseller_name for old tickets that only have reseller_id
+    missing_ids = list({
+        t["reseller_id"] for t in tickets
+        if t.get("reseller_id") and not t.get("reseller_name")
+    })
+    if missing_ids:
+        reseller_name_map = {
+            r["id"]: r["name"]
+            async for r in col("resellers").find(
+                {"id": {"$in": missing_ids}}, {"id": 1, "name": 1, "_id": 0}
+            )
+        }
+        for t in tickets:
+            if t.get("reseller_id") and not t.get("reseller_name"):
+                t["reseller_name"] = reseller_name_map.get(t["reseller_id"])
+            if t.get("reseller_id") and t.get("source") == "portal":
+                t["source"] = "reseller"
+
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
 
 
@@ -614,6 +633,16 @@ async def get_ticket(
                     await col("tickets").update_one({"_id": oid}, {"$set": _bf})
         except Exception:
             pass
+
+    # Backfill reseller_name for old tickets that only have reseller_id
+    if ticket.get("reseller_id") and not ticket.get("reseller_name"):
+        _res = await col("resellers").find_one(
+            {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
+        )
+        if _res:
+            ticket["reseller_name"] = _res["name"]
+    if ticket.get("reseller_id") and ticket.get("source") == "portal":
+        ticket["source"] = "reseller"
 
     return _serialize(ticket)
 
