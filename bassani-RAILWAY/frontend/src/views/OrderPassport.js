@@ -439,26 +439,51 @@ export default function OrderPassport() {
                         : (TICKET_STATUS_LABEL[ticket.status] || ticket.status)}
                     </span>
                   </div>
+                  {/* Order type — reseller vs internal */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500">Type</span>
+                    {ticket.source === "reseller" ? (
+                      <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
+                        Reseller Order
+                      </span>
+                    ) : (
+                      <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
+                        Internal Order
+                      </span>
+                    )}
+                  </div>
+                  {ticket.reseller_name && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Reseller</span>
+                      <span className="text-gray-700 font-medium">{ticket.reseller_name}</span>
+                    </div>
+                  )}
+                  {ticket.customer_name && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Customer</span>
+                      <span className="text-gray-700">{ticket.customer_name}</span>
+                    </div>
+                  )}
                   {ticket.assigned_to && (
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Assigned to</span>
                       <span className="text-gray-700">{ticket.assigned_to}</span>
                     </div>
                   )}
-                  {ticket.source && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Source</span>
-                      <span className="text-gray-600 capitalize text-xs">{ticket.source}</span>
-                    </div>
+                  {ticket.notes && (
+                    <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-2 py-1.5 mt-1 italic">
+                      {ticket.notes}
+                    </p>
                   )}
                   {ticket.incomplete_reason && (
                     <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-2 py-1.5 mt-1">
                       {ticket.incomplete_reason}
                     </p>
                   )}
-                  {ticket.updated_at && (
-                    <p className="text-[11px] text-gray-400 pt-1">Last updated {fmtDate(ticket.updated_at)}</p>
-                  )}
+                  <div className="flex items-center justify-between pt-1 text-[11px] text-gray-400">
+                    {ticket.created_at && <span>Created {fmtDate(ticket.created_at)}</span>}
+                    {ticket.updated_at && <span>Updated {fmtDate(ticket.updated_at)}</span>}
+                  </div>
                 </div>
               ) : (
                 <div className="text-center py-4 space-y-3">

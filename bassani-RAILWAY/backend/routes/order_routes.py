@@ -654,20 +654,24 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     ticket = await col("tickets").find_one(
         {"type": "sales", "order_id": order_id},
         {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
-         "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1},
+         "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
+         "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1},
     )
     ticket_out = None
     if ticket:
         ticket_out = {
-            "ticket_id":  str(ticket["_id"]),
-            "ref":        f"TKT-{str(ticket['_id'])[-8:].upper()}",
-            "status":     ticket.get("status"),
-            "exit_status": ticket.get("exit_status"),
-            "assigned_to": ticket.get("assigned_to"),
+            "ticket_id":    str(ticket["_id"]),
+            "ref":          f"TKT-{str(ticket['_id'])[-8:].upper()}",
+            "status":       ticket.get("status"),
+            "exit_status":  ticket.get("exit_status"),
+            "assigned_to":  ticket.get("assigned_to"),
             "incomplete_reason": ticket.get("incomplete_reason"),
-            "created_at": ticket.get("created_at"),
-            "updated_at": ticket.get("updated_at"),
-            "source":     ticket.get("source"),
+            "created_at":   ticket.get("created_at"),
+            "updated_at":   ticket.get("updated_at"),
+            "source":       ticket.get("source"),
+            "reseller_name": ticket.get("reseller_name"),
+            "customer_name": ticket.get("customer_name"),
+            "notes":        ticket.get("notes"),
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────
