@@ -659,6 +659,15 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     )
     ticket_out = None
     if ticket:
+        _reseller_name = ticket.get("reseller_name")
+        _source = ticket.get("source")
+        # Backfill: old tickets have reseller_id but no reseller_name
+        if not _reseller_name and ticket.get("reseller_id"):
+            _res_doc = await col("resellers").find_one(
+                {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
+            )
+            _reseller_name = _res_doc["name"] if _res_doc else None
+            _source = "reseller"  # old tickets used "portal" — normalise for the UI
         ticket_out = {
             "ticket_id":    str(ticket["_id"]),
             "ref":          f"TKT-{str(ticket['_id'])[-8:].upper()}",
@@ -668,8 +677,8 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
             "incomplete_reason": ticket.get("incomplete_reason"),
             "created_at":   ticket.get("created_at"),
             "updated_at":   ticket.get("updated_at"),
-            "source":       ticket.get("source"),
-            "reseller_name": ticket.get("reseller_name"),
+            "source":       _source,
+            "reseller_name": _reseller_name,
             "customer_name": ticket.get("customer_name"),
             "notes":        ticket.get("notes"),
         }
@@ -1091,14 +1100,20 @@ async def create_order(
             (current_user.get("name") or current_user.get("username"))
             if _assigned else None
         )
+        _reseller_name: str | None = None
+        if _is_reseller_order:
+            _res_doc = await col("resellers").find_one(
+                {"id": order.reseller_id}, {"name": 1, "_id": 0}
+            )
+            _reseller_name = _res_doc["name"] if _res_doc else None
         _note = (
-            f"Quote created by reseller {order.reseller_id}"
+            f"Quote created by {_reseller_name or order.reseller_id}"
             if _is_reseller_order
             else f"Portal order — {_role} ({current_user.get('username', '')})"
         )
         await col("tickets").insert_one({
             "type": "sales",
-            "source": "portal",
+            "source": "reseller" if _is_reseller_order else "portal",
             "customer_id": effective_partner_id,
             "customer_name": _ticket_customer_name,
             "order_id": odoo_order_id,
@@ -1107,6 +1122,7 @@ async def create_order(
             "status": _ticket_status,
             "exit_status": None,
             "reseller_id": order.reseller_id or None,
+            "reseller_name": _reseller_name,
             "assigned_to": _assigned,
             "assigned_to_name": _assigned_name,
             "payment_confirmed_by": None,
