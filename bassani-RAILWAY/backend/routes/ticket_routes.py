@@ -562,6 +562,15 @@ async def get_ticket(
                             comm_data = await col("order_commissions").find_one(
                                 {"odoo_order_id": str(order_id)}, NO_ID
                             )
+                            _pb_reseller_name = (
+                                comm_data.get("reseller_name") if comm_data
+                                else ticket.get("reseller_name")
+                            )
+                            if not _pb_reseller_name and ticket.get("reseller_id"):
+                                _res_pb = await col("resellers").find_one(
+                                    {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
+                                )
+                                _pb_reseller_name = _res_pb["name"] if _res_pb else None
                             pb_doc = {
                                 "order_id":       str(order_id),
                                 "warehouse_id":   row["warehouse_id"][0]  if row.get("warehouse_id") else None,
@@ -574,8 +583,8 @@ async def get_ticket(
                                 "dn_num":         dn_num,
                                 "ps_num":         row.get("name", ""),
                                 "notes":          row.get("note") or "",
-                                "is_reseller":    bool(comm_data),
-                                "reseller_name":  comm_data.get("reseller_name") if comm_data else None,
+                                "is_reseller":    bool(comm_data) or bool(ticket.get("reseller_id")),
+                                "reseller_name":  _pb_reseller_name,
                                 "packer_name": None, "status": "queued", "queued_at": now,
                                 "packed_at": None, "ready_at": None, "collected_at": None,
                                 "cancelled_at": None, "incomplete_at": None, "completed_at": None,
@@ -1766,6 +1775,16 @@ async def admin_override_payment(
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
 
+    _pb_reseller_name = (
+        comm_data.get("reseller_name") if comm_data
+        else ticket.get("reseller_name")
+    )
+    if not _pb_reseller_name and ticket.get("reseller_id"):
+        _res_pb = await col("resellers").find_one(
+            {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
+        )
+        _pb_reseller_name = _res_pb["name"] if _res_pb else None
+
     pb_doc = {
         "order_id":       str(order_id),
         "warehouse_id":   order_data["warehouse_id"][0]  if order_data.get("warehouse_id") else None,
@@ -1778,8 +1797,8 @@ async def admin_override_payment(
         "dn_num":         dn_num,
         "ps_num":         order_data.get("name", ""),
         "notes":          order_data.get("note") or "",
-        "is_reseller":    bool(comm_data),
-        "reseller_name":  comm_data.get("reseller_name") if comm_data else None,
+        "is_reseller":    bool(comm_data) or bool(ticket.get("reseller_id")),
+        "reseller_name":  _pb_reseller_name,
         "packer_name": None, "status": "queued", "queued_at": now,
         "packed_at": None, "ready_at": None, "collected_at": None,
         "cancelled_at": None, "incomplete_at": None, "completed_at": None,

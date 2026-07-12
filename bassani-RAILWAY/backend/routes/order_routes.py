@@ -113,30 +113,42 @@ async def list_orders(
         total = odoo.count("sale.order", domain)
 
         # Overlay commission data from MongoDB
+        comm_map: dict = {}
+        odoo_ids_str = [str(o["id"]) for o in orders]
+        async for c in col("order_commissions").find(
+            {"odoo_order_id": {"$in": odoo_ids_str}}, NO_ID
+        ):
+            comm_map[c["odoo_order_id"]] = c
         for order in orders:
-            odoo_order_id = str(order["id"])
-            comm_data = await col("order_commissions").find_one(
-                {"odoo_order_id": odoo_order_id}, NO_ID
-            )
+            comm_data = comm_map.get(str(order["id"]))
             order["commission_total"] = comm_data["commission_total"] if comm_data else 0
-            order["reseller_id"] = comm_data["reseller_id"] if comm_data else None
+            order["reseller_id"]   = comm_data["reseller_id"] if comm_data else None
             order["reseller_name"] = comm_data.get("reseller_name", "") if comm_data else ""
 
-        # Batch-fetch linked Sales tickets so the Orders table can show pipeline status
+        # Batch-fetch linked Sales tickets — also used as reseller fallback for
+        # non-commission-eligible resellers who have no order_commissions record
         order_ids = [o["id"] for o in orders]
         ticket_map: dict = {}
         if order_ids:
             async for t in col("tickets").find(
                 {"order_id": {"$in": order_ids}, "type": "sales"},
-                {"order_id": 1, "status": 1, "exit_status": 1},
+                {"order_id": 1, "status": 1, "exit_status": 1,
+                 "reseller_id": 1, "reseller_name": 1},
             ):
                 ticket_map[t["order_id"]] = {
-                    "id": str(t["_id"]),
-                    "status": t.get("exit_status") or t.get("status"),
-                    "exit_status": t.get("exit_status"),
+                    "id":           str(t["_id"]),
+                    "status":       t.get("exit_status") or t.get("status"),
+                    "exit_status":  t.get("exit_status"),
+                    "reseller_id":  t.get("reseller_id"),
+                    "reseller_name": t.get("reseller_name"),
                 }
         for order in orders:
-            order["linked_ticket"] = ticket_map.get(order["id"])
+            tk = ticket_map.get(order["id"])
+            order["linked_ticket"] = tk
+            # Fill reseller info from ticket when commission record is absent
+            if not order["reseller_name"] and tk and tk.get("reseller_name"):
+                order["reseller_name"] = tk["reseller_name"]
+                order["reseller_id"]   = tk.get("reseller_id")
 
         # Batch-fetch packing board entries to surface pipeline status in the list
         packing_map: dict = {}
@@ -405,8 +417,18 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
             {"odoo_order_id": str(order_id)}, NO_ID
         )
         order["commission_total"] = comm_data["commission_total"] if comm_data else 0
-        order["reseller_id"] = comm_data["reseller_id"] if comm_data else None
+        order["reseller_id"]   = comm_data["reseller_id"] if comm_data else None
         order["reseller_name"] = comm_data.get("reseller_name", "") if comm_data else ""
+
+        # Fallback: non-commission resellers have no commission record — use ticket
+        if not order["reseller_name"]:
+            tk = await col("tickets").find_one(
+                {"type": "sales", "order_id": order_id},
+                {"reseller_id": 1, "reseller_name": 1, "_id": 0},
+            )
+            if tk and tk.get("reseller_name"):
+                order["reseller_name"] = tk["reseller_name"]
+                order["reseller_id"]   = tk.get("reseller_id")
 
         return order
     except HTTPException:

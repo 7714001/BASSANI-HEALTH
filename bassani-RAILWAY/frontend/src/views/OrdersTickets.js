@@ -352,7 +352,7 @@ export default function OrdersTickets() {
         <div style="margin-bottom:24px">
           <p style="font-size:9px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px;margin-bottom:4px">Customer</p>
           <p style="font-size:16px;font-weight:700">${detail.customer_name || "—"}</p>
-          ${detail.is_reseller && detail.reseller_name ? `<p style="font-size:11px;color:#0f6e56">via ${detail.reseller_name}</p>` : ""}
+          ${detail.reseller_name ? `<p style="font-size:11px;color:#6d28d9">via ${detail.reseller_name}</p>` : ""}
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:12px 0;margin-bottom:28px">${metaRows}</div>
         <table>
@@ -432,8 +432,8 @@ export default function OrdersTickets() {
                           {detail.customer_city && (
                             <p className="text-xs text-gray-400 mt-0.5">{detail.customer_city}</p>
                           )}
-                          {detail.is_reseller && detail.reseller_name && (
-                            <p className="text-xs text-bassani-600 mt-0.5">via {detail.reseller_name}</p>
+                          {detail.reseller_name && (
+                            <p className="text-xs text-purple-600 font-medium mt-0.5">via {detail.reseller_name}</p>
                           )}
                         </div>
                         <div className="space-y-1.5">
