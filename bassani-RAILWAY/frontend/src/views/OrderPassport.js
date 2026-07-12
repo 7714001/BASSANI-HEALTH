@@ -326,10 +326,7 @@ export default function OrderPassport() {
   const outstandingLines = (order.lines || []).filter(
     l => (l.qty_delivered || 0) < (l.product_uom_qty || 0)
   );
-  const hasBackorder =
-    deliveries.some(d => d.is_backorder) ||
-    packing?.status === "waiting_stock" ||
-    (outstandingLines.length > 0 && deliveries.some(d => d.state === "done"));
+  const hasBackorder = outstandingLines.length > 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
