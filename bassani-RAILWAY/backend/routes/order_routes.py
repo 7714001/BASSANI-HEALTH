@@ -725,21 +725,28 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     invoice_out = invoices_out[0] if invoices_out else None  # kept for backwards compat
 
     # ── Deliveries ────────────────────────────────────────────────────────────
-    picking_ids = order.get("picking_ids") or []
+    # Use search_read to resolve picking_ids — same as get_order_deliveries,
+    # which is proven to work. order.picking_ids from read() can return []
+    # because sale.order.picking_ids is a computed field.
     deliveries = []
+    try:
+        so_rows = odoo.search_read("sale.order", domain=[("id", "=", order_id)], fields=["picking_ids"], limit=1)
+        picking_ids = so_rows[0]["picking_ids"] if so_rows else []
+    except Exception:
+        picking_ids = []
     if picking_ids:
         try:
-            pickings = odoo.read("stock.picking", picking_ids, fields=[
+            pickings = odoo_call("stock.picking", "read", [picking_ids], {"fields": [
                 "id", "name", "state", "scheduled_date", "date_done",
                 "backorder_id", "picking_type_code", "move_ids",
-            ])
+            ]})
             pickings = [p for p in pickings if p.get("picking_type_code") == "outgoing"]
             all_move_ids = [mid for p in pickings for mid in p.get("move_ids", [])]
             move_by_picking: dict = {}
             if all_move_ids:
-                moves = odoo.read("stock.move", all_move_ids, fields=[
+                moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
                     "id", "product_id", "product_uom_qty", "quantity_done", "picking_id",
-                ])
+                ]})
                 for m in moves:
                     pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
                     move_by_picking.setdefault(pid, []).append({
