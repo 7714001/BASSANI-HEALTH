@@ -4,7 +4,7 @@ import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import {
-  ChevronLeft, Package, FileText, Truck, AlertTriangle,
+  ChevronLeft, Package, FileText, Truck,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
 } from "lucide-react";
 import {
@@ -14,6 +14,22 @@ import {
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// ── Odoo order state — matches OrderView.js terminology exactly ───────────────
+const ODOO_STATE_LABEL = {
+  draft:  "Quotation",
+  sent:   "Quotation Sent",
+  sale:   "Sales Order",
+  done:   "Locked",
+  cancel: "Cancelled",
+};
+const ODOO_STATE_STYLE = {
+  draft:  "bg-amber-50 text-amber-700 border-amber-200",
+  sent:   "bg-blue-50 text-blue-700 border-blue-200",
+  sale:   "bg-green-50 text-green-700 border-green-200",
+  done:   "bg-gray-100 text-gray-500 border-gray-200",
+  cancel: "bg-red-50 text-red-700 border-red-200",
+};
 
 // ── Colour maps ───────────────────────────────────────────────────────────────
 const STATUS_COLOURS = {
@@ -146,11 +162,10 @@ function StatusBadge({ overall }) {
 function StatusRail({ order, ticket, packing, invoices }) {
   const pills = [];
 
-  const ORDER_MAP = {
-    draft: ["Quotation", "gray"], sent: ["Quote Sent", "blue"],
-    sale: ["Confirmed", "green"], done: ["Locked", "gray"], cancel: ["Cancelled", "red"],
-  };
-  const [oLabel, oColor] = ORDER_MAP[order.state] || [order.state, "gray"];
+  const [oLabel, oColor] = [
+    ODOO_STATE_LABEL[order.state] || order.state,
+    { draft: "amber", sent: "blue", sale: "green", done: "gray", cancel: "red" }[order.state] || "gray",
+  ];
   pills.push({ label: `Order: ${oLabel}`, color: oColor });
 
   if (ticket) {
@@ -328,11 +343,15 @@ export default function OrderPassport() {
   if (!data) return null;
 
   const { order, ticket, packing, invoices = [], deliveries, lot_map, manufacturing_orders, overall_status } = data;
-  const partner          = order.partner_detail || {};
-  const outstandingLines = (order.lines || []).filter(
-    l => (l.qty_delivered || 0) < (l.product_uom_qty || 0)
+  const partner            = order.partner_detail || {};
+  const hasPartialDelivery = deliveries.some(d => d.state === "done");
+  const outstandingLines   = (order.lines || []).filter(
+    l => hasPartialDelivery && (l.qty_delivered || 0) < (l.product_uom_qty || 0)
   );
-  const hasBackorder = outstandingLines.length > 0;
+  const hasBackorder =
+    deliveries.some(d => d.is_backorder) ||
+    packing?.status === "waiting_stock" ||
+    (hasPartialDelivery && outstandingLines.length > 0);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -356,7 +375,12 @@ export default function OrderPassport() {
             <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
               <div>
                 <p className="text-xs text-gray-400 mb-0.5">Order Reference</p>
-                <h1 className="text-2xl font-mono font-bold text-gray-900">{order.name}</h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-2xl font-mono font-bold text-gray-900">{order.name}</h1>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${ODOO_STATE_STYLE[order.state] || "bg-gray-50 text-gray-500 border-gray-200"}`}>
+                    {ODOO_STATE_LABEL[order.state] || order.state}
+                  </span>
+                </div>
                 <p className="text-sm text-gray-600 mt-0.5">
                   {order.partner_id?.[1] || "Unknown customer"}
                   {partner.email && <span className="text-gray-400 ml-2">· {partner.email}</span>}
@@ -365,15 +389,6 @@ export default function OrderPassport() {
               <div className="text-right">
                 <StatusBadge overall={overall_status} />
                 <p className="text-xs text-gray-400 mt-1.5">{overall_status.detail}</p>
-                {hasBackorder && (
-                  <button
-                    onClick={() => navigate("/orders/backorders", { state: { soName: order.name } })}
-                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2.5 py-1 hover:bg-orange-100 transition-colors"
-                  >
-                    <AlertTriangle size={11} />
-                    Backorder items
-                  </button>
-                )}
               </div>
             </div>
 
@@ -638,69 +653,6 @@ export default function OrderPassport() {
             )}
           </div>
 
-          {/* ── Backorder & Production ───────────────────────────────────────── */}
-          {(hasBackorder || manufacturing_orders.length > 0) && (
-            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3">
-              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1.5">
-                <AlertTriangle size={12} />Backorder & Production
-              </p>
-
-              {/* Outstanding items — exactly which lines and quantities */}
-              {outstandingLines.length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Outstanding items</p>
-                  {outstandingLines.map((line, i) => {
-                    const ordered   = line.product_uom_qty || 0;
-                    const delivered = line.qty_delivered   || 0;
-                    const outstanding = ordered - delivered;
-                    return (
-                      <div key={i} className="flex items-center justify-between text-xs bg-white/60 rounded-lg px-3 py-2 gap-2">
-                        <span className="text-amber-900 font-medium truncate flex-1">
-                          {line.name || line.product_id?.[1]}
-                        </span>
-                        <span className="shrink-0 tabular-nums text-amber-800">
-                          {delivered}/{ordered} delivered
-                        </span>
-                        <span className="shrink-0 text-[10px] font-bold text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded-full">
-                          {outstanding} outstanding
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Manufacturing orders replenishing this backorder */}
-              {manufacturing_orders.length > 0 && (
-                <div className="space-y-2 border-t border-amber-100 pt-3">
-                  <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1">
-                    <Package size={10} />Production orders
-                  </p>
-                  {manufacturing_orders.map(mo => {
-                    const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
-                    return (
-                      <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs bg-white/60 rounded-lg px-3 py-2">
-                        <div className="min-w-0">
-                          <span className="font-mono font-semibold text-amber-900">{mo.mo_name}</span>
-                          <span className="ml-1.5 text-amber-700">{mo.product_name}</span>
-                          {mo.qty_producing > 0 && (
-                            <span className="ml-1.5 text-green-700">{mo.qty_producing}/{mo.product_qty} producing</span>
-                          )}
-                          {mo.date_planned_finished && (
-                            <span className="ml-1.5 text-amber-500">· due {fmtDate(mo.date_planned_finished)}</span>
-                          )}
-                        </div>
-                        <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
-                          {MO_LABELS[mo.state] || mo.state}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* ── Order lines ──────────────────────────────────────────────────── */}
           {order.lines?.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
@@ -724,9 +676,13 @@ export default function OrderPassport() {
                       const lots        = pid && lot_map[pid] ? lot_map[pid] : [];
                       const ordered     = line.product_uom_qty || 0;
                       const delivered   = line.qty_delivered   || 0;
-                      const isOutstanding = delivered < ordered;
+                      const isOutstanding = hasPartialDelivery && delivered < ordered;
                       return (
-                        <tr key={i} className={isOutstanding ? "bg-orange-50/40" : ""}>
+                        <tr
+                          key={i}
+                          className={`${isOutstanding ? "bg-orange-50/40 cursor-pointer hover:bg-orange-100/60 transition-colors" : ""}`}
+                          onClick={isOutstanding ? () => navigate("/orders/backorders", { state: { soName: order.name } }) : undefined}
+                        >
                           <td className="py-2 pr-3">
                             <p className="text-gray-800 font-medium leading-snug">{line.name || line.product_id?.[1]}</p>
                             {lots.length > 0 && (
