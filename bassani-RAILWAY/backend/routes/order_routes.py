@@ -727,7 +727,6 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     # ── Deliveries ────────────────────────────────────────────────────────────
     picking_ids = order.get("picking_ids") or []
     deliveries = []
-    lot_map: dict = {}
     if picking_ids:
         try:
             pickings = odoo_call("stock.picking", "read", [picking_ids], {"fields": [
@@ -750,29 +749,6 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
                         "qty_done":     m["quantity_done"],
                     })
 
-            # Lot map — use search_read (same as get_order endpoint, which is proven
-            # to work). odoo_call/execute_kw handles related fields differently and
-            # was silently producing empty results for the passport.
-            try:
-                lot_pick_rows = odoo.search_read(
-                    "stock.picking",
-                    domain=[("sale_id", "=", order_id), ("state", "=", "done")],
-                    fields=["move_line_ids"],
-                    limit=20,
-                )
-                all_ml_ids = [ml for p in lot_pick_rows for ml in p.get("move_line_ids", [])]
-                if all_ml_ids:
-                    mls = odoo.read("stock.move.line", all_ml_ids, fields=["product_id", "lot_id"])
-                    for ml in mls:
-                        if not ml.get("lot_id"): continue
-                        pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
-                        lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
-                        lot_map.setdefault(pid, [])
-                        if lot_name not in lot_map[pid]:
-                            lot_map[pid].append(lot_name)
-            except Exception:
-                pass
-
             _STATE_LABEL = {
                 "draft": "Draft", "waiting": "Waiting for Stock",
                 "confirmed": "Confirmed", "assigned": "Ready to Pick",
@@ -792,6 +768,29 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
                 })
         except Exception:
             pass
+
+    # ── Lot map (fully independent — cannot be silenced by delivery block) ────
+    lot_map: dict = {}
+    try:
+        lot_pick_rows = odoo.search_read(
+            "stock.picking",
+            domain=[("sale_id", "=", order_id), ("state", "=", "done")],
+            fields=["move_line_ids"],
+            limit=20,
+        )
+        all_ml_ids = [ml for p in lot_pick_rows for ml in p.get("move_line_ids", [])]
+        if all_ml_ids:
+            mls = odoo.read("stock.move.line", all_ml_ids, fields=["product_id", "lot_id"])
+            for ml in mls:
+                if not ml.get("lot_id"):
+                    continue
+                pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                lot_name = ml["lot_id"][1] if isinstance(ml["lot_id"], list) else str(ml["lot_id"])
+                lot_map.setdefault(pid, [])
+                if lot_name not in lot_map[pid]:
+                    lot_map[pid].append(lot_name)
+    except Exception:
+        pass
 
     # ── Manufacturing orders ──────────────────────────────────────────────────
     mos = []
