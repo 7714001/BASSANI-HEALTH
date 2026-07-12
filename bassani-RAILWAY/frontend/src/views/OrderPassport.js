@@ -322,11 +322,14 @@ export default function OrderPassport() {
   if (!data) return null;
 
   const { order, ticket, packing, invoices = [], deliveries, lot_map, manufacturing_orders, overall_status } = data;
-  const partner        = order.partner_detail || {};
-  const hasBackorder   = deliveries.some(d => d.is_backorder);
+  const partner          = order.partner_detail || {};
   const outstandingLines = (order.lines || []).filter(
     l => (l.qty_delivered || 0) < (l.product_uom_qty || 0)
   );
+  const hasBackorder =
+    deliveries.some(d => d.is_backorder) ||
+    packing?.status === "waiting_stock" ||
+    (outstandingLines.length > 0 && deliveries.some(d => d.state === "done"));
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
