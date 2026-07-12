@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-11  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1 doc progress tracking, 11.C.2 inbox UX hardening, 11.C.3 reseller onboarding ownership gap (three-tier fix: auto-draft application, reseller stamping, Tier 3 gate, awaiting_docs approval flow) — all deployed 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
+**Last Updated:** 2026-07-12  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
 
 ---
 
@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1414,6 +1414,7 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] Batch/lot numbers displayed on order A4 view, packing slip, and invoice print view — sourced from `stock.move.line.lot_id` on done pickings linked to the sale order (8.31)
 - [x] Manufacturing order (MO) status visible on Sales Ticket detail (Production Status card, shown when any delivery is a backorder), Orders Ticket waiting_stock panel, and Backorders admin view MO chip — sourced from `mrp.production` via origin field match on sale order name (8.32)
 - [x] Order Passport — unified lifecycle view at `/orders/{id}/passport` showing overall status, pipeline stepper, ticket, invoice, deliveries, batch/lot numbers, and MOs on one page; barcode scan and invoice scan navigate here directly (8.33)
+- [x] Reseller identity visible on every order-related view — Sales Ticket list, Sales Ticket detail, Order list, Order detail, Order Passport ticket card, packing board order detail, and Backorders page — for all reseller orders regardless of commission eligibility (8.34)
 
 #### 8.32 — Manufacturing Order Visibility — Complete 2026-07-11
 
@@ -1429,16 +1430,42 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 ---
 
-#### 8.33 — Order Passport — Complete 2026-07-11
+#### 8.33 — Order Passport — Complete 2026-07-11 (extended 2026-07-12)
 
 **Goal:** Any staff member scanning a barcode, typing an order ref, or typing an invoice ref gets a single page showing the complete lifecycle of that order — ticket stage, invoice status, delivery state, batch/lot numbers, and any active MOs — without having to navigate between three separate views.
 
 - [x] `GET /api/orders/{order_id}/passport` — aggregates sale order, partner detail, order lines, MongoDB sales ticket, first linked invoice, outgoing pickings, lot map from done pickings, and MOs (if backorder); derives single `overall_status` object (`label`, `color`, `detail`) from all sources combined; enforces same reseller access check as `GET /{order_id}`
-- [x] `OrderPassport.js` — full-page view at `/orders/:orderId/passport`; pipeline stepper (Quote → Order → Deposit → Packing → Complete) reflects active ticket stage; overall status badge with colour-coded pill; two-column grid for ticket + invoice cards; delivery section with per-line qty and batch chips; backorder + MO panel (amber); order lines table with batch references; quick-link footer buttons
+- [x] `OrderPassport.js` — full-page view at `/orders/:orderId/passport`; pipeline stepper (Quote → Order → Deposit → Packing → Complete) reflects active ticket stage; overall status badge with colour-coded pill; two-column grid for ticket + invoice cards; delivery section with per-line qty and batch chips; order lines table with batch references; quick-link footer buttons
 - [x] `App.js` — route `/orders/:orderId/passport` added (no `adminOnly` — accessible to any authenticated role that can access orders)
-- [x] `search_routes.py` — order scan navigates directly to `/orders/{id}/passport`; invoice scan resolves linked sale order via `invoice_origin` and navigates to that order's passport; removed now-unused `col`, `_ORDER_RE`, `_INVOICE_RE`
+- [x] `search_routes.py` — order scan navigates directly to `/orders/{id}/passport`; invoice scan resolves linked sale order via `invoice_origin` and navigates to that order's passport
+- [x] Lot map built via independent `search_read` block (not inside delivery block) — correctly resolves lots from done pickings regardless of delivery fetch outcome
+- [x] Deliveries fetched via parallel call to `/api/orders/{id}/deliveries` (proven endpoint) — avoids Odoo computed field silent-return issue with `picking_ids` on `read()`
+- [x] Odoo order state displayed as human-readable badge inline with the order reference (`draft` → Quotation, `sale` → Sales Order, etc.) — consistent with Orders view terminology
+- [x] `hasPartialDelivery` gate — backorder state and outstanding line highlighting only trigger after at least one delivery is in `done` state; draft quotes are never falsely flagged
+- [x] Outstanding order line rows are clickable — navigate to `/orders/backorders` pre-filtered to that SO name
+- [x] Sales Ticket card on passport shows: order type pill (purple Reseller Order / blue Internal Order), reseller name, customer name, ticket notes, and both created and last-updated timestamps
 
-**Overall status derivation:** Reads `order.state`, `ticket.status`, `ticket.exit_status`, `invoice.payment_state`, and `deliveries.is_backorder` in priority order to produce one human-readable label + detail string — e.g. "Awaiting Stock · Invoice INV/2026/00042 is outstanding."
+**Overall status derivation:** Reads `order.state`, `ticket.status`, `ticket.exit_status`, `invoice.payment_state`, and `deliveries` in priority order to produce one human-readable label + detail string — e.g. "Awaiting Stock · Invoice INV/2026/00042 is outstanding."
+
+---
+
+#### 8.34 — Reseller Traceability Across All Views — Complete 2026-07-12
+
+**Goal:** Every view that shows an order — whether in the ticket pipeline, the orders list, the packing board, or the backorders view — identifies the reseller who placed it. This applies to all reseller orders regardless of whether the reseller is commission-eligible (non-commission resellers had no `order_commissions` record, so their name was silently missing).
+
+- [x] `order_routes.py` — new reseller tickets now stamp `reseller_name` and `source="reseller"` at write time (looked up from `resellers` collection during auto-ticket creation in `create_order`); eliminates read-time join for all new orders
+- [x] `ticket_routes.py` `list_tickets` — batch-resolves `reseller_name` for old tickets with `reseller_id` but no `reseller_name` (one `resellers` collection query per list call, not N); also normalises `source` from `"portal"` to `"reseller"` for old reseller tickets
+- [x] `ticket_routes.py` `get_ticket` — single reseller lookup fallback for old tickets; normalises `source` field
+- [x] `order_routes.py` `list_orders` — commission fetch converted from N individual `find_one` calls to one batch query; falls back to linked ticket's `reseller_name` for orders with no commission record (non-commission resellers, draft quotes)
+- [x] `order_routes.py` `get_order` — same ticket fallback for single-order detail
+- [x] `ticket_routes.py` auto-sync packing board creation — falls back to ticket's `reseller_id`/`reseller_name` when no commission record exists; `is_reseller` flag now set from ticket presence, not commission presence
+- [x] `ticket_routes.py` admin-override packing board creation — same fallback
+- [x] `SalesTickets.js` ticket list — customer column now shows purple "Reseller Order" badge + reseller name; "Email Inquiry" badge added; `"portal"` source now shows correctly as "Portal Order"
+- [x] `SalesTickets.js` ticket detail — "Via reseller: [name]" banner (purple) above Bill To section; source badge updated to handle `"reseller"` source
+- [x] `OrdersTickets.js` packing board detail — reseller name shown whenever present (removed `is_reseller` gate); consistent purple colour
+- [x] `OrderPassport.js` ticket card — order type pill (purple Reseller Order / blue Internal Order) + reseller name row + customer name row
+
+**Key design decision:** Reseller name is denormalised onto the ticket document at creation time. Read-time backfill only fires for pre-existing tickets that predate this change. This avoids joins on every list render while ensuring all historical data is still surfaced correctly.
 
 ---
 
@@ -1464,6 +1491,8 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] `Backorders.js` — new view at `/orders/backorders`; stats row (total pickings, products affected, Confirmed count, Ready count); By Order / By Product toggle; state filter pills; expandable multi-product rows in By Order view; By Product view aggregates total outstanding qty and order count per product with MO status; click-through link to linked sales ticket; `adminOnly: true` route
 - [x] "Backorders" nav item added under Orders section in sidebar (`Clock` icon, `orders.view` + `adminOnly`); `Clock` added to lucide-react import in `UI.js`
 - [x] Route `/orders/backorders` registered in `App.js` with `adminOnly`
+- [x] SO reference in By Order view is a clickable link to `/orders/{id}/passport` — direct navigation from backorder to full order lifecycle (8.34)
+- [x] SO name filter pre-populated when navigated from Order Passport outstanding line rows (8.33)
 
 **Phase 13 integration point:** Once Phase 13 production scheduling is built, this view will gain write actions — allocating stock from a completed manufacturing batch to the waiting backorder picking, which auto-advances the backorder on the packing board.
 

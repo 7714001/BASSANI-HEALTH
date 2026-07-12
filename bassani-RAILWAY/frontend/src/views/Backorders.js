@@ -65,9 +65,19 @@ function OrderRow({ entry, navigate }) {
         ) : null}
       </td>
 
-      {/* Sale order ref */}
-      <td className="p-3 font-mono text-sm text-gray-900 whitespace-nowrap">
-        {entry.sale_order_name || "—"}
+      {/* Sale order ref — links to Order Passport */}
+      <td className="p-3 font-mono text-sm whitespace-nowrap">
+        {entry.sale_order_id ? (
+          <button
+            onClick={() => navigate(`/orders/${entry.sale_order_id}/passport`)}
+            className="text-bassani-700 hover:text-bassani-900 hover:underline font-medium flex items-center gap-1"
+          >
+            {entry.sale_order_name || `#${entry.sale_order_id}`}
+            <ExternalLink size={11} className="text-bassani-400" />
+          </button>
+        ) : (
+          <span className="text-gray-900">{entry.sale_order_name || "—"}</span>
+        )}
       </td>
 
       {/* Backorder picking ref */}

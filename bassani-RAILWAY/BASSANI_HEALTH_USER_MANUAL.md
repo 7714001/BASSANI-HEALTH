@@ -493,6 +493,8 @@ When you log in, you land on **Sales Tickets** (`/tickets/sales`). This shows:
 - **Your queue** — tickets assigned to you
 - **Unassigned** — tickets waiting to be claimed (reseller orders that came in while you were offline, or new direct inquiries)
 
+**Identifying reseller orders:** The Customer column in the ticket list shows a purple **Reseller Order** badge and the reseller's name beneath the customer name for any order that came through a reseller partner. Internal orders show a blue **Portal Order** or **Direct Inquiry** badge. Opening a reseller ticket shows a purple "Via reseller: [name]" banner above the customer billing section.
+
 A small **Live** indicator appears in the top-right of the ticket list. When it is green, the page is receiving real-time updates — any change made by another staff member (stage advance, payment registration, order cancellation) appears immediately without a manual refresh. If it shows **Reconnecting**, the live connection dropped temporarily and will restore itself automatically within 30 seconds.
 
 ### Creating a Direct Inquiry Ticket
@@ -1308,6 +1310,23 @@ What you can do here:
 - For confirmed orders not yet in the packing queue: click **Queue for Packing** (requires `tickets.manage`)
 - For old draft orders without a Sales Ticket: click **Create Sales Ticket** to bring them into the pipeline
 
+**Reseller orders:** If an order was placed by a reseller partner on behalf of a customer, the Customer column shows the reseller's name in a purple badge beneath the customer name. This appears for all reseller orders — including those from resellers who are not commission-eligible.
+
+### Order Passport
+
+Click any order row to open its **Order Passport** — a single-page lifecycle summary that shows everything about an order in one place, without needing to navigate between three separate views.
+
+**What the passport shows:**
+- **Overall status** — a colour-coded badge derived from the combined state of the Odoo order, ticket stage, invoice, and deliveries (e.g. "Awaiting Payment", "In Packing", "Complete")
+- **Pipeline stepper** — visual progress indicator from Quote through to Complete, with the active stage highlighted
+- **Sales Ticket card** — ticket reference, current stage, who it is assigned to, order type (Reseller Order / Internal Order), reseller name if applicable, customer name, any notes, and both created and last-updated timestamps
+- **Invoice card** — invoice reference, amount, payment state, and due date
+- **Delivery & Fulfilment section** — each outgoing delivery with state, scheduled date, and per-product quantities delivered vs ordered; batch/lot numbers shown as chips on each line
+- **Order lines table** — all products with quantities, unit prices, and the batch references dispatched against each line
+- **Outstanding line rows** — any product not yet fully delivered is highlighted in amber; clicking the row navigates to the Backorders page pre-filtered to that order
+
+The passport is also the landing page for all barcode scans and order reference searches via the global search bar.
+
 ### Backorders
 
 Go to **Backorders** (under the Orders section in the sidebar) to see a consolidated view of all outstanding backorder demand across every customer order.
@@ -1321,7 +1340,7 @@ A backorder exists when an order was partially delivered — some products shipp
 - **Ready** — Odoo has reserved stock to this backorder; the order clerk can action it on the packing board.
 - **Waiting** — the backorder is blocked, waiting on an upstream picking or manufacturing order.
 
-**By Order view (default):** One row per backorder picking. Rows with multiple products collapse to show the first product with a "+N more" link — click to expand. Each row links to the portal Sales Ticket if one exists.
+**By Order view (default):** One row per backorder picking. Rows with multiple products collapse to show the first product with a "+N more" link — click to expand. Click the **sale order reference** (e.g. S00042) in the first column to open the Order Passport for that order — the full lifecycle view showing ticket stage, invoice, deliveries, and batch numbers. Each row also links to the portal Sales Ticket if one exists.
 
 **By Product view:** Aggregates by product across all waiting orders. Shows total units outstanding and how many orders are waiting. Useful for production planning — tells you the aggregate demand for each product before raising a manufacturing order. Click any row to expand and see which specific orders are waiting.
 
