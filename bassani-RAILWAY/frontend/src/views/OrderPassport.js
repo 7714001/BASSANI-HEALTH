@@ -292,8 +292,14 @@ export default function OrderPassport() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api.get(`/api/orders/${orderId}/passport`);
-      setData(r.data);
+      const [passportRes, deliveriesRes] = await Promise.all([
+        api.get(`/api/orders/${orderId}/passport`),
+        api.get(`/api/orders/${orderId}/deliveries`),
+      ]);
+      setData({
+        ...passportRes.data,
+        deliveries: deliveriesRes.data.deliveries || [],
+      });
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load order");
     } finally {
