@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { RefreshCw, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
@@ -184,10 +184,12 @@ function ProductGroupRow({ group, navigate }) {
 
 export default function Backorders() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [data,    setData   ] = useState([]);
   const [loading, setLoading] = useState(true);
   const [groupBy, setGroupBy] = useState("order"); // "order" | "product"
   const [stateFilter, setStateFilter] = useState("");
+  const [soFilter, setSoFilter] = useState(location.state?.soName || "");
 
   const load = async () => {
     setLoading(true);
@@ -203,10 +205,10 @@ export default function Backorders() {
 
   useEffect(() => { load(); }, []);
 
-  const filtered = useMemo(() =>
-    stateFilter ? data.filter(e => e.state === stateFilter) : data,
-    [data, stateFilter]
-  );
+  const filtered = useMemo(() => {
+    let d = soFilter ? data.filter(e => e.sale_order_name === soFilter) : data;
+    return stateFilter ? d.filter(e => e.state === stateFilter) : d;
+  }, [data, stateFilter, soFilter]);
 
   // Stats
   const totalProducts = useMemo(() => {
@@ -285,6 +287,21 @@ export default function Backorders() {
         {hasMO && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-700">
             Some backorders have linked manufacturing orders. Phase 13 will add production scheduling directly from this view.
+          </div>
+        )}
+
+        {/* SO filter chip — shown when arriving from Order Passport */}
+        {soFilter && (
+          <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
+            <span className="text-sm text-orange-800">
+              Backorders for <span className="font-mono font-semibold">{soFilter}</span>
+            </span>
+            <button
+              onClick={() => setSoFilter("")}
+              className="text-xs font-semibold text-orange-600 hover:text-orange-900 underline ml-auto"
+            >
+              View all
+            </button>
           </div>
         )}
 

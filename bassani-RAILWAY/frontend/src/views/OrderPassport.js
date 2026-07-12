@@ -359,6 +359,15 @@ export default function OrderPassport() {
               <div className="text-right">
                 <StatusBadge overall={overall_status} />
                 <p className="text-xs text-gray-400 mt-1.5">{overall_status.detail}</p>
+                {hasBackorder && (
+                  <button
+                    onClick={() => navigate("/orders/backorders", { state: { soName: order.name } })}
+                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2.5 py-1 hover:bg-orange-100 transition-colors"
+                  >
+                    <AlertTriangle size={11} />
+                    Backorder items
+                  </button>
+                )}
               </div>
             </div>
 
