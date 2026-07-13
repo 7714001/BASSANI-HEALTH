@@ -393,8 +393,8 @@ async def update_item_qty(
     entry = await col("packing_board").find_one({"order_id": body.order_id})
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
-    if entry["status"] not in ("queued", "packing", "ready"):
-        raise HTTPException(status_code=400, detail=f"Cannot edit qty in status '{entry['status']}'")
+    if entry["status"] != "packing":
+        raise HTTPException(status_code=400, detail=f"Qty can only be edited while packing (current status: '{entry['status']}')")
 
     items = entry.get("items", [])
     item = next((i for i in items if i.get("sku") == body.sku), None)

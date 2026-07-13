@@ -523,7 +523,8 @@ export default function OrdersTickets() {
                         {(detail.items || []).map((item, i) => {
                           const ticked = detail.item_ticks?.[item.sku];
                           const isBackordered = item.is_backordered;
-                          const canTick = canOrders && !isTerminal && item.sku;
+                          const isPacking = detail.status === "packing";
+                          const canTick = canOrders && isPacking && item.sku;
                           const lots = item.product_id ? (itemLots[item.product_id] || null) : null;
                           return (
                             <tr key={i} className={`border-b border-gray-50 hover:bg-slate-50/30 ${isBackordered ? "bg-amber-50/40" : ""}`}>
@@ -565,7 +566,7 @@ export default function OrdersTickets() {
                                         onChange={e => setQtyPackedEdits(prev => ({ ...prev, [item.sku]: e.target.value }))}
                                         onBlur={() => saveQtyPacked(item.sku, item)}
                                         onKeyDown={e => e.key === "Enter" && saveQtyPacked(item.sku, item)}
-                                        disabled={qtyPackedSaving.has(item.sku) || !item.sku}
+                                        disabled={!isPacking || qtyPackedSaving.has(item.sku) || !item.sku}
                                         className="w-16 text-center text-sm border border-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-bassani-400 disabled:opacity-40"
                                       />
                                       {item.qty_packed != null && item.qty_packed < (item.qty_reserved ?? item.qty ?? 0) && qtyPackedEdits[item.sku] === undefined && (
@@ -581,38 +582,43 @@ export default function OrdersTickets() {
                                 <td className="p-3 text-sm min-w-[160px]">
                                   {item.product_id ? (
                                     orderLotMap[item.product_id]?.length > 0 ? (
-                                      // Confirmed batch from a done picking — show it directly
+                                      // Confirmed batch from a done picking — always show
                                       <span className="font-mono text-[11px] text-bassani-700 font-medium">
                                         {orderLotMap[item.product_id].join(", ")}
                                       </span>
-                                    ) : lots === null ? (
-                                      <button
-                                        onClick={() => fetchLotsForItem(item.product_id)}
-                                        className="text-[10px] text-bassani-600 hover:underline"
-                                      >
-                                        Load batches
-                                      </button>
-                                    ) : lots.length === 0 ? (
-                                      <span className="text-[10px] text-gray-300">No stock lots</span>
-                                    ) : (
-                                      <div className="flex items-center gap-1.5">
-                                        <Select
-                                          value=""
-                                          onChange={e => assignLot(item.product_id, e.target.value)}
-                                          className="text-xs py-0.5 pr-6"
-                                          disabled={lotSaving === item.product_id}
+                                    ) : isPacking ? (
+                                      // Lot selection only available while actively packing
+                                      lots === null ? (
+                                        <button
+                                          onClick={() => fetchLotsForItem(item.product_id)}
+                                          className="text-[10px] text-bassani-600 hover:underline"
                                         >
-                                          <option value="">Select batch…</option>
-                                          {lots.map(l => (
-                                            <option key={l.id} value={l.id}>
-                                              {l.name}{l.expiry ? ` · ${l.expiry.split("T")[0]}` : ""}
-                                            </option>
-                                          ))}
-                                        </Select>
-                                        {lotSaving === item.product_id && (
-                                          <span className="text-[10px] text-gray-400">Saving…</span>
-                                        )}
-                                      </div>
+                                          Load batches
+                                        </button>
+                                      ) : lots.length === 0 ? (
+                                        <span className="text-[10px] text-gray-300">No stock lots</span>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5">
+                                          <Select
+                                            value=""
+                                            onChange={e => assignLot(item.product_id, e.target.value)}
+                                            className="text-xs py-0.5 pr-6"
+                                            disabled={lotSaving === item.product_id}
+                                          >
+                                            <option value="">Select batch…</option>
+                                            {lots.map(l => (
+                                              <option key={l.id} value={l.id}>
+                                                {l.name}{l.expiry ? ` · ${l.expiry.split("T")[0]}` : ""}
+                                              </option>
+                                            ))}
+                                          </Select>
+                                          {lotSaving === item.product_id && (
+                                            <span className="text-[10px] text-gray-400">Saving…</span>
+                                          )}
+                                        </div>
+                                      )
+                                    ) : (
+                                      <span className="text-[10px] text-gray-300">—</span>
                                     )
                                   ) : (
                                     <span className="text-[10px] text-gray-300">—</span>
