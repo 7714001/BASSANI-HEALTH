@@ -276,7 +276,10 @@ async def create_ticket(
     _assignee_name = current_user.get("name") or current_user.get("username") or "unknown"
     _assignee_role = current_user.get("role", "")
     if body.assigned_to and body.assigned_to != current_user["id"]:
-        _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1})
+        try:
+            _au = await col("users").find_one({"_id": ObjectId(body.assigned_to)}, {"name": 1, "username": 1, "role": 1})
+        except Exception:
+            _au = None
         _assignee_name = (_au.get("name") or _au.get("username")) if _au else body.assigned_to
         _assignee_role = _au.get("role", "") if _au else ""
     doc = {
@@ -706,7 +709,10 @@ async def update_ticket_stage(
     if body.assigned_to is not None:
         updates["assigned_to"] = body.assigned_to or None
         if body.assigned_to:
-            _au = await col("users").find_one({"id": body.assigned_to}, {"name": 1, "username": 1, "role": 1, "email": 1})
+            try:
+                _au = await col("users").find_one({"_id": ObjectId(body.assigned_to)}, {"name": 1, "username": 1, "role": 1, "email": 1})
+            except Exception:
+                _au = None
             updates["assigned_to_name"] = (_au.get("name") or _au.get("username")) if _au else None
             updates["assigned_to_role"] = _au.get("role", "") if _au else ""
         else:
@@ -1970,8 +1976,12 @@ async def reassign_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    # Resolve new assignee from portal users
-    new_user = await col("users").find_one({"id": body.assigned_to}, {"password": 0})
+    # Resolve new assignee from portal users — body.assigned_to is the _id string
+    try:
+        _assignee_oid = ObjectId(body.assigned_to)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    new_user = await col("users").find_one({"_id": _assignee_oid}, {"password": 0})
     if not new_user:
         raise HTTPException(status_code=404, detail="User not found")
     if new_user.get("role") == "reseller":
