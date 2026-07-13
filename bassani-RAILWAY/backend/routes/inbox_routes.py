@@ -70,6 +70,14 @@ class StartOnboardingBody(BaseModel):
     note: Optional[str] = None
 
 
+class CreateTicketFromInboxBody(BaseModel):
+    order_id: Optional[int] = None
+
+
+class LinkThreadBody(BaseModel):
+    ticket_id: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def inbox_configured() -> bool:
@@ -734,15 +742,41 @@ async def download_imap_attachment(
 
 # ── Actions ───────────────────────────────────────────────────────────────────
 
+async def _stamp_thread_with_ticket(thread_root_str: str, ticket_id: str, current_user: dict, now: datetime):
+    """Stamp ticket_id and status on all messages in an inbox thread."""
+    await col("sales_inbox").update_many(
+        {"$or": [
+            {"_id": ObjectId(thread_root_str)},
+            {"thread_root_id": thread_root_str},
+        ]},
+        {
+            "$set": {
+                "ticket_id":  ticket_id,
+                "status":     "ticket_created",
+                "handled_by": current_user.get("username"),
+                "handled_at": now,
+            }
+        },
+    )
+
+
 @router.post("/{item_id}/create-ticket")
 async def create_ticket_from_inbox(
     item_id: str,
     background_tasks: BackgroundTasks,
+    body: CreateTicketFromInboxBody = None,
     current_user: dict = Depends(
         require_any_permission("tickets.sales", "tickets.manage")
     ),
 ):
-    """Convert an inbox email into a Sales Ticket."""
+    """Convert an inbox email into a Sales Ticket.
+
+    Optional body.order_id links the new ticket to an existing Odoo order. If
+    that order already has an open ticket, this thread is linked to the existing
+    ticket instead of creating a new one (returns linked=True).
+    """
+    if body is None:
+        body = CreateTicketFromInboxBody()
     if not inbox_configured():
         _not_configured()
 
@@ -779,7 +813,32 @@ async def create_ticket_from_inbox(
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
 
+    # If an order_id was provided and that order already has an open ticket,
+    # link this thread to the existing ticket instead of creating a new one.
+    if body.order_id is not None:
+        order_ticket = await col("tickets").find_one(
+            {"order_id": body.order_id, "type": "sales", "exit_status": None},
+            {"_id": 1, "customer_name": 1},
+        )
+        if order_ticket:
+            existing_id = str(order_ticket["_id"])
+            await _stamp_thread_with_ticket(thread_root_str, existing_id, current_user, now)
+            if not order_ticket.get("inbox_item_id"):
+                await col("tickets").update_one(
+                    {"_id": order_ticket["_id"]},
+                    {"$set": {"inbox_item_id": thread_root_str, "updated_at": now}},
+                )
+            background_tasks.add_task(
+                audit_log,
+                "inbox.thread_linked", "ticket", existing_id,
+                entity_label=order_ticket.get("customer_name", customer_name),
+                user=current_user,
+                detail={"inbox_item_id": thread_root_str, "order_id": body.order_id},
+            )
+            return {"success": True, "ticket_id": existing_id, "linked": True}
+
     _from_email = root_doc.get("from_email") or item.get("from_email") or None
+    _order_id = body.order_id if body.order_id is not None else None
 
     doc = {
         "type":                "sales",
@@ -787,7 +846,7 @@ async def create_ticket_from_inbox(
         "customer_id":         customer_id,
         "customer_name":       customer_name,
         "customer_email":      _from_email,
-        "order_id":            None,
+        "order_id":            _order_id,
         "invoice_id":          None,
         "orders_ticket_ref":   None,
         "status":              "open",
@@ -816,20 +875,7 @@ async def create_ticket_from_inbox(
     # Stamp ticket_id and status on ALL messages in the thread so the
     # aggregation (which picks the newest doc) always sees ticket_id regardless
     # of which message ends up as the thread representative.
-    await col("sales_inbox").update_many(
-        {"$or": [
-            {"_id": ObjectId(thread_root_str)},
-            {"thread_root_id": thread_root_str},
-        ]},
-        {
-            "$set": {
-                "ticket_id":  ticket_id,
-                "status":     "ticket_created",
-                "handled_by": current_user.get("username"),
-                "handled_at": now,
-            }
-        },
-    )
+    await _stamp_thread_with_ticket(thread_root_str, ticket_id, current_user, now)
 
     background_tasks.add_task(
         audit_log,
@@ -840,6 +886,7 @@ async def create_ticket_from_inbox(
             "customer_id":  customer_id,
             "customer_name": customer_name,
             "ticket_id":    ticket_id,
+            "order_id":     _order_id,
             "from_email":   item.get("from_email"),
         },
     )
@@ -847,7 +894,72 @@ async def create_ticket_from_inbox(
         notify_ticket_assigned, "sales", customer_name, current_user["id"]
     )
 
-    return {"success": True, "ticket_id": ticket_id}
+    return {"success": True, "ticket_id": ticket_id, "linked": False}
+
+
+@router.post("/{item_id}/link-thread")
+async def link_thread_to_ticket(
+    item_id: str,
+    body: LinkThreadBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(
+        require_any_permission("tickets.sales", "tickets.manage")
+    ),
+):
+    """Link an inbox thread to an existing Sales Ticket without creating a new one.
+
+    Stamps ticket_id on all thread messages, and records inbox_item_id on the ticket.
+    Used when an email inquiry thread should be attached to a ticket that was
+    created from a different surface (e.g. directly from an order).
+    """
+    if not inbox_configured():
+        _not_configured()
+
+    item = await col("sales_inbox").find_one({"_id": _oid(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+
+    thread_root_str = item.get("thread_root_id") or str(item["_id"])
+    root_doc = item if not item.get("thread_root_id") else (
+        await col("sales_inbox").find_one({"_id": ObjectId(thread_root_str)}) or item
+    )
+
+    existing_ticket_id = root_doc.get("ticket_id") or item.get("ticket_id")
+    if existing_ticket_id and existing_ticket_id != body.ticket_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Thread is already linked to a different ticket (id: {existing_ticket_id})",
+        )
+
+    try:
+        ticket_oid = ObjectId(body.ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+
+    ticket = await col("tickets").find_one({"_id": ticket_oid, "type": "sales"})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=409, detail="Ticket is already closed")
+
+    now = datetime.now(timezone.utc)
+    await _stamp_thread_with_ticket(thread_root_str, body.ticket_id, current_user, now)
+
+    if not ticket.get("inbox_item_id"):
+        await col("tickets").update_one(
+            {"_id": ticket_oid},
+            {"$set": {"inbox_item_id": thread_root_str, "updated_at": now}},
+        )
+
+    background_tasks.add_task(
+        audit_log,
+        "inbox.thread_linked", "ticket", body.ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"inbox_item_id": thread_root_str},
+    )
+
+    return {"success": True, "ticket_id": body.ticket_id}
 
 
 @router.post("/{item_id}/link-customer")

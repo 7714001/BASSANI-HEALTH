@@ -3,7 +3,7 @@
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
 **Last Updated:** 2026-07-13  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 8.36 Ticket linking + inbox integration — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
 
 ---
 
@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1483,6 +1483,30 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 **Two-path shortfall design:**
 - Qty shortfall on a line (9 of 10): adjust Qty Packed, Odoo creates backorder automatically, order proceeds for the 9 units
 - True blocking issue (damaged goods, wrong product, QA failure): Report Packing Issue, order halted, Sales notified, reason visible on all downstream views
+
+---
+
+#### 8.36 — Ticket Linking and Inbox Integration — Complete 2026-07-13
+
+**Goal:** Close gaps where the 1-ticket-per-order constraint creates dead-ends, and surface the ticket pipeline at every point in the workflow where an email or order first enters the system.
+
+**Three scenarios addressed:**
+
+1. **Inbox "Convert to Ticket" with optional SO link** — the "Create Ticket" button in the Sales Inbox now opens a modal instead of firing immediately. Staff can optionally enter the Odoo order reference. If provided: the backend checks whether that order already has an open ticket; if yes, the email thread is linked to the existing ticket (not creating a new one); if no, the new ticket is created with `order_id` already set. If no order is entered, an unlinked inquiry ticket is created as before.
+
+2. **"Create Ticket" preflight from Orders / Invoices / Order Passport** — clicking "Create Sales Ticket" from any of these three surfaces now first calls a preflight endpoint. If the order already has an open ticket, a modal shows a direct link to that ticket (escape hatch replaces the dead-end 409 toast). If the same customer has open inquiry tickets with no order linked, the modal lists them and offers a "Link This" action (routes to `POST /api/tickets/{id}/link-order`) as an alternative to creating new.
+
+3. **Email thread linking to existing ticket** — new `POST /api/inbox/{item_id}/link-thread` endpoint allows linking an existing inbox thread to an existing sales ticket, stamping both directions. Used by the inbox "Convert to Ticket" modal's order-linked path.
+
+**Implementation:**
+- [x] `ticket_routes.py` — `GET /api/tickets/from-order/preflight?order_id=X`: looks up Odoo order, checks for existing linked ticket, returns up to 10 open unlinked tickets for the same customer; `POST /api/tickets/from-order` 409 now returns `{message, existing_ticket_id}` dict in detail for frontend escape hatch
+- [x] `inbox_routes.py` — `create_ticket_from_inbox` accepts optional `order_id` body param; if provided and order has existing ticket, routes to thread-linking logic (returns `{linked: true}`); `_stamp_thread_with_ticket` extracted as shared helper; `POST /{item_id}/link-thread` new endpoint
+- [x] `SalesInbox.js` — "Create Ticket" button opens a modal with optional order search; three outcomes handled: linked to existing ticket, new ticket with order, new unlinked ticket; navigates to ticket on success
+- [x] `Views.js` (Orders) — preflight call on "Create Sales Ticket"; modal with linked-ticket path (open existing) and unlinked-ticket path (link or create new); `doLinkUnlinkedTicket` calls existing `link-order` endpoint
+- [x] `Invoices.js` — same preflight + modal pattern
+- [x] `OrderPassport.js` — same preflight + modal pattern
+
+**Audit:** Every link action (thread-to-ticket, ticket-to-order via preflight) is audit-logged under `inbox.thread_linked` / `ticket.link_order`.
 
 ---
 

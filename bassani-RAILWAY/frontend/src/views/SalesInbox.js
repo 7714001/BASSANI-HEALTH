@@ -288,8 +288,15 @@ export default function SalesInbox() {
   const [onboarding,  setOnboarding ] = useState(false);
 
   // Action states
-  const [creatingTicket, setCreatingTicket] = useState(false);
-  const [archiving,      setArchiving     ] = useState(false);
+  const [creatingTicket,    setCreatingTicket   ] = useState(false);
+  const [archiving,         setArchiving        ] = useState(false);
+
+  // Create-ticket modal (with optional SO link)
+  const [ctModalOpen,       setCtModalOpen      ] = useState(false);
+  const [ctOrderQuery,      setCtOrderQuery     ] = useState("");
+  const [ctOrderResults,    setCtOrderResults   ] = useState([]);
+  const [ctOrderSearching,  setCtOrderSearching ] = useState(false);
+  const [ctOrderSelected,   setCtOrderSelected  ] = useState(null);
 
   // ── Load thread list ─────────────────────────────────────────────────────────
 
@@ -410,6 +417,54 @@ export default function SalesInbox() {
     return () => clearTimeout(t);
   }, [custSearch, linkOpen]);
 
+  // ── Order search (create-ticket modal) ──────────────────────────────────────
+
+  useEffect(() => {
+    if (!ctModalOpen || !ctOrderQuery.trim()) { setCtOrderResults([]); return; }
+    setCtOrderSearching(true);
+    const t = setTimeout(() => {
+      api.get("/api/orders/", { params: { search: ctOrderQuery, limit: 8 } })
+        .then(r => setCtOrderResults(r.data.orders || []))
+        .catch(() => setCtOrderResults([]))
+        .finally(() => setCtOrderSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [ctOrderQuery, ctModalOpen]);
+
+  const openCtModal = () => {
+    setCtOrderQuery("");
+    setCtOrderResults([]);
+    setCtOrderSelected(null);
+    setCtModalOpen(true);
+  };
+
+  const handleCreateTicket = async () => {
+    if (!selectedThread) return;
+    setCreatingTicket(true);
+    setCtModalOpen(false);
+    try {
+      const body = ctOrderSelected ? { order_id: ctOrderSelected.id } : {};
+      const r = await api.post(`/api/inbox/${selectedThread.id}/create-ticket`, body);
+      if (r.data.linked) {
+        toast.success("Email thread linked to existing sales ticket");
+      } else {
+        toast.success("Sales ticket created");
+      }
+      const updated = { ...selectedThread, ticket_id: r.data.ticket_id, status: "ticket_created" };
+      setSelectedThread(updated);
+      setThreads(prev =>
+        ["open", "unhandled"].includes(statusFilter)
+          ? prev.filter(t => t.id !== selectedThread.id)
+          : prev.map(t => t.id === selectedThread.id ? updated : t)
+      );
+      navigate("/tickets/sales", { state: { openTicketId: r.data.ticket_id } });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   const handleSendReply = async () => {
@@ -427,26 +482,6 @@ export default function SalesInbox() {
       toast.error(e.response?.data?.detail || "Failed to send reply");
     } finally {
       setSendingReply(false);
-    }
-  };
-
-  const handleCreateTicket = async () => {
-    if (!selectedThread) return;
-    setCreatingTicket(true);
-    try {
-      const r = await api.post(`/api/inbox/${selectedThread.id}/create-ticket`);
-      toast.success("Sales ticket created");
-      const updated = { ...selectedThread, ticket_id: r.data.ticket_id, status: "ticket_created" };
-      setSelectedThread(updated);
-      setThreads(prev =>
-        ["open", "unhandled"].includes(statusFilter)
-          ? prev.filter(t => t.id !== selectedThread.id)
-          : prev.map(t => t.id === selectedThread.id ? updated : t)
-      );
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to create ticket");
-    } finally {
-      setCreatingTicket(false);
     }
   };
 
@@ -732,7 +767,7 @@ export default function SalesInbox() {
                   )}
                   {canCreateTicket && (
                     <button
-                      onClick={handleCreateTicket}
+                      onClick={openCtModal}
                       disabled={creatingTicket}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 transition-colors disabled:opacity-60"
                     >
@@ -815,6 +850,57 @@ export default function SalesInbox() {
           )}
         </div>
       </div>
+
+      {/* ── Create ticket modal ─────────────────────────────────────────────── */}
+      {ctModalOpen && (
+        <Modal title="Convert to Sales Ticket" onClose={() => setCtModalOpen(false)} width="max-w-md">
+          <p className="text-sm text-gray-500 mb-4">
+            If this email is about an existing Odoo order, search for it below and the ticket will be linked
+            immediately. Leave blank to create an unlinked inquiry ticket.
+          </p>
+          <FormGroup label="Odoo order (optional)">
+            <Input
+              value={ctOrderQuery}
+              onChange={e => { setCtOrderQuery(e.target.value); setCtOrderSelected(null); }}
+              placeholder="Search by order number or customer…"
+              autoFocus
+            />
+          </FormGroup>
+          {ctOrderSearching && <p className="text-xs text-gray-400 mt-2">Searching…</p>}
+          {ctOrderResults.length > 0 && !ctOrderSelected && (
+            <div className="mt-2 border border-gray-200 rounded-xl overflow-hidden">
+              {ctOrderResults.map(o => (
+                <button
+                  key={o.id}
+                  onClick={() => { setCtOrderSelected(o); setCtOrderResults([]); }}
+                  className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 transition-colors"
+                >
+                  <p className="font-medium text-gray-900">{o.name}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{o.partner_id?.[1] || o.partner_name || ""}</p>
+                </button>
+              ))}
+            </div>
+          )}
+          {ctOrderSelected && (
+            <div className="mt-2 flex items-start gap-3 p-3 bg-bassani-50 border border-bassani-200 rounded-xl">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-bassani-900">{ctOrderSelected.name}</p>
+                <p className="text-xs text-bassani-700 mt-0.5">{ctOrderSelected.partner_id?.[1] || ctOrderSelected.partner_name || ""}</p>
+              </div>
+              <button onClick={() => setCtOrderSelected(null)} className="text-xs text-gray-400 hover:text-gray-700 shrink-0 mt-0.5">Clear</button>
+            </div>
+          )}
+          {ctOrderQuery && !ctOrderSearching && ctOrderResults.length === 0 && !ctOrderSelected && (
+            <p className="text-xs text-gray-400 mt-2">No orders found.</p>
+          )}
+          <div className="flex justify-end gap-2 mt-5">
+            <BtnSecondary onClick={() => setCtModalOpen(false)} disabled={creatingTicket}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={handleCreateTicket} loading={creatingTicket}>
+              {ctOrderSelected ? "Link Order and Convert" : "Convert to Ticket"}
+            </BtnPrimary>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Link customer modal ──────────────────────────────────────────────── */}
       {linkOpen && (

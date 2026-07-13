@@ -1620,6 +1620,57 @@ async def register_balance_payment(
     return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual}
 
 
+@router.get("/from-order/preflight")
+async def create_ticket_preflight(
+    order_id: int,
+    current_user: dict = Depends(require_permission("tickets.sales")),
+):
+    """Pre-flight check before creating a ticket from an Odoo order.
+
+    Returns whether the order already has an open ticket, and lists open tickets
+    for the same customer with no order linked yet (candidates for linking instead
+    of creating a new ticket).
+    """
+    odoo = get_odoo_client()
+    try:
+        orders = odoo.read("sale.order", [order_id], fields=["name", "partner_id", "state"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not orders:
+        raise HTTPException(status_code=404, detail="Order not found in Odoo")
+    order = orders[0]
+
+    partner = order.get("partner_id")
+    customer_id = partner[0] if partner and partner is not False else None
+
+    existing = await col("tickets").find_one(
+        {"order_id": order_id, "type": "sales", "exit_status": None},
+        {"_id": 1, "status": 1},
+    )
+
+    unlinked = []
+    if customer_id:
+        async for t in col("tickets").find(
+            {"customer_id": customer_id, "type": "sales", "exit_status": None, "order_id": None},
+            {"_id": 1, "source": 1, "status": 1, "customer_name": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(10):
+            unlinked.append({
+                "id": str(t["_id"]),
+                "source": t.get("source", "direct"),
+                "status": t.get("status", "open"),
+                "customer_name": t.get("customer_name", ""),
+                "created_at": t["created_at"].isoformat() if t.get("created_at") else None,
+            })
+
+    return {
+        "has_linked_ticket": bool(existing),
+        "existing_ticket_id": str(existing["_id"]) if existing else None,
+        "existing_ticket_status": existing.get("status") if existing else None,
+        "order_name": order["name"],
+        "unlinked_tickets": unlinked,
+    }
+
+
 @router.post("/from-order")
 async def create_ticket_from_order(
     body: TicketFromOrder,
@@ -1648,7 +1699,10 @@ async def create_ticket_from_order(
         )
     existing = await col("tickets").find_one({"order_id": body.order_id, "type": "sales", "exit_status": None})
     if existing:
-        raise HTTPException(status_code=409, detail="A Sales Ticket already exists for this order")
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "A Sales Ticket already exists for this order", "existing_ticket_id": str(existing["_id"])},
+        )
 
     partner = order.get("partner_id")
     customer_id = partner[0] if partner and partner is not False else None

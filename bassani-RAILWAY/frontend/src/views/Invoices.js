@@ -255,7 +255,8 @@ export default function Invoices() {
 
   // Per-row action states — keyed by invoice id
   const [sendingId,        setSendingId       ] = useState(null);
-  const [creatingTicketId, setCreatingTicketId] = useState(null);
+  const [creatingTicketId,       setCreatingTicketId      ] = useState(null);
+  const [ticketPreflightModal,   setTicketPreflightModal  ] = useState(null); // { inv, orderName, has_linked_ticket, existing_ticket_id, unlinked_tickets }
 
   // Reset to draft confirm
   const [resetConfirm,  setResetConfirm ] = useState(null); // null | invoice
@@ -402,6 +403,12 @@ export default function Invoices() {
     if (!inv.sale_order_id) return;
     setCreatingTicketId(inv.id);
     try {
+      const pf = await api.get("/api/tickets/from-order/preflight", { params: { order_id: inv.sale_order_id } });
+      const data = pf.data;
+      if (data.has_linked_ticket || data.unlinked_tickets?.length > 0) {
+        setTicketPreflightModal({ inv, ...data });
+        return;
+      }
       const r = await api.post("/api/tickets/from-order", { order_id: inv.sale_order_id });
       toast.success("Sales ticket created");
       navigate("/tickets/sales", { state: { openTicketId: r.data.ticket_id } });
@@ -409,6 +416,40 @@ export default function Invoices() {
       toast.error(e.response?.data?.detail || "Failed to create ticket");
     } finally {
       setCreatingTicketId(null);
+    }
+  };
+
+  const doCreateTicketFromPreflight = async () => {
+    const { inv } = ticketPreflightModal;
+    setTicketPreflightModal(null);
+    setCreatingTicketId(inv.id);
+    try {
+      const r = await api.post("/api/tickets/from-order", { order_id: inv.sale_order_id });
+      toast.success("Sales ticket created");
+      navigate("/tickets/sales", { state: { openTicketId: r.data.ticket_id } });
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      const existingId = typeof detail === "object" ? detail?.existing_ticket_id : null;
+      if (existingId) {
+        toast.error("A ticket already exists for this order");
+        navigate("/tickets/sales", { state: { openTicketId: existingId } });
+      } else {
+        toast.error((typeof detail === "object" ? detail?.message : detail) || "Failed to create ticket");
+      }
+    } finally {
+      setCreatingTicketId(null);
+    }
+  };
+
+  const doLinkUnlinkedTicket = async (ticketId) => {
+    const { inv } = ticketPreflightModal;
+    setTicketPreflightModal(null);
+    try {
+      await api.post(`/api/tickets/${ticketId}/link-order`, { order_id: inv.sale_order_id });
+      toast.success("Existing ticket linked to order");
+      navigate("/tickets/sales", { state: { openTicketId: ticketId } });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link ticket");
     }
   };
 
@@ -665,6 +706,55 @@ export default function Invoices() {
             <BtnSecondary onClick={() => setCnModal(null)} disabled={cnSaving}>Cancel</BtnSecondary>
             <BtnPrimary onClick={createCreditNote} loading={cnSaving}>Create Credit Note</BtnPrimary>
           </div>
+        </Modal>
+      )}
+
+      {/* Ticket preflight modal */}
+      {ticketPreflightModal && (
+        <Modal
+          title={ticketPreflightModal.has_linked_ticket ? "Ticket Already Exists" : "Link Existing Ticket?"}
+          onClose={() => setTicketPreflightModal(null)}
+          width="max-w-lg"
+        >
+          {ticketPreflightModal.has_linked_ticket ? (
+            <>
+              <p className="text-sm text-gray-600 mb-4">
+                A Sales Ticket already exists for order <strong>{ticketPreflightModal.order_name}</strong>.
+                Open it to continue managing this order in the pipeline.
+              </p>
+              <div className="flex justify-end gap-2">
+                <BtnSecondary onClick={() => setTicketPreflightModal(null)}>Cancel</BtnSecondary>
+                <BtnPrimary onClick={() => {
+                  navigate("/tickets/sales", { state: { openTicketId: ticketPreflightModal.existing_ticket_id } });
+                  setTicketPreflightModal(null);
+                }}>Open Existing Ticket</BtnPrimary>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600 mb-4">
+                The following open inquiry tickets have no order assigned yet. Link one to
+                order <strong>{ticketPreflightModal.order_name}</strong>, or create a new ticket.
+              </p>
+              <div className="border border-gray-200 rounded-xl overflow-hidden mb-4">
+                {ticketPreflightModal.unlinked_tickets.map(t => (
+                  <div key={t.id} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-0">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{t.customer_name}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {t.source === "email" ? "Email inquiry" : "Direct inquiry"} · {t.created_at ? new Date(t.created_at).toLocaleDateString("en-ZA") : ""}
+                      </p>
+                    </div>
+                    <BtnSecondary size="sm" onClick={() => doLinkUnlinkedTicket(t.id)}>Link This</BtnSecondary>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2">
+                <BtnSecondary onClick={() => setTicketPreflightModal(null)}>Cancel</BtnSecondary>
+                <BtnPrimary onClick={doCreateTicketFromPreflight}>Create New Ticket</BtnPrimary>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
