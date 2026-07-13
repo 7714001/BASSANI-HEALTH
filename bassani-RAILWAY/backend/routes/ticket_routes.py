@@ -384,6 +384,20 @@ async def list_tickets(
             if t.get("reseller_id") and t.get("source") == "portal":
                 t["source"] = "reseller"
 
+    # Batch-resolve order_id integers to human-readable SO names (e.g. S00045).
+    # Single Odoo call for all linked orders — non-fatal if Odoo is unavailable.
+    order_ids = list({t["order_id"] for t in tickets if t.get("order_id")})
+    if order_ids:
+        try:
+            odoo = get_odoo_client()
+            so_records = odoo.read("sale.order", order_ids, fields=["id", "name"])
+            order_name_map = {r["id"]: r["name"] for r in so_records}
+            for t in tickets:
+                if t.get("order_id"):
+                    t["order_name"] = order_name_map.get(t["order_id"])
+        except Exception:
+            pass  # degrade gracefully — list still works, names just absent
+
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
 
 

@@ -2669,9 +2669,11 @@ export default function SalesTickets() {
                   : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>
               },
               { id: "order_ref", header: "Order Ref", cell: ({ row: { original: t } }) =>
-                t.order_id
-                  ? <span className="text-xs font-mono text-gray-500">#{t.order_id}</span>
-                  : <span className="text-xs text-gray-300">—</span>
+                t.order_name
+                  ? <span className="text-xs font-mono text-gray-500">{t.order_name}</span>
+                  : t.order_id
+                    ? <span className="text-xs font-mono text-gray-500">#{t.order_id}</span>
+                    : <span className="text-xs text-gray-300">—</span>
               },
               { accessorKey: "updated_at", header: "Last Updated", cell: ({ row: { original: t } }) =>
                 <span className="text-xs text-gray-400">{fmtDate(t.updated_at)}</span>
@@ -2712,6 +2714,19 @@ export default function SalesTickets() {
                       </div>
                     )
                     : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+              },
+              { id: "so_ref", header: "SO #", meta: { className: "hidden md:table-cell" }, cell: ({ row: { original: t } }) =>
+                t.order_name
+                  ? (
+                    <button
+                      onClick={e => { e.stopPropagation(); navigate(`/orders/${t.order_id}/passport`); }}
+                      className="inline-flex items-center gap-1 text-xs font-mono text-bassani-600 hover:text-bassani-800 hover:underline"
+                    >
+                      {t.order_name}
+                      <ExternalLink size={10} />
+                    </button>
+                  )
+                  : <span className="text-xs text-gray-300">—</span>
               },
               { id: "assigned", header: "Assigned To", cell: ({ row: { original: t } }) =>
                 t.assigned_to_name
