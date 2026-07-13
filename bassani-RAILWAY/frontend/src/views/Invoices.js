@@ -299,7 +299,7 @@ export default function Invoices() {
   useEffect(() => {
     const id = location.state?.openInvoiceId;
     if (id) openViewInvoice({ id });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line
 
   const openViewInvoice = async (inv) => {
     setViewLoading(true);
