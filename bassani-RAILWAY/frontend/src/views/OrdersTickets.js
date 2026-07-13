@@ -6,7 +6,7 @@
 // responsible_pharmacist: RP Approve (when ready)
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -508,9 +508,6 @@ export default function OrdersTickets() {
                                 {item.sku && (
                                   <p className="text-[10px] font-mono text-gray-400 mt-0.5">{item.sku}</p>
                                 )}
-                                {item.product_id && orderLotMap[item.product_id]?.length > 0 && (
-                                  <p className="font-mono text-[10px] text-bassani-600 mt-0.5">Batch: {orderLotMap[item.product_id].join(", ")}</p>
-                                )}
                               </td>
                               <td className="p-3 text-center text-sm text-gray-600">
                                 {item.qty_ordered ?? item.qty ?? item.product_uom_qty ?? "—"}
@@ -523,7 +520,12 @@ export default function OrdersTickets() {
                               {canOrders && !isTerminal && (
                                 <td className="p-3 text-sm min-w-[160px]">
                                   {item.product_id ? (
-                                    lots === null ? (
+                                    orderLotMap[item.product_id]?.length > 0 ? (
+                                      // Confirmed batch from a done picking — show it directly
+                                      <span className="font-mono text-[11px] text-bassani-700 font-medium">
+                                        {orderLotMap[item.product_id].join(", ")}
+                                      </span>
+                                    ) : lots === null ? (
                                       <button
                                         onClick={() => fetchLotsForItem(item.product_id)}
                                         className="text-[10px] text-bassani-600 hover:underline"
