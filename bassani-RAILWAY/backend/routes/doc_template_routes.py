@@ -23,7 +23,7 @@ from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/doc-templates", tags=["doc-templates"])
 
-# The three Bassani-issued template documents managed by this module.
+# The four Bassani-issued template documents managed by this module.
 DOC_TYPES: dict[str, dict] = {
     "store_onboarding_agreement": {
         "label":    "Store Onboarding Agreement",
@@ -36,6 +36,10 @@ DOC_TYPES: dict[str, dict] = {
     "nda": {
         "label":    "NDA",
         "filename": "nda.pdf",
+    },
+    "welcome_pack": {
+        "label":    "Welcome Pack",
+        "filename": "welcome-pack.pdf",
     },
 }
 

@@ -109,6 +109,10 @@ class ApproveBody(BaseModel):
     company_name: Optional[str] = None  # required for inbox-sourced apps that have no company_name yet
 
 
+class SendWelcomePackBody(BaseModel):
+    message: str
+
+
 class UpdateApplicationBody(BaseModel):
     company_name:        Optional[str] = None
     trading_name:        Optional[str] = None
@@ -282,7 +286,7 @@ async def email_templates(
                 "contact_email": body.to_email.strip(),
                 "contact_name":  (body.customer_name or "").strip(),
                 "company_name":  (body.customer_name or "").strip(),
-                "inbox_thread_id": item_id_str,
+                "inbox_thread_ids": [item_id_str],
                 "created_at":    now,
                 "submitted_at":  None,
                 "reviewed_at":   None,
@@ -499,9 +503,6 @@ async def contact_applicant(
     if not contact_email:
         raise HTTPException(status_code=400, detail="This application has no contact email address")
 
-    if app.get("inbox_thread_id"):
-        raise HTTPException(status_code=409, detail="An inbox thread already exists for this application")
-
     from services.imap_client import get_config as _imap_cfg, get_graph_mailbox_address
     from services.graph_client import graph_configured
 
@@ -561,7 +562,7 @@ async def contact_applicant(
     )
     await col("customer_onboarding").update_one(
         {"id": app_id},
-        {"$set": {"inbox_thread_id": item_id_str}},
+        {"$addToSet": {"inbox_thread_ids": item_id_str}},
     )
 
     async def _do_send():
@@ -601,7 +602,7 @@ async def contact_applicant(
         after={"to_email": contact_email, "inbox_thread_id": item_id_str},
     )
 
-    return {"inbox_thread_id": item_id_str, "to_email": contact_email}
+    return {"inbox_thread_id": item_id_str, "inbox_thread_ids": [item_id_str], "to_email": contact_email}
 
 
 # ── Document upload endpoints ─────────────────────────────────────────────────
@@ -1006,6 +1007,7 @@ async def countersign_document(
     app_id:   str,
     doc_type: str,
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
     current_user: dict = Depends(require_permission("customers.approve_onboarding")),
 ):
     """
@@ -1066,29 +1068,176 @@ async def countersign_document(
         after={"doc_type": doc_type, "r2_key": key},
     )
 
-    # Advance the inbox thread to docs_complete once every portal-signed
-    # Bassani-sig doc has been countersigned.
+    # Advance all linked inbox threads to docs_complete once every portal-signed
+    # Bassani-sig doc has been countersigned, and notify configured recipients.
     all_countersigned = all(
         d.get("countersigned_at") or d.get("doc_type") == doc_type
         for d in updated_docs
         if d.get("signed_in_portal") and d.get("doc_type") in BASSANI_SIG_DOC_TYPES
     )
-    if all_countersigned and app.get("inbox_thread_id"):
+    if all_countersigned:
+        thread_ids = app.get("inbox_thread_ids") or (
+            [app["inbox_thread_id"]] if app.get("inbox_thread_id") else []
+        )
         from bson import ObjectId as _OID
-        try:
-            tid = app["inbox_thread_id"]
-            await col("onboarding_inbox").update_many(
-                {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
-                {"$set": {"status": "docs_complete"}},
-            )
-        except Exception:
-            pass
+        for tid in thread_ids:
+            try:
+                await col("onboarding_inbox").update_many(
+                    {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
+                    {"$set": {"status": "docs_complete"}},
+                )
+            except Exception:
+                pass
+
+        if background_tasks:
+            from routes.settings_routes import get_email_routing
+            from services.email_service import send_countersign_complete_notification
+            routing = await get_email_routing()
+            notify = routing.get("countersign_complete_to") or []
+            if notify:
+                background_tasks.add_task(
+                    send_countersign_complete_notification,
+                    to_emails=notify,
+                    company_name=app.get("company_name") or app.get("contact_name", ""),
+                    app_id=app_id,
+                )
 
     return {
         "doc_type":         doc_type,
         "countersigned_at": now.isoformat(),
         "countersigned_by": actor_name,
     }
+
+
+@router.post("/{app_id}/send-welcome-pack")
+async def send_welcome_pack(
+    app_id: str,
+    body: SendWelcomePackBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Send the welcome pack email to the customer.
+    Attaches the countersigned NDA, countersigned SOA, and the active welcome pack template.
+    Email footer uses the sender's signing_name and signing_title from their profile.
+    Creates an outgoing inbox thread so the send is traceable in the onboarding inbox.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    customer_email = (app.get("contact_email") or "").strip()
+    if not customer_email:
+        raise HTTPException(status_code=400, detail="No customer email on this application")
+
+    docs = app.get("documents") or []
+    bassani_docs = [d for d in docs if d.get("doc_type") in BASSANI_SIG_DOC_TYPES]
+    uncountersigned = [d for d in bassani_docs if not d.get("countersigned_at")]
+    if uncountersigned or not bassani_docs:
+        raise HTTPException(
+            status_code=400,
+            detail="All onboarding documents must be countersigned before sending the welcome pack",
+        )
+
+    # Fetch active welcome pack template
+    from routes.doc_template_routes import get_active_template_bytes
+    welcome_bytes = await get_active_template_bytes("welcome_pack")
+    if not welcome_bytes:
+        raise HTTPException(status_code=404, detail="No active welcome pack template has been uploaded. Upload one under Settings > Document Templates.")
+
+    # Gather countersigned PDF bytes from R2
+    attachments = []
+    for doc in bassani_docs:
+        key = doc.get("r2_key")
+        if key:
+            pdf_bytes = await r2_get(key)
+            if pdf_bytes:
+                label = REQUIRED_DOC_TYPES.get(doc["doc_type"], {}).get("label", doc["doc_type"])
+                attachments.append({"filename": f"{label}.pdf", "content": list(pdf_bytes)})
+
+    attachments.append({
+        "filename": "Bassani Health Welcome Pack.pdf",
+        "content": list(welcome_bytes),
+    })
+
+    # Get sender's signing name and title from their profile
+    username = current_user.get("username", "")
+    user_doc = await col("users").find_one({"username": username})
+    sender_name  = (user_doc or {}).get("signing_name") or current_user.get("name") or "Bassani Health"
+    sender_title = (user_doc or {}).get("signing_title", "")
+
+    company_name = app.get("company_name") or app.get("contact_name", "Customer")
+    message = body.message.strip()
+
+    # Send email in background
+    from services.email_service import send_customer_welcome_pack
+    background_tasks.add_task(
+        send_customer_welcome_pack,
+        to_email=customer_email,
+        customer_name=company_name,
+        custom_message=message,
+        sender_name=sender_name,
+        sender_title=sender_title,
+        attachments=attachments,
+    )
+
+    # Create an outgoing inbox thread so the send is visible in onboarding inbox
+    now = datetime.now(timezone.utc)
+    from services.email_service import _wrap as _email_wrap, _p, _divider
+    body_html = _email_wrap(
+        _p(message.replace("\n", "<br>"))
+        + _divider()
+        + _p(f"Application reference: <strong>{app_id}</strong>", muted=True)
+    )
+    thread_doc = {
+        "mailbox_address":  "resend",
+        "from_email":       current_user.get("email", ""),
+        "from_name":        sender_name,
+        "to_email":         customer_email,
+        "subject":          f"Welcome to Bassani Health",
+        "body_html":        body_html,
+        "body_preview":     message[:120],
+        "is_outgoing":      True,
+        "status":           "application_linked",
+        "received_at":      now,
+        "has_attachments":  True,
+        "attachments":      [],
+        "thread_root_id":   None,
+        "is_read":          True,
+        "created_at":       now,
+        "sent_by":          username,
+        "application_id":   app_id,
+        "reseller_id":      app.get("reseller_id"),
+        "reseller_name":    app.get("reseller_name"),
+        "note":             "welcome_pack",
+    }
+    result = await col("onboarding_inbox").insert_one(thread_doc)
+    thread_id = str(result.inserted_id)
+    await col("onboarding_inbox").update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"thread_root_id": thread_id}},
+    )
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {
+            "$addToSet": {"inbox_thread_ids": thread_id},
+            "$set": {
+                "welcome_pack_sent_at": now.isoformat(),
+                "welcome_pack_sent_by": current_user.get("name") or username,
+            },
+        },
+    )
+
+    await audit_log(
+        user=current_user,
+        action="onboarding.welcome_pack_sent",
+        entity_type="customer_onboarding",
+        entity_id=app_id,
+        entity_label=company_name,
+        after={"sent_to": customer_email},
+    )
+
+    return {"success": True, "thread_id": thread_id}
 
 
 @router.put("/{app_id}/approve")
@@ -1251,22 +1400,24 @@ async def approve_application(
         }},
     )
 
-    # Archive the linked inbox thread and stamp customer_id on it.
-    # Applies to all applications that have a thread (portal-submitted and inbox-sourced).
-    if app.get("inbox_thread_id"):
+    # Archive all linked inbox threads and stamp customer_id on them.
+    thread_ids = app.get("inbox_thread_ids") or (
+        [app["inbox_thread_id"]] if app.get("inbox_thread_id") else []
+    )
+    if thread_ids:
         from bson import ObjectId as _OID
-        try:
-            tid = app["inbox_thread_id"]
-            await col("onboarding_inbox").update_many(
-                {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
-                {"$set": {
-                    "status":        "archived",
-                    "customer_id":   partner_id,
-                    "customer_name": app.get("company_name", ""),
-                }},
-            )
-        except Exception:
-            pass  # non-fatal
+        for tid in thread_ids:
+            try:
+                await col("onboarding_inbox").update_many(
+                    {"$or": [{"_id": _OID(tid)}, {"thread_root_id": tid}]},
+                    {"$set": {
+                        "status":        "archived",
+                        "customer_id":   partner_id,
+                        "customer_name": app.get("company_name", ""),
+                    }},
+                )
+            except Exception:
+                pass  # non-fatal
 
     await audit_log("onboarding.approve", "customer_onboarding", app_id,
                     entity_label=app.get("company_name", ""), user=current_user,
@@ -1364,23 +1515,22 @@ async def approve_application_link(
     return {"success": True, "odoo_partner_id": body.odoo_partner_id}
 
 
-@router.post("/{app_id}/send-signing-docs")
-async def send_signing_docs(
+@router.post("/{app_id}/generate-signing-docs")
+async def generate_signing_docs(
     app_id: str,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("customers.approve_onboarding")),
 ):
     """
     Generate a 30-day signing session for the customer to sign the NDA and
-    Store Onboarding Agreement.  Requires that the customer has already
-    submitted their Customer Information Form and CIPC certificate.
-    Sends an email to the customer with a unique signing link.
+    Store Onboarding Agreement.  Creates the session and snapshots the form data
+    so the admin can preview the pre-filled documents before sending to the customer.
+    Does NOT send any email — call POST /{app_id}/send-signing-docs to send.
     """
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     if app.get("status") not in {"pending", "awaiting_docs"}:
-        raise HTTPException(status_code=400, detail="Signing documents can only be sent for pending applications")
+        raise HTTPException(status_code=400, detail="Signing documents can only be generated for pending applications")
 
     submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
     for required in ("customer_information_form", "cipc_certificate"):
@@ -1388,12 +1538,8 @@ async def send_signing_docs(
             label = REQUIRED_DOC_TYPES.get(required, required)
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot send signing documents — {label} has not been submitted yet",
+                detail=f"Cannot generate signing documents — {label} has not been submitted yet",
             )
-
-    contact_email = app.get("contact_email", "").strip()
-    if not contact_email:
-        raise HTTPException(status_code=400, detail="Application has no customer email address")
 
     token = str(uuid.uuid4())
     now   = datetime.now(timezone.utc)
@@ -1420,21 +1566,68 @@ async def send_signing_docs(
     }
 
     session_doc = {
-        "token":         token,
-        "app_id":        app_id,
-        "form_data":     form_snapshot,
-        "docs_to_sign":  ["nda", "store_onboarding_agreement"],
-        "signed":        {},
-        "status":        "pending",
-        "sent_at":       now,
-        "expires_at":    expires_at,
-        "sent_by_id":    str(current_user.get("_id") or current_user.get("id", "")),
-        "sent_by_name":  current_user.get("name") or current_user.get("username", ""),
+        "token":        token,
+        "app_id":       app_id,
+        "form_data":    form_snapshot,
+        "docs_to_sign": ["nda", "store_onboarding_agreement"],
+        "signed":       {},
+        "status":       "generated",
+        "sent_at":      None,
+        "expires_at":   expires_at,
+        "generated_by_id":   str(current_user.get("_id") or current_user.get("id", "")),
+        "generated_by_name": current_user.get("name") or current_user.get("username", ""),
     }
     await col("signing_sessions").insert_one(session_doc)
     await col("customer_onboarding").update_one(
         {"id": app_id},
-        {"$set": {"signing_session_token": token, "signing_session_sent_at": now}},
+        {"$set": {"signing_session_token": token, "signing_session_generated_at": now}},
+    )
+
+    await audit_log(
+        "onboarding.generate_signing_docs", "customer_onboarding", app_id,
+        entity_label=app.get("company_name", ""), user=current_user,
+        after={"signing_session_token": token, "expires_at": expires_at.isoformat(), "status": "generated"},
+    )
+    return {"success": True, "token": token, "expires_at": expires_at.isoformat()}
+
+
+@router.post("/{app_id}/send-signing-docs")
+async def send_signing_docs(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Send the signing invitation email to the customer using the existing generated
+    signing session.  Admin must have called generate-signing-docs first.
+    Can be called multiple times to resend.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    token = app.get("signing_session_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="No signing session found. Generate documents first.")
+
+    session = await col("signing_sessions").find_one({"token": token})
+    if not session:
+        raise HTTPException(status_code=404, detail="Signing session not found")
+
+    contact_email = app.get("contact_email", "").strip()
+    if not contact_email:
+        raise HTTPException(status_code=400, detail="Application has no customer email address")
+
+    now        = datetime.now(timezone.utc)
+    expires_at = session.get("expires_at")
+
+    await col("signing_sessions").update_one(
+        {"token": token},
+        {"$set": {"status": "sent", "sent_at": now}},
+    )
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"signing_session_sent_at": now}},
     )
 
     from services.email_service import send_signing_invitation
@@ -1444,15 +1637,15 @@ async def send_signing_docs(
         to_email=contact_email,
         customer_name=app.get("contact_name") or app.get("company_name", ""),
         signing_url=signing_url,
-        expiry_date=expires_at.strftime("%-d %B %Y"),
+        expiry_date=expires_at.strftime("%-d %B %Y") if expires_at else "",
     )
 
     await audit_log(
         "onboarding.send_signing_docs", "customer_onboarding", app_id,
         entity_label=app.get("company_name", ""), user=current_user,
-        after={"signing_session_token": token, "expires_at": expires_at.isoformat()},
+        after={"signing_session_token": token, "sent_at": now.isoformat()},
     )
-    return {"success": True, "token": token, "expires_at": expires_at.isoformat()}
+    return {"success": True, "sent_at": now.isoformat()}
 
 
 @router.get("/{app_id}/signing-session")
@@ -1479,14 +1672,16 @@ async def get_signing_session(
 
     return {
         "session": {
-            "token":        session["token"],
-            "status":       session.get("status", "pending"),
-            "docs_to_sign": session.get("docs_to_sign", []),
-            "signed":       session.get("signed", {}),
-            "sent_at":      session["sent_at"].isoformat() if session.get("sent_at") else None,
-            "expires_at":   expires_at.isoformat() if expires_at else None,
-            "expired":      expired,
-            "sent_by_name": session.get("sent_by_name", ""),
+            "token":              session["token"],
+            "status":             session.get("status", "pending"),
+            "docs_to_sign":       session.get("docs_to_sign", []),
+            "signed":             session.get("signed", {}),
+            "form_data":          session.get("form_data", {}),
+            "sent_at":            session["sent_at"].isoformat() if session.get("sent_at") else None,
+            "expires_at":         expires_at.isoformat() if expires_at else None,
+            "expired":            expired,
+            "generated_by_name":  session.get("generated_by_name", ""),
+            "sent_by_name":       session.get("sent_by_name", ""),
         }
     }
 

@@ -348,7 +348,7 @@ async def submit_public_registration(
         )
         await col("customer_onboarding").update_one(
             {"id": ref},
-            {"$set": {"inbox_thread_id": item_id_str}},
+            {"$addToSet": {"inbox_thread_ids": item_id_str}},
         )
 
         try:
@@ -406,6 +406,12 @@ async def get_signing_session(token: str):
     expires_at = session.get("expires_at")
     if expires_at and now > expires_at:
         raise HTTPException(status_code=410, detail="This signing link has expired. Please contact Bassani Health to request a new one.")
+
+    # Sessions in "generated" state have not been deliberately sent to the customer yet.
+    # "pending" is the legacy status from before the generate/send split — treat as sent.
+    session_status = session.get("status", "pending")
+    if session_status == "generated":
+        raise HTTPException(status_code=403, detail="This signing link is not yet active. Please contact Bassani Health.")
 
     return {
         "form_data":    session.get("form_data", {}),

@@ -366,12 +366,64 @@ def send_onboarding_submitted(
             ("Submitted by", via_label),
             ("Reference", _mono(app_ref)),
         ])
-        + _button("Review application", f"{settings.portal_url}/applications")
+        + _button("Review application", f"{settings.portal_url}/applications/{app_ref}")
         + _divider()
         + _p("Log in to the portal to review and action this application.", muted=True)
     )
     _send(resolved_to, f"New Application: {company_name}",
           _wrap(body))
+
+
+def send_countersign_complete_notification(
+    to_emails: "list[str]",
+    company_name: str,
+    app_id: str,
+) -> None:
+    """Sent to configured recipients when all portal-signed onboarding docs are countersigned."""
+    if not to_emails:
+        return
+    body = (
+        _h1("Documents countersigned")
+        + _p("All customer documents have been countersigned and the application is ready for the next step.")
+        + _info_box([
+            ("Customer", f"<strong>{company_name}</strong>"),
+            ("Reference", _mono(app_id)),
+            ("Next step", "Send the welcome pack to the customer"),
+        ], tint="#f0fdf4", border="#86efac")
+        + _button("Open application", f"{settings.portal_url}/applications/{app_id}")
+        + _divider()
+        + _p("Log in to the portal to send the welcome pack.", muted=True)
+    )
+    _send(to_emails, f"Documents Countersigned: {company_name}", _wrap(body))
+
+
+def send_customer_welcome_pack(
+    to_email: str,
+    customer_name: str,
+    custom_message: str,
+    sender_name: str,
+    sender_title: str,
+    attachments: list,
+) -> None:
+    """Welcome pack email from the signing authority to the customer, with signed docs attached."""
+    sig_line = f"<strong>{sender_name}</strong>"
+    if sender_title:
+        sig_line += f"<br><span style='color:#6b7280;font-size:12px;'>{sender_title}</span>"
+    sig_line += "<br><span style='color:#6b7280;font-size:12px;'>Bassani Health</span>"
+
+    body = (
+        _h1("Welcome to Bassani Health")
+        + _p(f"Dear {customer_name},")
+        + _p(custom_message.strip().replace("\n", "<br>"))
+        + _divider()
+        + f'<p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:#1a1a1a;">{sig_line}</p>'
+    )
+    _send(
+        to_email,
+        f"Welcome to Bassani Health",
+        _wrap(body),
+        attachments=attachments if attachments else None,
+    )
 
 
 def send_registration_confirmation(

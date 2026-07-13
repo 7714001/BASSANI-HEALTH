@@ -621,6 +621,7 @@ export default function DocumentTemplates({ embedded = false }) {
     { key: "nda",                        label: "NDA" },
     { key: "store_onboarding_agreement", label: "Store Agreement" },
     { key: "customer_information_form",  label: "Customer Info Form" },
+    { key: "welcome_pack",               label: "Welcome Pack" },
   ];
 
   const load = () => {
@@ -641,7 +642,7 @@ export default function DocumentTemplates({ embedded = false }) {
 
           <div className="mb-6">
                 <p className="text-sm text-gray-500">
-                  Manage the three Bassani-issued onboarding template PDFs. Uploading a new version
+                  Manage the four Bassani-issued template PDFs. Uploading a new version
                   immediately replaces what customers download. No redeployment needed. Previous
                   versions are archived and can be restored at any time.
                 </p>

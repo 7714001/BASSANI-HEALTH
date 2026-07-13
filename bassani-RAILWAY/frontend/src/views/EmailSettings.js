@@ -89,6 +89,7 @@ export default function EmailSettings({ embedded = false }) {
   const [saving,  setSaving ] = useState(false);
   const [config,  setConfig ] = useState({
     application_submitted_to: [],
+    countersign_complete_to:  [],
     order_ready_extra_to:     [],
     order_cc:                 [],
     finance_notification_to:  [],
@@ -155,6 +156,22 @@ export default function EmailSettings({ embedded = false }) {
                 emails={config.application_submitted_to}
                 onChange={upd("application_submitted_to")}
                 placeholder="support@bassanihealth.com"
+              />
+            </div>
+          </RoutingSection>
+
+          <RoutingSection
+            icon={Mail}
+            title="Onboarding: Documents Countersigned"
+            description="Triggered when all customer onboarding documents have been countersigned. Use this to notify Dean and Kashi so the welcome pack can be sent."
+            note="If this list is empty, no notification is sent."
+          >
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
+              <EmailTagInput
+                emails={config.countersign_complete_to}
+                onChange={upd("countersign_complete_to")}
+                placeholder="dean@bassanihealth.com"
               />
             </div>
           </RoutingSection>

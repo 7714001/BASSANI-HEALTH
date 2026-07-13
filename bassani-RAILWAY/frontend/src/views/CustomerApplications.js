@@ -7,7 +7,7 @@ import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate } from "../c
 
 // ── Derived status ─────────────────────────────────────────────────────────────
 
-const BASSANI_SIG_TYPES = new Set(["nda", "tqa", "store_onboarding_agreement"]);
+const BASSANI_SIG_TYPES = new Set(["nda", "store_onboarding_agreement"]);
 
 function deriveStatus(app) {
   const s = app.status;
@@ -15,26 +15,33 @@ function deriveStatus(app) {
   if (s === "rejected")      return "rejected";
   if (s === "awaiting_docs") return "awaiting_docs";
 
-  // For pending apps, reflect countersign progress on portal-signed docs
-  const docs   = app.documents || [];
-  const bdocs  = docs.filter(d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type));
-  if (!bdocs.length) return "ready_to_approve";
+  const docs  = app.documents || [];
+  const bdocs = docs.filter(d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type));
 
-  const signed = bdocs.filter(d => d.countersigned_at).length;
-  if (signed === 0)            return "needs_countersigning";
-  if (signed < bdocs.length)   return "countersigning_in_progress";
-  return "ready_to_approve";
+  if (bdocs.length >= 2) {
+    const signed = bdocs.filter(d => d.countersigned_at).length;
+    if (signed === 0)           return "needs_countersigning";
+    if (signed < bdocs.length)  return "countersigning_in_progress";
+    return "ready_to_approve";
+  }
+
+  if (app.signing_session_sent_at)    return "awaiting_signature";
+  if (app.signing_session_token)      return "docs_generated";
+  return "pending_review";
 }
 
 // ── Status badge ───────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  awaiting_docs:              { label: "Awaiting Docs",    cls: "bg-amber-50 text-amber-700",   icon: Clock       },
-  needs_countersigning:       { label: "Needs Countersign",cls: "bg-blue-50 text-blue-700",     icon: PenLine     },
-  countersigning_in_progress: { label: "In Progress",      cls: "bg-purple-50 text-purple-700", icon: PenLine     },
-  ready_to_approve:           { label: "Ready to Approve", cls: "bg-teal-50 text-teal-700",     icon: FileCheck   },
-  approved:                   { label: "Approved",         cls: "bg-green-50 text-green-700",   icon: CheckCircle },
-  rejected:                   { label: "Rejected",         cls: "bg-red-50 text-red-700",       icon: XCircle     },
+  pending_review:             { label: "Pending Review",      cls: "bg-gray-50 text-gray-700",    icon: Clock       },
+  docs_generated:             { label: "Docs Generated",      cls: "bg-indigo-50 text-indigo-700", icon: UserCheck   },
+  awaiting_signature:         { label: "Awaiting Signature",  cls: "bg-amber-50 text-amber-700",  icon: PenLine     },
+  awaiting_docs:              { label: "Awaiting Docs",       cls: "bg-amber-50 text-amber-700",  icon: Clock       },
+  needs_countersigning:       { label: "Needs Countersign",   cls: "bg-blue-50 text-blue-700",    icon: PenLine     },
+  countersigning_in_progress: { label: "In Progress",         cls: "bg-purple-50 text-purple-700",icon: PenLine     },
+  ready_to_approve:           { label: "Ready to Approve",    cls: "bg-teal-50 text-teal-700",    icon: FileCheck   },
+  approved:                   { label: "Approved",            cls: "bg-green-50 text-green-700",  icon: CheckCircle },
+  rejected:                   { label: "Rejected",            cls: "bg-red-50 text-red-700",      icon: XCircle     },
 };
 
 function StatusBadge({ derivedStatus }) {
@@ -50,13 +57,16 @@ function StatusBadge({ derivedStatus }) {
 // ── Filter definitions ─────────────────────────────────────────────────────────
 
 const FILTERS = [
-  { key: "all",                        label: "All"              },
-  { key: "awaiting_docs",              label: "Awaiting Docs"    },
-  { key: "needs_countersigning",       label: "Needs Countersign"},
-  { key: "countersigning_in_progress", label: "In Progress"      },
-  { key: "ready_to_approve",           label: "Ready to Approve" },
-  { key: "approved",                   label: "Approved"         },
-  { key: "rejected",                   label: "Rejected"         },
+  { key: "all",                        label: "All"                 },
+  { key: "pending_review",             label: "Pending Review"      },
+  { key: "docs_generated",             label: "Docs Generated"      },
+  { key: "awaiting_signature",         label: "Awaiting Signature"  },
+  { key: "awaiting_docs",              label: "Awaiting Docs"       },
+  { key: "needs_countersigning",       label: "Needs Countersign"   },
+  { key: "countersigning_in_progress", label: "In Progress"         },
+  { key: "ready_to_approve",           label: "Ready to Approve"    },
+  { key: "approved",                   label: "Approved"            },
+  { key: "rejected",                   label: "Rejected"            },
 ];
 
 // ── Main view ──────────────────────────────────────────────────────────────────

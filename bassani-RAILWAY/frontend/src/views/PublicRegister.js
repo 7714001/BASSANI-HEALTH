@@ -12,7 +12,9 @@ import toast from "react-hot-toast";
 
 const BUSINESS_TYPES = [
   "Pharmacy", "Dispensary", "Healthcare Provider",
-  "Wellness Centre", "Private Practice", "Other",
+  "Wellness Centre", "Private Practice",
+  "Section 22C Facility", "Sole Proprietor", "Company (Pty) Ltd", "Partnership",
+  "Other",
 ];
 
 const PROVINCES = [

@@ -14,30 +14,40 @@ import { DOC_CONFIGS, detectFields, countersignPdf } from "../utils/pdfSigning";
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  awaiting_docs:              { label: "Awaiting Docs",    cls: "bg-amber-50  text-amber-700  border-amber-200",  dot: "bg-amber-400",  icon: Clock       },
-  needs_countersigning:       { label: "Needs Countersign",cls: "bg-blue-50   text-blue-700   border-blue-200",   dot: "bg-blue-400",   icon: PenLine     },
-  countersigning_in_progress: { label: "In Progress",      cls: "bg-purple-50 text-purple-700 border-purple-200", dot: "bg-purple-400", icon: PenLine     },
-  ready_to_approve:           { label: "Ready to Approve", cls: "bg-teal-50   text-teal-700   border-teal-200",   dot: "bg-teal-400",   icon: FileCheck   },
-  approved:                   { label: "Approved",         cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
-  rejected:                   { label: "Rejected",         cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle     },
+  pending_review:             { label: "Pending Review",     cls: "bg-gray-50   text-gray-700   border-gray-200",   dot: "bg-gray-400",   icon: Clock       },
+  docs_generated:             { label: "Docs Generated",     cls: "bg-indigo-50 text-indigo-700 border-indigo-200", dot: "bg-indigo-400", icon: FileText    },
+  awaiting_signature:         { label: "Awaiting Signature", cls: "bg-amber-50  text-amber-700  border-amber-200",  dot: "bg-amber-400",  icon: PenLine     },
+  awaiting_docs:              { label: "Awaiting Docs",      cls: "bg-amber-50  text-amber-700  border-amber-200",  dot: "bg-amber-400",  icon: Clock       },
+  needs_countersigning:       { label: "Needs Countersign",  cls: "bg-blue-50   text-blue-700   border-blue-200",   dot: "bg-blue-400",   icon: PenLine     },
+  countersigning_in_progress: { label: "In Progress",        cls: "bg-purple-50 text-purple-700 border-purple-200", dot: "bg-purple-400", icon: PenLine     },
+  ready_to_approve:           { label: "Ready to Approve",   cls: "bg-teal-50   text-teal-700   border-teal-200",   dot: "bg-teal-400",   icon: FileCheck   },
+  approved:                   { label: "Approved",           cls: "bg-green-50  text-green-700  border-green-200",  dot: "bg-green-500",  icon: CheckCircle },
+  rejected:                   { label: "Rejected",           cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle     },
 };
 
 const _BASSANI_SIG_TYPES = new Set(["nda", "store_onboarding_agreement"]);
 
-function deriveStatus(app, docs) {
+function deriveStatus(app, docs, signingSession) {
   const s = app?.status;
   if (s === "approved")      return "approved";
   if (s === "rejected")      return "rejected";
   if (s === "awaiting_docs") return "awaiting_docs";
-  if (!docs)                 return "awaiting_docs"; // still loading
+  if (!docs)                 return "pending_review";
 
-  const bdocs  = docs.filter(d => d.signed_in_portal && _BASSANI_SIG_TYPES.has(d.doc_type));
-  if (!bdocs.length) return "ready_to_approve";
+  const bdocs = docs.filter(d => d.signed_in_portal && _BASSANI_SIG_TYPES.has(d.doc_type));
+  if (bdocs.length >= 2) {
+    const signed = bdocs.filter(d => d.countersigned_at).length;
+    if (signed === 0)           return "needs_countersigning";
+    if (signed < bdocs.length)  return "countersigning_in_progress";
+    return "ready_to_approve";
+  }
 
-  const signed = bdocs.filter(d => d.countersigned_at).length;
-  if (signed === 0)           return "needs_countersigning";
-  if (signed < bdocs.length)  return "countersigning_in_progress";
-  return "ready_to_approve";
+  if (signingSession && !signingSession.expired) {
+    const st = signingSession.status;
+    if (st === "sent" || st === "pending") return "awaiting_signature";
+    return "docs_generated";
+  }
+  return "pending_review";
 }
 
 function StatusBadge({ status, size = "md" }) {
@@ -421,7 +431,7 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
 
 const BASSANI_SIG_TYPES = new Set(["nda", "store_onboarding_agreement"]);
 
-function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSession, onSendSigningDocs, sendingSignDocs, canSendDocs }) {
+function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSession, onGenerateSigningDocs, generatingSignDocs, onSendSigningLink, sendingSignLink, onPreviewDoc, canSendDocs }) {
   const [viewing,        setViewing       ] = useState(null);
   const [countersigning, setCountersigning] = useState(null);
 
@@ -531,6 +541,9 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
 
         const sessionExists  = signingSession && !signingSession.expired;
         const sessionExpired = signingSession?.expired;
+        // "pending" is the legacy status from before the generate/send split — treat as sent
+        const sessionSent    = sessionExists && (signingSession.status === "sent" || signingSession.status === "pending");
+        const sessionGenerated = sessionExists && signingSession.status === "generated";
 
         return (
           <Card icon={Send} title="NDA and Store Agreement">
@@ -538,10 +551,11 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
               <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
                 <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
                 <p className="text-xs text-amber-700">
-                  The Customer Information Form and CIPC certificate must be submitted before you can send the NDA and Store Agreement.
+                  The Customer Information Form and CIPC certificate must be submitted before you can generate the NDA and Store Agreement.
                 </p>
               </div>
-            ) : sessionExists ? (
+            ) : sessionSent ? (
+              /* ── Sent to customer — awaiting their signature ── */
               <div className="space-y-3">
                 <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
                   <Clock size={14} className="text-blue-500 shrink-0 mt-0.5" />
@@ -555,7 +569,7 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
                 </div>
                 <div className="space-y-1.5">
                   {["nda", "store_onboarding_agreement"].map(dt => {
-                    const label  = dt === "nda" ? "NDA" : "Store Onboarding Agreement";
+                    const label    = dt === "nda" ? "NDA" : "Store Onboarding Agreement";
                     const isSigned = !!(signingSession.signed?.[dt] || submittedTypes.has(dt));
                     return (
                       <div key={dt} className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs ${isSigned ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-500"}`}>
@@ -569,32 +583,76 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
                   })}
                 </div>
                 <button
-                  onClick={onSendSigningDocs}
-                  disabled={sendingSignDocs}
+                  onClick={onSendSigningLink}
+                  disabled={sendingSignLink}
                   className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors"
                 >
-                  {sendingSignDocs ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                  {sendingSignLink ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
                   Resend signing link
                 </button>
               </div>
+            ) : sessionGenerated ? (
+              /* ── Documents generated — admin review before sending ── */
+              <div className="space-y-3">
+                <div className="flex items-start gap-2.5 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+                  <CheckCircle size={14} className="text-green-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-green-800 mb-0.5">Documents generated</p>
+                    <p className="text-xs text-green-700">
+                      Pre-filled with the customer&apos;s application data. Review the documents below before sending.
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {[
+                    { dt: "nda",                       label: "Non-Disclosure Agreement" },
+                    { dt: "store_onboarding_agreement", label: "Store Onboarding Agreement" },
+                  ].map(({ dt, label }) => (
+                    <div key={dt} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
+                      <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
+                        <FileText size={13} className="text-bassani-500 shrink-0" />
+                        {label}
+                      </div>
+                      <button
+                        onClick={() => onPreviewDoc(dt)}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-bassani-600 hover:text-bassani-700 transition-colors"
+                      >
+                        <Eye size={11} /> Preview
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={onSendSigningLink}
+                  disabled={sendingSignLink}
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition-colors"
+                >
+                  {sendingSignLink ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                  Send to Customer
+                </button>
+                <p className="text-[11px] text-gray-400">
+                  The customer will receive an email with a secure link to sign both documents.
+                </p>
+              </div>
             ) : (
+              /* ── No session yet / expired ── */
               <div className="space-y-3">
                 {sessionExpired && (
                   <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
                     <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
-                    <p className="text-xs text-red-700">The previous signing link has expired. Send a new one below.</p>
+                    <p className="text-xs text-red-700">The previous signing session has expired. Generate a new one below.</p>
                   </div>
                 )}
                 <p className="text-xs text-gray-500">
-                  The initial documents have been received. Generate a pre-filled signing link to send the NDA and Store Onboarding Agreement to the customer.
+                  The initial documents have been received. Generate pre-filled copies of the NDA and Store Agreement for review before sending them to the customer.
                 </p>
                 <button
-                  onClick={onSendSigningDocs}
-                  disabled={sendingSignDocs}
+                  onClick={onGenerateSigningDocs}
+                  disabled={generatingSignDocs}
                   className="flex items-center gap-2 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition-colors"
                 >
-                  {sendingSignDocs ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                  Generate and Send Documents
+                  {generatingSignDocs ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                  Generate Documents
                 </button>
               </div>
             )}
@@ -607,7 +665,7 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
 
 // ── Actions sidebar ────────────────────────────────────────────────────────────
 
-function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, onUpdate, navigate }) {
+function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, onUpdate, navigate, signingSession, onGenerateSigningDocs, generatingSignDocs, onSendSigningLink, sendingSignLink, canSendDocs, onSendWelcomePack }) {
   const [rejectMode,     setRejectMode    ] = useState(false);
   const [rejectReason,   setRejectReason  ] = useState("");
   const [companyName,    setCompanyName   ] = useState(app.company_name || "");
@@ -625,10 +683,18 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
   );
   const needsCountersign = pendingCountersigns.length > 0;
 
+  // Signing completeness — customer must have returned NDA + SOA before approval is possible
+  const allSigningComplete = !isAwaitingDocs && (docs || []).filter(
+    d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type)
+  ).length >= 2;
+  const sessionSent      = signingSession && !signingSession.expired && (signingSession.status === "sent" || signingSession.status === "pending");
+  const sessionGenerated = signingSession && !signingSession.expired && signingSession.status === "generated";
+  const sessionActive    = sessionSent || sessionGenerated;
+
   if (!isActionable) {
     return (
       <Card title="Decision">
-        <MetaRow label="Outcome"     value={STATUS_CFG[deriveStatus(app, docs)]?.label} />
+        <MetaRow label="Outcome"     value={STATUS_CFG[deriveStatus(app, docs, signingSession)]?.label} />
         <MetaRow label="Reviewed by" value={app.reviewed_by} />
         <MetaRow label="Reviewed on" value={app.reviewed_at ? fmtDate(app.reviewed_at) : null} />
         {app.rejection_reason && (
@@ -664,7 +730,7 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
         subject: contactSubject.trim(),
         message: contactMessage.trim(),
       });
-      onUpdate({ inbox_thread_id: r.data.inbox_thread_id });
+      onUpdate({ inbox_thread_ids: [...(app.inbox_thread_ids || []), r.data.inbox_thread_id] });
       toast.success("Message sent");
       setContactMode(false);
       setContactSubject("");
@@ -678,14 +744,18 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
 
   return (
     <Card title="Actions">
-      {app.inbox_thread_id && !contactMode && !rejectMode && (
-        <div className="mb-4 -mt-1">
-          <button
-            onClick={() => navigate(`/onboarding-inbox?thread=${app.inbox_thread_id}`)}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-xl transition-colors border border-gray-200"
-          >
-            <Mail size={13} /> View Inbox Thread
-          </button>
+      {(app.inbox_thread_ids || []).length > 0 && !contactMode && !rejectMode && (
+        <div className="mb-4 -mt-1 space-y-1.5">
+          {(app.inbox_thread_ids || []).map((tid, i) => (
+            <button
+              key={tid}
+              onClick={() => navigate(`/onboarding-inbox?thread=${tid}`)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-xl transition-colors border border-gray-200"
+            >
+              <Mail size={13} />
+              {(app.inbox_thread_ids || []).length === 1 ? "View Inbox Thread" : `View Thread ${i + 1}`}
+            </button>
+          ))}
         </div>
       )}
 
@@ -789,7 +859,38 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
             </div>
           )}
 
-          {canApprove && (
+          {canApprove && !isAwaitingDocs && !allSigningComplete ? (
+            // Signing flow not yet complete — surface the correct next action
+            sessionSent ? (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+                <Clock size={13} className="text-amber-500 shrink-0" />
+                <p className="text-xs text-amber-700 font-medium">Awaiting customer signature. Documents have been sent.</p>
+              </div>
+            ) : sessionGenerated ? (
+              <button
+                onClick={onSendSigningLink}
+                disabled={sendingSignLink}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                {sendingSignLink ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                Send to Customer
+              </button>
+            ) : canSendDocs ? (
+              <button
+                onClick={onGenerateSigningDocs}
+                disabled={generatingSignDocs}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                {generatingSignDocs ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                Generate Documents
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5">
+                <Clock size={13} className="text-gray-400 shrink-0" />
+                <p className="text-xs text-gray-500">Awaiting signing documents to be sent to customer.</p>
+              </div>
+            )
+          ) : canApprove && (
             <button
               onClick={handleApprove}
               disabled={loading || needsCountersign || (isAwaitingDocs && !companyName.trim())}
@@ -800,7 +901,24 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
             </button>
           )}
 
-          {!app.inbox_thread_id && canApprove && (
+          {canApprove && allSigningComplete && !app.welcome_pack_sent_at && (
+            <button onClick={onSendWelcomePack} disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl transition-colors border border-teal-700">
+              <Send size={14} />
+              Send Welcome Pack
+            </button>
+          )}
+
+          {canApprove && app.welcome_pack_sent_at && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-xl px-3 py-2">
+              <CheckCircle size={13} className="text-green-600 shrink-0" />
+              <p className="text-xs text-green-700 font-medium">
+                Welcome pack sent{app.welcome_pack_sent_by ? ` by ${app.welcome_pack_sent_by}` : ""}
+              </p>
+            </div>
+          )}
+
+          {!(app.inbox_thread_ids || []).length && canApprove && (
             <button onClick={() => setContactMode(true)} disabled={loading}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-semibold rounded-xl transition-colors border border-gray-200">
               <Mail size={14} />
@@ -835,10 +953,14 @@ export default function CustomerApplicationDetail() {
   const [loading,     setLoading    ] = useState(true);
   const [docs,        setDocs       ] = useState(null);
   const [docsLoading, setDocsLoading] = useState(true);
-  const [assigning,       setAssigning      ] = useState(false);
-  const [takeoverConfirm, setTakeoverConfirm ] = useState(false);
-  const [signingSession,  setSigningSession  ] = useState(undefined); // undefined = loading, null = none
-  const [sendingSignDocs, setSendingSignDocs ] = useState(false);
+  const [assigning,          setAssigning         ] = useState(false);
+  const [takeoverConfirm,    setTakeoverConfirm   ] = useState(false);
+  const [signingSession,     setSigningSession    ] = useState(undefined); // undefined = loading, null = none
+  const [generatingSignDocs, setGeneratingSignDocs] = useState(false);
+  const [sendingSignLink,    setSendingSignLink   ] = useState(false);
+  const [welcomePackModal,   setWelcomePackModal  ] = useState(false);
+  const [welcomePackMessage, setWelcomePackMessage] = useState("");
+  const [sendingWelcomePack, setSendingWelcomePack] = useState(false);
 
   useEffect(() => {
     api.get(`/api/onboarding/${id}`)
@@ -864,16 +986,63 @@ export default function CustomerApplicationDetail() {
 
   useEffect(() => { fetchSigningSession(); }, [fetchSigningSession]);
 
-  const sendSigningDocs = async () => {
-    setSendingSignDocs(true);
+  const generateSigningDocs = async () => {
+    setGeneratingSignDocs(true);
+    try {
+      await api.post(`/api/onboarding/${id}/generate-signing-docs`);
+      toast.success("Documents generated — review them before sending to the customer");
+      fetchSigningSession();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to generate documents");
+    } finally {
+      setGeneratingSignDocs(false);
+    }
+  };
+
+  const sendSigningLink = async () => {
+    setSendingSignLink(true);
     try {
       await api.post(`/api/onboarding/${id}/send-signing-docs`);
       toast.success("Signing link sent to customer");
       fetchSigningSession();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to send signing documents");
+      toast.error(e.response?.data?.detail || "Failed to send signing link");
     } finally {
-      setSendingSignDocs(false);
+      setSendingSignLink(false);
+    }
+  };
+
+  const previewGeneratedDoc = async (docType) => {
+    if (!signingSession?.form_data) return;
+    try {
+      const tplRes = await api.get(`/api/templates/${docType}/download`, { responseType: "arraybuffer" });
+      const { buildPrefill, generateSignedPdf, DOC_CONFIGS } = await import("../utils/pdfSigning");
+      const prefill = buildPrefill(docType, signingSession.form_data);
+      const pdfBytes = await generateSignedPdf(new Uint8Array(tplRes.data), {
+        textValues: prefill,
+        config: DOC_CONFIGS[docType],
+        addWatermark: true,
+      });
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      window.open(URL.createObjectURL(blob), "_blank");
+    } catch {
+      toast.error("Failed to generate preview");
+    }
+  };
+
+  const sendWelcomePack = async () => {
+    if (!welcomePackMessage.trim()) return toast.error("Enter a message for the customer");
+    setSendingWelcomePack(true);
+    try {
+      const r = await api.post(`/api/onboarding/${id}/send-welcome-pack`, { message: welcomePackMessage.trim() });
+      toast.success("Welcome pack sent");
+      setWelcomePackModal(false);
+      setWelcomePackMessage("");
+      updateApp({ inbox_thread_ids: [...(app.inbox_thread_ids || []), r.data.thread_id], welcome_pack_sent_at: new Date().toISOString() });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send welcome pack");
+    } finally {
+      setSendingWelcomePack(false);
     }
   };
 
@@ -967,20 +1136,22 @@ export default function CustomerApplicationDetail() {
               <span className="font-mono text-xs text-bassani-700 font-semibold bg-bassani-50 px-2 py-0.5 rounded-md">
                 {app.id}
               </span>
-              <StatusBadge status={deriveStatus(app, docs)} size="md" />
+              <StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />
               {app.reseller_name && (
                 <span className="text-xs text-gray-400">
                   Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> · {fmtDate(app.submitted_at)}
                 </span>
               )}
-              {app.inbox_thread_id && (
+              {(app.inbox_thread_ids || []).slice(0, 3).map((tid, i) => (
                 <button
-                  onClick={() => navigate(`/onboarding-inbox?thread=${app.inbox_thread_id}`)}
+                  key={tid}
+                  onClick={() => navigate(`/onboarding-inbox?thread=${tid}`)}
                   className="inline-flex items-center gap-1 text-[11px] text-blue-600 font-medium bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 hover:bg-blue-100 transition-colors"
                 >
-                  <Mail size={9} /> View inbox thread
+                  <Mail size={9} />
+                  {(app.inbox_thread_ids || []).length === 1 ? "View inbox thread" : `Thread ${i + 1}`}
                 </button>
-              )}
+              ))}
             </div>
           </div>
         </div>
@@ -1034,8 +1205,11 @@ export default function CustomerApplicationDetail() {
                 isHolder={isHolder}
                 onDocUpdate={handleDocUpdate}
                 signingSession={signingSession}
-                onSendSigningDocs={sendSigningDocs}
-                sendingSignDocs={sendingSignDocs}
+                onGenerateSigningDocs={generateSigningDocs}
+                generatingSignDocs={generatingSignDocs}
+                onSendSigningLink={sendSigningLink}
+                sendingSignLink={sendingSignLink}
+                onPreviewDoc={previewGeneratedDoc}
                 canSendDocs={can("customers.approve_onboarding") && ["pending", "awaiting_docs"].includes(app?.status)}
               />
 
@@ -1052,8 +1226,8 @@ export default function CustomerApplicationDetail() {
                 <MetaRow label="Submitted on"  value={fmtDate(app.submitted_at)} />
               </Card>
 
-              {/* Countersign assignment — only shown to signing authority users */}
-              {isHolder && (
+              {/* Countersign assignment — only relevant once customer has signed back */}
+              {isHolder && (docs || []).some(d => d.signed_in_portal && _BASSANI_SIG_TYPES.has(d.doc_type)) && (
                 <Card title="Countersign Assignment">
                   <div className="space-y-3">
                     {app.assigned_to ? (
@@ -1104,6 +1278,13 @@ export default function CustomerApplicationDetail() {
                 onReject={reject}
                 onUpdate={updateApp}
                 navigate={navigate}
+                signingSession={signingSession}
+                onGenerateSigningDocs={generateSigningDocs}
+                generatingSignDocs={generatingSignDocs}
+                onSendSigningLink={sendSigningLink}
+                sendingSignLink={sendingSignLink}
+                canSendDocs={can("customers.approve_onboarding") && ["pending", "awaiting_docs"].includes(app?.status)}
+                onSendWelcomePack={() => setWelcomePackModal(true)}
               />
 
             </div>
@@ -1116,6 +1297,41 @@ export default function CustomerApplicationDetail() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setTakeoverConfirm(false)}>Cancel</BtnSecondary>
             <BtnPrimary onClick={() => { setTakeoverConfirm(false); handleAssign(); }}>Take Over</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {welcomePackModal && (
+        <Modal title="Send Welcome Pack" onClose={() => { setWelcomePackModal(false); setWelcomePackMessage(""); }}>
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+              <p className="text-xs text-blue-700">
+                This email will be sent to <strong>{app?.contact_email}</strong> with the countersigned NDA,
+                countersigned Store Onboarding Agreement, and the active welcome pack attached.
+                The email signature will use your signing name and title from your profile.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Message <span className="text-red-400">*</span>
+              </label>
+              <textarea
+                value={welcomePackMessage}
+                onChange={e => setWelcomePackMessage(e.target.value)}
+                rows={6}
+                autoFocus
+                placeholder="Dear [Customer Name],&#10;&#10;Welcome to Bassani Health. Please find your onboarding documents attached…"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-bassani-300 resize-none placeholder-gray-400"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <BtnSecondary onClick={() => { setWelcomePackModal(false); setWelcomePackMessage(""); }} disabled={sendingWelcomePack}>
+                Cancel
+              </BtnSecondary>
+              <BtnPrimary onClick={sendWelcomePack} disabled={sendingWelcomePack || !welcomePackMessage.trim()}>
+                {sendingWelcomePack ? <><Loader2 size={13} className="animate-spin mr-1.5" />Sending…</> : <><Send size={13} className="mr-1.5" />Send Welcome Pack</>}
+              </BtnPrimary>
+            </div>
           </div>
         </Modal>
       )}
