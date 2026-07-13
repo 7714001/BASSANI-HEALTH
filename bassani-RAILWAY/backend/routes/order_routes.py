@@ -1411,6 +1411,7 @@ async def confirm_order(
                         qty_reserved  = float(m.get("reserved_availability", qty_ordered))
                         items.append({
                             "name": pname, "sku": sku,
+                            "product_id": m["product_id"][0] if m.get("product_id") else None,
                             "qty": qty_ordered,           # backward-compat alias
                             "qty_ordered": qty_ordered,
                             "qty_reserved": qty_reserved,

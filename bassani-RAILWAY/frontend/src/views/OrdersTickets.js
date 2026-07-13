@@ -95,6 +95,8 @@ export default function OrdersTickets() {
   const [mos,        setMos       ] = useState([]);
   const [mosLoading, setMosLoading] = useState(false);
   const [orderLotMap, setOrderLotMap] = useState({});
+  const [qtyPackedEdits,  setQtyPackedEdits ] = useState({});  // sku → draft string
+  const [qtyPackedSaving, setQtyPackedSaving] = useState(new Set());
 
   // Fetch MOs when viewing a waiting_stock backorder entry
   useEffect(() => {
@@ -119,6 +121,7 @@ export default function OrdersTickets() {
     setDetail(null);
     setDetailLoading(true);
     setView("detail");
+    setQtyPackedEdits({});
     try {
       const r = await api.get(`/api/packing/entry/${entry.order_id}`);
       setDetail(r.data);
@@ -138,6 +141,7 @@ export default function OrdersTickets() {
       setOverrideStatus(r.data.status);
       setPackerInput("");
       setItemLots({});
+      setQtyPackedEdits({});
     } catch { toast.error("Failed to refresh order"); }
     load(); // silently refresh list in background
   };
@@ -217,6 +221,28 @@ export default function OrdersTickets() {
       await refreshDetail(detail.order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
     finally { setBusyId(null); }
+  };
+
+  const saveQtyPacked = async (sku, item) => {
+    const raw = qtyPackedEdits[sku];
+    if (raw === undefined || raw === "") return;
+    const val = parseFloat(raw);
+    const maxQty = item.qty_reserved ?? item.qty ?? 0;
+    if (isNaN(val) || val < 0 || val > maxQty) {
+      toast.error(`Qty packed must be between 0 and ${maxQty}`);
+      setQtyPackedEdits(prev => { const n = { ...prev }; delete n[sku]; return n; });
+      return;
+    }
+    setQtyPackedSaving(prev => new Set(prev).add(sku));
+    try {
+      await api.put("/api/packing/update-item-qty", { order_id: detail.order_id, sku, qty_packed: val });
+      setQtyPackedEdits(prev => { const n = { ...prev }; delete n[sku]; return n; });
+      await refreshDetail(detail.order_id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to save qty");
+    } finally {
+      setQtyPackedSaving(prev => { const n = new Set(prev); n.delete(sku); return n; });
+    }
   };
 
   const submitOverride = async () => {
@@ -485,6 +511,9 @@ export default function OrdersTickets() {
                           <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Ordered</th>
                           <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Reserved</th>
                           {canOrders && !isTerminal && (
+                            <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Qty Packed</th>
+                          )}
+                          {canOrders && !isTerminal && (
                             <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch / Lot</th>
                           )}
                           <th className="text-center p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Packed</th>
@@ -517,6 +546,37 @@ export default function OrdersTickets() {
                                   ? <span className={item.is_backordered ? "text-amber-600 font-medium" : "text-gray-600"}>{item.qty_reserved}</span>
                                   : <span className="text-gray-300">—</span>}
                               </td>
+                              {canOrders && !isTerminal && (
+                                <td className="p-3 text-center">
+                                  {isBackordered ? (
+                                    <span className="text-gray-300 text-sm">—</span>
+                                  ) : (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={item.qty_reserved ?? item.qty ?? 0}
+                                        step={1}
+                                        value={
+                                          qtyPackedEdits[item.sku] !== undefined
+                                            ? qtyPackedEdits[item.sku]
+                                            : (item.qty_packed ?? item.qty_reserved ?? item.qty ?? "")
+                                        }
+                                        onChange={e => setQtyPackedEdits(prev => ({ ...prev, [item.sku]: e.target.value }))}
+                                        onBlur={() => saveQtyPacked(item.sku, item)}
+                                        onKeyDown={e => e.key === "Enter" && saveQtyPacked(item.sku, item)}
+                                        disabled={qtyPackedSaving.has(item.sku) || !item.sku}
+                                        className="w-16 text-center text-sm border border-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-bassani-400 disabled:opacity-40"
+                                      />
+                                      {item.qty_packed != null && item.qty_packed < (item.qty_reserved ?? item.qty ?? 0) && qtyPackedEdits[item.sku] === undefined && (
+                                        <span className="text-[10px] text-amber-600 font-medium">
+                                          Short {(item.qty_reserved ?? item.qty ?? 0) - item.qty_packed}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              )}
                               {canOrders && !isTerminal && (
                                 <td className="p-3 text-sm min-w-[160px]">
                                   {item.product_id ? (
@@ -597,7 +657,7 @@ export default function OrdersTickets() {
                           <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl p-3">
                             <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
                             <div>
-                              <p className="text-xs font-semibold text-amber-700">Incomplete reason</p>
+                              <p className="text-xs font-semibold text-amber-700">Packing issue reported</p>
                               <p className="text-sm text-amber-600 mt-0.5">{detail.incomplete_reason}</p>
                             </div>
                           </div>
@@ -730,17 +790,17 @@ export default function OrdersTickets() {
                         </div>
                       )}
 
-                      {/* orders_clerk: mark incomplete (packing or ready) */}
+                      {/* orders_clerk: report packing issue (packing or ready) */}
                       {canOrders && ["packing", "ready"].includes(detail.status) && (
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
                           <p className="text-xs text-gray-400 mb-3">
-                            Something wrong? Flag this order so Sales can contact the client.
+                            For stock shortfalls, use the Qty Packed column above. Use this only when the entire order cannot proceed — damaged goods, wrong products received, or a QA failure.
                           </p>
                           <BtnSecondary
                             onClick={() => { setIncompleteReason(""); setIncompleteModal(true); }}
                             className="w-full justify-center text-amber-600 border-amber-200 hover:bg-amber-50"
                           >
-                            <AlertTriangle size={13} />Mark Incomplete
+                            <AlertTriangle size={13} />Report Packing Issue
                           </BtnSecondary>
                         </div>
                       )}
@@ -904,11 +964,11 @@ export default function OrdersTickets() {
           </main>
         )}
 
-        {/* Incomplete reason modal overlays the detail page */}
+        {/* Packing issue modal overlays the detail page */}
         {incompleteModal && (
-          <Modal title="Mark Incomplete" onClose={() => setIncompleteModal(false)}>
+          <Modal title="Report a Packing Issue" onClose={() => setIncompleteModal(false)}>
             <p className="text-xs text-gray-500 mb-4">
-              Sales will relay this reason to the client when following up on the order.
+              This will halt the order and notify Sales so they can follow up with the client. Use this for issues that prevent the order from proceeding — not for simple qty shortfalls (use the Qty Packed column for those).
             </p>
             <FormGroup label="Reason" required>
               <Textarea
@@ -922,7 +982,7 @@ export default function OrdersTickets() {
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setIncompleteModal(false)}>Cancel</BtnSecondary>
               <BtnDanger onClick={submitIncomplete} loading={busyId === detail?.order_id}>
-                Mark Incomplete
+                Confirm Issue
               </BtnDanger>
             </div>
           </Modal>

@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-12  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
+**Last Updated:** 2026-07-13  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
 
 ---
 
@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
@@ -1466,6 +1466,23 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] `OrderPassport.js` ticket card — order type pill (purple Reseller Order / blue Internal Order) + reseller name row + customer name row
 
 **Key design decision:** Reseller name is denormalised onto the ticket document at creation time. Read-time backfill only fires for pre-existing tickets that predate this change. This avoids joins on every list render while ensuring all historical data is still surfaced correctly.
+
+---
+
+#### 8.35 — Per-Line Qty Packed + Packing-Time Shortfall Handling — Complete 2026-07-13
+
+**Goal:** When a packer physically has fewer units than Odoo reserved (e.g. 9 units in the bin, 10 reserved), they can record the actual qty for that line without halting the entire order. Odoo then creates a backorder automatically for the shortfall via its standard wizard. "Report Packing Issue" (previously "Mark Incomplete") is reserved for true order-blocking situations only.
+
+- [x] `order_routes.py` `create_order` packing board item builder — adds `product_id` to every item dict so the backend can match portal items to Odoo move lines
+- [x] `packing_board_routes.py` — `UpdateItemQtyBody` Pydantic model; `PUT /update-item-qty` endpoint: validates qty_packed is in [0, qty_reserved], writes to the item's `qty_packed` field in MongoDB, audit-logs the change; permission: `tickets.orders`
+- [x] `_validate_odoo_delivery` — accepts optional `qty_overrides: {product_id: qty_packed}` dict; when provided, reads `stock.move.line` records for the picking and writes `qty_done` per move line (filling in order until the override qty is reached, leaving remainder at 0); falls back to `action_set_quantities_to_reservation` when no overrides present
+- [x] `complete_entry` — builds `qty_overrides` from any `qty_packed` values stored on the packing board items; passes to `_validate_odoo_delivery`; detects packing-time shortfall (qty_overrides produced a backorder); creates a portal backorder entry for the short lines with the correct short qty; sets `has_pending_invoice=True` on the primary entry when a packing-time shortfall creates a new delivery (so `mark_collected` creates the invoice)
+- [x] `OrdersTickets.js` — "Qty Packed" column added to the items table (between Reserved and Batch/Lot), visible when `canOrders && !isTerminal`; number input defaults to `qty_packed ?? qty_reserved`; saves on blur/Enter via `PUT /update-item-qty`; amber "Short N" label appears below the input when qty_packed < qty_reserved; hidden for backordered items; draft state cleared on order switch
+- [x] `OrdersTickets.js` — "Mark Incomplete" renamed to "Report Packing Issue" throughout (button, modal title, confirm button, amber label in notes section); action card description updated to direct packers to use Qty Packed for shortfalls and reserve this action for order-blocking issues
+
+**Two-path shortfall design:**
+- Qty shortfall on a line (9 of 10): adjust Qty Packed, Odoo creates backorder automatically, order proceeds for the 9 units
+- True blocking issue (damaged goods, wrong product, QA failure): Report Packing Issue, order halted, Sales notified, reason visible on all downstream views
 
 ---
 

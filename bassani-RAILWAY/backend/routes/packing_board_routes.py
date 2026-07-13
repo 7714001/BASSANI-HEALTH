@@ -315,6 +315,11 @@ class MarkCollectedBody(BaseModel):
     order_id: str
     picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
+class UpdateItemQtyBody(BaseModel):
+    order_id:   str
+    sku:        str
+    qty_packed: float
+
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
@@ -374,6 +379,48 @@ async def tick_item(
         raise HTTPException(status_code=404, detail="Order not on board")
     all_done = all(updated["item_ticks"].values()) if updated.get("item_ticks") else False
     return {"success": True, "all_done": all_done, "status": updated["status"]}
+
+
+@router.put("/update-item-qty")
+async def update_item_qty(
+    body: UpdateItemQtyBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Packer sets the actual qty they have in hand for a specific line item.
+    Stored as qty_packed on the item; used as qty_done when validating in Odoo.
+    Must be >= 0 and <= qty_reserved. If below reserved, Odoo will auto-create
+    a backorder for the shortfall when the order is marked complete."""
+    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry["status"] not in ("queued", "packing", "ready"):
+        raise HTTPException(status_code=400, detail=f"Cannot edit qty in status '{entry['status']}'")
+
+    items = entry.get("items", [])
+    item = next((i for i in items if i.get("sku") == body.sku), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found on this order")
+
+    qty_reserved = float(item.get("qty_reserved") or item.get("qty") or 0)
+    if body.qty_packed < 0:
+        raise HTTPException(status_code=400, detail="Qty packed cannot be negative")
+    if body.qty_packed > qty_reserved:
+        raise HTTPException(status_code=400, detail=f"Qty packed ({body.qty_packed}) cannot exceed reserved qty ({qty_reserved})")
+
+    new_items = [
+        {**i, "qty_packed": body.qty_packed} if i.get("sku") == body.sku else i
+        for i in items
+    ]
+    await col("packing_board").update_one(
+        {"order_id": body.order_id},
+        {"$set": {"items": new_items}},
+    )
+    await audit_log(
+        "packing.qty_packed", "packing_board", body.order_id,
+        entity_label=body.order_id, user=current_user,
+        detail={"sku": body.sku, "qty_packed": body.qty_packed, "qty_reserved": qty_reserved},
+    )
+    return {"success": True, "qty_packed": body.qty_packed}
 
 
 @router.put("/status")
@@ -438,13 +485,13 @@ async def rp_approve(
     return {"success": True}
 
 
-def _validate_odoo_delivery(odoo_order_id: int) -> dict:
+def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = None) -> dict:
     """Validate all assigned stock.picking records linked to an Odoo sale order.
 
-    Sets qty_done = reserved quantity on every move line before validating to
-    avoid the Immediate Transfer dialog. If button_validate returns a backorder
-    wizard dict (partial reservation), processes it so Odoo creates the backorder
-    and captures the new picking's ID and name for portal tracking.
+    Normally sets qty_done = reserved quantity via action_set_quantities_to_reservation.
+    When qty_overrides is provided ({product_id: qty_packed}), writes those specific
+    qty_done values to the move lines directly — allowing a packer-reported shortfall
+    to produce a backorder automatically via Odoo's standard wizard.
 
     Returns {"success": bool, "pickings": [name, ...], "error": str|None,
              "backorder_picking_id": int|None, "backorder_picking_name": str|None}.
@@ -472,7 +519,32 @@ def _validate_odoo_delivery(odoo_order_id: int) -> dict:
         pid = picking["id"]
         pname = picking["name"]
         try:
-            _odoo.execute("stock.picking", "action_set_quantities_to_reservation", [pid])
+            if qty_overrides:
+                # Apply per-product qty_done values; fill move lines in order,
+                # stopping when the packer-reported qty is reached.
+                from collections import defaultdict as _dd
+                move_lines = _odoo.search_read(
+                    "stock.move.line",
+                    [("picking_id", "=", pid), ("state", "not in", ["done", "cancel"])],
+                    ["id", "product_id", "reserved_uom_qty"],
+                )
+                product_mls: dict = _dd(list)
+                for ml in move_lines:
+                    pid_val = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+                    product_mls[pid_val].append(ml)
+                for product_id_val, mls in product_mls.items():
+                    override = qty_overrides.get(product_id_val)
+                    remaining = float(override) if override is not None else None
+                    for ml in mls:
+                        reserved = float(ml.get("reserved_uom_qty", 0))
+                        if remaining is None:
+                            _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": reserved}])
+                        else:
+                            take = min(remaining, reserved)
+                            _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": take}])
+                            remaining = max(0.0, remaining - take)
+            else:
+                _odoo.execute("stock.picking", "action_set_quantities_to_reservation", [pid])
             result = _odoo.execute("stock.picking", "button_validate", [pid])
             if isinstance(result, dict) and result.get("res_model") == "stock.backorder.confirmation":
                 # Partial reservation — ask Odoo to auto-create a backorder
@@ -524,33 +596,84 @@ async def complete_entry(
     # ── Odoo delivery validation (non-blocking) ────────────────────────────────
     _no_bo: dict = {"backorder_picking_id": None, "backorder_picking_name": None}
     delivery_result: dict = {"success": False, "pickings": [], "error": "Not attempted", **_no_bo}
+
+    # Build per-product qty overrides from packer-reported qty_packed values.
+    packing_items = entry.get("items", [])
+    qty_overrides: Optional[dict] = None
+    _packed_map = {
+        i["product_id"]: float(i["qty_packed"])
+        for i in packing_items
+        if i.get("product_id") and i.get("qty_packed") is not None
+    }
+    if _packed_map:
+        qty_overrides = _packed_map
+
     try:
         odoo_order_id = int(entry["order_id"])
-        delivery_result = _validate_odoo_delivery(odoo_order_id)
+        delivery_result = _validate_odoo_delivery(odoo_order_id, qty_overrides)
     except (ValueError, TypeError) as e:
         delivery_result = {"success": False, "pickings": [], "error": f"Invalid order ID: {e}", **_no_bo}
     except Exception as e:
         delivery_result = {"success": False, "pickings": [], "error": str(e), **_no_bo}
 
     is_partial = bool(entry.get("has_pending_invoice"))
+
+    # Detect packing-time shortfall: packer reported less than reserved for at least one product
+    # and Odoo created a new backorder picking.
+    _is_packing_shortfall = bool(
+        qty_overrides
+        and delivery_result.get("backorder_picking_id")
+        and any(
+            _packed_map.get(i.get("product_id"), i.get("qty_reserved", 0)) < float(i.get("qty_reserved", 0))
+            for i in packing_items
+            if i.get("product_id")
+        )
+    )
+
     backorder_entry_id: Optional[str] = None
     backorder_picking_name: Optional[str] = delivery_result.get("backorder_picking_name")
 
     # ── Create backorder packing entry when a partial delivery was validated ──
-    if is_partial and delivery_result.get("backorder_picking_id"):
-        _bo_items = [
-            {
-                "name": i["name"],
-                "sku": i.get("sku", ""),
-                "qty": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
-                "qty_ordered": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
-                "qty_reserved": 0,
-                "is_backordered": False,
-                "location": "",
-            }
-            for i in entry.get("items", [])
-            if i.get("is_backordered")
-        ]
+    if (is_partial or _is_packing_shortfall) and delivery_result.get("backorder_picking_id"):
+        if _is_packing_shortfall:
+            # Items that were short at packing time — qty = reserved minus what was packed
+            _bo_items = [
+                {
+                    "name": i["name"],
+                    "sku": i.get("sku", ""),
+                    "product_id": i.get("product_id"),
+                    "qty": round(float(i.get("qty_reserved", 0)) - _packed_map.get(i["product_id"], float(i.get("qty_reserved", 0))), 4),
+                    "qty_ordered": round(float(i.get("qty_reserved", 0)) - _packed_map.get(i["product_id"], float(i.get("qty_reserved", 0))), 4),
+                    "qty_reserved": 0,
+                    "is_backordered": False,
+                    "location": "",
+                }
+                for i in packing_items
+                if i.get("product_id") and _packed_map.get(i["product_id"]) is not None
+                and _packed_map[i["product_id"]] < float(i.get("qty_reserved", 0))
+            ]
+            # Ensure mark_collected will create an invoice for the delivered qty
+            if not is_partial:
+                await col("packing_board").update_one(
+                    {"_id": entry["_id"]},
+                    {"$set": {"has_pending_invoice": True}},
+                )
+        else:
+            # Pre-packing backorder (existing logic) — items flagged is_backordered at confirmation
+            _bo_items = [
+                {
+                    "name": i["name"],
+                    "sku": i.get("sku", ""),
+                    "product_id": i.get("product_id"),
+                    "qty": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
+                    "qty_ordered": round(i.get("qty_ordered", i.get("qty", 0)) - i.get("qty_reserved", 0), 4),
+                    "qty_reserved": 0,
+                    "is_backordered": False,
+                    "location": "",
+                }
+                for i in packing_items
+                if i.get("is_backordered")
+            ]
         _bo_entry = {
             "order_id": body.order_id,
             "odoo_picking_id": delivery_result["backorder_picking_id"],
