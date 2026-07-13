@@ -301,6 +301,31 @@ export default function OrderPassport() {
     }
   };
 
+  // Packing board — open the per-warehouse display screen in a new tab
+  const [packingBoardLoading, setPackingBoardLoading] = useState(false);
+  const openPackingBoard = async () => {
+    setPackingBoardLoading(true);
+    try {
+      const warehouseId = data?.packing?.warehouse_id;
+      let tokenRes;
+      if (warehouseId) {
+        tokenRes = await api.get(`/api/warehouses/${warehouseId}/display-token`);
+      } else {
+        const defRes = await api.get("/api/settings/default-warehouse");
+        const defId = defRes.data.warehouse_id;
+        if (!defId) { toast.error("No default warehouse configured in Settings"); return; }
+        tokenRes = await api.get(`/api/warehouses/${defId}/display-token`);
+      }
+      const token = tokenRes?.data?.token;
+      if (!token) { toast.error("No packing board screen configured for this warehouse — generate a token in Settings > Warehouses"); return; }
+      window.open(`${window.location.origin}/packing-board.html?token=${token}`, "_blank");
+    } catch {
+      toast.error("Failed to load packing board");
+    } finally {
+      setPackingBoardLoading(false);
+    }
+  };
+
   // Register payment — tracks which invoice is being paid
   const [payingInvoice, setPayingInvoice] = useState(null);
   const [payJournals,   setPayJournals  ] = useState([]);
@@ -796,12 +821,12 @@ export default function OrderPassport() {
               </BtnSecondary>
             )}
             {packing && (
-              <BtnSecondary onClick={() => navigate("/tickets/orders")}>
+              <BtnSecondary onClick={openPackingBoard} loading={packingBoardLoading}>
                 <Package size={13} />Packing Board
               </BtnSecondary>
             )}
             {invoices.length > 0 && (
-              <BtnSecondary onClick={() => navigate("/invoices")}>
+              <BtnSecondary onClick={() => navigate("/invoices", { state: { openInvoiceId: invoices[0]?.invoice_id, filter: "all" } })}>
                 <FileText size={13} />Invoices
               </BtnSecondary>
             )}

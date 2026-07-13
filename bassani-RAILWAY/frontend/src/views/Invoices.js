@@ -295,6 +295,12 @@ export default function Invoices() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-open a specific invoice when navigated here from Order Passport
+  useEffect(() => {
+    const id = location.state?.openInvoiceId;
+    if (id) openViewInvoice({ id });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const openViewInvoice = async (inv) => {
     setViewLoading(true);
     try {
