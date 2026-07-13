@@ -258,7 +258,7 @@ These addresses are CC'd on every "Order Received" and "Order Confirmed" email s
 
 ## Step 8b — Manage Onboarding Document Templates (Super Admin)
 
-The four Bassani-issued onboarding documents — Store Onboarding Agreement, Customer Information Form, NDA, and TQA — can be updated directly from the portal without any code change or redeployment. This means your legal or operations team can revise an agreement, upload the new version, and it is live for all future downloads immediately.
+The three Bassani-issued onboarding documents — Store Onboarding Agreement, Customer Information Form, and NDA — can be updated directly from the portal without any code change or redeployment. This means your legal or operations team can revise an agreement, upload the new version, and it is live immediately.
 
 Navigate to **Admin > Document Templates** in the left sidebar (visible to Super Admin only).
 
@@ -732,10 +732,10 @@ The Onboarding Inbox uses the same two-panel layout as the Sales Inbox:
 - **New** — unhandled threads only
 - **In Progress** — threads where some (but not all) required documents have been saved to the customer profile
 - **Linked** — threads linked to a pending onboarding application (typically reseller-originated)
-- **Docs Complete** — threads where all five required documents have been received and saved
+- **Docs Complete** — threads where all required documents have been received and saved
 - **Archived** — dismissed threads
 
-**Document progress pills** on each thread row show how many of the five required documents have been saved for that thread. An amber **N/5 docs** pill means more documents are still outstanding. A green **N/5 docs** pill with a checkmark means all five required documents have been received and saved to the customer's profile.
+**Document progress pills** on each thread row show how many of the required documents have been saved for that thread. An amber pill means more documents are still outstanding. A green pill with a checkmark means all required documents have been received and saved to the customer's profile.
 
 **Thread header chips:**
 - Green **Application linked** chip — thread is linked to a pending reseller application; click to open the application
@@ -763,7 +763,7 @@ When a thread comes from a sender who is not yet in the system and is **not** li
 1. Open the thread — a **Create Customer** button appears in the header when the sender has no linked customer and no pending application
 2. Click **Create Customer**
 
-**Step 1 — Map Documents:** The five required onboarding document slots are displayed. For each slot, choose the matching attachment from the email using the dropdown. Leave a slot blank if that document was not included in this email.
+**Step 1 — Map Documents:** The required onboarding document slots are displayed. For each slot, choose the matching attachment from the email using the dropdown. Leave a slot blank if that document was not included in this email.
 
 3. Click **Continue**
 
@@ -809,9 +809,9 @@ If the customer already has a document of the same type on file, an amber warnin
 
 The documents are saved directly from the email to secure cloud storage and linked to the customer's profile. No manual download or re-upload is needed.
 
-**Document progress tracking:** After saving, the thread's status updates automatically. An amber **N/5 docs** pill appears on the thread row showing how many of the five required documents have been received. When all five are saved, the pill turns green and the thread moves to the **Docs Complete** tab.
+**Document progress tracking:** After saving, the thread's status updates automatically. The progress pill on the thread row shows how many required documents have been received. When all required documents are saved, the pill turns green and the thread moves to the **Docs Complete** tab.
 
-The customer's profile shows the same structured view: each of the five document types has its own row with a green dot when uploaded and a grey dot when outstanding.
+The customer's profile shows the same structured view: each document type has its own row with a green dot when uploaded and a grey dot when outstanding.
 
 ### Archiving a Thread
 
@@ -824,13 +824,13 @@ The thread moves to the Archived tab. Archived threads are automatically deleted
 
 ### Sending Onboarding Documents
 
-To send the four template PDFs to a prospective customer directly from the onboarding mailbox:
+To send the Customer Information Form template to a prospective customer directly from the onboarding mailbox:
 
 1. Click **Send Docs** in the top bar
 2. Enter the customer's email address and optionally their name (used in the greeting)
 3. Click **Send Documents**
 
-The email goes out from the onboarding mailbox address. When the customer replies with their signed copies, their reply threads back into the inbox automatically — no manual matching needed.
+The email goes out from the onboarding mailbox address with the Customer Information Form attached. When the customer replies with their signed form and CIPC certificate, their reply threads back into the inbox automatically — no manual matching needed. After the admin reviews the application, they send the NDA and Store Onboarding Agreement separately via the "Generate and Send Documents" button on the application detail page.
 
 ### Previewing PDF Attachments
 
@@ -1187,15 +1187,14 @@ Type the customer's business name and wait for the search to run. The search che
 
 **Step 2 — Documents**
 
-Upload all five of the following signed documents before continuing:
+Upload both of the following documents before continuing:
 
-- Signed Store Onboarding Agreement
 - Signed Customer Information Form
-- Signed NDA
-- Signed TQA Document
 - CIPC Company Registration Certificate
 
-Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 5 uploaded`. The **Continue to Details** button is disabled until all five slots are filled.
+Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 2 uploaded`. The **Continue to Details** button is disabled until both slots are filled.
+
+> The NDA and Store Onboarding Agreement are sent to the customer by the admin after the application is reviewed — they are not required at this stage.
 
 > Documents are staged to Cloudflare R2 as you upload them and will be attached to the customer's profile the moment the customer is created. If you close the browser before completing Step 3, you will need to start a new session and re-upload.
 
@@ -1257,7 +1256,7 @@ To add a contact person *(requires `customers.manage` permission)*:
 The new contact appears in the list immediately and is created in Odoo.
 
 **Customer Documents:**
-The **Documents** section on a customer's profile shows all compliance documents associated with that customer, with a progress counter in the section header (e.g. "Documents (3 / 5 onboarding)"):
+The **Documents** section on a customer's profile shows all compliance documents associated with that customer, with a progress counter in the section header (e.g. "Documents (3 / 4 onboarding)"):
 - **Onboarding documents** — the signed agreements and CIPC certificate submitted through the onboarding process. These carry an "Onboarding" badge and cannot be deleted from this view.
 - **Admin-uploaded documents** — any additional documents uploaded directly by an admin. These carry an "Admin Upload" badge and can be deleted.
 - **Customer-uploaded documents** — files submitted by the customer via a secure upload link (see below). These carry a "Customer Upload" badge.
@@ -1398,17 +1397,28 @@ The application detail page is a two-column view:
 - **Left column:** Full business details, primary contact, business address, additional information, and all submitted documents
 - **Right column (sidebar):** Application metadata and action buttons
 
-**Documents:** The Documents section on the application shows all five documents the reseller uploaded — the four signed templates plus the CIPC certificate. Click **Download** next to any document to access the secure download link.
+**Documents:** The Documents section on the application shows the documents received. Initially this will be the Customer Information Form and CIPC certificate. The NDA and Store Onboarding Agreement are collected in a second step via the signing session. Click **Download** next to any document to access the secure download link.
+
+**Sending NDA and Store Agreement to customer** *(requires `customers.approve_onboarding`)*:
+
+After reviewing the initial submission (Customer Information Form + CIPC):
+1. Confirm the customer's details are correct
+2. Click **Generate and Send Documents** in the signing session panel below the documents list
+3. The customer receives a secure email with a unique 30-day link to `/sign/{token}`
+4. The customer opens the link, reviews the pre-filled NDA and Store Onboarding Agreement, draws their signature, and submits each document
+5. Each signed document appears in the Documents list on the application with a "Signed in portal" badge
+6. The signing authority countersigns each document (same countersign flow as before)
+7. Once both documents are countersigned, the approval gate is unlocked
 
 **Approving an application** *(requires `customers.approve_onboarding`)*:
 1. Open the application
-2. Review all details and confirm all 5 documents are present and correct
+2. Confirm all 4 documents are present (CIF + CIPC + NDA + SOA) and NDA + SOA are countersigned
 3. Click **Approve & Create Customer** in the right sidebar
 4. The system creates the customer in Odoo automatically and links them to the reseller's account
 5. The reseller receives an approval email
 6. The application status updates to **Approved** on the page — no navigation away required
 
-> If any of the 5 documents are missing, the approval button will be blocked with an error listing which documents are absent.
+> If any of the 4 documents are missing, or the NDA/SOA have not been countersigned, the approval button will be blocked with a specific error.
 
 **If approval is blocked by a duplicate customer:**
 

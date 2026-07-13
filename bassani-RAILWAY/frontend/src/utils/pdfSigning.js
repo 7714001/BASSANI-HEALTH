@@ -71,28 +71,6 @@ export const DOC_CONFIGS = {
       { name: "store_date_es_:signer:date", description: "Date of signing (set to today)" },
     ],
   },
-  tqa: {
-    hasBassaniSig: true,
-    sections: [
-      { title: "Company details", fields: [
-        { name: "company_name",       label: "Company Name",        testDefault: "Test Company (Pty) Ltd" },
-        { name: "company_reg_number", label: "Registration Number", testDefault: "2024/123456/07" },
-      ]},
-      { title: "Contact details", fields: [
-        { name: "customer_name",        label: "Full Name",           testDefault: "Test Customer" },
-        { name: "customer_designation", label: "Designation / Title", testDefault: "Director" },
-      ]},
-    ],
-    isAutoFill: (name) => name.startsWith("bassani_") || name === "customer_date_es_:date",
-    getAutoFillValue: (name, profile) => {
-      if (name === "bassani_name") return profile?.name || "";
-      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
-    },
-    bassaniTextFields: [
-      { name: "bassani_name",            description: "Full name of Bassani signing authority" },
-      { name: "customer_date_es_:date",  description: "Date of signing (set to today)" },
-    ],
-  },
   customer_information_form: {
     hasBassaniSig: false,
     sections: [
@@ -156,12 +134,6 @@ export function buildPrefill(docType, form) {
     city:               form.city,
     province:           form.province,
     postal_code:        form.postal_code,
-  };
-  if (docType === "tqa") return {
-    company_name:         form.company_name,
-    company_reg_number:   form.registration_number,
-    customer_name:        form.contact_name,
-    customer_designation: form.contact_position,
   };
   if (docType === "store_onboarding_agreement") return {
     registered_business_name:    form.company_name,

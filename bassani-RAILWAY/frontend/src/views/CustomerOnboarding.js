@@ -46,18 +46,14 @@ const STEPS = [
 ];
 
 const TEMPLATES = [
-  { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
-  { filename: "customer-information-form.pdf",  label: "Customer Information Form" },
-  { filename: "nda.pdf",                        label: "NDA" },
-  { filename: "tqa.pdf",                        label: "TQA Document" },
+  { filename: "customer-information-form.pdf", label: "Customer Information Form" },
 ];
 
+// Customers submit only these 2 documents upfront.
+// NDA + Store Onboarding Agreement are sent separately by admin after review.
 const REQUIRED_DOCS = [
-  { type: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
-  { type: "customer_information_form",  label: "Signed Customer Information Form" },
-  { type: "nda",                        label: "Signed NDA" },
-  { type: "tqa",                        label: "Signed TQA Document" },
-  { type: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
+  { type: "customer_information_form", label: "Signed Customer Information Form" },
+  { type: "cipc_certificate",          label: "CIPC Company Registration Certificate" },
 ];
 
 const BLANK = {
@@ -270,7 +266,7 @@ export default function CustomerOnboarding() {
       // Upload path: require all 5 docs
       const missing = REQUIRED_DOCS.filter(d => !uploads[d.type]);
       if (missing.length) {
-        toast.error(`Upload all required documents (${missing.length} remaining)`);
+        toast.error(`Upload all required documents (${missing.length} remaining) or use the invitation link`);
         return false;
       }
     }
@@ -491,7 +487,7 @@ export default function CustomerOnboarding() {
             {!allUploaded && (
               <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-3">
                 <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-700">Upload all 5 documents, or send them to the customer via email above to continue.</p>
+                <p className="text-xs text-amber-700">Upload both required documents, or send an invitation to the customer to self-register above.</p>
               </div>
             )}
 

@@ -1,9 +1,9 @@
 """
 Document template management endpoints.
 
-Allows super_admin to upload, version, and activate the four Bassani-issued
+Allows super_admin to upload, version, and activate the three Bassani-issued
 onboarding template PDFs (Store Onboarding Agreement, Customer Information Form,
-NDA, TQA). Versions are stored in R2; the active version is served by the public
+NDA). Versions are stored in R2; the active version is served by the public
 and onboarding download endpoints instead of the baked-in static files.
 
 Collection: doc_templates
@@ -23,7 +23,7 @@ from middleware.audit import audit_log
 
 router = APIRouter(prefix="/api/doc-templates", tags=["doc-templates"])
 
-# The four Bassani-issued template documents managed by this module.
+# The three Bassani-issued template documents managed by this module.
 DOC_TYPES: dict[str, dict] = {
     "store_onboarding_agreement": {
         "label":    "Store Onboarding Agreement",
@@ -36,10 +36,6 @@ DOC_TYPES: dict[str, dict] = {
     "nda": {
         "label":    "NDA",
         "filename": "nda.pdf",
-    },
-    "tqa": {
-        "label":    "TQA Document",
-        "filename": "tqa.pdf",
     },
 }
 

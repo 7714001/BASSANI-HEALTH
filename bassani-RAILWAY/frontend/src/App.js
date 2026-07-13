@@ -49,6 +49,7 @@ import ForgotPassword        from "./views/ForgotPassword";
 import ResetPassword         from "./views/ResetPassword";
 import StockReport           from "./views/StockReport";
 import PublicRegister        from "./views/PublicRegister";
+import SigningPage           from "./views/SigningPage";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
@@ -160,6 +161,7 @@ export default function App() {
         } />
         <Route path="/register"     element={<HcpRegister />} />
         <Route path="/apply"        element={<PublicRegister />} />
+        <Route path="/sign/:token"  element={<SigningPage />} />
         <Route path="/upload-docs/:token" element={<PublicDocUpload />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />

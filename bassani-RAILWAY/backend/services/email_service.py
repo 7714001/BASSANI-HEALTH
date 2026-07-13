@@ -669,9 +669,49 @@ def send_otp_email(email: str, name: str, otp: str) -> None:
 
 # Onboarding document emails
 
+def send_signing_invitation(
+    to_email: str,
+    customer_name: str,
+    signing_url: str,
+    expiry_date: str,
+) -> None:
+    """
+    Sent to a customer when an admin clicks 'Generate and Send Documents'.
+    Contains a unique link to sign the NDA and Store Onboarding Agreement
+    in-browser. The link is valid for 30 days.
+    """
+    if not to_email:
+        return
+    name = customer_name or "there"
+    body = (
+        _h1("Your documents are ready to sign")
+        + _p(f"Hi {name},")
+        + _p(
+            "Thank you for submitting your registration. We have reviewed your application "
+            "and prepared the remaining documents for your signature."
+        )
+        + _p(
+            "Please use the secure link below to review and sign the Non-Disclosure Agreement "
+            "and Store Onboarding Agreement. Your details have already been filled in."
+        )
+        + _button("Review and sign documents", signing_url)
+        + _info_box([
+            ("Documents to sign", "Non-Disclosure Agreement, Store Onboarding Agreement"),
+            ("Link expires",      expiry_date),
+        ])
+        + _divider()
+        + _p(
+            "If you have any questions, please reply to this email and a member "
+            "of the team will assist you.",
+            muted=True,
+        )
+    )
+    _send(to_email, "Bassani Health: Documents ready to sign", _wrap(body))
+
+
 def send_onboarding_templates(to_email: str, reseller_name: str, reply_to: str = "") -> None:
     """
-    Emails all 4 Bassani onboarding template PDFs to a customer's email address.
+    Emails the Customer Information Form template to a customer's email address.
     Called by the reseller from Step 0 of the onboarding wizard, and by admin from
     the customer listing page.
     When reply_to is set (the onboarding mailbox address), the customer is instructed
@@ -684,10 +724,7 @@ def send_onboarding_templates(to_email: str, reseller_name: str, reply_to: str =
 
     _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
     _TEMPLATES = [
-        ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
         ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
-        ("nda.pdf",                        "Bassani Health NDA"),
-        ("tqa.pdf",                        "Bassani Health TQA Document"),
     ]
 
     attachments = []
@@ -701,33 +738,36 @@ def send_onboarding_templates(to_email: str, reseller_name: str, reply_to: str =
 
     if reply_to:
         return_instruction = _p(
-            "Once you have completed and signed all documents, please "
-            "<strong>reply directly to this email</strong> with the signed copies attached. "
-            "Our onboarding team will review them and activate your account."
+            "Please complete and sign the form, then "
+            "<strong>reply directly to this email</strong> with the signed form "
+            "and your CIPC company registration certificate attached. "
+            "Our team will review your submission and send you the remaining documents to sign."
         )
     else:
         return_instruction = _p(
-            "Complete and sign all four documents, then return them to your Bassani Health "
-            f"representative, <strong>{reseller_name}</strong>, to finalise your account setup."
+            "Please complete and sign the Customer Information Form, then return it along with your "
+            f"CIPC company registration certificate to your Bassani Health representative, "
+            f"<strong>{reseller_name}</strong>."
         )
 
     info_rows = [
-        ("Documents attached", f"{len(attachments)} of 4"),
+        ("Attached",           "Customer Information Form"),
+        ("Also required",      "CIPC Company Registration Certificate"),
         ("Your representative", reseller_name),
     ]
     if reply_to:
-        info_rows.append(("Return signed docs to", f'<a href="mailto:{reply_to}" style="color:#0f6e56;">{reply_to}</a>'))
+        info_rows.append(("Return to", f'<a href="mailto:{reply_to}" style="color:#0f6e56;">{reply_to}</a>'))
     else:
         info_rows.append(("Queries", f'<a href="mailto:{settings.healthcare_email}" style="color:#0f6e56;">{settings.healthcare_email}</a>'))
 
     body = (
         _h1("Your onboarding documents")
-        + _p("Please find the required onboarding documents attached to this email.")
+        + _p("Please find the Customer Information Form attached to this email.")
         + return_instruction
         + _info_box(info_rows)
         + _divider()
-        + _p("Once all documents are signed and returned, your account will be reviewed "
-             "and activated by the Bassani Health team.", muted=True)
+        + _p("Once your documents are received and reviewed, we will send you a secure link "
+             "to complete the remaining signing steps.", muted=True)
     )
     _send(
         to_email,

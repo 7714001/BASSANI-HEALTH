@@ -28,24 +28,22 @@ _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboard
 
 # Hardcoded manifest — prevents directory traversal, controls display names
 TEMPLATES: dict[str, str] = {
-    "store-onboarding-agreement.pdf": "Store Onboarding Agreement",
     "customer-information-form.pdf":  "Customer Information Form",
-    "nda.pdf":                        "NDA",
-    "tqa.pdf":                        "TQA Document",
 }
 
-# All five are required before an application can be submitted or approved
+# All four are required before an application can be approved:
+# customer_information_form + cipc_certificate submitted by customer;
+# nda + store_onboarding_agreement sent via signing session after admin review.
 REQUIRED_DOC_TYPES: dict[str, str] = {
-    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
     "customer_information_form":  "Signed Customer Information Form",
-    "nda":                        "Signed NDA",
-    "tqa":                        "Signed TQA Document",
     "cipc_certificate":           "CIPC Company Registration Certificate",
+    "nda":                        "Signed NDA",
+    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
 }
 
 # Subset of REQUIRED_DOC_TYPES that have a Bassani signature field and therefore
 # require countersigning by the signing authority holder before approval.
-BASSANI_SIG_DOC_TYPES: frozenset[str] = frozenset({"nda", "tqa", "store_onboarding_agreement"})
+BASSANI_SIG_DOC_TYPES: frozenset[str] = frozenset({"nda", "store_onboarding_agreement"})
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -202,10 +200,7 @@ async def email_templates(
 
     _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
     _TEMPLATES = [
-        ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
         ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
-        ("nda.pdf",                        "Bassani Health NDA"),
-        ("tqa.pdf",                        "Bassani Health TQA Document"),
     ]
     file_attachments = []
     for filename, display_name in _TEMPLATES:
@@ -221,24 +216,23 @@ async def email_templates(
     from services.email_service import _wrap as _email_wrap, _h1, _p, _info_box, _divider
     body_html = _email_wrap(
         _h1("Your onboarding documents")
-        + _p("Please find your Bassani Health onboarding documents attached to this email.")
+        + _p("Please find the Customer Information Form attached to this email.")
         + _p(
-            "Once you have completed and signed all documents, please "
-            "<strong>reply directly to this email</strong> with all five signed documents "
-            "attached. Our onboarding team will review them and activate your account."
+            "Please complete and sign the form, then "
+            "<strong>reply directly to this email</strong> with the signed form "
+            "and your CIPC company registration certificate attached. "
+            "Our team will review your submission and send you the remaining documents to sign."
         )
         + _info_box([
-            ("Attached templates",   f"{len(file_attachments)} documents"),
-            ("Also required",        "CIPC Company Registration Certificate"),
-            ("How to return signed docs", "Reply directly to this email with all five attached"),
+            ("Attached",       "Customer Information Form"),
+            ("Also required",  "CIPC Company Registration Certificate (reply with both)"),
         ])
         + _divider()
         + _p(
-            "If you have any questions before returning your documents, please reply to this email "
-            "and a member of the team will assist you.", muted=True
+            "If you have any questions, please reply to this email and a member of the team will assist you.",
+            muted=True,
         ),
         footer_note=(
-            "Please reply to this email with your five completed documents attached. "
             "Bassani Health &nbsp;&middot;&nbsp; Cnr Dytchley &amp; Marcius Roads, Kyalami"
         ),
     )
@@ -720,7 +714,7 @@ async def submit_application(
     if not reseller:
         raise HTTPException(status_code=400, detail="Reseller profile not found")
 
-    # Enforce all 5 required documents before submission
+    # Enforce initial required documents before submission (customer_information_form + cipc_certificate)
     submitted_types = {d.get("doc_type") for d in (application.documents or [])}
     missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
     if missing:
@@ -1368,6 +1362,133 @@ async def approve_application_link(
         )
 
     return {"success": True, "odoo_partner_id": body.odoo_partner_id}
+
+
+@router.post("/{app_id}/send-signing-docs")
+async def send_signing_docs(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Generate a 30-day signing session for the customer to sign the NDA and
+    Store Onboarding Agreement.  Requires that the customer has already
+    submitted their Customer Information Form and CIPC certificate.
+    Sends an email to the customer with a unique signing link.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.get("status") not in {"pending", "awaiting_docs"}:
+        raise HTTPException(status_code=400, detail="Signing documents can only be sent for pending applications")
+
+    submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
+    for required in ("customer_information_form", "cipc_certificate"):
+        if required not in submitted_types:
+            label = REQUIRED_DOC_TYPES.get(required, required)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot send signing documents — {label} has not been submitted yet",
+            )
+
+    contact_email = app.get("contact_email", "").strip()
+    if not contact_email:
+        raise HTTPException(status_code=400, detail="Application has no customer email address")
+
+    token = str(uuid.uuid4())
+    now   = datetime.now(timezone.utc)
+    from datetime import timedelta
+    expires_at = now + timedelta(days=30)
+
+    form_snapshot = {
+        "company_name":        app.get("company_name", ""),
+        "trading_name":        app.get("trading_name", ""),
+        "registration_number": app.get("registration_number", ""),
+        "vat_number":          app.get("vat_number", ""),
+        "contact_name":        app.get("contact_name", ""),
+        "contact_position":    app.get("contact_position", ""),
+        "contact_email":       app.get("contact_email", ""),
+        "contact_phone":       app.get("contact_phone", ""),
+        "contact_alt_phone":   app.get("contact_alt_phone", ""),
+        "signatory_id_number": app.get("signatory_id_number", ""),
+        "street":              app.get("street", ""),
+        "suburb":              app.get("suburb", ""),
+        "city":                app.get("city", ""),
+        "province":            app.get("province", ""),
+        "postal_code":         app.get("postal_code", ""),
+        "country":             app.get("country", "South Africa"),
+    }
+
+    session_doc = {
+        "token":         token,
+        "app_id":        app_id,
+        "form_data":     form_snapshot,
+        "docs_to_sign":  ["nda", "store_onboarding_agreement"],
+        "signed":        {},
+        "status":        "pending",
+        "sent_at":       now,
+        "expires_at":    expires_at,
+        "sent_by_id":    str(current_user.get("_id") or current_user.get("id", "")),
+        "sent_by_name":  current_user.get("name") or current_user.get("username", ""),
+    }
+    await col("signing_sessions").insert_one(session_doc)
+    await col("customer_onboarding").update_one(
+        {"id": app_id},
+        {"$set": {"signing_session_token": token, "signing_session_sent_at": now}},
+    )
+
+    from services.email_service import send_signing_invitation
+    signing_url = f"{os.environ.get('PORTAL_URL', '')}/sign/{token}"
+    background_tasks.add_task(
+        send_signing_invitation,
+        to_email=contact_email,
+        customer_name=app.get("contact_name") or app.get("company_name", ""),
+        signing_url=signing_url,
+        expiry_date=expires_at.strftime("%-d %B %Y"),
+    )
+
+    await audit_log(
+        "onboarding.send_signing_docs", "customer_onboarding", app_id,
+        entity_label=app.get("company_name", ""), user=current_user,
+        after={"signing_session_token": token, "expires_at": expires_at.isoformat()},
+    )
+    return {"success": True, "token": token, "expires_at": expires_at.isoformat()}
+
+
+@router.get("/{app_id}/signing-session")
+async def get_signing_session(
+    app_id: str,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """Return the current signing session state for an application, or null if none exists."""
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    token = app.get("signing_session_token")
+    if not token:
+        return {"session": None}
+
+    session = await col("signing_sessions").find_one({"token": token}, NO_ID)
+    if not session:
+        return {"session": None}
+
+    now = datetime.now(timezone.utc)
+    expires_at = session.get("expires_at")
+    expired = bool(expires_at and now > expires_at)
+
+    return {
+        "session": {
+            "token":        session["token"],
+            "status":       session.get("status", "pending"),
+            "docs_to_sign": session.get("docs_to_sign", []),
+            "signed":       session.get("signed", {}),
+            "sent_at":      session["sent_at"].isoformat() if session.get("sent_at") else None,
+            "expires_at":   expires_at.isoformat() if expires_at else None,
+            "expired":      expired,
+            "sent_by_name": session.get("sent_by_name", ""),
+        }
+    }
 
 
 @router.put("/{app_id}/assign")

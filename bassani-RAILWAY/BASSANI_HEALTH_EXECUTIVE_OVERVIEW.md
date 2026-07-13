@@ -97,7 +97,7 @@ Every action in the system is recorded in a permanent, tamper-evident audit log:
 
 ### Document Management and Version Control
 
-Bassani's customer onboarding process requires four signed legal documents from every customer: the Store Onboarding Agreement, the Customer Information Form, the NDA, and the TQA Document. Previously, these documents were static files built into the system — updating them required a developer, a code change, and a redeployment.
+Bassani's customer onboarding process requires four signed documents from every customer: the Customer Information Form, the NDA, the Store Onboarding Agreement, and the CIPC company registration certificate. Previously, the document templates were static files built into the system — updating them required a developer, a code change, and a redeployment.
 
 The portal now includes a document template management module that gives Bassani's management team direct control over these documents:
 
@@ -301,7 +301,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Document template management — version-controlled PDF uploads, rollback, audit trail; no redeployment required | Live |
 | Multi-authority signing — every authorised staff member configures their own personal signature on their profile; multiple people can countersign simultaneously; application claim mechanism prevents accidental dual countersigning | Live |
 | Test signing flow — super admin previews the exact customer signing experience for any document with pre-filled dummy data | Live |
-| In-portal customer document signing — wizard data pre-fills all four documents; customer draws signature in-browser; signed PDFs stored automatically; no print/scan/upload | Live |
+| Two-phase customer document signing — customer signs Customer Information Form during self-registration; admin sends NDA and Store Agreement after review via a secure 30-day link; customer signs in-browser with pre-filled data; no print/scan/upload | Live |
 | Application countersigning — signing authority reviews customer-signed PDFs and countersigns each Bassani signature block in-browser before approval; approve button gated on completion | Live |
 | Audit trail — named actor, before/after, every action | Live |
 | Commission engine — turnover tracking, statements, dispute workflow | Live |

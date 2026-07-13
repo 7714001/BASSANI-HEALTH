@@ -1510,6 +1510,55 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 ---
 
+#### 8.37 — Customer Onboarding Redesign (Two-Phase Document Flow) — Complete 2026-07-13
+
+**Goal:** Remove the TQA document from all surfaces and redesign the onboarding flow so that customers only sign the Customer Information Form at self-registration time. NDA and Store Onboarding Agreement are sent to the customer after an admin reviews the initial submission, via a 30-day secure signing session unique to that customer.
+
+**Business rationale:** Prevents confidential Bassani template documents (NDA, SOA) from being distributed publicly via the /apply URL. Admin has full control over who receives and signs those documents, and when.
+
+**Key decisions confirmed:**
+- Hard gate: all 4 docs (CIF + CIPC + NDA + SOA) must be present before Odoo customer creation is allowed.
+- Signing sessions expire after 30 days; admin can resend to generate a new token.
+- TQA removed entirely from all surfaces — templates, doc type constants, signing flows, admin document templates page.
+- `BASSANI_SIG_DOC_TYPES` reduced from `{"nda", "tqa", "store_onboarding_agreement"}` to `{"nda", "store_onboarding_agreement"}`.
+
+**Phase 1 — TQA removal:**
+- [x] `onboarding_routes.py` — removed `tqa.pdf` from `TEMPLATES`, removed `tqa` from `REQUIRED_DOC_TYPES`, updated `BASSANI_SIG_DOC_TYPES`, updated `email_templates` endpoint to send only CIF
+- [x] `doc_template_routes.py` — removed `tqa` from `DOC_TYPES`; now three managed templates
+- [x] `public_routes.py` — removed TQA from `TEMPLATES` and `REQUIRED_DOC_TYPES`
+- [x] `email_service.py` — removed TQA from `send_onboarding_templates`; updated copy to reflect CIF-only send
+- [x] `pdfSigning.js` — removed `tqa` from `DOC_CONFIGS` and `buildPrefill()`
+- [x] `DocumentTemplates.js` — removed TQA from `FIELD_REF_DOCS`; description updated to "three templates"
+- [x] `CustomerApplicationDetail.js` — removed `tqa` from both `_BASSANI_SIG_TYPES` (status derive) and `BASSANI_SIG_TYPES` (doc card)
+
+**Phase 2 — Customer submission docs reduction:**
+- [x] `PublicRegister.js` — `SIGN_DOCS` reduced to `customer_information_form` only; updated signing step instruction copy and progress counter
+- [x] `CustomerOnboarding.js` — `TEMPLATES` reduced to CIF only; `REQUIRED_DOCS` reduced to CIF + CIPC; updated validation messages
+
+**Phase 3 — Signing session infrastructure:**
+- [x] `onboarding_routes.py` — `POST /{id}/send-signing-docs`: validates initial docs present, creates `signing_sessions` MongoDB doc with 30-day UUID token, sends `send_signing_invitation` email, stamps `signing_session_token` on app, audit-logged
+- [x] `onboarding_routes.py` — `GET /{id}/signing-session`: returns current session state for admin detail page
+- [x] `public_routes.py` — `GET /api/public/signing/{token}`: validates token + expiry, returns `form_data` + `docs_to_sign` + `signed` status
+- [x] `public_routes.py` — `POST /api/public/signing/{token}/sign/{doc_type}`: accepts signed PDF, stores in R2 under `onboarding/signing-sessions/{token}/{doc_type}.pdf`, updates session, stamps document onto application's `documents` array with `signed_in_portal=true`
+- [x] `email_service.py` — `send_signing_invitation()`: sends customer an email with unique `/sign/{token}` link and 30-day expiry date
+
+**Phase 4 — Public signing page:**
+- [x] `SigningPage.js` — new public view at `/sign/:token`. No auth required. Loads session from backend, shows a card per document with Sign button. In-modal signing experience (same canvas + pdf-lib pattern as PublicRegister). Posts signed PDFs to the backend signing endpoint. Completion screen shown when all docs signed.
+- [x] `App.js` — route `/sign/:token` → `SigningPage` added alongside `/apply` and `/upload-docs/:token`
+
+**Phase 5 — Admin application detail page:**
+- [x] `CustomerApplicationDetail.js` — `signingSession` state fetched from `GET /api/onboarding/{id}/signing-session` on load; `sendSigningDocs` handler calls `POST /{id}/send-signing-docs` and refreshes; `DocumentsCard` receives props: shows "Generate and Send Documents" button when initial 2 docs are present and no active session exists; shows session status card (which docs the customer has signed, expiry, resend link) when session active; button hidden once both NDA + SOA docs are in the application
+
+**Definition of Done:**
+- Customer submits /apply → only CIF signed + CIPC uploaded → application in `pending` state
+- Admin reviews application → clicks "Generate and Send Documents" → customer receives email within seconds
+- Customer opens /sign/{token} → signs NDA → signs SOA → success screen shown
+- Admin sees signing session status on application detail page; both docs appear in document list with `signed_in_portal=true`
+- Admin countersigns NDA and SOA → application status reaches `ready_to_approve`
+- Admin approves → Odoo customer created → all 4 docs transferred to customer_documents
+
+---
+
 #### 8.31 — Batch/Lot Numbers on Print Documents — Complete 2026-07-11
 
 **Goal:** Every A4 document the portal generates (order view, packing slip, invoice) shows the batch/lot number(s) that were physically dispatched with that order. Required for medicinal cannabis compliance traceability — the dispensed batch must be identifiable from the paper document.

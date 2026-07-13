@@ -21,19 +21,18 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
 
 TEMPLATES: dict[str, str] = {
-    "store-onboarding-agreement.pdf": "Store Onboarding Agreement",
     "customer-information-form.pdf":  "Customer Information Form",
-    "nda.pdf":                        "NDA",
-    "tqa.pdf":                        "TQA Document",
 }
 
+# Documents submitted by the customer at registration time.
+# NDA + Store Onboarding Agreement are sent by admin via signing session after review.
 REQUIRED_DOC_TYPES: dict[str, str] = {
-    "store_onboarding_agreement": "Signed Store Onboarding Agreement",
     "customer_information_form":  "Signed Customer Information Form",
-    "nda":                        "Signed NDA",
-    "tqa":                        "Signed TQA Document",
     "cipc_certificate":           "CIPC Company Registration Certificate",
 }
+
+# Doc types accepted via the signing session flow (not the regular upload endpoint)
+SIGNING_SESSION_DOC_TYPES: frozenset[str] = frozenset({"nda", "store_onboarding_agreement"})
 
 
 class PublicRegistration(BaseModel):
@@ -207,7 +206,8 @@ async def submit_public_registration(
     Submit a self-service customer registration application.
     Creates a customer_onboarding document with source='self_service'.
     If a valid referral_code is supplied the application is linked to that reseller.
-    All 5 documents are required before submission (no inbox fallback on this path).
+    Two documents are required at submission: Customer Information Form + CIPC certificate.
+    NDA and Store Onboarding Agreement are sent by admin via signing session after review.
     """
     from routes.settings_routes import get_email_routing
     from services.email_service import send_onboarding_submitted
@@ -223,7 +223,7 @@ async def submit_public_registration(
             reseller_id   = reseller.get("id")
             reseller_name = reseller.get("name") or reseller.get("company_name", "")
 
-    # Require all 5 documents
+    # Require initial 2 documents at submission
     submitted_types = {d.get("doc_type") for d in (registration.documents or [])}
     missing = [label for dtype, label in REQUIRED_DOC_TYPES.items()
                if dtype not in submitted_types]
@@ -381,3 +381,117 @@ async def submit_public_registration(
     background_tasks.add_task(_send_confirmation)
 
     return {"success": True, "reference": ref}
+
+
+# ── Public signing session endpoints ──────────────────────────────────────────
+# These serve the /sign/:token page (no auth required).
+
+@router.get("/signing/{token}")
+async def get_signing_session(token: str):
+    """
+    Validate a signing session token and return the form data and docs to sign.
+    Called by the public /sign/:token page before rendering the signing UI.
+    """
+    try:
+        uuid.UUID(token)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid token")
+
+    session = await col("signing_sessions").find_one({"token": token}, NO_ID)
+    if not session:
+        raise HTTPException(status_code=404, detail="Signing link not found or has already been used")
+
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc)
+    expires_at = session.get("expires_at")
+    if expires_at and now > expires_at:
+        raise HTTPException(status_code=410, detail="This signing link has expired. Please contact Bassani Health to request a new one.")
+
+    return {
+        "form_data":    session.get("form_data", {}),
+        "docs_to_sign": session.get("docs_to_sign", []),
+        "signed":       session.get("signed", {}),
+        "expires_at":   expires_at.isoformat() if expires_at else None,
+    }
+
+
+@router.post("/signing/{token}/sign/{doc_type}")
+async def submit_signed_doc(token: str, doc_type: str, file: UploadFile = File(...)):
+    """
+    Accept a signed PDF for a specific doc type and store it in R2.
+    Updates the signing session and stamps the document onto the application.
+    """
+    try:
+        uuid.UUID(token)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid token")
+
+    if doc_type not in SIGNING_SESSION_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
+
+    session = await col("signing_sessions").find_one({"token": token}, NO_ID)
+    if not session:
+        raise HTTPException(status_code=404, detail="Signing link not found")
+
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc)
+    expires_at = session.get("expires_at")
+    if expires_at and now > expires_at:
+        raise HTTPException(status_code=410, detail="This signing link has expired")
+
+    if doc_type not in session.get("docs_to_sign", []):
+        raise HTTPException(status_code=400, detail=f"{doc_type} is not part of this signing session")
+
+    contents = await file.read()
+    if len(contents) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (20 MB maximum)")
+
+    ext = os.path.splitext(file.filename or "")[1] or ".pdf"
+    r2_key = f"onboarding/signing-sessions/{token}/{doc_type}{ext}"
+    await r2_put(r2_key, contents, file.content_type or "application/pdf")
+
+    doc_labels = {
+        "nda":                        "Signed NDA",
+        "store_onboarding_agreement": "Signed Store Onboarding Agreement",
+    }
+
+    signed_entry = {
+        "r2_key":      r2_key,
+        "filename":    file.filename,
+        "signed_at":   now.isoformat(),
+        "size":        len(contents),
+    }
+
+    # Update session
+    updated_signed = {**session.get("signed", {}), doc_type: signed_entry}
+    all_signed = all(d in updated_signed for d in session.get("docs_to_sign", []))
+    new_status = "fully_signed" if all_signed else "partially_signed"
+
+    await col("signing_sessions").update_one(
+        {"token": token},
+        {"$set": {f"signed.{doc_type}": signed_entry, "status": new_status}},
+    )
+
+    # Stamp document onto the application so it appears in the admin docs list
+    app_id = session.get("app_id")
+    if app_id:
+        doc_record = {
+            "doc_type":        doc_type,
+            "label":           doc_labels.get(doc_type, doc_type),
+            "r2_key":          r2_key,
+            "filename":        file.filename,
+            "size":            len(contents),
+            "uploaded_at":     now.isoformat(),
+            "signed_in_portal": True,
+        }
+        # Remove any existing entry for this doc_type, then push the new one
+        await col("customer_onboarding").update_one(
+            {"id": app_id},
+            {"$pull": {"documents": {"doc_type": doc_type}}},
+        )
+        await col("customer_onboarding").update_one(
+            {"id": app_id},
+            {"$push": {"documents": doc_record}},
+        )
+
+    return {"success": True, "doc_type": doc_type, "all_signed": all_signed}

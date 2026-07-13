@@ -35,12 +35,10 @@ const STEPS = [
   { label: "Sign Documents",   icon: PenLine      },
 ];
 
-// Documents that require in-portal signing
+// Documents the customer signs during self-registration.
+// NDA and Store Onboarding Agreement are sent separately by admin after review.
 const SIGN_DOCS = [
-  { type: "nda",                        label: "Non-Disclosure Agreement",   filename: "nda.pdf"                        },
-  { type: "customer_information_form",  label: "Customer Information Form",  filename: "customer-information-form.pdf"  },
-  { type: "tqa",                        label: "Trading Quality Agreement",  filename: "tqa.pdf"                        },
-  { type: "store_onboarding_agreement", label: "Store Onboarding Agreement", filename: "store-onboarding-agreement.pdf" },
+  { type: "customer_information_form", label: "Customer Information Form", filename: "customer-information-form.pdf" },
 ];
 
 const BLANK = {
@@ -500,8 +498,9 @@ export default function PublicRegister() {
       <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
         <p className="text-xs font-semibold text-blue-800 mb-1">Sign your onboarding documents</p>
         <p className="text-xs text-blue-700 leading-relaxed">
-          Your details have been pre-filled from the information you provided. Review each document,
-          draw your signature, and click Sign. All four documents must be signed before you can submit.
+          Your details have been pre-filled from the information you provided. Review the document,
+          draw your signature, and click Sign. The Customer Information Form must be signed before you can submit.
+          You will receive the NDA and Store Onboarding Agreement to sign after your submission is reviewed.
         </p>
       </div>
 
@@ -627,7 +626,7 @@ export default function PublicRegister() {
         <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
           <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
-            Sign all 4 documents and upload your CIPC certificate to submit your application.
+            Sign the Customer Information Form and upload your CIPC certificate to submit your application.
           </p>
         </div>
       )}
@@ -878,7 +877,7 @@ export default function PublicRegister() {
                 <div className="flex justify-between">
                   <span className="text-gray-400">Documents</span>
                   <span className={`font-medium ${allSigned && hasCipc ? "text-green-700" : "text-amber-600"}`}>
-                    {signedCount}/4 signed{hasCipc ? " + CIPC" : ""}
+                    {signedCount}/1 signed{hasCipc ? " + CIPC" : ""}
                   </span>
                 </div>
               )}

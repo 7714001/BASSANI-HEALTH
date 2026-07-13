@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
   MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle,
-  Eye, X, Mail, PenLine, RotateCcw, FileCheck, UserCheck, UserMinus,
+  Eye, X, Mail, PenLine, RotateCcw, FileCheck, UserCheck, UserMinus, Send,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -22,7 +22,7 @@ const STATUS_CFG = {
   rejected:                   { label: "Rejected",         cls: "bg-red-50    text-red-700    border-red-200",    dot: "bg-red-500",    icon: XCircle     },
 };
 
-const _BASSANI_SIG_TYPES = new Set(["nda", "tqa", "store_onboarding_agreement"]);
+const _BASSANI_SIG_TYPES = new Set(["nda", "store_onboarding_agreement"]);
 
 function deriveStatus(app, docs) {
   const s = app?.status;
@@ -419,9 +419,9 @@ function CountersignModal({ doc, appId, onCountersigned, onClose }) {
 
 // ── Documents section ──────────────────────────────────────────────────────────
 
-const BASSANI_SIG_TYPES = new Set(["nda", "tqa", "store_onboarding_agreement"]);
+const BASSANI_SIG_TYPES = new Set(["nda", "store_onboarding_agreement"]);
 
-function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate }) {
+function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSession, onSendSigningDocs, sendingSignDocs, canSendDocs }) {
   const [viewing,        setViewing       ] = useState(null);
   const [countersigning, setCountersigning] = useState(null);
 
@@ -518,6 +518,89 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate }) {
           </div>
         )}
       </Card>
+
+      {/* Signing session panel */}
+      {canSendDocs && (() => {
+        const submittedTypes = new Set((docs || []).map(d => d.doc_type));
+        const hasInitialDocs = submittedTypes.has("customer_information_form") && submittedTypes.has("cipc_certificate");
+        const ndaSigned = submittedTypes.has("nda");
+        const soaSigned = submittedTypes.has("store_onboarding_agreement");
+        const allSigningDone = ndaSigned && soaSigned;
+
+        if (allSigningDone) return null; // all docs collected — no panel needed
+
+        const sessionExists  = signingSession && !signingSession.expired;
+        const sessionExpired = signingSession?.expired;
+
+        return (
+          <Card icon={Send} title="NDA and Store Agreement">
+            {!hasInitialDocs ? (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">
+                  The Customer Information Form and CIPC certificate must be submitted before you can send the NDA and Store Agreement.
+                </p>
+              </div>
+            ) : sessionExists ? (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                  <Clock size={14} className="text-blue-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-blue-800 mb-0.5">Awaiting customer signature</p>
+                    <p className="text-xs text-blue-700">
+                      Signing link sent {signingSession.sent_at ? new Date(signingSession.sent_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" }) : ""}.
+                      {signingSession.expires_at ? ` Expires ${new Date(signingSession.expires_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" })}.` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {["nda", "store_onboarding_agreement"].map(dt => {
+                    const label  = dt === "nda" ? "NDA" : "Store Onboarding Agreement";
+                    const isSigned = !!(signingSession.signed?.[dt] || submittedTypes.has(dt));
+                    return (
+                      <div key={dt} className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs ${isSigned ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-500"}`}>
+                        {isSigned
+                          ? <CheckCircle size={13} className="text-green-600 shrink-0" />
+                          : <div className="w-3 h-3 rounded-full border-2 border-gray-300 shrink-0" />}
+                        <span className="font-medium">{label}</span>
+                        {isSigned && <span className="ml-auto text-[10px] font-semibold text-green-600">Signed</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={onSendSigningDocs}
+                  disabled={sendingSignDocs}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors"
+                >
+                  {sendingSignDocs ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                  Resend signing link
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sessionExpired && (
+                  <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                    <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-700">The previous signing link has expired. Send a new one below.</p>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500">
+                  The initial documents have been received. Generate a pre-filled signing link to send the NDA and Store Onboarding Agreement to the customer.
+                </p>
+                <button
+                  onClick={onSendSigningDocs}
+                  disabled={sendingSignDocs}
+                  className="flex items-center gap-2 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition-colors"
+                >
+                  {sendingSignDocs ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                  Generate and Send Documents
+                </button>
+              </div>
+            )}
+          </Card>
+        );
+      })()}
     </>
   );
 }
@@ -752,8 +835,10 @@ export default function CustomerApplicationDetail() {
   const [loading,     setLoading    ] = useState(true);
   const [docs,        setDocs       ] = useState(null);
   const [docsLoading, setDocsLoading] = useState(true);
-  const [assigning,      setAssigning     ] = useState(false);
-  const [takeoverConfirm, setTakeoverConfirm] = useState(false);
+  const [assigning,       setAssigning      ] = useState(false);
+  const [takeoverConfirm, setTakeoverConfirm ] = useState(false);
+  const [signingSession,  setSigningSession  ] = useState(undefined); // undefined = loading, null = none
+  const [sendingSignDocs, setSendingSignDocs ] = useState(false);
 
   useEffect(() => {
     api.get(`/api/onboarding/${id}`)
@@ -770,6 +855,27 @@ export default function CustomerApplicationDetail() {
   }, [id]);
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
+
+  const fetchSigningSession = useCallback(() => {
+    api.get(`/api/onboarding/${id}/signing-session`)
+      .then(r => setSigningSession(r.data.session || null))
+      .catch(() => setSigningSession(null));
+  }, [id]);
+
+  useEffect(() => { fetchSigningSession(); }, [fetchSigningSession]);
+
+  const sendSigningDocs = async () => {
+    setSendingSignDocs(true);
+    try {
+      await api.post(`/api/onboarding/${id}/send-signing-docs`);
+      toast.success("Signing link sent to customer");
+      fetchSigningSession();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send signing documents");
+    } finally {
+      setSendingSignDocs(false);
+    }
+  };
 
   const handleAssign = async () => {
     setAssigning(true);
@@ -927,6 +1033,10 @@ export default function CustomerApplicationDetail() {
                 loading={docsLoading}
                 isHolder={isHolder}
                 onDocUpdate={handleDocUpdate}
+                signingSession={signingSession}
+                onSendSigningDocs={sendSigningDocs}
+                sendingSignDocs={sendingSignDocs}
+                canSendDocs={can("customers.approve_onboarding") && ["pending", "awaiting_docs"].includes(app?.status)}
               />
 
             </div>
