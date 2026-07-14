@@ -830,7 +830,7 @@ To send the Customer Information Form template to a prospective customer directl
 2. Enter the customer's email address and optionally their name (used in the greeting)
 3. Click **Send Documents**
 
-The email goes out from the onboarding mailbox address with the Customer Information Form attached. When the customer replies with their signed form and CIPC certificate, their reply threads back into the inbox automatically — no manual matching needed. After the admin reviews the application, they send the NDA and Store Onboarding Agreement separately via the "Generate and Send Documents" button on the application detail page.
+The email goes out from the onboarding mailbox address with the Customer Information Form attached. When the customer replies with their signed form and CIPC certificate, their reply threads back into the inbox automatically — no manual matching needed. After the admin reviews the application, they generate and preview the NDA and Store Onboarding Agreement on the application detail page, then deliberately send the signing link to the customer once satisfied with the pre-filled content.
 
 ### Previewing PDF Attachments
 
@@ -844,7 +844,7 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 
 1. Reseller opens **Applications** → clicks **Start Application**
 2. The onboarding wizard opens at Step 0. Reseller enters the **business name** (required) and the customer's email address, clicks **Send Docs**
-3. The four template PDFs are emailed to the customer. A draft application is created and linked to the reseller
+3. The Customer Information Form is emailed to the customer. A draft application is created and linked to the reseller
 4. The wizard unlocks Steps 1-4. Reseller continues filling in business details, contact, address, and additional info with whatever they know. Progress is saved automatically as they move between steps
 5. Reseller can close and return at any time — the draft appears in **Applications** under the **Drafts** filter with a **Continue** button
 
@@ -1390,25 +1390,65 @@ For an unpaid invoice, click **Register Payment**, select the payment journal, e
 Go to **Applications** to review customer onboarding applications submitted by resellers. A badge on the sidebar menu shows the number of applications currently awaiting review — this count refreshes automatically every minute.
 
 **Application list:**
-Filter by status using the chips at the top — Pending, Approved, Rejected, or All. Each row shows the business name, the reseller who submitted it, the contact details, submission date, and current status. Click any row or the Review/View button to open the full application.
+Filter by status using the chips at the top. Each row shows the business name, the reseller who submitted it, the contact details, submission date, and current status. Click any row or the Review/View button to open the full application.
+
+Status values on the list:
+- **Pending Review** — initial submission received, awaiting admin review
+- **Docs Generated** — admin has generated pre-filled NDA and SOA; not yet sent to customer
+- **Awaiting Signature** — signing link has been sent; customer has not yet signed all documents
+- **Needs Countersign** — customer has signed; Bassani signing authority needs to countersign
+- **In Progress** — one document countersigned, one outstanding
+- **Ready to Approve** — all documents signed and countersigned; approval available
+- **Approved / Rejected** — terminal states
 
 **Reviewing an application:**
 The application detail page is a two-column view:
 - **Left column:** Full business details, primary contact, business address, additional information, and all submitted documents
 - **Right column (sidebar):** Application metadata and action buttons
 
-**Documents:** The Documents section on the application shows the documents received. Initially this will be the Customer Information Form and CIPC certificate. The NDA and Store Onboarding Agreement are collected in a second step via the signing session. Click **Download** next to any document to access the secure download link.
+**Documents:** The Documents section on the application shows the documents received. Initially this will be the Customer Information Form and CIPC certificate. The NDA and Store Onboarding Agreement are collected via a separate signing session described below. Click **Download** next to any document to access the secure download link.
 
-**Sending NDA and Store Agreement to customer** *(requires `customers.approve_onboarding`)*:
+**Step 1 — Generate documents for review** *(requires `customers.approve_onboarding`)*:
 
-After reviewing the initial submission (Customer Information Form + CIPC):
-1. Confirm the customer's details are correct
-2. Click **Generate and Send Documents** in the signing session panel below the documents list
-3. The customer receives a secure email with a unique 30-day link to `/sign/{token}`
-4. The customer opens the link, reviews the pre-filled NDA and Store Onboarding Agreement, draws their signature, and submits each document
-5. Each signed document appears in the Documents list on the application with a "Signed in portal" badge
-6. The signing authority countersigns each document (same countersign flow as before)
-7. Once both documents are countersigned, the approval gate is unlocked
+After reviewing the initial submission (Customer Information Form + CIPC) and confirming the customer's details are correct:
+
+1. Click **Generate Documents** in the NDA and Store Agreement panel below the documents list
+2. The system creates a 30-day signing session and snapshots the customer's data from the application — no email is sent at this point
+3. The panel updates to show a **Preview NDA** and **Preview Store Agreement** button. Click either to open a pre-filled version of that document in a new browser tab. Check that the company name, registration number, contact details, and address all read correctly
+4. If details are wrong, close the preview and correct them on the application record, then regenerate
+5. Once satisfied with the pre-filled content, proceed to Step 2
+
+**Step 2 — Send documents to the customer** *(requires `customers.approve_onboarding`)*:
+
+1. Click **Send to Customer** in the NDA and Store Agreement panel
+2. The customer receives a secure email with a unique 30-day link to `/sign/{token}`
+3. The panel updates to "Awaiting customer signature" and shows which documents have been signed
+4. The application status badge on the list page updates to **Awaiting Signature**
+5. If the customer has not signed after a few days, click **Resend signing link** to send the email again with the same link
+
+**What the customer does:**
+The customer opens the link (no portal account required), sees a pre-filled copy of each document, draws their signature on a canvas, and submits. Each signed document appears in the Documents list with a "Signed in portal" badge. The customer can sign both documents in one sitting or return later — the link stays valid for 30 days.
+
+**Step 3 — Countersign** *(requires `signing_authority.sign`)*:
+
+Once the customer has signed both documents, they appear in the Documents section with a "Signed in portal" badge and a **Countersign** button. The Countersign Assignment card in the sidebar becomes visible.
+
+1. Click **Claim Application** in the Countersign Assignment card to reserve the application
+2. Click **Countersign** next to the NDA, review the document, draw or apply your configured signature, and submit
+3. Repeat for the Store Onboarding Agreement
+4. Both countersigned documents now show a "Countersigned by [your name]" badge
+
+When both are countersigned, a notification email is sent automatically to the recipients configured under **Settings > Email Routing > Onboarding: Documents Countersigned** (typically Kashi and Dean).
+
+**Step 4 — Send Welcome Pack** *(requires `customers.approve_onboarding`)*:
+
+After countersigning is complete, the **Send Welcome Pack** button appears in the right sidebar.
+
+1. Click **Send Welcome Pack**
+2. Enter a personal message to the customer in the text box (this appears as the body of the email)
+3. Click **Send**
+4. The customer receives an email with the countersigned NDA, countersigned Store Agreement, and the Welcome Pack attached. Your name and title appear as the email footer
+5. A "Welcome pack sent by [your name]" badge appears on the application
 
 **Approving an application** *(requires `customers.approve_onboarding`)*:
 1. Open the application
@@ -1701,18 +1741,16 @@ If you believe a statement is incorrect:
 
 ### Onboarding Docs — Quick Access
 
-The **Onboarding Docs** page lets you send or download the four Bassani Health template documents at any time — for example, when a prospect asks for the documents before you are ready to start a formal application.
+The **Onboarding Docs** page lets you download or send the Customer Information Form template at any time — for example, when a prospect asks for the form before you are ready to start a formal application.
 
 Go to **Onboarding Docs** in the sidebar. From here you can:
 
-- **Download** any of the four template documents directly to your device:
-  - Store Onboarding Agreement
-  - Customer Information Form
-  - NDA
-  - TQA Document
-- **Email all four templates** to your customer by entering their email address and clicking **Send Documents** — the files are delivered as attachments from the Bassani Health email system
+- **Download** the Customer Information Form directly to your device
+- **Email the Customer Information Form** to your customer by entering their email address and clicking **Send Documents**
 
-> **For a formal onboarding, use the wizard instead.** Go to **Applications** → **Start Application**. The wizard includes the same send-docs step and also creates the application, saves your progress, and notifies you when the signed documents arrive. Using the wizard avoids having to re-enter the customer's details later.
+> The NDA and Store Onboarding Agreement are not distributed directly. Bassani Health generates and sends those documents to the customer directly after reviewing your application — this ensures confidential agreement terms are only shared after admin review.
+
+> **For a formal onboarding, use the wizard instead.** Go to **Applications** → **Start Application**. The wizard creates the application, saves your progress, and notifies Bassani Health to begin the signing process. Using the wizard avoids having to re-enter the customer's details later.
 
 ---
 

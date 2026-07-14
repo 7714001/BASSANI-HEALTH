@@ -301,8 +301,9 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Document template management — version-controlled PDF uploads, rollback, audit trail; no redeployment required | Live |
 | Multi-authority signing — every authorised staff member configures their own personal signature on their profile; multiple people can countersign simultaneously; application claim mechanism prevents accidental dual countersigning | Live |
 | Test signing flow — super admin previews the exact customer signing experience for any document with pre-filled dummy data | Live |
-| Two-phase customer document signing — customer signs Customer Information Form during self-registration; admin sends NDA and Store Agreement after review via a secure 30-day link; customer signs in-browser with pre-filled data; no print/scan/upload | Live |
+| Controlled customer document signing — customer signs only the Customer Information Form during self-registration. Admin reviews the submission, generates pre-filled NDA and Store Agreement for internal review, then deliberately sends the signing link to the customer. Customer signs both documents in-browser via a secure 30-day link. No print/scan/upload at any stage. | Live |
 | Application countersigning — signing authority reviews customer-signed PDFs and countersigns each Bassani signature block in-browser before approval; approve button gated on completion | Live |
+| Countersign notification and welcome pack — when both NDA and Store Agreement are countersigned, a notification is sent automatically to configured recipients (Kashi and Dean). Dean then sends the customer a welcome pack email directly from the portal, with the countersigned documents and welcome letter attached. Approval is the final step after the welcome pack has been sent. | Live |
 | Audit trail — named actor, before/after, every action | Live |
 | Commission engine — turnover tracking, statements, dispute workflow | Live |
 | Email notifications — all business events, configurable routing | Live |

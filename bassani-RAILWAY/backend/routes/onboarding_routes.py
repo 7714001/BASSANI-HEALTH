@@ -1668,6 +1668,8 @@ async def get_signing_session(
 
     now = datetime.now(timezone.utc)
     expires_at = session.get("expires_at")
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     expired = bool(expires_at and now > expires_at)
 
     return {
