@@ -1015,7 +1015,7 @@ export default function CustomerApplicationDetail() {
   const previewGeneratedDoc = async (docType) => {
     if (!signingSession?.form_data) return;
     try {
-      const tplRes = await api.get(`/api/templates/${docType}/download`, { responseType: "arraybuffer" });
+      const tplRes = await api.get(`/api/doc-templates/${docType}/download`, { responseType: "arraybuffer" });
       const { buildPrefill, generateSignedPdf, DOC_CONFIGS } = await import("../utils/pdfSigning");
       const prefill = buildPrefill(docType, signingSession.form_data);
       const pdfBytes = await generateSignedPdf(new Uint8Array(tplRes.data), {
@@ -1025,7 +1025,8 @@ export default function CustomerApplicationDetail() {
       });
       const blob = new Blob([pdfBytes], { type: "application/pdf" });
       window.open(URL.createObjectURL(blob), "_blank");
-    } catch {
+    } catch (e) {
+      console.error("PDF preview failed:", e);
       toast.error("Failed to generate preview");
     }
   };
