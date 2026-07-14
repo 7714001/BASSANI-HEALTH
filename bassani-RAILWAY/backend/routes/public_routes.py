@@ -21,7 +21,9 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "onboarding-templates")
 
 TEMPLATES: dict[str, str] = {
-    "customer-information-form.pdf":  "Customer Information Form",
+    "customer-information-form.pdf":      "Customer Information Form",
+    "nda.pdf":                            "Non-Disclosure Agreement",
+    "store-onboarding-agreement.pdf":     "Store Onboarding Agreement",
 }
 
 # Documents submitted by the customer at registration time.
