@@ -258,31 +258,43 @@ These addresses are CC'd on every "Order Received" and "Order Confirmed" email s
 
 ## Step 8b — Manage Onboarding Document Templates (Super Admin)
 
-The three Bassani-issued onboarding documents — Store Onboarding Agreement, Customer Information Form, and NDA — can be updated directly from the portal without any code change or redeployment. This means your legal or operations team can revise an agreement, upload the new version, and it is live immediately.
+The three Bassani-issued onboarding PDFs — Store Onboarding Agreement, Customer Information Form, and NDA — and the Welcome Pack bundle can all be updated directly from the portal without any code change or redeployment.
 
 Navigate to **Admin > Document Templates** in the left sidebar (visible to Super Admin only).
 
 ### What You See
 
-Each of the four documents is shown as a card. The card displays:
+The three PDF documents (NDA, Store Onboarding Agreement, Customer Information Form) each appear as a card showing:
 
 - **Active version badge** — the current version number (v1, v2, v3…) in green
 - **Uploaded by / date / file size** of the current active version
-- **Release note** — any notes the uploader added when publishing this version (e.g. "Updated indemnity clause, approved by legal 2026-07-07")
-- **Download current** — download the active version directly from here
-- **Upload new version** — publish a new version (super admin only)
-- **Version count** — click to expand the version history
+- **Release note** — any notes the uploader added when publishing this version
+- **View / Download current** — access the active version directly
+- **Upload new version** — publish a new PDF (super admin only)
+- **Version count** — click to expand the full version history
 
-If no version has been uploaded yet, an amber warning appears. The document is still available for download, but it is serving the static file from the last deployment rather than a managed version.
+The **Welcome Pack** appears as a separate card (teal icon) with a list of all files in the active bundle. Each file can be individually downloaded. This is a multi-file bundle — a single versioned unit that contains all the documents attached to the welcome pack email (price list, product guide, etc.).
 
-### Uploading a New Version
+If no version has been uploaded yet, an amber warning appears on that card.
+
+### Uploading a New Version (PDF documents)
 
 1. Click **Upload new version** on the relevant document card
 2. Click the upload area to choose a PDF file from your computer
-3. Add an optional release note — this is shown on the card and in version history. Record what changed, for example "Updated POPIA clause, signed off by legal team 2026-07-07"
+3. Add an optional release note — record what changed, for example "Updated POPIA clause, signed off by legal team 2026-07-07"
 4. Click **Upload and activate**
 
-The new version is live immediately. Any reseller or customer who downloads the document from this point on receives the new version.
+The new version is live immediately.
+
+### Uploading a New Welcome Pack Bundle
+
+1. Click **Upload new bundle** on the Welcome Pack card
+2. Click the upload area and select all files that make up the welcome pack (you can select multiple files at once — PDF and Excel accepted)
+3. Edit the label for each file — this is shown in the version history and helps identify each file. The label defaults to the filename
+4. Add an optional release note, for example "Updated price list for Q3 2026"
+5. Click **Upload and activate**
+
+All selected files become the active bundle immediately. When the next welcome pack email is sent, every file in this bundle is attached. Previous bundles are archived and can be restored at any time.
 
 ### Version History and Rollback
 
@@ -1445,9 +1457,10 @@ When both are countersigned, a notification email is sent automatically to the r
 After countersigning is complete, the **Send Welcome Pack** button appears in the right sidebar.
 
 1. Click **Send Welcome Pack**
-2. Enter a personal message to the customer in the text box (this appears as the body of the email)
-3. Click **Send**
-4. The customer receives an email with the countersigned NDA, countersigned Store Agreement, and the Welcome Pack attached. Your name and title appear as the email footer
+2. Review the pre-populated subject and message (edit if needed)
+3. Check the attachments listed — the countersigned NDA, countersigned Store Agreement, and every file in the active Welcome Pack bundle are all shown
+4. Click **Send**
+5. The customer receives the email with all documents attached. Your name and title appear as the email footer
 5. A "Welcome pack sent by [your name]" badge appears on the application
 
 **Approving an application** *(requires `customers.approve_onboarding`)*:

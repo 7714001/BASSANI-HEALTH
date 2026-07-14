@@ -1141,10 +1141,10 @@ async def send_welcome_pack(
             detail="All onboarding documents must be countersigned before sending the welcome pack",
         )
 
-    # Fetch active welcome pack template
-    from routes.doc_template_routes import get_active_template_bytes
-    welcome_bytes = await get_active_template_bytes("welcome_pack")
-    if not welcome_bytes:
+    # Fetch all files from the active welcome pack bundle
+    from routes.doc_template_routes import get_active_bundle_files
+    bundle_files = await get_active_bundle_files("welcome_pack")
+    if not bundle_files:
         raise HTTPException(status_code=404, detail="No active welcome pack template has been uploaded. Upload one under Settings > Document Templates.")
 
     # Gather countersigned PDF bytes from R2
@@ -1157,10 +1157,9 @@ async def send_welcome_pack(
                 label = REQUIRED_DOC_TYPES.get(doc["doc_type"], doc["doc_type"])
                 attachments.append({"filename": f"{label}.pdf", "content": list(pdf_bytes)})
 
-    attachments.append({
-        "filename": "Bassani Health Welcome Pack.pdf",
-        "content": list(welcome_bytes),
-    })
+    # Attach every file in the welcome pack bundle
+    for f in bundle_files:
+        attachments.append({"filename": f["filename"], "content": list(f["data"])})
 
     # Get sender's signing name and title from their profile
     username = current_user.get("username", "")
