@@ -4,6 +4,7 @@ import {
   CheckCircle, XCircle, Clock, ArrowLeft, Building2, User,
   MapPin, ClipboardList, FileText, Download, Loader2, AlertTriangle,
   Eye, X, Mail, PenLine, RotateCcw, FileCheck, UserCheck, UserMinus, Send,
+  Upload,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -660,6 +661,155 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
         );
       })()}
     </>
+  );
+}
+
+// ── Application timeline ───────────────────────────────────────────────────────
+
+const BASSANI_SIG_SET = new Set(["nda", "store_onboarding_agreement"]);
+
+const TL_CFG = {
+  submitted:    { Icon: FileText,    bg: "bg-blue-100",   iconCls: "text-blue-600"   },
+  uploaded:     { Icon: Upload,      bg: "bg-gray-100",   iconCls: "text-gray-500"   },
+  signed:       { Icon: PenLine,     bg: "bg-indigo-100", iconCls: "text-indigo-600" },
+  generated:    { Icon: FileText,    bg: "bg-purple-100", iconCls: "text-purple-600" },
+  link_sent:    { Icon: Send,        bg: "bg-purple-100", iconCls: "text-purple-600" },
+  countersigned:{ Icon: FileCheck,   bg: "bg-teal-100",   iconCls: "text-teal-600"   },
+  welcome_pack: { Icon: Mail,        bg: "bg-teal-100",   iconCls: "text-teal-600"   },
+  approved:     { Icon: CheckCircle, bg: "bg-green-100",  iconCls: "text-green-600"  },
+  rejected:     { Icon: XCircle,     bg: "bg-red-100",    iconCls: "text-red-600"    },
+};
+
+function fmtTs(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return d.toLocaleString("en-ZA", {
+    day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function buildTimeline(app, docs, signingSession) {
+  const events = [];
+  const push = (at, type, title, detail = null) => {
+    if (!at) return;
+    events.push({ at: new Date(at), type, title, detail, ...TL_CFG[type] });
+  };
+
+  // 1. Submission
+  push(
+    app.submitted_at,
+    "submitted",
+    "Application submitted",
+    app.reseller_name
+      ? `Submitted by ${app.reseller_name}`
+      : app.source === "self_service" ? "Self-service registration" : null,
+  );
+
+  // 2. Documents uploaded / signed by customer at registration
+  for (const doc of docs || []) {
+    if (!doc.uploaded_at) continue;
+    if (BASSANI_SIG_SET.has(doc.doc_type)) continue; // handled separately below
+    if (doc.signed_in_portal) {
+      push(doc.uploaded_at, "signed", `${doc.label || doc.doc_type} signed by customer`, "Signed in the customer portal");
+    } else {
+      push(doc.uploaded_at, "uploaded", `${doc.label || doc.doc_type} uploaded`, null);
+    }
+  }
+
+  // 3. Signing session generated
+  push(
+    app.signing_session_generated_at,
+    "generated",
+    "NDA and Store Agreement generated",
+    signingSession?.generated_by_name ? `by ${signingSession.generated_by_name}` : null,
+  );
+
+  // 4. Signing link sent to customer
+  push(
+    signingSession?.sent_at,
+    "link_sent",
+    "Signing link sent to customer",
+    signingSession?.sent_by_name ? `by ${signingSession.sent_by_name}` : null,
+  );
+
+  // 5. NDA + SOA signed by customer
+  for (const doc of docs || []) {
+    if (!doc.uploaded_at || !BASSANI_SIG_SET.has(doc.doc_type) || !doc.signed_in_portal) continue;
+    push(doc.uploaded_at, "signed", `${doc.label || doc.doc_type} signed by customer`, "Signed in the customer portal");
+  }
+
+  // 6. Countersignatures
+  for (const doc of docs || []) {
+    if (!doc.countersigned_at) continue;
+    push(
+      doc.countersigned_at,
+      "countersigned",
+      `${doc.label || doc.doc_type} countersigned`,
+      doc.countersigned_by ? `by ${doc.countersigned_by}` : null,
+    );
+  }
+
+  // 7. Welcome pack
+  push(
+    app.welcome_pack_sent_at,
+    "welcome_pack",
+    "Welcome pack sent to customer",
+    app.welcome_pack_sent_by ? `by ${app.welcome_pack_sent_by}` : null,
+  );
+
+  // 8. Approval / rejection
+  if (app.reviewed_at) {
+    const isRejected = app.status === "rejected";
+    const detail = [
+      app.reviewed_by ? `by ${app.reviewed_by}` : null,
+      isRejected && app.rejection_reason ? `Reason: ${app.rejection_reason}` : null,
+    ].filter(Boolean).join(" — ");
+    push(app.reviewed_at, isRejected ? "rejected" : "approved",
+      isRejected ? "Application rejected" : "Application approved and customer created",
+      detail || null,
+    );
+  }
+
+  events.sort((a, b) => a.at - b.at);
+  return events;
+}
+
+function TimelineCard({ app, docs, signingSession }) {
+  const events = buildTimeline(app, docs, signingSession);
+
+  return (
+    <Card icon={Clock} title="Activity Timeline">
+      {events.length === 0 ? (
+        <p className="text-xs text-gray-300">No activity yet.</p>
+      ) : (
+        <div className="relative">
+          {/* Vertical connector line */}
+          <div className="absolute left-[9px] top-2 bottom-2 w-px bg-gray-100 pointer-events-none" />
+
+          <div className="space-y-4">
+            {events.map((ev, i) => (
+              <div key={i} className="flex items-start gap-3 relative">
+                {/* Dot */}
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${ev.bg}`}>
+                  <ev.Icon size={9} className={ev.iconCls} />
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0 pb-0.5">
+                  <p className="text-xs font-semibold text-gray-800 leading-snug">{ev.title}</p>
+                  {ev.detail && (
+                    <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{ev.detail}</p>
+                  )}
+                  <p className="text-[10px] text-gray-300 mt-1 tabular-nums">{fmtTs(ev.at)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1394,6 +1544,12 @@ export default function CustomerApplicationDetail() {
                 sendingSignLink={sendingSignLink}
                 canSendDocs={can("customers.approve_onboarding") && ["pending", "awaiting_docs"].includes(app?.status)}
                 onSendWelcomePack={() => setWelcomePackModal(true)}
+              />
+
+              <TimelineCard
+                app={app}
+                docs={docs}
+                signingSession={signingSession}
               />
 
             </div>

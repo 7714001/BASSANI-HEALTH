@@ -1154,7 +1154,7 @@ async def send_welcome_pack(
         if key:
             pdf_bytes = await r2_get(key)
             if pdf_bytes:
-                label = REQUIRED_DOC_TYPES.get(doc["doc_type"], {}).get("label", doc["doc_type"])
+                label = REQUIRED_DOC_TYPES.get(doc["doc_type"], doc["doc_type"])
                 attachments.append({"filename": f"{label}.pdf", "content": list(pdf_bytes)})
 
     attachments.append({
