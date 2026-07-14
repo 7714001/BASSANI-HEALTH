@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
-  CheckCircle, PenLine, Loader2, AlertTriangle, X, FileText,
+  CheckCircle, PenLine, Loader2, AlertTriangle, X, FileText, Upload,
 } from "lucide-react";
 import { DOC_CONFIGS, detectFields, generateSignedPdf, buildPrefill } from "../utils/pdfSigning";
 import api from "../api";
@@ -21,7 +21,7 @@ const DOC_META = {
 // ── In-page signing modal ──────────────────────────────────────────────────────
 
 function SigningModal({ token, docType, formData, onSigned, onClose }) {
-  const meta      = DOC_META[docType];
+  const meta = DOC_META[docType];
   const [loading,    setLoading   ] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error,      setError     ] = useState(null);
@@ -30,6 +30,8 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
   const [fields,     setFields    ] = useState([]);
   const [textValues, setTextValues] = useState({});
   const [sigMeta,    setSigMeta   ] = useState(null);
+  const [sigMode,    setSigMode   ] = useState("draw"); // "draw" | "upload"
+  const [uploadedSig, setUploadedSig] = useState(null); // PNG data URL
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const lastPos   = useRef({ x: 0, y: 0 });
@@ -61,8 +63,6 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
       );
       setTextValues(init);
 
-      // Show the customer a pre-filled preview so they see exactly what they're signing.
-      // pdfBytes stays as the original (AcroForm fields intact) for the actual sign step.
       const preview = await generateSignedPdf(bytes, {
         textValues: prefill, config: cfg, addWatermark: false,
       });
@@ -98,18 +98,40 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
     hasMark.current = false;
   };
 
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      // Convert to PNG via canvas so pdf-lib can embed it regardless of source format
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext("2d").drawImage(img, 0, 0);
+        setUploadedSig(c.toDataURL("image/png"));
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSign = async () => {
-    if (!hasMark.current) return toast.error("Please draw your signature before signing");
-    if (!pdfBytes)        return;
+    if (sigMode === "draw"   && !hasMark.current) return toast.error("Please draw your signature before signing");
+    if (sigMode === "upload" && !uploadedSig)     return toast.error("Please upload a signature image before signing");
+    if (!pdfBytes) return;
     setGenerating(true);
     try {
-      const cfg      = DOC_CONFIGS[docType];
+      const cfg       = DOC_CONFIGS[docType];
       const sigFields = fields.filter(f => f.type === "Signature");
       const mikeField = cfg?.hasBassaniSig
         ? sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null
         : null;
 
-      const customerSigDataUrl = canvasRef.current.toDataURL("image/png");
+      const customerSigDataUrl = sigMode === "draw"
+        ? canvasRef.current.toDataURL("image/png")
+        : uploadedSig;
+
       const result = await generateSignedPdf(pdfBytes, {
         textValues,
         signingProfile: sigMeta,
@@ -134,10 +156,6 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
       setGenerating(false);
     }
   };
-
-  const cfg       = DOC_CONFIGS[docType];
-  const sigFields = fields.filter(f => f.type === "Signature");
-  const detectedNames = new Set(fields.map(f => f.name));
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
@@ -174,68 +192,74 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
             )}
           </div>
 
-          <div className="w-80 shrink-0 border-l border-gray-200 bg-white flex flex-col">
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <div className="w-72 shrink-0 border-l border-gray-200 bg-white flex flex-col">
+            <div className="flex-1 overflow-y-auto p-5">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Your signature</p>
 
-              {cfg?.hasBassaniSig && sigMeta && (
+              {/* Draw / Upload toggle */}
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-4">
+                <button
+                  onClick={() => setSigMode("draw")}
+                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${sigMode === "draw" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                >
+                  Draw
+                </button>
+                <button
+                  onClick={() => setSigMode("upload")}
+                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${sigMode === "upload" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                >
+                  Upload image
+                </button>
+              </div>
+
+              {sigMode === "draw" ? (
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
-                  <div className="bg-green-50 border border-green-100 rounded-xl p-3">
-                    <p className="text-xs font-semibold text-green-800">{sigMeta.name || "Bassani Health"}</p>
-                    <p className="text-xs text-green-600">{sigMeta.title || ""}</p>
-                    <p className="text-[10px] text-green-500 mt-1">Signature will be added by Bassani after countersigning</p>
+                  <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+                    <canvas
+                      ref={canvasRef}
+                      width={280}
+                      height={140}
+                      className="w-full touch-none cursor-crosshair"
+                      onMouseDown={startDraw}
+                      onMouseMove={draw}
+                      onMouseUp={endDraw}
+                      onMouseLeave={endDraw}
+                      onTouchStart={startDraw}
+                      onTouchMove={draw}
+                      onTouchEnd={endDraw}
+                    />
                   </div>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <p className="text-[10px] text-gray-400">Draw your signature above</p>
+                    <button onClick={clearCanvas} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1">Clear</button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block cursor-pointer">
+                    <div className={`border-2 border-dashed rounded-xl p-5 text-center transition-colors ${uploadedSig ? "border-bassani-200 bg-bassani-50" : "border-gray-200 bg-gray-50 hover:border-bassani-300 hover:bg-bassani-50/30"}`}>
+                      {uploadedSig ? (
+                        <img src={uploadedSig} alt="Signature preview" className="max-h-20 mx-auto object-contain" />
+                      ) : (
+                        <>
+                          <Upload size={22} className="mx-auto mb-2 text-gray-300" />
+                          <p className="text-xs font-medium text-gray-500">Click to upload signature</p>
+                          <p className="text-[10px] text-gray-400 mt-1">PNG, JPG or GIF — any device</p>
+                        </>
+                      )}
+                    </div>
+                    <input type="file" accept="image/*" className="sr-only" onChange={handleFileUpload} />
+                  </label>
+                  {uploadedSig && (
+                    <button onClick={() => setUploadedSig(null)} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1 mt-1.5">
+                      Remove and choose again
+                    </button>
+                  )}
                 </div>
               )}
-
-              {(cfg?.sections || []).map(section => {
-                const visible = section.fields.filter(f => detectedNames.has(f.name) && !cfg.isAutoFill(f.name));
-                if (!visible.length) return null;
-                return (
-                  <div key={section.title}>
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">{section.title}</p>
-                    <div className="space-y-3">
-                      {visible.map(f => (
-                        <div key={f.name}>
-                          <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
-                          <input
-                            type="text"
-                            value={textValues[f.name] ?? ""}
-                            onChange={e => setTextValues(v => ({ ...v, [f.name]: e.target.value }))}
-                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-bassani-500"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Your signature</p>
-                  <button onClick={clearCanvas} className="text-[10px] text-gray-400 hover:text-gray-600 underline underline-offset-1">Clear</button>
-                </div>
-                <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden bg-gray-50">
-                  <canvas
-                    ref={canvasRef}
-                    width={300}
-                    height={120}
-                    className="w-full touch-none cursor-crosshair"
-                    onMouseDown={startDraw}
-                    onMouseMove={draw}
-                    onMouseUp={endDraw}
-                    onMouseLeave={endDraw}
-                    onTouchStart={startDraw}
-                    onTouchMove={draw}
-                    onTouchEnd={endDraw}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1.5">Draw your signature above</p>
-              </div>
             </div>
 
-            <div className="p-5 border-t border-gray-100 space-y-2">
+            <div className="p-5 border-t border-gray-100">
               <button
                 onClick={handleSign}
                 disabled={generating}
