@@ -1479,7 +1479,7 @@ export default function CustomerApplicationDetail() {
 
               <Card title="Application Details">
                 <MetaRow label="Reference"     value={app.id} />
-                <MetaRow label="Status"        value={<StatusBadge status={app.status} size="md" />} />
+                <MetaRow label="Status"        value={<StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />} />
                 <MetaRow label="Business Type" value={app.business_type} />
                 <MetaRow label="Submitted by"  value={app.reseller_name} />
                 <MetaRow label="Submitted on"  value={fmtDate(app.submitted_at)} />

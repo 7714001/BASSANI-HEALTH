@@ -1193,6 +1193,9 @@ async def send_welcome_pack(
         + _divider()
         + _p(f"Application reference: <strong>{app_id}</strong>", muted=True)
     )
+    # Use the existing signing correspondence thread if one exists,
+    # so welcome pack and signing link stay in a single inbox thread.
+    signing_thread_id = app.get("signing_thread_id")
     thread_doc = {
         "mailbox_address":  "resend",
         "from_email":       current_user.get("email", ""),
@@ -1206,7 +1209,7 @@ async def send_welcome_pack(
         "received_at":      now,
         "has_attachments":  True,
         "attachments":      [],
-        "thread_root_id":   None,
+        "thread_root_id":   signing_thread_id,  # reply in signing thread, or new root
         "is_read":          True,
         "created_at":       now,
         "sent_by":          username,
@@ -1215,22 +1218,36 @@ async def send_welcome_pack(
         "reseller_name":    app.get("reseller_name"),
         "note":             "welcome_pack",
     }
-    result = await col("onboarding_inbox").insert_one(thread_doc)
-    thread_id = str(result.inserted_id)
-    await col("onboarding_inbox").update_one(
-        {"_id": result.inserted_id},
-        {"$set": {"thread_root_id": thread_id}},
-    )
-    await col("customer_onboarding").update_one(
-        {"id": app_id},
-        {
-            "$addToSet": {"inbox_thread_ids": thread_id},
-            "$set": {
+    result  = await col("onboarding_inbox").insert_one(thread_doc)
+    new_id  = str(result.inserted_id)
+
+    if signing_thread_id:
+        # Reply in existing thread — no new thread root or inbox_thread_ids entry needed
+        thread_id = signing_thread_id
+        await col("customer_onboarding").update_one(
+            {"id": app_id},
+            {"$set": {
                 "welcome_pack_sent_at": now.isoformat(),
                 "welcome_pack_sent_by": current_user.get("name") or username,
+            }},
+        )
+    else:
+        # No signing thread found — create new root
+        thread_id = new_id
+        await col("onboarding_inbox").update_one(
+            {"_id": result.inserted_id},
+            {"$set": {"thread_root_id": thread_id}},
+        )
+        await col("customer_onboarding").update_one(
+            {"id": app_id},
+            {
+                "$addToSet": {"inbox_thread_ids": thread_id},
+                "$set": {
+                    "welcome_pack_sent_at": now.isoformat(),
+                    "welcome_pack_sent_by": current_user.get("name") or username,
+                },
             },
-        },
-    )
+        )
 
     await audit_log(
         user=current_user,
@@ -1643,6 +1660,56 @@ async def send_signing_docs(
         signing_url=signing_url,
         expiry_date=expires_at.strftime("%-d %B %Y") if expires_at else "",
     )
+
+    # Create or append to the onboarding correspondence thread in the inbox.
+    # First send: create thread root and store ID on the app.
+    # Resend: insert as reply in the existing thread so all sends stay in one place.
+    from services.email_service import _wrap as _email_wrap, _p, _divider
+    company_name = app.get("company_name") or app.get("contact_name", "Customer")
+    signing_thread_id = app.get("signing_thread_id")
+    _body_html = _email_wrap(
+        _p(f"Signing invitation sent to <strong>{contact_email}</strong>.")
+        + _p("The customer has been sent a secure link to sign the NDA and Store Onboarding Agreement.")
+        + _divider()
+        + _p(f"Application reference: <strong>{app_id}</strong>", muted=True)
+    )
+    _signing_thread_doc = {
+        "mailbox_address": "resend",
+        "from_email":      current_user.get("email", ""),
+        "from_name":       current_user.get("name") or current_user.get("username", ""),
+        "to_email":        contact_email,
+        "subject":         f"Onboarding: {company_name}",
+        "body_html":       _body_html,
+        "body_preview":    f"Signing invitation sent to {contact_email}",
+        "is_outgoing":     True,
+        "status":          "application_linked",
+        "received_at":     now,
+        "has_attachments": False,
+        "attachments":     [],
+        "thread_root_id":  signing_thread_id,  # None = new root; existing ID = reply
+        "is_read":         True,
+        "created_at":      now,
+        "sent_by":         current_user.get("username"),
+        "application_id":  app_id,
+        "reseller_id":     app.get("reseller_id"),
+        "reseller_name":   app.get("reseller_name"),
+        "note":            "signing_link",
+    }
+    _result = await col("onboarding_inbox").insert_one(_signing_thread_doc)
+    _new_id  = str(_result.inserted_id)
+    if not signing_thread_id:
+        # First send — make this the thread root
+        await col("onboarding_inbox").update_one(
+            {"_id": _result.inserted_id},
+            {"$set": {"thread_root_id": _new_id}},
+        )
+        await col("customer_onboarding").update_one(
+            {"id": app_id},
+            {
+                "$addToSet": {"inbox_thread_ids": _new_id},
+                "$set":      {"signing_thread_id": _new_id},
+            },
+        )
 
     await audit_log(
         "onboarding.send_signing_docs", "customer_onboarding", app_id,
