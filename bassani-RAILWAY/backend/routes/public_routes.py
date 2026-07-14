@@ -404,6 +404,8 @@ async def get_signing_session(token: str):
     from datetime import timezone as _tz
     now = datetime.now(_tz.utc)
     expires_at = session.get("expires_at")
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=_tz.utc)
     if expires_at and now > expires_at:
         raise HTTPException(status_code=410, detail="This signing link has expired. Please contact Bassani Health to request a new one.")
 
@@ -442,6 +444,8 @@ async def submit_signed_doc(token: str, doc_type: str, file: UploadFile = File(.
     from datetime import timezone as _tz
     now = datetime.now(_tz.utc)
     expires_at = session.get("expires_at")
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=_tz.utc)
     if expires_at and now > expires_at:
         raise HTTPException(status_code=410, detail="This signing link has expired")
 
