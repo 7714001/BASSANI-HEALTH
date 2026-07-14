@@ -404,6 +404,7 @@ def send_customer_welcome_pack(
     sender_name: str,
     sender_title: str,
     attachments: list,
+    subject: str = "Welcome to Bassani Health",
 ) -> None:
     """Welcome pack email from the signing authority to the customer, with signed docs attached."""
     sig_line = f"<strong>{sender_name}</strong>"
@@ -420,7 +421,7 @@ def send_customer_welcome_pack(
     )
     _send(
         to_email,
-        f"Welcome to Bassani Health",
+        subject,
         _wrap(body),
         attachments=attachments if attachments else None,
     )

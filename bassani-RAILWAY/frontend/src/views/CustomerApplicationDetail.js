@@ -663,6 +663,110 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
   );
 }
 
+// ── Welcome pack compose modal ─────────────────────────────────────────────────
+
+function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
+  const companyName   = app.company_name || app.contact_name || "Customer";
+  const defaultSubject = "Welcome to Bassani Health";
+  const defaultBody    = `Dear ${companyName},\n\nPlease find attached your signed onboarding documents and our welcome pack.\n\nWe look forward to working with you.`;
+  const [subject, setSubject] = useState(defaultSubject);
+  const [message, setMessage] = useState(defaultBody);
+
+  const countersignedDocs = (docs || []).filter(
+    d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type) && d.countersigned_at
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-full max-w-2xl overflow-hidden" style={{ maxHeight: "92vh" }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2">
+            <Send size={15} className="text-teal-600" />
+            <span className="text-sm font-bold text-gray-900">Send Welcome Pack</span>
+          </div>
+          <button onClick={onClose} disabled={sending} className="text-gray-400 hover:text-gray-700 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Compose fields */}
+        <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+
+          {/* From */}
+          <div className="flex items-center gap-4 px-5 py-3">
+            <span className="text-xs font-semibold text-gray-400 w-14 shrink-0 text-right">From</span>
+            <span className="text-sm text-gray-500 truncate">{user?.name || "Bassani Health"} via Bassani Health onboarding</span>
+          </div>
+
+          {/* To */}
+          <div className="flex items-center gap-4 px-5 py-3">
+            <span className="text-xs font-semibold text-gray-400 w-14 shrink-0 text-right">To</span>
+            <span className="text-sm font-semibold text-gray-800">{app.contact_email}</span>
+          </div>
+
+          {/* Subject */}
+          <div className="flex items-center gap-4 px-5 py-3">
+            <span className="text-xs font-semibold text-gray-400 w-14 shrink-0 text-right">Subject</span>
+            <input
+              value={subject}
+              onChange={e => setSubject(e.target.value)}
+              className="flex-1 text-sm text-gray-900 focus:outline-none placeholder-gray-300"
+              placeholder="Subject"
+            />
+          </div>
+
+          {/* Body */}
+          <textarea
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            rows={8}
+            autoFocus
+            className="w-full px-5 py-4 text-sm text-gray-800 resize-none focus:outline-none leading-relaxed"
+            placeholder="Write your message to the customer…"
+          />
+
+          {/* Attachments */}
+          <div className="px-5 py-4 bg-gray-50">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
+              Attachments ({countersignedDocs.length + 1})
+            </p>
+            <div className="space-y-1.5">
+              {countersignedDocs.map(d => (
+                <div key={d.doc_type} className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+                  <FileText size={13} className="text-bassani-500 shrink-0" />
+                  <span className="text-xs font-medium text-gray-700 flex-1">{d.label || d.doc_type}</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 rounded px-1.5 py-0.5">
+                    <CheckCircle size={9} /> Countersigned
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+                <FileText size={13} className="text-teal-500 shrink-0" />
+                <span className="text-xs font-medium text-gray-700">Bassani Health Welcome Pack.pdf</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-2 shrink-0">
+          <BtnSecondary onClick={onClose} disabled={sending}>Cancel</BtnSecondary>
+          <button
+            onClick={() => onSend(subject, message)}
+            disabled={sending || !message.trim()}
+            className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+          >
+            {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            Send Welcome Pack
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Actions sidebar ────────────────────────────────────────────────────────────
 
 function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, onUpdate, navigate, signingSession, onGenerateSigningDocs, generatingSignDocs, onSendSigningLink, sendingSignLink, canSendDocs, onSendWelcomePack }) {
@@ -686,6 +790,10 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
   // Signing completeness — customer must have returned NDA + SOA before approval is possible
   const allSigningComplete = !isAwaitingDocs && (docs || []).filter(
     d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type)
+  ).length >= 2;
+  // Welcome pack gate — both NDA + SOA must also be countersigned
+  const allCountersigned = !isAwaitingDocs && (docs || []).filter(
+    d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type) && d.countersigned_at
   ).length >= 2;
   const sessionSent      = signingSession && !signingSession.expired && (signingSession.status === "sent" || signingSession.status === "pending");
   const sessionGenerated = signingSession && !signingSession.expired && signingSession.status === "generated";
@@ -901,9 +1009,9 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
             </button>
           )}
 
-          {canApprove && allSigningComplete && !app.welcome_pack_sent_at && (
+          {canApprove && allCountersigned && !app.welcome_pack_sent_at && (
             <button onClick={onSendWelcomePack} disabled={loading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl transition-colors border border-teal-700">
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl transition-colors">
               <Send size={14} />
               Send Welcome Pack
             </button>
@@ -959,7 +1067,6 @@ export default function CustomerApplicationDetail() {
   const [generatingSignDocs, setGeneratingSignDocs] = useState(false);
   const [sendingSignLink,    setSendingSignLink   ] = useState(false);
   const [welcomePackModal,   setWelcomePackModal  ] = useState(false);
-  const [welcomePackMessage, setWelcomePackMessage] = useState("");
   const [sendingWelcomePack, setSendingWelcomePack] = useState(false);
 
   useEffect(() => {
@@ -1031,14 +1138,15 @@ export default function CustomerApplicationDetail() {
     }
   };
 
-  const sendWelcomePack = async () => {
-    if (!welcomePackMessage.trim()) return toast.error("Enter a message for the customer");
+  const sendWelcomePack = async (subject, message) => {
     setSendingWelcomePack(true);
     try {
-      const r = await api.post(`/api/onboarding/${id}/send-welcome-pack`, { message: welcomePackMessage.trim() });
+      const r = await api.post(`/api/onboarding/${id}/send-welcome-pack`, {
+        subject: subject.trim(),
+        message: message.trim(),
+      });
       toast.success("Welcome pack sent");
       setWelcomePackModal(false);
-      setWelcomePackMessage("");
       updateApp({ inbox_thread_ids: [...(app.inbox_thread_ids || []), r.data.thread_id], welcome_pack_sent_at: new Date().toISOString() });
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send welcome pack");
@@ -1303,38 +1411,14 @@ export default function CustomerApplicationDetail() {
       )}
 
       {welcomePackModal && (
-        <Modal title="Send Welcome Pack" onClose={() => { setWelcomePackModal(false); setWelcomePackMessage(""); }}>
-          <div className="space-y-4">
-            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-              <p className="text-xs text-blue-700">
-                This email will be sent to <strong>{app?.contact_email}</strong> with the countersigned NDA,
-                countersigned Store Onboarding Agreement, and the active welcome pack attached.
-                The email signature will use your signing name and title from your profile.
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                Message <span className="text-red-400">*</span>
-              </label>
-              <textarea
-                value={welcomePackMessage}
-                onChange={e => setWelcomePackMessage(e.target.value)}
-                rows={6}
-                autoFocus
-                placeholder="Dear [Customer Name],&#10;&#10;Welcome to Bassani Health. Please find your onboarding documents attached…"
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-bassani-300 resize-none placeholder-gray-400"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <BtnSecondary onClick={() => { setWelcomePackModal(false); setWelcomePackMessage(""); }} disabled={sendingWelcomePack}>
-                Cancel
-              </BtnSecondary>
-              <BtnPrimary onClick={sendWelcomePack} disabled={sendingWelcomePack || !welcomePackMessage.trim()}>
-                {sendingWelcomePack ? <><Loader2 size={13} className="animate-spin mr-1.5" />Sending…</> : <><Send size={13} className="mr-1.5" />Send Welcome Pack</>}
-              </BtnPrimary>
-            </div>
-          </div>
-        </Modal>
+        <WelcomePackModal
+          app={app}
+          docs={docs}
+          user={user}
+          onSend={sendWelcomePack}
+          sending={sendingWelcomePack}
+          onClose={() => setWelcomePackModal(false)}
+        />
       )}
     </div>
   );

@@ -112,6 +112,7 @@ class ApproveBody(BaseModel):
 
 class SendWelcomePackBody(BaseModel):
     message: str
+    subject: Optional[str] = None
 
 
 class UpdateApplicationBody(BaseModel):
@@ -1168,7 +1169,8 @@ async def send_welcome_pack(
     sender_title = (user_doc or {}).get("signing_title", "")
 
     company_name = app.get("company_name") or app.get("contact_name", "Customer")
-    message = body.message.strip()
+    message      = body.message.strip()
+    email_subject = (body.subject or "").strip() or "Welcome to Bassani Health"
 
     # Send email in background
     from services.email_service import send_customer_welcome_pack
@@ -1180,6 +1182,7 @@ async def send_welcome_pack(
         sender_name=sender_name,
         sender_title=sender_title,
         attachments=attachments,
+        subject=email_subject,
     )
 
     # Create an outgoing inbox thread so the send is visible in onboarding inbox
@@ -1195,7 +1198,7 @@ async def send_welcome_pack(
         "from_email":       current_user.get("email", ""),
         "from_name":        sender_name,
         "to_email":         customer_email,
-        "subject":          f"Welcome to Bassani Health",
+        "subject":          email_subject,
         "body_html":        body_html,
         "body_preview":     message[:120],
         "is_outgoing":      True,
