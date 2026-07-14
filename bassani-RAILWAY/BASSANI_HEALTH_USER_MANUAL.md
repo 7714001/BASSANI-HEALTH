@@ -258,7 +258,7 @@ These addresses are CC'd on every "Order Received" and "Order Confirmed" email s
 
 ## Step 8b — Manage Onboarding Document Templates (Super Admin)
 
-The three Bassani-issued onboarding PDFs — Store Onboarding Agreement, Customer Information Form, and NDA — and the Welcome Pack bundle can all be updated directly from the portal without any code change or redeployment.
+The three Bassani-issued onboarding PDFs — Store Onboarding Agreement, Customer Information Form, and NDA — and the four Welcome Pack documents can all be updated directly from the portal without any code change or redeployment.
 
 Navigate to **Admin > Document Templates** in the left sidebar (visible to Super Admin only).
 
@@ -273,9 +273,18 @@ The three PDF documents (NDA, Store Onboarding Agreement, Customer Information F
 - **Upload new version** — publish a new PDF (super admin only)
 - **Version count** — click to expand the full version history
 
-The **Welcome Pack** appears as a separate card (teal icon) with a list of all files in the active bundle. Each file can be individually downloaded. This is a multi-file bundle — a single versioned unit that contains all the documents attached to the welcome pack email (price list, product guide, etc.).
+The **Welcome Pack** appears as a single card (teal icon) containing four independently managed document slots:
 
-If no version has been uploaded yet, an amber warning appears on that card.
+| Slot | File type |
+|---|---|
+| Help Me Budget | Excel (.xlsx / .xls) |
+| Welcome Letter | PDF |
+| Price List | PDF or Excel |
+| Product Brochure | PDF |
+
+Each slot has its own version history, upload date, and rollback. Updating one slot has no effect on the others. An amber "missing" count is shown on the card header if any slot has not yet had a file uploaded.
+
+If no version has been uploaded for a slot yet, an amber warning appears on that slot.
 
 ### Uploading a New Version (PDF documents)
 
@@ -286,19 +295,21 @@ If no version has been uploaded yet, an amber warning appears on that card.
 
 The new version is live immediately.
 
-### Uploading a New Welcome Pack Bundle
+### Updating a Welcome Pack Document
 
-1. Click **Upload new bundle** on the Welcome Pack card
-2. Click the upload area and select all files that make up the welcome pack (you can select multiple files at once — PDF and Excel accepted)
-3. Edit the label for each file — this is shown in the version history and helps identify each file. The label defaults to the filename
-4. Add an optional release note, for example "Updated price list for Q3 2026"
+Each Welcome Pack slot is updated independently:
+
+1. On the Welcome Pack card, find the slot you want to update (e.g. Price List)
+2. Click **Upload new version** on that slot
+3. Select the file — the upload area shows the accepted format for that slot
+4. Add an optional release note, for example "Updated pricing for Q3 2026"
 5. Click **Upload and activate**
 
-All selected files become the active bundle immediately. When the next welcome pack email is sent, every file in this bundle is attached. Previous bundles are archived and can be restored at any time.
+The new version for that slot is live immediately. All other slots are unaffected. When the next welcome pack email is sent, the active version from each slot is attached automatically.
 
 ### Version History and Rollback
 
-Click the version count at the bottom-right of a card to expand the full version history. Each row shows the version number, upload date, uploader, file size, and release note.
+Click the version count at the bottom-right of any card or slot to expand the full version history. Each row shows the version number, upload date, uploader, file size, and release note.
 
 - **Download** any archived version to verify its content before restoring it
 - **Activate** any non-active row to roll back to that version — it becomes the active version immediately and the current version is archived
@@ -1458,7 +1469,7 @@ After countersigning is complete, the **Send Welcome Pack** button appears in th
 
 1. Click **Send Welcome Pack**
 2. Review the pre-populated subject and message (edit if needed)
-3. Check the attachments listed — the countersigned NDA, countersigned Store Agreement, and every file in the active Welcome Pack bundle are all shown
+3. Check the attachments listed — the countersigned NDA, countersigned Store Agreement, and the active version of each Welcome Pack document (Help Me Budget, Welcome Letter, Price List, Product Brochure) are all shown
 4. Click **Send**
 5. The customer receives the email with all documents attached. Your name and title appear as the email footer
 5. A "Welcome pack sent by [your name]" badge appears on the application

@@ -818,7 +818,7 @@ function TimelineCard({ app, docs, signingSession }) {
 function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
   const companyName   = app.company_name || app.contact_name || "Customer";
   const defaultSubject = "Welcome to Bassani Health";
-  const defaultBody    = `Dear ${companyName},\n\nPlease find attached your signed onboarding documents and our welcome pack.\n\nWe look forward to working with you.`;
+  const defaultBody    = `Dear Valued Partner,\n\nThank you for onboarding with Bassani Health. You will find attached:\n\n- A Help Me Budget spreadsheet to work out your order\n- Your welcome letter\n- Our latest price list\n- Our product brochure\n\nLooking forward to a successful and prosperous business partnership.\n\nBest regards,\nThe Bassani Sales Team`;
   const [subject, setSubject] = useState(defaultSubject);
   const [message, setMessage] = useState(defaultBody);
 

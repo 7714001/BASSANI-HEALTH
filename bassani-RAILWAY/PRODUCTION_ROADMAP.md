@@ -28,7 +28,7 @@
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
-| 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07; 17.6 Welcome Pack multi-file bundle — 2026-07-14 |
+| 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07; 17.6 Welcome Pack slot-based management — 2026-07-14 |
 | 18 | In-Portal Customer Document Signing | 🟢 Complete | 18.0–18.4 complete — 2026-07-08 |
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
@@ -3394,7 +3394,7 @@ DocuSign requires a separate service decision and API credentials. The current d
 
 **Status:** 🟢 Complete — 2026-07-07
 
-**Goal:** Super admin can upload, version, and activate the four Bassani-issued onboarding template documents directly from the portal. Three are single PDFs (NDA, Store Onboarding Agreement, Customer Information Form). The Welcome Pack is a multi-file bundle (one or more PDF/Excel files) managed with the same versioning and rollback model. Once uploaded, the active version is served immediately — no redeployment required.
+**Goal:** Super admin can upload, version, and activate the four Bassani-issued onboarding template documents directly from the portal. Three are single PDFs (NDA, Store Onboarding Agreement, Customer Information Form). The Welcome Pack consists of four independently managed document slots (Help Me Budget, Welcome Letter, Price List, Product Brochure) — each with its own version history and rollback, so any one can be updated without affecting the others. Once uploaded, the active version is served immediately — no redeployment required.
 
 ### Motivation
 
@@ -3408,20 +3408,24 @@ The four Bassani-issued onboarding documents were previously static files baked 
 
 **Backend — `backend/routes/doc_template_routes.py`**
 
-Four doc types managed: `store_onboarding_agreement`, `customer_information_form`, `nda`, `welcome_pack`. `welcome_pack` is flagged `is_bundle: True` in `DOC_TYPES`.
+Four doc types managed: `store_onboarding_agreement`, `customer_information_form`, `nda`, `welcome_pack`. `welcome_pack` is flagged `is_slots: True` in `DOC_TYPES` with four named slots: `budget`, `letter`, `price_list`, `brochure`.
 
 | Endpoint | Auth | Description |
 |---|---|---|
-| `GET /api/doc-templates/` | admin | List all four doc types with active version summary; welcome_pack returns `is_bundle: true` and `files[]` |
-| `GET /api/doc-templates/{doc_type}/history` | admin | All versions for a doc type, newest first; bundle versions include `files[]` |
+| `GET /api/doc-templates/` | admin | List all four doc types; welcome_pack returns `is_slots: true` and `slots[]` with active version per slot |
+| `GET /api/doc-templates/{doc_type}/history` | admin | All versions for a single-file doc type, newest first |
 | `POST /api/doc-templates/{doc_type}/upload` | super_admin | Upload new single-file PDF version (rejects `welcome_pack`) |
-| `POST /api/doc-templates/welcome_pack/upload-bundle` | super_admin | Upload new welcome pack bundle (multiple PDF/Excel files + JSON labels + notes) |
-| `POST /api/doc-templates/{doc_type}/activate/{version_id}` | super_admin | Roll back to a specific archived version (works for both single-file and bundle) |
+| `GET /api/doc-templates/welcome_pack/slots` | admin | List all four slots with their active versions |
+| `POST /api/doc-templates/welcome_pack/{slot}/upload` | super_admin | Upload new version for one slot only; deactivates only that slot's previous versions |
+| `GET /api/doc-templates/welcome_pack/{slot}/history` | admin | Version history for one slot |
+| `POST /api/doc-templates/welcome_pack/{slot}/activate/{version_id}` | super_admin | Roll back one slot to a specific version |
+| `GET /api/doc-templates/welcome_pack/{slot}/download` | admin | Download active file for a slot |
+| `GET /api/doc-templates/welcome_pack/{slot}/download/{version_id}` | admin | Download specific version for a slot |
+| `POST /api/doc-templates/{doc_type}/activate/{version_id}` | super_admin | Roll back single-file doc type to a specific archived version |
 | `GET /api/doc-templates/{doc_type}/download` | admin | Download active single-file version (rejects `welcome_pack`) |
 | `GET /api/doc-templates/{doc_type}/download/{version_id}` | admin | Download specific single-file version |
-| `GET /api/doc-templates/welcome_pack/bundle/{id}/file/{idx}` | admin | Download one file from a specific bundle version by index |
 
-Shared helpers: `get_active_template_bytes(doc_type)` for single-file types; `get_active_bundle_files(doc_type)` for bundles — returns `list[{filename, label, content_type, data: bytes}]`.
+Shared helpers: `get_active_template_bytes(doc_type)` for single-file types; `get_active_bundle_files(doc_type)` for the welcome pack — iterates all four slots, returns `list[{filename, label, content_type, data: bytes}]` for every slot that has an active version.
 
 **Backward-compatible download migration**
 
@@ -3431,18 +3435,19 @@ Shared helpers: `get_active_template_bytes(doc_type)` for single-file types; `ge
 
 Single-file fields: `doc_type`, `version`, `label`, `filename`, `r2_key`, `file_size`, `uploaded_at`, `uploaded_by_id`, `uploaded_by_name`, `is_active`, `notes`.
 
-Bundle fields (welcome_pack): same + `is_bundle: true`, `files: [{label, filename, r2_key, file_size, content_type}]`, `total_file_size`. No `r2_key` or `filename` at the root level for bundles.
+Welcome pack slot fields: same + `slot` field (one of `budget`, `letter`, `price_list`, `brochure`), `content_type`. R2 key pattern: `doc-templates/welcome_pack/{slot}/v{version}/{filename}`. Activating one slot version deactivates only other versions of that same slot — other slots are unaffected.
 
 Versions are never deleted. Only the `is_active` flag changes on upload or rollback.
 
 **Frontend — `frontend/src/views/DocumentTemplates.js`**
 
 - Three single-file PDF cards use `DocTypeCard` — unchanged UX
-- Welcome Pack uses `WelcomePackBundleCard` — switched on `template.is_bundle` from the API
-- `WelcomePackBundleCard`: shows active bundle file list with per-file download; "Upload new bundle" modal accepts multiple PDF/Excel files with editable label per file and release notes
-- `BundleVersionHistory`: version table with expandable file list per row, per-file download button
-- Amber warning when no bundle has been uploaded
-- `superAdminOnly: true` gates upload/activate for both card types
+- Welcome Pack uses `WelcomePackSlotsCard` — switched on `template.is_slots` from the API
+- `WelcomePackSlotsCard`: renders four `SlotCard` components, one per slot; shows "all uploaded" or "{n} missing" badge at the card header
+- `SlotCard`: shows active version per slot with upload date, uploader, size, and release note; per-slot upload modal with `accept` attribute set to that slot's allowed formats; expandable `SlotVersionHistory`
+- `SlotVersionHistory`: version table with filename, date, uploader, size, activate/download per row; activate only affects that slot
+- Amber warning per slot when no version has been uploaded for it
+- Upload and activate gated to super admin (`settings.manage` permission)
 
 **Audit trail**
 
@@ -3554,27 +3559,31 @@ Clicking **Download signed test PDF** runs the full pdf-lib generation pipeline 
 - [x] Generated PDF matches the real customer output exactly
 - [x] All four documents configured with correct field mappings and section groupings
 
-#### 17.6 — Welcome Pack multi-file bundle (complete 2026-07-14)
+#### 17.6 — Welcome Pack slot-based management (complete 2026-07-14)
 
-The Welcome Pack is a multi-file bundle rather than a single PDF — Bassani's welcome pack consists of one Excel price list and three PDF documents. This sub-deploy replaces the single-file upload with a bundle model using the same versioning and rollback mechanics.
+The Welcome Pack consists of four separately maintained documents (Help Me Budget, Welcome Letter, Price List, Product Brochure). This sub-deploy implements slot-based management so each file has its own independent version history — updating the price list does not require re-uploading the brochure or any other file.
 
 **Backend:**
-- `welcome_pack` flagged `is_bundle: True` in `DOC_TYPES`; excluded from the single-file upload endpoint
-- `POST /api/doc-templates/welcome_pack/upload-bundle` — accepts multiple files (PDF + Excel), JSON-encoded label list, and notes; stores each file in R2 under `doc-templates/welcome_pack/v{n}/{filename}`; creates one `doc_templates` MongoDB doc with `files[]` array; deactivates previous bundles; audit-logged
-- `GET /api/doc-templates/welcome_pack/bundle/{id}/file/{idx}` — streams one file from a specific bundle version by index
-- `get_active_bundle_files("welcome_pack")` helper — returns `[{filename, label, content_type, data}]` for all files in the active bundle
-- `send_welcome_pack` in `onboarding_routes.py` updated to call `get_active_bundle_files()` and attach every bundle file to the email (instead of a single "Bassani Health Welcome Pack.pdf")
-- Existing single-file helpers (`get_active_template_bytes`, `download_active_template`, `download_template_version`) guard-reject bundle doc types with a clear error
+- `welcome_pack` flagged `is_slots: True` in `DOC_TYPES`; `SLOT_DOC_TYPES` set guards all single-file endpoints
+- `WELCOME_PACK_SLOTS` list defines four slots: `budget` (Excel), `letter` (PDF), `price_list` (PDF/Excel), `brochure` (PDF)
+- `POST /api/doc-templates/welcome_pack/{slot}/upload` — uploads one file to one slot; validates extension against `slot.accepts`; deactivates only that slot's previous versions; R2 key `doc-templates/welcome_pack/{slot}/v{n}/{filename}`; audit-logged
+- `GET /api/doc-templates/welcome_pack/slots` — lists all four slots with their active version metadata
+- `GET /api/doc-templates/welcome_pack/{slot}/history` — version history per slot
+- `POST /api/doc-templates/welcome_pack/{slot}/activate/{version_id}` — per-slot rollback
+- `GET /api/doc-templates/welcome_pack/{slot}/download[/{version_id}]` — download active or specific version for a slot
+- `get_active_bundle_files("welcome_pack")` — iterates all four slots; returns `[{filename, label, content_type, data}]` for every slot that has an active version
+- `send_welcome_pack` in `onboarding_routes.py` calls `get_active_bundle_files()` — attaches the active file from each uploaded slot to the email
+- `list_doc_templates()` returns `is_slots: true` and `slots[]` array for the welcome pack
 
 **Frontend:**
-- `WelcomePackBundleCard` renders for `template.is_bundle === true` — teal icon, per-file list with download buttons, "Upload new bundle" button
-- Bundle upload modal: multi-file picker (`.pdf,.xlsx,.xls`), per-file editable label with auto-cleaned default from filename, individual file removal before submit, release notes field
-- `BundleVersionHistory` — version table with expandable file drill-down per row; per-file download; Activate button restores full bundle
-- Field reference modal simplified to three PDFs (welcome pack is non-signed, no AcroForm fields)
+- `WelcomePackSlotsCard` renders for `template.is_slots === true` — teal Package icon, "all uploaded" or "{n} missing" header badge
+- `SlotCard` per slot: active version badge, meta grid (date / uploader / size), download button, per-slot upload modal with correct `accept` attribute, expandable `SlotVersionHistory`
+- `SlotVersionHistory`: version table with filename, date, uploader, size, activate/download per row
+- Field reference modal unchanged — three PDFs only (welcome pack slots are non-signed)
 
-- [x] `doc_template_routes.py` updated — bundle endpoints added, `is_bundle` flag on welcome_pack
-- [x] `onboarding_routes.py` `send-welcome-pack` updated to attach all bundle files
-- [x] `DocumentTemplates.js` `WelcomePackBundleCard` + `BundleVersionHistory` added
+- [x] `doc_template_routes.py` rewritten — slot endpoints, `is_slots` flag, `WELCOME_PACK_SLOTS` + `WELCOME_PACK_SLOT_MAP` constants
+- [x] `onboarding_routes.py` `send-welcome-pack` uses `get_active_bundle_files()` — unchanged call, updated implementation iterates slots
+- [x] `DocumentTemplates.js` `WelcomePackSlotsCard` + `SlotCard` + `SlotVersionHistory` implemented; renders on `template.is_slots`
 
 ---
 
