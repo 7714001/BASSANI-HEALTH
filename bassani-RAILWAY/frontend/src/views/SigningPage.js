@@ -43,8 +43,6 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
     ]).then(async ([pdfRes, metaRes]) => {
       const bytes = new Uint8Array(pdfRes.data);
       setPdfBytes(bytes);
-      url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-      setPdfUrl(url);
       setSigMeta(metaRes?.data || null);
 
       const detected = await detectFields(bytes);
@@ -62,6 +60,14 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
         })
       );
       setTextValues(init);
+
+      // Show the customer a pre-filled preview so they see exactly what they're signing.
+      // pdfBytes stays as the original (AcroForm fields intact) for the actual sign step.
+      const preview = await generateSignedPdf(bytes, {
+        textValues: prefill, config: cfg, addWatermark: false,
+      });
+      url = URL.createObjectURL(new Blob([preview], { type: "application/pdf" }));
+      setPdfUrl(url);
     }).catch(() => setError("Failed to load document. Please try again."))
       .finally(() => setLoading(false));
     return () => { if (url) URL.revokeObjectURL(url); };
