@@ -16,7 +16,7 @@ from services.email_service import (
     send_onboarding_rejected,
 )
 from services.r2_client import r2_put, r2_delete, r2_presign, r2_get
-from config import settings
+from config import get_settings as _get_settings
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -1632,7 +1632,7 @@ async def send_signing_docs(
     )
 
     from services.email_service import send_signing_invitation
-    signing_url = f"{settings.portal_url}/sign/{token}"
+    signing_url = f"{_get_settings().portal_url}/sign/{token}"
     background_tasks.add_task(
         send_signing_invitation,
         to_email=contact_email,
