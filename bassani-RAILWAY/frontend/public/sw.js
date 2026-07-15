@@ -5,7 +5,7 @@
 //   - API / WebSocket calls       → bypass cache entirely
 
 // Bump this whenever the cache structure changes to evict all old caches on activate.
-const CACHE_NAME = 'bassani-v4';
+const CACHE_NAME = 'bassani-v5';
 
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', event => {
@@ -14,6 +14,7 @@ self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
       cache.addAll([
+        '/',
         '/manifest.json',
         '/icons/icon-192.png',
         '/icons/icon-512.png',
@@ -48,7 +49,7 @@ self.addEventListener('fetch', event => {
   // Only fall back to cache when truly offline.
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/index.html'))
+      fetch(event.request).catch(() => caches.match('/'))
     );
     return;
   }
@@ -65,7 +66,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      });
+      }).catch(() => new Response('', { status: 503, statusText: 'Offline' }));
     })
   );
 });

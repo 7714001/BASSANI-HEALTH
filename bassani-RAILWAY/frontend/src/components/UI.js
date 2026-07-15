@@ -560,6 +560,7 @@ export function DataTable({
     getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
     manualPagination,
     manualSorting,
+    autoResetPageIndex: false,
     initialState: !manualPagination ? { pagination: { pageSize: defaultPageSize } } : undefined,
   });
 

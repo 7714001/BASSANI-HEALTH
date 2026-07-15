@@ -84,7 +84,7 @@ def _age_tier(elapsed: float, deadline: float) -> str:
     return "ok"
 
 
-def _board_card(entry: dict, deadline: int = OVERDUE_HOURS) -> dict:
+def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None) -> dict:
     clock   = entry.get("queued_at", datetime.now(timezone.utc))
     elapsed = _hours_elapsed(clock)
     return {
@@ -105,31 +105,45 @@ def _board_card(entry: dict, deadline: int = OVERDUE_HOURS) -> dict:
         "qa_approved_at": _iso(entry.get("qa_approved_at")),
         "rp_approved_at": _iso(entry.get("rp_approved_at")),
         "packer_name":    entry.get("packer_name"),
+        "assigned_name":  assigned_name,
         "warehouse_name": entry.get("warehouse_name"),
     }
 
 
+# Ticket statuses shown in the Quotes column, with their deadlines.
+# open/quote = soft 48h (not yet a confirmed order)
+# sale_order = hard 72h (order confirmed, awaiting packing board)
+_QUOTE_STATUS_DEADLINE = {
+    "open":       QUOTE_HOURS,
+    "quote":      QUOTE_HOURS,
+    "sale_order": OVERDUE_HOURS,
+}
+
+
 def _ticket_card(ticket: dict) -> dict:
     clock   = ticket.get("created_at", datetime.now(timezone.utc))
+    status  = ticket.get("status", "open")
+    deadline = _QUOTE_STATUS_DEADLINE.get(status, QUOTE_HOURS)
     elapsed = _hours_elapsed(clock)
     return {
         "id":             str(ticket.get("_id", "")),
         "type":           "quote",
         "customer_name":  ticket.get("customer_name", ""),
-        "so_ref":         "",
+        "so_ref":         ticket.get("order_id") or "",
         "clock_start":    _iso(clock),
-        "deadline_hours": QUOTE_HOURS,
+        "deadline_hours": deadline,
         "hours_elapsed":  round(elapsed, 2),
-        "age_tier":       _age_tier(elapsed, QUOTE_HOURS),
+        "age_tier":       _age_tier(elapsed, deadline),
         "total_units":    0,
         "order_value":    None,
         "is_sample":      ticket.get("is_sample", False),
         "is_reseller":    bool(ticket.get("reseller_id")),
         "reseller_name":  ticket.get("reseller_name"),
-        "status":         ticket.get("status", ""),
+        "status":         status,
         "qa_approved_at": None,
         "rp_approved_at": None,
-        "packer_name":    ticket.get("assigned_to_name"),
+        "packer_name":    None,
+        "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": None,
     }
 
@@ -155,6 +169,7 @@ def _collection_card(ticket: dict, board: dict) -> dict:
         "qa_approved_at": None,
         "rp_approved_at": None,
         "packer_name":    None,
+        "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": board.get("warehouse_name"),
     }
 
@@ -195,8 +210,9 @@ async def get_monitor_data(token: str = Query("")):
         {"order_value": 1, "_id": 0},
     ).to_list(length=5000)
 
+    # open/quote = unconfirmed; sale_order = confirmed but not yet on packing board
     open_quotes = await col("tickets").find(
-        {"type": "sales", "status": {"$in": ["open", "quote"]},
+        {"type": "sales", "status": {"$in": ["open", "quote", "sale_order"]},
          "exit_status": None, "orders_ticket_ref": None},
         NO_ID,
     ).to_list(length=500)
@@ -218,20 +234,36 @@ async def get_monitor_data(token: str = Query("")):
         ).to_list(length=500)
         board_coll_map = {e["order_id"]: e for e in extra}
 
+    # Ticket assignee lookup for packing board cards (board entries don't store assignee)
+    board_order_ids = [e.get("order_id") for e in board_active if e.get("order_id")]
+    ticket_assign_map: dict = {}
+    if board_order_ids:
+        ticket_assigns = await col("tickets").find(
+            {"orders_ticket_ref": {"$in": board_order_ids}},
+            {"orders_ticket_ref": 1, "assigned_to_name": 1, "_id": 0},
+        ).to_list(length=1000)
+        ticket_assign_map = {
+            t["orders_ticket_ref"]: t.get("assigned_to_name")
+            for t in ticket_assigns
+            if t.get("orders_ticket_ref")
+        }
+
     # ── Build columns ─────────────────────────────────────────────────────────
     packing_col    = []
     qa_col         = []
     rp_col         = []
 
     for entry in board_active:
-        status = entry.get("status", "")
+        status    = entry.get("status", "")
+        order_id  = entry.get("order_id", "")
+        a_name    = ticket_assign_map.get(order_id)
         if status in ("queued", "packing"):
-            packing_col.append(_board_card(entry))
+            packing_col.append(_board_card(entry, assigned_name=a_name))
         elif status == "ready":
             if not entry.get("qa_approved_at"):
-                qa_col.append(_board_card(entry))
+                qa_col.append(_board_card(entry, assigned_name=a_name))
             else:
-                rp_col.append(_board_card(entry))
+                rp_col.append(_board_card(entry, assigned_name=a_name))
 
     quotes_col     = [_ticket_card(t) for t in open_quotes]
     collection_col = [

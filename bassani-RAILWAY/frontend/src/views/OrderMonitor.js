@@ -121,23 +121,42 @@ function AgeBadge({ card, now }) {
   );
 }
 
+function cardUrl(card) {
+  if (card.so_ref) return `/orders/${encodeURIComponent(card.so_ref)}/passport`;
+  return "/tickets/sales";
+}
+
+const STAGE_LABEL = {
+  open:       { label: "Inquiry",         color: "#6366f1" },
+  quote:      { label: "Quote sent",      color: "#8b5cf6" },
+  sale_order: { label: "Awaiting packing", color: "#f59e0b" },
+};
+
 function OrderCard({ card, now }) {
-  const tier = TIER[card.age_tier] || TIER.ok;
+  const tier       = TIER[card.age_tier] || TIER.ok;
   const isReseller = card.is_reseller && card.reseller_name;
   const isSample   = card.is_sample;
+  const href       = cardUrl(card);
+  const stageInfo  = card.type === "quote" ? STAGE_LABEL[card.status] : null;
 
   return (
-    <div style={{
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid rgba(255,255,255,0.07)",
-      borderLeft: `4px solid ${tier.border}`,
-      borderRadius: "0 12px 12px 0",
-      padding: "12px 14px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 8,
-      transition: "background 0.2s",
-    }}>
+    <div
+      onClick={() => window.open(href, "_blank", "noopener,noreferrer")}
+      style={{
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.07)",
+        borderLeft: `4px solid ${tier.border}`,
+        borderRadius: "0 12px 12px 0",
+        padding: "12px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        transition: "background 0.2s",
+        cursor: "pointer",
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}
+      onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+    >
       {/* Customer + tags */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", lineHeight: 1.3 }}>
@@ -146,25 +165,37 @@ function OrderCard({ card, now }) {
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {isSample   && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(99,102,241,0.2)", color: "#a5b4fc" }}>SAMPLE</span>}
           {isReseller && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(20,184,166,0.2)", color: "#5eead4" }}>RESELLER</span>}
+          {stageInfo  && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${stageInfo.color}22`, color: stageInfo.color }}>{stageInfo.label}</span>}
         </div>
       </div>
 
-      {/* SO ref + packer */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        {card.so_ref && (
-          <span style={{ fontFamily: "monospace", fontSize: 11, color: "#64748b", fontWeight: 600 }}>
-            {card.so_ref}
-          </span>
-        )}
+      {/* SO ref */}
+      {card.so_ref && (
+        <span style={{ fontFamily: "monospace", fontSize: 11, color: "#64748b", fontWeight: 600 }}>
+          {card.so_ref}
+        </span>
+      )}
+
+      {/* Assigned to */}
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 10, color: "#475569" }}>
+          {card.assigned_name
+            ? `Assigned: ${card.assigned_name}`
+            : <span style={{ color: "#334155", fontStyle: "italic" }}>Unassigned</span>
+          }
+        </span>
         {card.packer_name && (
-          <span style={{ fontSize: 10, color: "#475569" }}>{card.packer_name}</span>
+          <>
+            <span style={{ color: "#1e293b", fontSize: 10 }}>·</span>
+            <span style={{ fontSize: 10, color: "#475569" }}>Packer: {card.packer_name}</span>
+          </>
         )}
       </div>
 
       {/* Age badge */}
       <AgeBadge card={card} now={now} />
 
-      {/* Footer: units + value */}
+      {/* Footer: units + reseller + value */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 8 }}>
         <span style={{ fontSize: 11, color: "#475569" }}>
           {card.total_units ? `${card.total_units} units` : ""}

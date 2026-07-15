@@ -513,7 +513,6 @@ export default function SalesTickets() {
         setDetailOrder(null);
       }
     } catch { toast.error("Failed to refresh ticket"); }
-    load(); // silently refresh list in background
   };
 
   // Load deliveries whenever a ticket with an order is opened/refreshed
@@ -2534,7 +2533,7 @@ export default function SalesTickets() {
 
 
   // ── Filtered ticket list (client-side) ───────────────────────────────────
-  const filteredTickets = tickets.filter(t => {
+  const filteredTickets = useMemo(() => tickets.filter(t => {
     if (sourceFilter === "internal" &&  t.reseller_id) return false;
     if (sourceFilter === "external" && !t.reseller_id) return false;
     if (statusFilter.size > 0) {
@@ -2550,7 +2549,7 @@ export default function SalesTickets() {
       ) return false;
     }
     return true;
-  });
+  }), [tickets, sourceFilter, statusFilter, listSearch]);
 
   // ── List + create modal ───────────────────────────────────────────────────
   return (
