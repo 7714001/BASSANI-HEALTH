@@ -284,6 +284,7 @@ class BoardEntry(BaseModel):
     notes:         Optional[str] = ""
     is_reseller:   bool = False
     reseller_name: Optional[str] = None
+    order_value:   Optional[float] = None
 
 
 class AssignPacker(BaseModel):

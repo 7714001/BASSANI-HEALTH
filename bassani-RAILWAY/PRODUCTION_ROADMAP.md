@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-13  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 8.36 Ticket linking + inbox integration — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09  
+**Last Updated:** 2026-07-15  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 8.36 Ticket linking + inbox integration — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09; Phase 23 Operations Monitor live — 2026-07-15  
 
 ---
 
@@ -33,6 +33,7 @@
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
+| 23 | Operations Monitor | 🟢 Complete | 23.0 complete — 2026-07-15 |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -4095,3 +4096,62 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 - [x] Background payment check runs every 15 minutes
 - [x] FNB Business and Nedbank Business CSV formats both import correctly
 - [x] Duplicate lines are skipped on import
+
+---
+
+## Phase 23 — Operations Monitor
+
+**Goal:** A live, read-only big-screen display that gives operations staff an at-a-glance view of the full order pipeline, highlighting orders approaching the 72-hour fulfilment deadline so the team can prioritise without manually reviewing the ticket list.  
+**Priority:** Medium  
+**Status:** ✅ Complete  
+**Completed:** 2026-07-15
+
+### Context
+
+Orders should progress from confirmation to dispatch within 72 hours. Before this phase, the only way to identify aging orders was to open the ticket list and mentally scan. At volume this is error-prone. The monitor is designed to run on a dedicated TV or screen in the office — no login, public URL with a rotating token.
+
+Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes that have stalled.
+
+### Tasks
+
+#### 23.0 — Monitor Backend
+
+- [x] `backend/routes/monitor_routes.py` — new router at `/api/monitor`
+- [x] `GET /api/monitor/token` (admin): retrieve current token + rotated_at
+- [x] `POST /api/monitor/token` (admin): generate/rotate token via `secrets.token_urlsafe(32)`; stored in `portal_settings._id: "monitor_display_token"`
+- [x] `GET /api/monitor/validate?token=` (public): 200 or 403
+- [x] `GET /api/monitor/data?token=` (public): full KPIs + 5 column card sets — no Odoo calls, all MongoDB
+- [x] Age tiers: ok (0–33%), warning (33–66%), urgent (66–100%), overdue (>100%) — all relative to 72h deadline (48h for quotes)
+- [x] KPIs: overdue, at_risk, in_pipeline, completed_today, units_today, open_quotes, avg_time_hours, pipeline_value, revenue_today, mtd_revenue
+- [x] Columns: quotes (open/quote status), packing (queued/packing), qa (ready + no qa_approved_at), rp (ready + qa_approved_at set), collection (ready_for_collection)
+- [x] order_value stamped on packing board entry at confirm_order from Odoo `amount_total`
+- [x] order_value added to `BoardEntry` Pydantic model as `Optional[float]`
+- [x] monitor_router registered in `server.py`
+
+#### 23.1 — Monitor Frontend
+
+- [x] `frontend/src/views/OrderMonitor.js` — full-screen dark theme TV display
+  - Token read from `?token=` URL param; validated on mount against `GET /api/monitor/validate`
+  - 30-second polling of `GET /api/monitor/data`; 1-second `setInterval` for live countdown badges
+  - KPI strip: 4 large cards (overdue/at_risk/in_pipeline/completed_today) + 6 small cards (open_quotes/avg_time/pipeline_value/revenue_today/mtd_revenue/units_today)
+  - 5 Kanban columns: Open Quotes (indigo) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Awaiting Payment (amber)
+  - Cards sorted oldest-first within each column (most urgent at top)
+  - Age tier colour coding: ok=green, warning=amber, urgent=orange, overdue=red+animate-pulse
+  - RESELLER and SAMPLE pill tags on cards; reseller name in card footer
+  - Live countdown badge recomputes from `clock_start` + `deadline_hours` client-side every second
+  - LIVE/OFFLINE indicator in header
+- [x] `frontend/src/views/MonitorSettings.js` — Settings tab for token management
+  - Generate URL (first-time), copy to clipboard, rotate token (with confirmation modal)
+  - Rotation warning: all screens must update to new URL
+- [x] `{ key: "monitor-display", label: "Monitor Display" }` tab added to `Settings.js`
+- [x] `<Route path="/monitor" element={<OrderMonitor />} />` added to `App.js` (public, outside `ProtectedRoute`)
+
+### Definition of Done
+
+- [x] `/monitor?token=...` loads without login and shows live Kanban columns + KPIs
+- [x] Invalid or missing token shows a clear error screen
+- [x] Cards are sorted oldest-first within each column (highest-priority at top)
+- [x] Age tier colours update live as time passes (1-second client-side recompute)
+- [x] Overdue count KPI pulses red when non-zero
+- [x] Admin can generate, view, copy, and rotate the display URL from Settings → Monitor Display
+- [x] Rotating the token invalidates the old URL immediately

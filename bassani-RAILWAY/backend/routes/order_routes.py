@@ -1432,6 +1432,7 @@ async def confirm_order(
                     "notes": order_data.get("note") or "",
                     "is_reseller": is_reseller_order,
                     "reseller_name": reseller_name_val,
+                    "order_value": float(pre_rows[0].get("amount_total") or 0) if pre_rows else None,
                     "packer_name": None,
                     "status": "queued",
                     "queued_at": now,

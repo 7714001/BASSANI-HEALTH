@@ -560,6 +560,7 @@ from routes.label_routes              import router as label_router
 from routes.bank_recon_routes         import router as bank_recon_router
 from routes.gtin_pool_routes          import router as gtin_pool_router
 from routes.search_routes             import router as search_router
+from routes.monitor_routes            import router as monitor_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -572,7 +573,7 @@ for router in [
     reseller_catalog_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,
-    label_router, bank_recon_router, gtin_pool_router, search_router,
+    label_router, bank_recon_router, gtin_pool_router, search_router, monitor_router,
 ]:
     app.include_router(router)
 

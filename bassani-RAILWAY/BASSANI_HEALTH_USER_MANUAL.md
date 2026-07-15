@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 11 July 2026
+**Last Updated:** 15 July 2026
 
 ---
 
@@ -997,6 +997,57 @@ Bank fees, inter-account transfers, and refunds are not customer payments. Hover
 Every 15 minutes, the portal checks whether any outstanding invoices have been marked as paid in the accounting system. When it detects a payment, it automatically advances the linked sales ticket without Finance clicking "Confirm Payment". The ticket will show "Auto-confirmed from bank" with the date.
 
 > **Tip:** If you use **Register Balance Payment** directly in the portal (see above), the ticket advances immediately. The auto-confirm background check is the backstop for payments registered outside the portal.
+
+---
+
+## Operations Monitor (TV Display)
+
+The Operations Monitor is a live, read-only display designed to run on a dedicated screen or TV in the office. It shows the full order pipeline at a glance, with colour-coded aging alerts so the team can instantly see which orders need attention without opening the ticket list.
+
+**No login is required.** Access is controlled by a secret URL token managed by the super admin.
+
+### Setting Up the Monitor Display
+
+1. Go to **Settings → Monitor Display**
+2. Click **Generate Display URL** (first time only)
+3. Click **Copy** to copy the full URL
+4. Open the URL in a browser on the display device and set it to full-screen (F11 on most browsers)
+
+The display refreshes automatically every 30 seconds.
+
+**Rotating the token:** If the display URL is compromised or you want to revoke access to a specific device, click **Rotate token** in Settings → Monitor Display. The old URL stops working immediately. Copy the new URL and update all display devices.
+
+### Reading the Monitor
+
+**KPI strip (top of screen):**
+- **Overdue** — orders past the 72-hour fulfilment deadline. Pulses red when non-zero.
+- **At Risk** — orders between 48 and 72 hours old. Focus here next.
+- **In Pipeline** — total active orders across packing, QA, RP, and awaiting payment.
+- **Completed Today** — orders marked complete since midnight.
+- **Open Quotes**, **Avg Completion**, **Pipeline Value**, **Revenue Today**, **MTD Revenue**, **Units Today** — secondary metrics.
+
+**Pipeline columns (left to right):**
+
+| Column | What it shows |
+|---|---|
+| Open Quotes | Sales tickets in quote stage — awaiting customer confirmation |
+| Packing | Confirmed orders being packed (queued + in packing) |
+| QA Review | Orders packed and awaiting QA sign-off |
+| RP Review | QA approved — awaiting RP sign-off |
+| Awaiting Payment | Invoice issued — customer has not yet paid |
+
+Within each column, orders are sorted **oldest first** (most urgent at top).
+
+**Colour coding on each card:**
+
+| Colour | Meaning |
+|---|---|
+| Green border | On track — under 33% of the 72h window elapsed |
+| Amber border | Attention — between 33% and 66% of the window |
+| Orange border | Urgent — between 66% and 100% of the window |
+| Red border + pulse | Overdue — past the 72h deadline |
+
+The countdown badge on each card updates every second. Quotes use a 48-hour alerting window instead of 72 hours.
 
 ---
 
@@ -2035,6 +2086,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 11 July 2026
+**Last Updated:** 15 July 2026
 
 *This manual covers the system as built through Phase 20 and Phase 12.5, including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), the Sales Agent commission_eligible flag with commission exclusion (Phase 20), GS1 pharmaceutical label printing from the Products page (Phase 12.4 — requires Zebra ZT411 printer and valid GTINs from GS1 South Africa), and GTIN Pool management (Phase 12.5 — upload purchased GS1 GTIN codes, assign to products from the Products page, track availability across the pool). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

@@ -57,6 +57,7 @@ import Settings             from "./views/Settings";
 import BankReconciliation   from "./views/BankReconciliation";
 import Backorders           from "./views/Backorders";
 import OrderPassport        from "./views/OrderPassport";
+import OrderMonitor         from "./views/OrderMonitor";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -295,6 +296,9 @@ export default function App() {
         <Route path="/my-applications/:id" element={
           <ProtectedRoute><AppLayout><ResellerApplicationDetail /></AppLayout></ProtectedRoute>
         } />
+
+        {/* Public: operations monitor (no auth, token in URL) */}
+        <Route path="/monitor" element={<OrderMonitor />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
