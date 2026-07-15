@@ -1558,7 +1558,7 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 **Phase 6 — Post-countersign notification and welcome pack:**
 - [x] `onboarding_routes.py` — when all Bassani-sig docs countersigned, fires `send_countersign_complete_notification()` to `countersign_complete_to` routing list; iterates `inbox_thread_ids` array
-- [x] `onboarding_routes.py` — `POST /{id}/send-welcome-pack`: validates all Bassani-sig docs countersigned; fetches active welcome pack template + countersigned NDA + SOA bytes from R2; sends `send_customer_welcome_pack()` email with all three attached; stamps `welcome_pack_sent_at`/`welcome_pack_sent_by`; creates outgoing onboarding inbox thread; audit-logged
+- [x] `onboarding_routes.py` — `POST /{id}/send-welcome-pack`: validates all Bassani-sig docs countersigned; fetches all four onboarding documents (CIF, CIPC, countersigned NDA, countersigned SOA) from R2 plus active welcome pack slot files (budget, letter, price_list, brochure); sends `send_customer_welcome_pack()` email with all files attached (up to 8 attachments); stamps `welcome_pack_sent_at`/`welcome_pack_sent_by`; creates outgoing onboarding inbox thread; audit-logged
 - [x] `email_service.py` — `send_countersign_complete_notification()`: notifies configured recipients when all NDA+SOA are countersigned
 - [x] `email_service.py` — `send_customer_welcome_pack()`: warm professional email with custom body, sender's `signing_name`/`signing_title` as footer, PDF attachments support
 - [x] `settings_routes.py` — `countersign_complete_to: List[str]` added to `EmailRoutingConfig`; included in `get_email_routing` fallback and MongoDB read

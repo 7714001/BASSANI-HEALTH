@@ -1120,7 +1120,8 @@ async def send_welcome_pack(
 ):
     """
     Send the welcome pack email to the customer.
-    Attaches the countersigned NDA, countersigned SOA, and the active welcome pack template.
+    Attaches all four onboarding documents (CIF, CIPC, countersigned NDA, countersigned SOA)
+    plus all four active welcome pack slot files (budget, letter, price list, brochure).
     Email footer uses the sender's signing_name and signing_title from their profile.
     Creates an outgoing inbox thread so the send is traceable in the onboarding inbox.
     """
@@ -1147,17 +1148,24 @@ async def send_welcome_pack(
     if not bundle_files:
         raise HTTPException(status_code=404, detail="No active welcome pack template has been uploaded. Upload one under Settings > Document Templates.")
 
-    # Gather countersigned PDF bytes from R2
-    attachments = []
-    for doc in bassani_docs:
-        key = doc.get("r2_key")
-        if key:
-            pdf_bytes = await r2_get(key)
-            if pdf_bytes:
-                label = REQUIRED_DOC_TYPES.get(doc["doc_type"], doc["doc_type"])
-                attachments.append({"filename": f"{label}.pdf", "content": list(pdf_bytes)})
+    # Attach all onboarding documents: CIF, CIPC, countersigned NDA, countersigned SOA.
+    # Countersigning overwrites the same R2 key, so r2_key on NDA/SOA already points
+    # to the countersigned version.
+    def _file_ext(filename: str) -> str:
+        return ("." + filename.rsplit(".", 1)[-1].lower()) if filename and "." in filename else ".pdf"
 
-    # Attach every file in the welcome pack bundle
+    attachments = []
+    for doc in docs:
+        key = doc.get("r2_key")
+        if not key:
+            continue
+        file_bytes = await r2_get(key)
+        if file_bytes:
+            label = REQUIRED_DOC_TYPES.get(doc.get("doc_type", ""), "Document")
+            ext = _file_ext(doc.get("filename", ""))
+            attachments.append({"filename": f"{label}{ext}", "content": list(file_bytes)})
+
+    # Attach every file in the welcome pack bundle (budget, letter, price_list, brochure)
     for f in bundle_files:
         attachments.append({"filename": f["filename"], "content": list(f["data"])})
 

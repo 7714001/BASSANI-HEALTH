@@ -1480,9 +1480,9 @@ After countersigning is complete, the **Send Welcome Pack** button appears in th
 
 1. Click **Send Welcome Pack**
 2. Review the pre-populated subject and message (edit if needed)
-3. Check the attachments listed — the countersigned NDA, countersigned Store Agreement, and the active version of each Welcome Pack document (Help Me Budget, Welcome Letter, Price List, Product Brochure) are all shown
+3. The email automatically attaches all four onboarding documents (Signed CIF, CIPC Certificate, countersigned NDA, countersigned Store Agreement) plus the active version of each Welcome Pack document (Help Me Budget, Welcome Letter, Price List, Product Brochure) — eight files in total
 4. Click **Send**
-5. The customer receives the email with all documents attached. Your name and title appear as the email footer
+5. The customer receives the email with all eight files attached. Your name and title appear as the email footer
 5. A "Welcome pack sent by [your name]" badge appears on the application
 
 **Approving an application** *(requires `customers.approve_onboarding`)*:
