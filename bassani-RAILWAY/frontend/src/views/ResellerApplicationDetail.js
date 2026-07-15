@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  CheckCircle, XCircle, Clock, ChevronDown, FileText,
-  Download, Eye, X, Loader2, Pencil,
+  CheckCircle, XCircle, Clock, ChevronDown, Pencil, Loader2,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -14,13 +13,6 @@ const BUSINESS_TYPES  = ["Pharmacy", "Dispensary", "Healthcare Provider", "Welln
 const PROVINCES       = ["Gauteng", "Western Cape", "KwaZulu-Natal", "Eastern Cape", "Limpopo", "Mpumalanga", "North West", "Free State", "Northern Cape"];
 const ORDER_VOLUMES   = ["Less than 10 orders/month", "10 – 50 orders/month", "50 – 100 orders/month", "More than 100 orders/month"];
 const REFERRAL_SOURCES = ["Bassani Health representative", "Referral from another reseller", "Social media", "Industry event / conference", "Online search"];
-const REQUIRED_DOC_TYPES = {
-  store_onboarding_agreement: "Signed Store Onboarding Agreement",
-  customer_information_form:  "Signed Customer Information Form",
-  nda:                        "Signed NDA",
-  cipc_certificate:           "CIPC Company Registration Certificate",
-};
-
 // ── Status config ──────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
@@ -208,39 +200,6 @@ function ProgressStepper({ app }) {
 }
 
 
-// ── PDF viewer modal ───────────────────────────────────────────────────────────
-
-function PdfViewer({ doc, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-full max-w-5xl"
-        style={{ height: "90vh" }} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileText size={15} className="text-bassani-600 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{doc.label || doc.doc_type}</p>
-              {doc.filename && <p className="text-[10px] text-gray-400 truncate">{doc.filename}</p>}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 shrink-0 ml-4">
-            <a href={doc.download_url} target="_blank" rel="noreferrer"
-              className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
-              <Download size={12} /> Download
-            </a>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-        <iframe src={doc.download_url} title={doc.label || doc.doc_type}
-          className="flex-1 w-full rounded-b-2xl" style={{ border: "none" }} />
-      </div>
-    </div>
-  );
-}
-
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function ResellerApplicationDetail() {
@@ -253,13 +212,6 @@ export default function ResellerApplicationDetail() {
   const [form,        setForm       ] = useState({});
   const [saving,      setSaving     ] = useState(false);
 
-  const [docs,        setDocs       ] = useState([]);
-  const [docsLoading, setDocsLoading] = useState(true);
-  const [viewing,     setViewing    ] = useState(null);
-  const [replacing,   setReplacing  ] = useState(null); // doc_type currently uploading
-
-  const fileRefs = useRef({});
-
   const isPending = app?.status === "pending";
 
   // Load application
@@ -269,16 +221,6 @@ export default function ResellerApplicationDetail() {
       .catch(() => { toast.error("Application not found"); navigate("/my-applications"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
-
-  // Load documents
-  const loadDocs = () => {
-    setDocsLoading(true);
-    api.get(`/api/onboarding/${id}/documents`)
-      .then(r => setDocs(r.data.documents || []))
-      .catch(() => setDocs([]))
-      .finally(() => setDocsLoading(false));
-  };
-  useEffect(() => { if (app) loadDocs(); }, [app]); // eslint-disable-line
 
   // Edit mode
   const startEditing = () => {
@@ -329,24 +271,6 @@ export default function ResellerApplicationDetail() {
     }
   };
 
-  const replaceDoc = async (docType, file) => {
-    setReplacing(docType);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await api.post(`/api/onboarding/${id}/documents/${docType}`, fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      toast.success("Document replaced");
-      loadDocs();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to replace document");
-    } finally {
-      setReplacing(null);
-      if (fileRefs.current[docType]) fileRefs.current[docType].value = "";
-    }
-  };
-
   if (loading) return <LoadingState />;
   if (!app)    return null;
 
@@ -355,8 +279,6 @@ export default function ResellerApplicationDetail() {
 
   return (
     <>
-      {viewing && <PdfViewer doc={viewing} onClose={() => setViewing(null)} />}
-
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Top bar */}
         <div className="border-b border-gray-100 bg-white px-6 py-3 flex items-center justify-between gap-4 shrink-0">
@@ -497,68 +419,6 @@ export default function ResellerApplicationDetail() {
                     </div>
                   )}
                 </>
-              )}
-            </Section>
-
-            {/* ── Documents ── */}
-            <Section title="Supporting Documents">
-              {docsLoading ? (
-                <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-                  <Loader2 size={13} className="animate-spin" /> Loading documents…
-                </div>
-              ) : docs.length === 0 ? (
-                <p className="text-sm text-gray-400">No documents on file.</p>
-              ) : (
-                <div className="space-y-2">
-                  {/* Show all 5 required types, merging with uploaded docs */}
-                  {Object.entries(REQUIRED_DOC_TYPES).map(([key, typeLabel]) => {
-                    const doc = docs.find(d => d.doc_type === key);
-                    const isReplacing = replacing === key;
-                    return (
-                      <div key={key}
-                        className={`flex items-center justify-between rounded-xl px-4 py-3 border ${doc ? "bg-gray-50 border-gray-100" : "bg-amber-50 border-amber-100"}`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${doc ? "bg-bassani-50" : "bg-amber-100"}`}>
-                            <FileText size={14} className={doc ? "text-bassani-600" : "text-amber-500"} />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-gray-800 truncate">{typeLabel}</p>
-                            {doc?.filename
-                              ? <p className="text-[10px] text-gray-400 truncate mt-0.5">{doc.filename}</p>
-                              : <p className="text-[10px] text-amber-600 mt-0.5">Not uploaded</p>
-                            }
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0 ml-4">
-                          {doc?.download_url && (
-                            <>
-                              <button onClick={() => setViewing(doc)}
-                                className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 transition-colors">
-                                <Eye size={12} /> View
-                              </button>
-                              <a href={doc.download_url} target="_blank" rel="noreferrer"
-                                className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">
-                                <Download size={12} /> Download
-                              </a>
-                            </>
-                          )}
-                          {isPending && (
-                            <label className={`flex items-center gap-1.5 text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer transition-colors ${isReplacing ? "opacity-50 pointer-events-none" : ""}`}>
-                              {isReplacing
-                                ? <Loader2 size={12} className="animate-spin" />
-                                : null
-                              }
-                              {doc ? "Replace" : "Upload"}
-                              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
-                                ref={el => fileRefs.current[key] = el}
-                                onChange={e => { if (e.target.files[0]) replaceDoc(key, e.target.files[0]); }} />
-                            </label>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
               )}
             </Section>
 

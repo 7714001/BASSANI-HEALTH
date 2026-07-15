@@ -769,14 +769,9 @@ async def get_application_documents(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    if current_user.get("role") == "reseller":
-        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-        if not reseller or app.get("reseller_id") != reseller["id"]:
-            raise HTTPException(status_code=403, detail="Access denied")
-    else:
-        perms = current_user.get("permissions", {})
-        if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
-            raise HTTPException(status_code=403, detail="Permission denied")
+    perms = current_user.get("permissions", {})
+    if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     docs = app.get("documents") or []
     result = []
@@ -947,18 +942,14 @@ async def replace_application_document(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """Reseller replaces a specific document on their own pending application."""
-    if current_user.get("role") != "reseller":
-        raise HTTPException(status_code=403, detail="Only resellers can replace application documents")
-    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-    if not reseller:
-        raise HTTPException(status_code=403, detail="Reseller profile not found")
+    """Admin replaces a specific document on a pending application."""
+    perms = current_user.get("permissions", {})
+    if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app.get("reseller_id") != reseller["id"]:
-        raise HTTPException(status_code=403, detail="Access denied")
     if app.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Only pending applications can be updated")
     if doc_type not in REQUIRED_DOC_TYPES:
@@ -1000,7 +991,7 @@ async def replace_application_document(
     )
     await audit_log("onboarding.replace_document", "customer_onboarding", app_id,
                     entity_label=app.get("company_name", ""), user=current_user,
-                    reseller_id=reseller["id"], after={"doc_type": doc_type, "filename": file.filename})
+                    reseller_id=app.get("reseller_id"), after={"doc_type": doc_type, "filename": file.filename})
     return new_doc
 
 
