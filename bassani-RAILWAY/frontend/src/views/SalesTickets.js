@@ -373,9 +373,22 @@ export default function SalesTickets() {
           const msg = JSON.parse(e.data);
           if (msg.type !== "ticket_update") return;
           const changedId = msg.ticket_id;
+          // One fetch serves both the list update and the open detail panel.
+          // Calling refreshDetail separately would trigger a second auto-sync Odoo round-trip.
           api.get(`/api/tickets/${changedId}`).then(r => {
-            setTickets(prev => prev.map(t => t.id === changedId ? r.data : t));
-            if (detailRef.current?.id === changedId) refreshDetail(changedId);
+            const updated = r.data;
+            setTickets(prev => prev.map(t => t.id === changedId ? updated : t));
+            if (detailRef.current?.id === changedId) {
+              setDetail(updated);
+              setStageForm({
+                status: updated.status,
+                order_id: updated.order_id || "",
+                invoice_id: updated.invoice_id || "",
+                note: "",
+                incomplete_reason: "",
+              });
+              if (updated.odoo_order_state === "cancel") load();
+            }
           }).catch(() => {});
         } catch { /* ignore parse errors */ }
       };

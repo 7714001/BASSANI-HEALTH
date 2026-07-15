@@ -479,7 +479,9 @@ async def get_ticket(
                     set_fields: dict = {"updated_at": now}
                     history:    list = []
                     current_status = ticket.get("status", "open")
-                    current_idx    = STATUSES.index(current_status) if current_status in STATUSES else 0
+                    # Unknown / legacy statuses (e.g. "invoice" from pre-8.39) are treated as
+                    # beyond the pipeline so the "never go backward" guard blocks all movement.
+                    current_idx    = STATUSES.index(current_status) if current_status in STATUSES else len(STATUSES)
 
                     if live_state != ticket.get("odoo_order_state"):
                         set_fields["odoo_order_state"] = live_state
