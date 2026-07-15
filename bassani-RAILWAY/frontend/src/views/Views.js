@@ -597,26 +597,6 @@ export function Customers() {
   const [showOnboardingDocs,   setShowOnboardingDocs  ] = useState(false);
   const [obInviteEmail,        setObInviteEmail       ] = useState("");
   const [obInviteSending,      setObInviteSending     ] = useState(false);
-  const [obDownloading,        setObDownloading       ] = useState(null);
-
-  const OB_TEMPLATES = [
-    { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
-    { filename: "customer-information-form.pdf",  label: "Customer Information Form" },
-    { filename: "nda.pdf",                        label: "NDA" },
-    { filename: "tqa.pdf",                        label: "TQA Document" },
-  ];
-
-  const downloadObTemplate = async (filename, label) => {
-    setObDownloading(filename);
-    try {
-      const res = await api.get(`/api/onboarding/templates/download/${filename}`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      const a   = document.createElement("a");
-      a.href = url; a.download = label + ".pdf"; a.click();
-      URL.revokeObjectURL(url);
-    } catch { toast.error("Download failed"); }
-    finally { setObDownloading(null); }
-  };
 
   const sendObInvite = async () => {
     if (!obInviteEmail.trim()) return toast.error("Enter the customer's email address");
@@ -817,71 +797,40 @@ export function Customers() {
         />
       </main>
       {showOnboardingDocs && (
-        <Modal title="Onboarding Documents" onClose={() => setShowOnboardingDocs(false)}>
-          <div className="space-y-4">
-            <div className="rounded-xl border border-gray-100 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2 bg-gray-50">
-                <FileText size={13} className="text-bassani-600 shrink-0" />
-                <p className="text-xs font-bold text-gray-700">Template Documents</p>
-              </div>
-              <div className="px-4 py-3 space-y-2">
-                {OB_TEMPLATES.map(t => (
-                  <div key={t.filename}
-                    className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-7 h-7 bg-bassani-50 rounded-lg flex items-center justify-center shrink-0">
-                        <FileText size={12} className="text-bassani-600" />
-                      </div>
-                      <span className="text-xs font-semibold text-gray-800 truncate">{t.label}</span>
-                    </div>
-                    <button
-                      onClick={() => downloadObTemplate(t.filename, t.label)}
-                      disabled={obDownloading === t.filename}
-                      className="flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 disabled:opacity-50 shrink-0 ml-3 transition-colors">
-                      {obDownloading === t.filename
-                        ? <Loader2 size={11} className="animate-spin" />
-                        : <Download size={11} />}
-                      Download
-                    </button>
-                  </div>
-                ))}
-              </div>
+        <Modal title="Send Registration Link" onClose={() => setShowOnboardingDocs(false)}>
+          <div className="rounded-xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2 bg-gray-50">
+              <Mail size={13} className="text-bassani-600 shrink-0" />
+              <p className="text-xs font-bold text-gray-700">Send Registration Invitation</p>
             </div>
-
-            <div className="rounded-xl border border-gray-100 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2 bg-gray-50">
-                <Mail size={13} className="text-bassani-600 shrink-0" />
-                <p className="text-xs font-bold text-gray-700">Send Registration Invitation</p>
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Send the customer a link to the self-service registration page. They will complete their own details and upload their documents.
+              </p>
+              <div className="flex gap-2 items-center">
+                <span className="text-[10px] text-gray-400 font-mono bg-gray-50 border border-gray-200 rounded px-2 py-1 truncate flex-1">{window.location.origin}/apply</span>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/apply`); toast.success("Link copied"); }}
+                  className="shrink-0 text-xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-200 rounded transition-colors">
+                  Copy
+                </button>
               </div>
-              <div className="px-4 py-4 space-y-3">
-                <p className="text-xs text-gray-500">
-                  Send the customer a link to the self-service registration page. They will complete their own details and upload their signed documents.
-                </p>
-                <div className="flex gap-2 items-center">
-                  <span className="text-[10px] text-gray-400 font-mono bg-gray-50 border border-gray-200 rounded px-2 py-1 truncate flex-1">{window.location.origin}/apply</span>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/apply`); toast.success("Link copied"); }}
-                    className="shrink-0 text-xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-200 rounded transition-colors">
-                    Copy
-                  </button>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    value={obInviteEmail}
-                    onChange={e => setObInviteEmail(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && sendObInvite()}
-                    placeholder="customer@example.co.za"
-                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
-                  />
-                  <button
-                    onClick={sendObInvite}
-                    disabled={obInviteSending || !obInviteEmail.trim()}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-                    {obInviteSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
-                    Send Invitation
-                  </button>
-                </div>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={obInviteEmail}
+                  onChange={e => setObInviteEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && sendObInvite()}
+                  placeholder="customer@example.co.za"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+                />
+                <button
+                  onClick={sendObInvite}
+                  disabled={obInviteSending || !obInviteEmail.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                  {obInviteSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                  Send Invitation
+                </button>
               </div>
             </div>
           </div>
