@@ -464,7 +464,7 @@ async def get_order_lines(
             lines = odoo.read(
                 "sale.order.line",
                 order["order_line"],
-                fields=["product_id", "name", "product_uom_qty", "product_uom", "price_unit", "price_subtotal"],
+                fields=["product_id", "name", "product_uom_qty", "price_unit", "price_subtotal"],
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Odoo line error: {str(e)}")

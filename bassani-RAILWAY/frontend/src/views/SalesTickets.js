@@ -2266,7 +2266,7 @@ export default function SalesTickets() {
                                     {l.product_id?.[1] || l.name}
                                   </td>
                                   <td className="py-1 text-right text-gray-600 tabular-nums">
-                                    {l.product_uom_qty} {l.product_uom?.[1] || ""}
+                                    {l.product_uom_qty}
                                   </td>
                                   <td className="py-1 pl-2 text-right text-gray-600 tabular-nums">
                                     {fmtR(l.price_unit)}
