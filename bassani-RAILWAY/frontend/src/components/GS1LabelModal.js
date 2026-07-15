@@ -24,7 +24,7 @@ function toYYMMDD(iso) {
 function fmtExpiry(iso) {
   if (!iso) return "";
   try {
-    return new Date(iso + "T00:00:00").toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" });
+    return new Date(iso + "T00:00:00").toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" });
   } catch { return iso; }
 }
 

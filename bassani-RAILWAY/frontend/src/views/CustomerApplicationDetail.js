@@ -563,8 +563,8 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
                   <div>
                     <p className="text-xs font-semibold text-blue-800 mb-0.5">Awaiting customer signature</p>
                     <p className="text-xs text-blue-700">
-                      Signing link sent {signingSession.sent_at ? new Date(signingSession.sent_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" }) : ""}.
-                      {signingSession.expires_at ? ` Expires ${new Date(signingSession.expires_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" })}.` : ""}
+                      Signing link sent {signingSession.sent_at ? new Date(signingSession.sent_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" }) : ""}.
+                      {signingSession.expires_at ? ` Expires ${new Date(signingSession.expires_at).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })}.` : ""}
                     </p>
                   </div>
                 </div>
@@ -686,7 +686,7 @@ function fmtTs(iso) {
   if (isNaN(d)) return null;
   return d.toLocaleString("en-ZA", {
     day: "numeric", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg",
   });
 }
 

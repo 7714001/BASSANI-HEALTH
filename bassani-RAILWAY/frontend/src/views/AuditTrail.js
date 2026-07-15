@@ -5,7 +5,7 @@ import { useAuth } from "../AuthContext";
 import { ShieldAlert } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
-  BtnSecondary, Badge, SearchBar, ChipRow, FilterPill,
+  BtnSecondary, Badge, SearchBar, ChipRow, FilterPill, fmtDateTime,
 } from "../components/UI";
 
 const ENTITY_TYPES = [
@@ -142,7 +142,7 @@ export default function AuditTrail() {
               enableSorting: false,
               cell: ({ row: { original: l } }) => (
                 <span className="text-xs text-gray-500 whitespace-nowrap">
-                  {l.created_at ? new Date(l.created_at).toLocaleString("en-ZA") : "—"}
+                  {l.created_at ? fmtDateTime(l.created_at) : "—"}
                 </span>
               ),
             },
@@ -198,7 +198,7 @@ export default function AuditTrail() {
               </div>
               <div>
                 <p className="text-gray-400 uppercase tracking-wide text-[10px] mb-1">When</p>
-                <p className="text-gray-800">{detail.created_at ? new Date(detail.created_at).toLocaleString("en-ZA") : "—"}</p>
+                <p className="text-gray-800">{detail.created_at ? fmtDateTime(detail.created_at) : "—"}</p>
               </div>
             </div>
             {detail.before != null && (

@@ -15,6 +15,10 @@ router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+class SamplesAccountBody(BaseModel):
+    samples_account: bool
+
+
 class CustomerCreate(BaseModel):
     name: str
     company_type: str = "company"
@@ -278,6 +282,9 @@ async def customer_profile(
         for ct in raw_contacts:
             contacts.append({k: (v if v is not False else None) for k, v in ct.items()})
 
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": customer_id}, {"_id": 0})
+    samples_account = bool(meta.get("samples_account")) if meta else False
+
     return {
         "customer":             customer,
         "contacts":             contacts,
@@ -285,6 +292,7 @@ async def customer_profile(
         "recent_orders":        all_orders[:10],
         "outstanding_invoices": invoices,
         "ownership":            ownership,
+        "samples_account":      samples_account,
     }
 
 
@@ -392,7 +400,7 @@ def check_duplicate_customer(
 
 
 @router.get("/search")
-def search_all_customers(
+async def search_all_customers(
     q: str = Query(..., min_length=2),
     limit: int = Query(8, le=20),
     current_user: dict = Depends(get_current_user),
@@ -400,7 +408,7 @@ def search_all_customers(
     """
     Search all Odoo customers by name — used in the add-customer modal so resellers
     can find existing Bassani customers before deciding to create a new one.
-    No ownership filter applied.
+    No ownership filter applied. Overlays samples_account flag from customer_metadata.
     """
     odoo = get_odoo_client()
     domain = [
@@ -422,6 +430,14 @@ def search_all_customers(
             for k, v in c.items():
                 if v is False:
                     c[k] = None
+        # Overlay samples_account flag
+        ids = [c["id"] for c in customers]
+        meta_map = {}
+        async for m in col("customer_metadata").find({"odoo_partner_id": {"$in": ids}}, {"odoo_partner_id": 1, "samples_account": 1, "_id": 0}):
+            meta_map[m["odoo_partner_id"]] = m
+        for c in customers:
+            meta = meta_map.get(c["id"])
+            c["samples_account"] = bool(meta.get("samples_account")) if meta else False
         return {"customers": customers}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
@@ -699,6 +715,39 @@ def update_customer_address(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.patch("/{customer_id}/samples-account")
+async def update_samples_account(
+    customer_id: int,
+    body: SamplesAccountBody,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    odoo = get_odoo_client()
+    try:
+        partner = odoo.read("res.partner", [customer_id], fields=["id", "name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": customer_id}, {"_id": 0})
+    before_val = bool(meta.get("samples_account")) if meta else False
+
+    await col("customer_metadata").update_one(
+        {"odoo_partner_id": customer_id},
+        {"$set": {"samples_account": body.samples_account}},
+        upsert=True,
+    )
+
+    await audit_log(
+        "customer.samples_account_change", "customer", customer_id,
+        entity_label=partner[0]["name"],
+        user=current_user,
+        before={"samples_account": before_val},
+        after={"samples_account": body.samples_account},
+    )
+    return {"success": True, "samples_account": body.samples_account}
 
 
 @router.patch("/{customer_id}/type")

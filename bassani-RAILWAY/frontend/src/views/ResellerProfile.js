@@ -524,7 +524,7 @@ export default function ResellerProfile() {
                             {a.entity_label && <span className="text-gray-600"> — {a.entity_label}</span>}
                           </p>
                           <p className="text-[11px] text-gray-400 mt-0.5">
-                            {a.actor_username || "system"} · {a.created_at ? new Date(a.created_at).toLocaleString("en-ZA") : "—"}
+                            {a.actor_username || "system"} · {a.created_at ? new Date(a.created_at).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" }) : "—"}
                           </p>
                         </div>
                       </div>

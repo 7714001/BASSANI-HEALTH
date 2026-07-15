@@ -181,6 +181,9 @@ export default function SalesTickets() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [createNote, setCreateNote]         = useState("");
   const [creating, setCreating]             = useState(false);
+  const [sampleRecipientSearch, setSampleRecipientSearch] = useState("");
+  const [sampleRecipientResults, setSampleRecipientResults] = useState([]);
+  const [selectedRecipient, setSelectedRecipient] = useState(null);
 
   useEffect(() => {
     if (!createModal || customerSearch.length < 2) { setCustomerResults([]); return; }
@@ -193,16 +196,38 @@ export default function SalesTickets() {
     return () => clearTimeout(t);
   }, [customerSearch, createModal]);
 
+  useEffect(() => {
+    if (!createModal || !selectedCustomer?.samples_account || sampleRecipientSearch.length < 2) {
+      setSampleRecipientResults([]); return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get("/api/customers/search", { params: { q: sampleRecipientSearch, limit: 8 } });
+        setSampleRecipientResults(r.data.customers || []);
+      } catch { setSampleRecipientResults([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [sampleRecipientSearch, selectedCustomer, createModal]);
+
   const openCreate = () => {
     setSelectedCustomer(null); setCustomerSearch(""); setCustomerResults([]); setCreateNote("");
+    setSelectedRecipient(null); setSampleRecipientSearch(""); setSampleRecipientResults([]);
     setCreateModal(true);
   };
 
   const createTicket = async () => {
     if (!selectedCustomer) return toast.error("Select a customer first");
+    if (selectedCustomer.samples_account && !selectedRecipient) return toast.error("Select a sample recipient");
     setCreating(true);
     try {
-      await api.post("/api/tickets/", { customer_id: selectedCustomer.id, note: createNote || undefined });
+      await api.post("/api/tickets/", {
+        customer_id: selectedCustomer.id,
+        note: createNote || undefined,
+        ...(selectedCustomer.samples_account && selectedRecipient ? {
+          sample_recipient_id: selectedRecipient.id,
+          sample_recipient_name: selectedRecipient.name,
+        } : {}),
+      });
       toast.success("Ticket created");
       setCreateModal(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
@@ -1427,6 +1452,14 @@ export default function SalesTickets() {
                         )
                       )}
                     </div>
+                    {detail.is_sample && (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                        <span className="font-semibold">Sample order</span>
+                        {detail.sample_recipient_name && (
+                          <span className="text-amber-600">for {detail.sample_recipient_name}</span>
+                        )}
+                      </div>
+                    )}
                     {!isReseller && detail.reseller_name && (
                       <div className="flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50 border border-purple-100 rounded-lg px-2.5 py-1.5">
                         <span className="font-semibold">Via reseller:</span>
@@ -1687,27 +1720,27 @@ export default function SalesTickets() {
                           </button>
                         )}
 
-                        {detail.order_id && detailOrder?.state === "sale" && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        {!detail.is_sample && detail.order_id && detailOrder?.state === "sale" && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
                           <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
                           </button>
                         )}
 
-                        {detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        {!detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
                           <button onClick={confirmPayment} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-amber-500 shrink-0" />
                             {saving ? "Confirming…" : "Confirm Payment"}
                           </button>
                         )}
 
-                        {detail.payment_confirmed_at && detail.order_id && canFinance && (
+                        {!detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && (
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
                           </button>
                         )}
 
                         {/* 8.24 — Invoice lifecycle actions */}
-                        {detail.invoice_id && !isReseller && canFinance && (
+                        {!detail.is_sample && detail.invoice_id && !isReseller && canFinance && (
                           <>
                             <button onClick={sendInvoice} disabled={sendingInvoice} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                               {sendingInvoice ? <Loader2 size={14} className="shrink-0 animate-spin" /> : <Send size={14} className="text-blue-500 shrink-0" />}
@@ -2544,6 +2577,7 @@ export default function SalesTickets() {
                       onRemove={() => removeLine(line._id)}
                       autoFocus={line._id === lastAddedId}
                       warehouseId={quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined}
+                      isSample={!!quoteTicket?.is_sample}
                     />
                   ))}
                 </tbody>
@@ -2765,7 +2799,9 @@ export default function SalesTickets() {
                     )}
                   </p>
                   <div className="flex flex-wrap items-center gap-1 mt-0.5">
-                    {t.source === "reseller" ? (
+                    {t.is_sample ? (
+                      <Badge color="amber">Sample</Badge>
+                    ) : t.source === "reseller" ? (
                       <Badge color="purple">Reseller Order</Badge>
                     ) : t.source === "portal" ? (
                       <Badge color="blue">Portal Order</Badge>
@@ -2778,6 +2814,9 @@ export default function SalesTickets() {
                       <span className="text-[11px] text-purple-600 font-medium">{t.reseller_name}</span>
                     )}
                   </div>
+                  {t.is_sample && t.sample_recipient_name && (
+                    <p className="text-[11px] text-amber-600 mt-0.5">For: {t.sample_recipient_name}</p>
+                  )}
                 </div>
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
@@ -2828,9 +2867,16 @@ export default function SalesTickets() {
         <Modal title="New Direct Inquiry" onClose={() => setCreateModal(false)}>
           <FormGroup label="Customer" required>
             {selectedCustomer ? (
-              <div className="flex items-center justify-between bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
-                <span className="text-sm font-medium text-bassani-800">{selectedCustomer.name}</span>
-                <button onClick={() => setSelectedCustomer(null)} className="text-xs text-gray-400 hover:text-gray-600">Change</button>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between bg-bassani-50 border border-bassani-100 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-bassani-800">{selectedCustomer.name}</span>
+                    {selectedCustomer.samples_account && (
+                      <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 uppercase tracking-wide">Samples Account</span>
+                    )}
+                  </div>
+                  <button onClick={() => { setSelectedCustomer(null); setSelectedRecipient(null); setSampleRecipientSearch(""); }} className="text-xs text-gray-400 hover:text-gray-600">Change</button>
+                </div>
               </div>
             ) : (
               <>
@@ -2838,9 +2884,11 @@ export default function SalesTickets() {
                 {customerResults.length > 0 && (
                   <div className="mt-1 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
                     {customerResults.map(c => (
-                      <button key={c.id} onClick={() => setSelectedCustomer(c)}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors">
-                        {c.name} {c.city && <span className="text-xs text-gray-400">— {c.city}</span>}
+                      <button key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(""); setCustomerResults([]); }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">
+                        <span>{c.name}</span>
+                        {c.city && <span className="text-xs text-gray-400">— {c.city}</span>}
+                        {c.samples_account && <span className="ml-auto text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 uppercase tracking-wide">Samples</span>}
                       </button>
                     ))}
                   </div>
@@ -2848,6 +2896,35 @@ export default function SalesTickets() {
               </>
             )}
           </FormGroup>
+
+          {selectedCustomer?.samples_account && (
+            <FormGroup label="Sample recipient" required>
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-2">
+                This is a Samples Account. All line items will be priced at R0.00. Select the customer this sample is intended for.
+              </p>
+              {selectedRecipient ? (
+                <div className="flex items-center justify-between bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                  <span className="text-sm font-medium text-green-800">{selectedRecipient.name}</span>
+                  <button onClick={() => { setSelectedRecipient(null); setSampleRecipientSearch(""); }} className="text-xs text-gray-400 hover:text-gray-600">Change</button>
+                </div>
+              ) : (
+                <>
+                  <Input value={sampleRecipientSearch} onChange={e => setSampleRecipientSearch(e.target.value)} placeholder="Search customers…" />
+                  {sampleRecipientResults.length > 0 && (
+                    <div className="mt-1 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
+                      {sampleRecipientResults.map(c => (
+                        <button key={c.id} onClick={() => { setSelectedRecipient(c); setSampleRecipientSearch(""); setSampleRecipientResults([]); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors">
+                          {c.name} {c.city && <span className="text-xs text-gray-400">— {c.city}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </FormGroup>
+          )}
+
           <FormGroup label="Note">
             <Textarea value={createNote} onChange={e => setCreateNote(e.target.value)} rows={2} placeholder="What the PO/RFQ asked for" />
           </FormGroup>

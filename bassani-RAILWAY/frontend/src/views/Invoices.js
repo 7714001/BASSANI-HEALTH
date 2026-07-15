@@ -748,7 +748,7 @@ export default function Invoices() {
                     <div>
                       <p className="text-sm font-medium text-gray-900">{t.customer_name}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {t.source === "email" ? "Email inquiry" : "Direct inquiry"} · {t.created_at ? new Date(t.created_at).toLocaleDateString("en-ZA") : ""}
+                        {t.source === "email" ? "Email inquiry" : "Direct inquiry"} · {t.created_at ? new Date(t.created_at).toLocaleDateString("en-ZA", { timeZone: "Africa/Johannesburg" }) : ""}
                       </p>
                     </div>
                     <BtnSecondary size="sm" onClick={() => doLinkUnlinkedTicket(t.id)}>Link This</BtnSecondary>

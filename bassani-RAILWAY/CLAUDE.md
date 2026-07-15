@@ -39,7 +39,7 @@ The natural business workflow is: inquiry → quote → customer acceptance → 
 Every sale.order — whether placed by a reseller, by staff, or converted from an inquiry — flows through Sales → Orders (packing board) → QA/RP → Finance. No order is processed outside this pipeline.
 
 **5. MongoDB handles portal-layer concerns only.**
-Reseller profiles, commission records, ownership mappings, onboarding applications, audit logs, tickets, and settings belong in MongoDB. Financial records (orders, invoices, payments) live in Odoo.
+Reseller profiles, commission records, ownership mappings, onboarding applications, audit logs, tickets, settings, and customer metadata (e.g. `samples_account` flag) belong in MongoDB. Financial records (orders, invoices, payments) live in Odoo. Customer-level portal flags use the `customer_metadata` collection keyed by `odoo_partner_id`.
 
 **6. All Odoo reads and writes are warehouse- and company-scoped.**
 Bassani operates across multiple warehouses belonging to different Odoo companies. Every stock read, tax lookup, and record creation must be scoped to the resolved warehouse's company. Use `get_company_id()` and `company_context()` from `warehouse_context.py` — never bypass them.
@@ -115,7 +115,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign — TQA removed; CIF+CIPC at registration; admin generates docs for preview, then deliberately sends signing link; customer signs NDA+SOA at /sign/:token; countersign notification to Kashi/Dean; welcome pack sent by Dean; approval gates on all 4 docs + countersigns. Staff account creation outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign — TQA removed; CIF+CIPC at registration; admin generates docs for preview, then deliberately sends signing link; customer signs NDA+SOA at /sign/:token; countersign notification to Kashi/Dean; welcome pack sent by Dean; approval gates on all 4 docs + countersigns. 8.38 complete: Samples Account — `samples_account` flag on `customer_metadata`, auto-zero pricing, no invoice pipeline, recipient tracking. Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |

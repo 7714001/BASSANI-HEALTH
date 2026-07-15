@@ -219,7 +219,7 @@ export default function GTINPool({ embedded }) {
                       </td>
                       <td className="px-5 py-3 text-gray-400 dark:text-gray-500 text-xs whitespace-nowrap">
                         {item.assigned_at
-                          ? new Date(item.assigned_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })
+                          ? new Date(item.assigned_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })
                           : <span className="text-gray-300 dark:text-gray-600">—</span>}
                       </td>
                       <td className="px-5 py-3 text-right">

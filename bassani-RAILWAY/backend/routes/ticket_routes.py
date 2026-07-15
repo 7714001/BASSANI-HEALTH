@@ -121,8 +121,10 @@ EXIT_STATUSES = ["not_interested", "cancelled", "complete"]
 
 class TicketCreate(BaseModel):
     customer_id: int
-    assigned_to: Optional[str] = None   # defaults to the creating sales rep
-    note: Optional[str] = None          # free text — e.g. what the PO/RFQ asked for
+    assigned_to: Optional[str] = None          # defaults to the creating sales rep
+    note: Optional[str] = None                 # free text — e.g. what the PO/RFQ asked for
+    sample_recipient_id: Optional[int] = None  # Odoo partner ID of the actual recipient
+    sample_recipient_name: Optional[str] = None
 
 
 class TicketStageUpdate(BaseModel):
@@ -271,6 +273,24 @@ async def create_ticket(
     if _customer_email is False:
         _customer_email = None
 
+    # Check if this customer is a Samples Account
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": body.customer_id}, {"_id": 0})
+    is_sample = bool(meta.get("samples_account")) if meta else False
+
+    if is_sample:
+        if not body.sample_recipient_id:
+            raise HTTPException(status_code=400, detail="Sample recipient is required for a Samples Account customer")
+        # Validate recipient exists in Odoo
+        try:
+            recipient_rows = odoo.read("res.partner", [body.sample_recipient_id], fields=["id", "name"])
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+        if not recipient_rows:
+            raise HTTPException(status_code=404, detail="Sample recipient not found")
+        _recipient_name = body.sample_recipient_name or recipient_rows[0]["name"]
+    else:
+        _recipient_name = None
+
     now = datetime.now(timezone.utc)
     _assignee_id = body.assigned_to or current_user["id"]
     _assignee_name = current_user.get("name") or current_user.get("username") or "unknown"
@@ -291,6 +311,9 @@ async def create_ticket(
         "customer_is_company": bool(_cust.get("is_company")),
         "customer_company_id": _company_id,
         "customer_company_name": _company_name,
+        "is_sample": is_sample,
+        "sample_recipient_id": body.sample_recipient_id if is_sample else None,
+        "sample_recipient_name": _recipient_name,
         "order_id": None,
         "invoice_id": None,
         "orders_ticket_ref": None,
@@ -312,7 +335,7 @@ async def create_ticket(
     }
     result = await col("tickets").insert_one(doc)
     await audit_log("ticket.create", "ticket", str(result.inserted_id), entity_label=_cust["name"],
-                    user=current_user, after={"status": "open", "customer_id": body.customer_id})
+                    user=current_user, after={"status": "open", "customer_id": body.customer_id, "is_sample": is_sample})
     await notify_ticket_assigned("sales", _cust["name"], doc["assigned_to"])
     return {"success": True, "ticket_id": str(result.inserted_id)}
 
@@ -867,11 +890,12 @@ async def create_order_from_ticket(
 
     create_context = {"company_id": company_id, "allowed_company_ids": [company_id]} if company_id else None
 
+    _is_sample = bool(ticket.get("is_sample"))
     lines = [
         (0, 0, {
             "product_id": l.product_id,
             "product_uom_qty": l.product_uom_qty,
-            "price_unit": round(l.price_unit, 2),
+            "price_unit": 0.0 if _is_sample else round(l.price_unit, 2),
             **({"name": l.name} if l.name else {}),
         })
         for l in body.order_line

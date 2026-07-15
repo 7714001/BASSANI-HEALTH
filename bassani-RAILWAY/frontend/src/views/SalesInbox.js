@@ -42,28 +42,34 @@ function initials(name) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const SAST = { timeZone: "Africa/Johannesburg" };
+
 function fmtTime(d) {
   if (!d) return "";
-  return new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+  return new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", ...SAST });
 }
 
 function fmtListDate(d) {
   if (!d) return "";
-  const dt        = new Date(d);
-  const now       = new Date();
-  const today     = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dt  = new Date(d);
+  const now = new Date();
+  const toSASTMidnight = (date) => {
+    const s = date.toLocaleDateString("en-ZA", { year: "numeric", month: "2-digit", day: "2-digit", ...SAST });
+    return new Date(s.split("/").reverse().join("-") + "T00:00:00");
+  };
+  const today     = toSASTMidnight(now);
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  const msgDay    = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const msgDay    = toSASTMidnight(dt);
   if (msgDay.getTime() === today.getTime())     return fmtTime(dt);
   if (msgDay.getTime() === yesterday.getTime()) return "Yesterday";
-  if ((today - msgDay) / 86400000 < 7)          return dt.toLocaleDateString("en-ZA", { weekday: "short" });
-  return dt.toLocaleDateString("en-ZA", { day: "numeric", month: "short" });
+  if ((today - msgDay) / 86400000 < 7)          return dt.toLocaleDateString("en-ZA", { weekday: "short", ...SAST });
+  return dt.toLocaleDateString("en-ZA", { day: "numeric", month: "short", ...SAST });
 }
 
 function fmtMsgDate(d) {
   if (!d) return "";
   return new Date(d).toLocaleDateString("en-ZA", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric",
+    weekday: "long", day: "numeric", month: "long", year: "numeric", ...SAST,
   });
 }
 

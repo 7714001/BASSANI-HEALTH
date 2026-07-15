@@ -531,6 +531,19 @@ When a customer emails or calls in an order that isn't coming through a reseller
 
 The ticket starts at `Open` stage. From here you move it forward as the conversation progresses.
 
+### Creating a Sample Order Ticket
+
+When placing an order against the Bassani Samples Account (products distributed as samples, no charge):
+
+1. Click **New Direct Inquiry**
+2. Search for and select the **Samples Account** customer — it shows an amber "Samples" label
+3. A **Sample recipient** field appears. Search for and select the actual customer who will receive the sample — this is required and must be an existing Odoo customer
+4. Add any notes and click **Create**
+
+The ticket is created as a **Sample order** (amber "Sample" badge on the ticket list; amber banner in ticket detail showing who the sample is for).
+
+In the quote builder, all product prices are automatically locked to R0.00 and cannot be changed. On confirmation, no invoice is created and no payment step appears — stock is moved at zero cost. The packing board pipeline runs as normal.
+
 ### Handling a Follow-up Inquiry (Link Existing Order)
 
 Sometimes an email or call is about an **existing order** rather than a new one — for example, a customer asking about collection, delivery timing, or an amendment. In these cases you do not need to build a new quote.
@@ -1264,6 +1277,20 @@ Admins see the type badge as a dropdown. Select "Company" or "Individual" to cha
 > Only change a customer's type if you are certain it is misclassified. Orders and invoices already raised against the account are unaffected, but the change affects how future orders are structured.
 
 **Credit Hold:** If a customer appears with a red "Credit Hold" badge, they are over their Odoo credit limit. Orders for this customer will produce a warning at quote stage and a hard block at confirmation stage (unless you override).
+
+**Samples Account** *(requires `customers.manage` permission)*
+
+The Bassani Samples Account is a dedicated Odoo customer used when Bassani distributes product samples at no charge. Any customer can be designated as a Samples Account from their customer profile page.
+
+To enable the Samples Account flag:
+1. Open the customer profile
+2. Scroll to the **Samples Account** section
+3. Click **Disabled — click to enable**
+4. A confirmation modal explains the effect — click **Enable**
+
+Once enabled, an amber "Samples Account" badge appears in the customer header. All future sales tickets created against this customer are automatically classified as Sample orders. The flag applies to new tickets only; existing tickets are not affected.
+
+To disable, click **Enabled — click to disable** and confirm.
 
 **Contact persons** *(company accounts only)*
 

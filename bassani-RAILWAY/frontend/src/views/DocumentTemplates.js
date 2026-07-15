@@ -12,7 +12,7 @@ import toast from "react-hot-toast";
 
 function fmtDate(iso) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" });
 }
 
 function fmtSize(bytes) {

@@ -466,6 +466,12 @@ export default function CustomerProfile() {
 
   const [sendDocsConfirmOpen, setSendDocsConfirmOpen] = useState(false);
 
+  // ── Samples Account ───────────────────────────────────────────────────────
+  const [samplesAccount,         setSamplesAccount        ] = useState(false);
+  const [samplesChanging,        setSamplesChanging       ] = useState(false);
+  const [samplesEnableConfirm,   setSamplesEnableConfirm  ] = useState(false);
+  const [samplesDisableConfirm,  setSamplesDisableConfirm ] = useState(false);
+
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
   const [reqModalOpen,         setReqModalOpen        ] = useState(false);
@@ -476,7 +482,7 @@ export default function CustomerProfile() {
 
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
-      .then(r => setData(r.data))
+      .then(r => { setData(r.data); setSamplesAccount(!!r.data.samples_account); })
       .catch(() => { toast.error("Failed to load customer profile"); navigate("/customers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
@@ -665,6 +671,21 @@ export default function CustomerProfile() {
     setTypeConfirmOpen(true);
   };
 
+  const doToggleSamplesAccount = async (enable) => {
+    setSamplesChanging(true);
+    try {
+      await api.patch(`/api/customers/${id}/samples-account`, { samples_account: enable });
+      setSamplesAccount(enable);
+      toast.success(enable ? "Samples Account enabled" : "Samples Account disabled");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update Samples Account flag");
+    } finally {
+      setSamplesChanging(false);
+      setSamplesEnableConfirm(false);
+      setSamplesDisableConfirm(false);
+    }
+  };
+
   const handleAddContact = async () => {
     if (!addContactForm.name.trim()) return toast.error("Name is required");
     setAddContactSaving(true);
@@ -758,6 +779,9 @@ export default function CustomerProfile() {
                       <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">
                         Via {ownership.reseller_name}
                       </span>
+                    )}
+                    {samplesAccount && (
+                      <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-medium">Samples Account</span>
                     )}
                   </div>
                 </div>
@@ -910,6 +934,43 @@ export default function CustomerProfile() {
                   </table>
                 </div>
               )}
+            </Section>
+          )}
+
+          {/* Samples Account — admin only */}
+          {can("customers.manage") && (
+            <Section title="Samples Account">
+              <div className="px-5 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-800">Mark as Samples Account</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      When enabled, all sales tickets created against this customer are classified as Sample orders.
+                      Line items are automatically priced at R0.00 and no invoice or payment is created. Stock is
+                      still moved and tracked. Each sample ticket requires a recipient customer to be specified.
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    {samplesAccount ? (
+                      <button
+                        onClick={() => setSamplesDisableConfirm(true)}
+                        disabled={samplesChanging}
+                        className="text-xs font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200 rounded-full px-3 py-1.5 transition-colors disabled:opacity-50"
+                      >
+                        {samplesChanging ? "Updating…" : "Enabled — click to disable"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setSamplesEnableConfirm(true)}
+                        disabled={samplesChanging}
+                        className="text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200 rounded-full px-3 py-1.5 transition-colors disabled:opacity-50"
+                      >
+                        {samplesChanging ? "Updating…" : "Disabled — click to enable"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </Section>
           )}
 
@@ -1342,6 +1403,36 @@ export default function CustomerProfile() {
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setAddrArchiveConfirm(null)}>Cancel</BtnSecondary>
             <BtnDanger onClick={doArchiveAddr}>Remove</BtnDanger>
+          </div>
+        </Modal>
+      )}
+
+      {samplesEnableConfirm && (
+        <Modal title="Enable Samples Account?" onClose={() => setSamplesEnableConfirm(false)}>
+          <p className="text-sm text-gray-600 mb-3">
+            Mark <strong>{data?.customer?.name}</strong> as a Samples Account?
+          </p>
+          <p className="text-sm text-gray-500">
+            All future sales tickets against this customer will be classified as Sample orders. Line items will be priced at R0.00 and no invoice or payment will be created.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setSamplesEnableConfirm(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={() => doToggleSamplesAccount(true)} loading={samplesChanging}>Enable</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {samplesDisableConfirm && (
+        <Modal title="Disable Samples Account?" onClose={() => setSamplesDisableConfirm(false)}>
+          <p className="text-sm text-gray-600 mb-3">
+            Remove the Samples Account flag from <strong>{data?.customer?.name}</strong>?
+          </p>
+          <p className="text-sm text-gray-500">
+            Future tickets will be treated as standard orders. Existing sample tickets are not affected.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setSamplesDisableConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={() => doToggleSamplesAccount(false)}>Disable</BtnDanger>
           </div>
         </Modal>
       )}

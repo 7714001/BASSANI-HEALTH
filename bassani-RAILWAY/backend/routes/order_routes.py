@@ -1254,7 +1254,7 @@ async def confirm_order(
     # ── Reseller ownership check ───────────────────────────────────────────────
     # Resellers may only confirm their own quotes (those whose ticket carries their reseller_id).
     _sales_ticket = await col("tickets").find_one(
-        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1}
+        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1, "is_sample": 1}
     )
     if current_user.get("role") == "reseller":
         _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
@@ -1361,11 +1361,12 @@ async def confirm_order(
                        extra={"order_id": order_id, "error": str(_se)})
 
     # ── Step 2: Customer invoice — create and post ─────────────────────────────
-    # Skipped for partial orders: invoicing is deferred to collection time so
-    # we only invoice for what the customer actually receives in each delivery.
+    # Skipped for partial orders and sample tickets. Sample tickets never produce
+    # an invoice — stock is moved at zero cost for internal sampling purposes.
+    _is_sample_ticket = bool(_sales_ticket.get("is_sample")) if _sales_ticket else False
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
-    if not is_partial:
+    if not is_partial and not _is_sample_ticket:
         try:
             # Use the advance payment wizard — the only public XML-RPC route for
             # creating invoices from a sale order (_create_invoices is private).
@@ -1415,6 +1416,8 @@ async def confirm_order(
                     f"Invoice post/read failed: {str(e)} — "
                     "check the invoice in Odoo."
                 )
+    elif _is_sample_ticket:
+        pass  # Sample orders intentionally have no invoice
     else:
         warnings.append(
             "Invoice deferred: this order has items on backorder. "

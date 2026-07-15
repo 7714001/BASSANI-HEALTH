@@ -309,7 +309,7 @@ export default function MyProfile() {
                             <img src={sigPreviewUrl} alt="Current signature" className="max-h-10 max-w-[200px] object-contain" />
                             {profile?.signature_updated_at && (
                               <p className="text-[10px] text-gray-400 mt-1">
-                                Updated {new Date(profile.signature_updated_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
+                                Updated {new Date(profile.signature_updated_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })}
                               </p>
                             )}
                           </div>

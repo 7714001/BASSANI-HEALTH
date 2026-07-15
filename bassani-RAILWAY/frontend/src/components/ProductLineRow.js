@@ -12,7 +12,7 @@ import { X } from "lucide-react";
 import api from "../api";
 import { fmtR, parseDisplayName } from "./UI";
 
-export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, warehouseId }) {
+export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, warehouseId, isSample }) {
   const [prodSearch, setProdSearch]     = useState(line._product_label || "");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searching, setSearching]       = useState(false);
@@ -80,7 +80,7 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       _product_label:      label,
       name:                p.description_sale || baseName,
       _description_sale:   p.description_sale || "",
-      price_unit:          p.list_price || 0,
+      price_unit:          isSample ? 0 : (p.list_price || 0),
       _tax_rate:           p.tax_rate   || 0,
       _sku:                p.default_code || "",
       _stock:              stock,
@@ -251,17 +251,24 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
 
       {/* ── Unit Price ── */}
       <td className="p-2 w-36">
-        <div className="flex items-center border border-gray-200 rounded-lg bg-white px-2 py-1.5 focus-within:ring-1 focus-within:ring-bassani-300">
-          <span className="text-xs text-gray-400 mr-1 shrink-0">R</span>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={line.price_unit}
-            onChange={e => onUpdate({ price_unit: parseFloat(e.target.value) || 0 })}
-            className="w-full text-sm text-right border-0 bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-          />
-        </div>
+        {isSample ? (
+          <div className="flex items-center border border-gray-100 rounded-lg bg-gray-50 px-2 py-1.5" title="Price locked to R0.00 for sample orders">
+            <span className="text-xs text-gray-400 mr-1 shrink-0">R</span>
+            <span className="w-full text-sm text-right text-gray-400">0.00</span>
+          </div>
+        ) : (
+          <div className="flex items-center border border-gray-200 rounded-lg bg-white px-2 py-1.5 focus-within:ring-1 focus-within:ring-bassani-300">
+            <span className="text-xs text-gray-400 mr-1 shrink-0">R</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={line.price_unit}
+              onChange={e => onUpdate({ price_unit: parseFloat(e.target.value) || 0 })}
+              className="w-full text-sm text-right border-0 bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+          </div>
+        )}
       </td>
 
       {/* ── Tax % ── */}

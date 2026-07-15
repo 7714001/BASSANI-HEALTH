@@ -17,9 +17,11 @@ import {
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-export const fmtR   = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-export const fmtNum = (n) => Number(n || 0).toLocaleString("en-ZA");
-export const fmtDate= (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric" }) : "—";
+const SAST = { timeZone: "Africa/Johannesburg" };
+export const fmtR       = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const fmtNum     = (n) => Number(n || 0).toLocaleString("en-ZA");
+export const fmtDate    = (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric", ...SAST }) : "—";
+export const fmtDateTime= (d) => d ? new Date(d).toLocaleString("en-ZA", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", ...SAST }) : "—";
 
 // Splits an Odoo display_name into base name + variant chips.
 // Odoo appends each attribute as a trailing "(Value)" group:

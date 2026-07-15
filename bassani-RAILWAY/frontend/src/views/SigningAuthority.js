@@ -562,7 +562,7 @@ function SetupModal({ existing, onClose, onSaved }) {
             <div className="bg-white border border-gray-200 rounded-lg px-6 py-5 font-serif text-sm text-gray-700 space-y-3">
               <div className="flex gap-8 text-xs text-gray-500">
                 <span><strong>Signed at</strong> {location || "Cape Town"}</span>
-                <span><strong>on</strong> {new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" })}</span>
+                <span><strong>on</strong> {new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric", timeZone: "Africa/Johannesburg" })}</span>
               </div>
               <div>
                 <img

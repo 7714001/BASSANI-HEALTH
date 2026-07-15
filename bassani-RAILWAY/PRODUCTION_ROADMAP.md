@@ -931,7 +931,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟡 In Progress — 8.1–8.12 code complete; DoD 8/9 items done; one remaining item is operational (create 6 named staff accounts via Users page — no code required)  
-**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23 · Sub-deploy 10 (8.12 Reseller order cart restoration) — 2026-06-29  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23 · Sub-deploy 10 (8.12 Reseller order cart restoration) — 2026-06-29 · 8.38 Samples Account — 2026-07-15  
 
 ### Context
 Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
@@ -1587,6 +1587,47 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - Kashi and Dean receive notification email that countersigning is complete
 - Dean opens application → clicks **Send Welcome Pack** → enters custom message → sends email with welcome pack + both countersigned docs attached
 - Admin approves → Odoo customer created → all 4 docs transferred to customer_documents
+
+---
+
+#### 8.38 — Samples Account — Complete 2026-07-15
+
+**Goal:** Internal Bassani staff use a dedicated Bassani Samples customer account in Odoo for sample orders. These are real stock movements but have zero monetary value and must not produce invoices or payment steps. The portal must classify these as Sample tickets, enforce R0.00 pricing, record the intended recipient, and skip all finance pipeline steps.
+
+**Key decisions confirmed:**
+- `samples_account` flag lives in MongoDB `customer_metadata` collection (keyed by `odoo_partner_id`) — no Odoo changes required
+- Each sample ticket requires an Odoo customer lookup for the actual sample recipient (`sample_recipient_id` / `sample_recipient_name`) — free text not allowed
+- Portal auto-zeroes all `price_unit` on product select when `is_sample` is true; price field is locked read-only in the quote builder
+- Backend also enforces `price_unit = 0.0` for all lines in `create_order_from_ticket` — dual enforcement
+- `confirm_order` skips Step 2 (invoice creation) entirely for sample tickets — no `account.move` is created
+- Register Deposit, Confirm Payment, Register Balance Payment, and invoice lifecycle actions are all hidden in ticket detail for sample tickets
+- Stock still moves through the full packing board pipeline
+
+**What was built:**
+- [x] `customer_routes.py` — `PATCH /api/customers/{id}/samples-account` writes `samples_account` flag to `customer_metadata` collection; upserts by `odoo_partner_id`; audit-logged
+- [x] `customer_routes.py` — `/profile` 360 view includes `samples_account` from `customer_metadata`
+- [x] `customer_routes.py` — `/search` endpoint made async; overlays `samples_account` flag from `customer_metadata` on results — lets the create-ticket modal detect samples accounts in search results
+- [x] `ticket_routes.py` — `TicketCreate` model: added `sample_recipient_id: Optional[int]`, `sample_recipient_name: Optional[str]`
+- [x] `ticket_routes.py` — `create_ticket`: checks `customer_metadata` for `samples_account`; if set, requires `sample_recipient_id`; validates recipient exists in Odoo; stamps `is_sample: True`, `sample_recipient_id`, `sample_recipient_name` on ticket; audit-logs `is_sample`
+- [x] `ticket_routes.py` — `create_order_from_ticket`: forces `price_unit = 0.0` for all lines when `ticket.is_sample` is true
+- [x] `order_routes.py` — `confirm_order`: extended `_sales_ticket` projection to include `is_sample`; Step 2 (invoice creation) skipped when `_is_sample_ticket` is true
+- [x] `CustomerProfile.js` — "Samples Account" section (admin only, `customers.manage` permission) with enable/disable toggle and confirmation modals; "Samples Account" badge in customer header; `samplesAccount` state initialized from profile 360 view response
+- [x] `SalesTickets.js` — create modal: shows "Samples Account" badge on matched customer; shows "Sample recipient" Odoo customer search field when customer is a samples account; required validation before create; `sample_recipient_id`/`sample_recipient_name` included in `POST /api/tickets/` body
+- [x] `SalesTickets.js` — ticket list: "Sample" badge (amber) replaces source badge for sample tickets; "For: [recipient name]" sub-line shown
+- [x] `SalesTickets.js` — ticket detail: amber "Sample order — for [recipient]" metadata banner; Register Deposit, Confirm Payment, Register Balance Payment, and all invoice lifecycle actions gated with `!detail.is_sample`
+- [x] `SalesTickets.js` — quote builder: `isSample={!!quoteTicket?.is_sample}` passed to `ProductLineRow`
+- [x] `ProductLineRow.js` — `isSample` prop: sets `price_unit: 0` instead of `p.list_price` on product select; replaces price input with a locked "R 0.00" display
+
+**Definition of Done:**
+- Admin opens customer profile for the Bassani Samples account → sees "Samples Account" section → enables it → confirmation modal shown → flag saved to `customer_metadata`
+- "Samples Account" amber badge appears in customer header
+- Sales staff opens New Direct Inquiry → searches for the Samples customer → sees "Samples" label in results → selects it → "Sample recipient" search field appears with amber warning → selects actual recipient customer → creates ticket
+- Ticket is created with `is_sample: true`, `sample_recipient_id`, `sample_recipient_name`
+- Ticket list shows "Sample" amber badge and "For: [recipient]" sub-line
+- Ticket detail shows amber "Sample order — for [recipient]" banner; Register Deposit and finance actions are absent
+- Quote builder: adding a product auto-sets price to R0.00; price field is a locked read-only display
+- Confirm Order skips invoice creation; order goes directly to packing board
+- Backend rejects price override — `create_order_from_ticket` forces all `price_unit = 0.0` even if frontend sends non-zero
 
 ---
 

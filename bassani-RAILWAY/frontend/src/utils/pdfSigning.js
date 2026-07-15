@@ -22,7 +22,7 @@ export const DOC_CONFIGS = {
     getAutoFillValue: (name, profile) => {
       if (name === "bassani_name")                 return profile?.name  || "";
       if (name.toLowerCase().includes("position")) return profile?.title || "";
-      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric", timeZone: "Africa/Johannesburg" });
     },
     bassaniTextFields: [
       { name: "bassani_name",     description: "Full name of Bassani signing authority" },
@@ -62,7 +62,7 @@ export const DOC_CONFIGS = {
       if (name === "bassani_name")     return profile?.name  || "";
       if (name === "bassani_position") return profile?.title || "";
       if (name === "bassani_witness")  return "";
-      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+      return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric", timeZone: "Africa/Johannesburg" });
     },
     bassaniTextFields: [
       { name: "bassani_name",               description: "Full name of Bassani signing authority" },
@@ -97,10 +97,11 @@ export const DOC_CONFIGS = {
     ],
     isAutoFill: (name) => name === "date_day" || name === "date_month" || name === "date_year",
     getAutoFillValue: (name) => {
-      const now = new Date();
-      if (name === "date_day")   return String(now.getDate()).padStart(2, "0");
-      if (name === "date_month") return now.toLocaleString("en-ZA", { month: "long" });
-      if (name === "date_year")  return String(now.getFullYear());
+      const now  = new Date();
+      const sast = { timeZone: "Africa/Johannesburg" };
+      if (name === "date_day")   return now.toLocaleDateString("en-ZA", { day: "2-digit", ...sast });
+      if (name === "date_month") return now.toLocaleString("en-ZA", { month: "long", ...sast });
+      if (name === "date_year")  return now.toLocaleDateString("en-ZA", { year: "numeric", ...sast });
       return "";
     },
   },
