@@ -81,13 +81,13 @@ const ORDER_STATE_COLOR = {
 
 const PACK_STATUS_LABEL = {
   queued: "Queued", packing: "Packing", ready: "Ready for Inspection",
-  complete: "Complete", incomplete: "Incomplete", cancelled: "Cancelled",
-  waiting_stock: "Waiting for Stock",
+  complete: "Complete", collected: "Collected", incomplete: "Incomplete",
+  cancelled: "Cancelled", waiting_stock: "Waiting for Stock",
 };
 const PACK_STATUS_COLOR = {
   queued: "gray", packing: "amber", ready: "blue",
-  complete: "green", incomplete: "orange", cancelled: "red",
-  waiting_stock: "amber",
+  complete: "green", collected: "teal", incomplete: "orange",
+  cancelled: "red", waiting_stock: "amber",
 };
 
 // Reseller-facing labels — plain English, no internal system terms
