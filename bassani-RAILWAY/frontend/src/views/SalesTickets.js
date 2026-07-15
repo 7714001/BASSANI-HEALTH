@@ -52,19 +52,19 @@ function OrderBarcode({ orderRef }) {
 }
 
 const STATUS_LABEL = {
-  open: "Open (RFQ)", quote: "Quote", sale_order: "Sale Order", invoice: "Invoice",
-  confirmed_wip: "Confirmed — WIP", ready_for_collection: "Ready for Collection",
+  open: "Open (RFQ)", quote: "Quote", sale_order: "Confirmed",
+  confirmed_wip: "In Fulfilment", ready_for_collection: "Ready for Collection",
   incomplete: "Incomplete", partially_fulfilled: "Partially Fulfilled",
 };
 const STATUS_COLOR = {
-  open: "gray", quote: "amber", sale_order: "blue", invoice: "indigo",
+  open: "gray", quote: "amber", sale_order: "blue",
   confirmed_wip: "teal", ready_for_collection: "green", incomplete: "orange",
   partially_fulfilled: "amber",
 };
 const EXIT_LABEL  = { not_interested: "Not Interested", cancelled: "Cancelled", complete: "Complete" };
 const EXIT_COLOR  = { not_interested: "gray", cancelled: "red", complete: "green" };
-const FORWARD_STATUSES = ["open", "quote", "sale_order", "invoice", "confirmed_wip", "ready_for_collection", "partially_fulfilled", "incomplete"];
-const PRE_CONFIRM = new Set(["open", "quote", "sale_order", "invoice"]);
+const FORWARD_STATUSES = ["open", "quote", "sale_order", "confirmed_wip", "ready_for_collection", "partially_fulfilled", "incomplete"];
+const PRE_CONFIRM = new Set(["open", "quote", "sale_order"]);
 
 const ORDER_STATE_LABEL = {
   draft: "Quotation", sent: "Quotation Sent", sale: "Sale Order", done: "Locked", cancel: "Cancelled",
@@ -875,60 +875,15 @@ export default function SalesTickets() {
     finally { setQuoteSaving(false); }
   };
 
-  // ── Deposit Registration ──────────────────────────────────────────────────
-  const [depositModal, setDepositModal]     = useState(false);
-  const [depositJournals, setDepositJournals] = useState([]);
-  const [depositForm, setDepositForm]       = useState({ invoice_type: "fixed", amount: "", percentage: "", date: "", journal_id: "", note: "" });
-  const [depositSaving, setDepositSaving]   = useState(false);
+  // ── Admin: queue for packing override (legacy / error recovery) ─────────────
   const [paymentOverrideConfirm, setPaymentOverrideConfirm] = useState(false);
   const [paymentOverrideSaving,  setPaymentOverrideSaving ] = useState(false);
 
-  const openDepositModal = async () => {
-    const today = new Date().toISOString().split("T")[0];
-    setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
-    try {
-      const [journalRes, orderRes] = await Promise.all([
-        api.get("/api/tickets/payment-journals"),
-        detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
-      ]);
-      const journals = journalRes.data.journals || [];
-      setDepositJournals(journals);
-      const orderTotal = orderRes?.data?.amount_total || 0;
-      setDepositForm(f => ({
-        ...f,
-        amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
-        journal_id: journals[0]?.id ? String(journals[0].id) : "",
-      }));
-    } catch { toast.error("Failed to load deposit details"); }
-    setDepositModal(true);
-  };
-
-  const registerDeposit = async () => {
-    const { invoice_type, amount, percentage, date, journal_id } = depositForm;
-    if (!date || !journal_id) return toast.error("Date and payment method are required");
-    if (invoice_type === "fixed" && !amount) return toast.error("Amount is required");
-    if (invoice_type === "percentage" && (!percentage || percentage <= 0 || percentage > 100))
-      return toast.error("Percentage must be between 1 and 100");
-    setDepositSaving(true);
-    const tid = detail.id;
-    const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined };
-    if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
-    if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
-    try {
-      await api.post(`/api/tickets/${tid}/register-deposit`, body);
-      toast.success("Deposit registered and invoice created in Odoo");
-      setDepositModal(false);
-      refreshDetail(tid);
-    } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
-    finally { setDepositSaving(false); }
-  };
-
-  // ── Admin payment override ────────────────────────────────────────────────
   const adminOverridePayment = async () => {
     setPaymentOverrideSaving(true);
     try {
       await api.post(`/api/tickets/${detail.id}/admin-override-payment`);
-      toast.success("Payment marked confirmed — order queued for packing");
+      toast.success("Order queued for packing");
       setPaymentOverrideConfirm(false);
       refreshDetail(detail.id);
     } catch (e) { toast.error(e.response?.data?.detail || "Override failed"); }
@@ -1720,12 +1675,6 @@ export default function SalesTickets() {
                           </button>
                         )}
 
-                        {!detail.is_sample && detail.order_id && detailOrder?.state === "sale" && !detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
-                          <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
-                            <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
-                          </button>
-                        )}
-
                         {!detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
                           <button onClick={confirmPayment} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-amber-500 shrink-0" />
@@ -1822,12 +1771,12 @@ export default function SalesTickets() {
                                 </FormGroup>
                                 <BtnPrimary onClick={advance} loading={saving} className="w-full justify-center">Save</BtnPrimary>
 
-                                {detailOrder?.state === "sale" && !detail.payment_confirmed_at && !detail.orders_ticket_ref && (
+                                {detailOrder?.state === "sale" && !detail.orders_ticket_ref && (
                                   <>
                                     <div className="border-t border-gray-100 pt-3 mt-1">
-                                      <p className="text-[10px] text-gray-400 mb-2">Use this only for orders where payment is confirmed in Odoo but the standard Finance deposit flow was not used (e.g. legacy or pre-portal orders).</p>
+                                      <p className="text-[10px] text-gray-400 mb-2">Use this only if the order was confirmed in Odoo but was not automatically queued for packing (e.g. legacy or pre-portal orders).</p>
                                       <BtnDanger onClick={() => setPaymentOverrideConfirm(true)} className="w-full justify-center">
-                                        Mark Payment Received
+                                        Queue for Packing
                                       </BtnDanger>
                                     </div>
                                   </>
@@ -2025,87 +1974,15 @@ export default function SalesTickets() {
           </Modal>
         )}
 
-        {/* Deposit modal overlays the detail page */}
-        {depositModal && (
-          <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
-            <p className="text-xs text-gray-500 mb-4">
-              Creates an invoice in Odoo and registers payment against it.
-            </p>
-            <FormGroup label="Invoice Type" required>
-              <div className="space-y-2">
-                {[
-                  { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount" },
-                  { value: "percentage",label: "Percentage",          desc: "Down payment as % of order total" },
-                  { value: "delivered", label: "Regular Invoice",     desc: "Full invoice for delivered quantities" },
-                ].map(opt => (
-                  <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${depositForm.invoice_type === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
-                    <input type="radio" name="invoice_type" value={opt.value} checked={depositForm.invoice_type === opt.value}
-                      onChange={e => setDepositForm(f => ({ ...f, invoice_type: e.target.value }))}
-                      className="mt-0.5 accent-bassani-600" />
-                    <span>
-                      <span className="text-sm font-semibold text-gray-900">{opt.label}</span>
-                      <span className="block text-xs text-gray-400">{opt.desc}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </FormGroup>
-            {depositForm.invoice_type === "fixed" && (
-              <FormGroup label="Amount (ZAR)" required>
-                <Input type="number" step="0.01" min="0.01"
-                  value={depositForm.amount}
-                  onChange={e => setDepositForm(f => ({ ...f, amount: e.target.value }))}
-                  placeholder="e.g. 15000.00" autoFocus />
-              </FormGroup>
-            )}
-            {depositForm.invoice_type === "percentage" && (
-              <FormGroup label="Percentage (%)" required>
-                <Input type="number" step="1" min="1" max="100"
-                  value={depositForm.percentage}
-                  onChange={e => setDepositForm(f => ({ ...f, percentage: e.target.value }))}
-                  placeholder="e.g. 50" />
-              </FormGroup>
-            )}
-            <FormGroup label="Payment Date" required>
-              <Input type="date" value={depositForm.date}
-                onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))} />
-            </FormGroup>
-            <FormGroup label="Payment Method" required>
-              <Select value={depositForm.journal_id}
-                onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}>
-                <option value="">— Select —</option>
-                {depositJournals.map(j => (
-                  <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
-                ))}
-              </Select>
-            </FormGroup>
-            <FormGroup label="Note">
-              <Input value={depositForm.note}
-                onChange={e => setDepositForm(f => ({ ...f, note: e.target.value }))}
-                placeholder="e.g. EFT received 2026-06-21" />
-            </FormGroup>
-            <div className="flex justify-end gap-2 mt-4">
-              <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerDeposit} disabled={depositSaving}>
-                {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                Register in Odoo
-              </BtnPrimary>
-            </div>
-          </Modal>
-        )}
-
-        {/* 8.24 — Reset to draft confirm */}
+        {/* Queue for Packing override — error recovery for confirmed orders not auto-queued */}
         {paymentOverrideConfirm && (
-          <Modal title="Mark Payment Received" onClose={() => setPaymentOverrideConfirm(false)}>
-            <p className="text-sm text-gray-600 mb-2">
-              This will mark payment as confirmed and immediately queue the order for packing — <strong>without</strong> going through the standard Finance deposit registration.
-            </p>
+          <Modal title="Queue for Packing" onClose={() => setPaymentOverrideConfirm(false)}>
             <p className="text-sm text-gray-600 mb-4">
-              Only use this for orders where payment has already been received and confirmed in Odoo separately (e.g. pre-portal or legacy orders). You are responsible for ensuring the financial record exists in Odoo.
+              This will manually queue the order for packing. Only use this for orders where the order was confirmed in Odoo but was not automatically added to the packing board (e.g. legacy or pre-portal orders, or after a system error).
             </p>
             <div className="flex justify-end gap-2">
               <BtnSecondary onClick={() => setPaymentOverrideConfirm(false)}>Cancel</BtnSecondary>
-              <BtnDanger onClick={adminOverridePayment} loading={paymentOverrideSaving} disabled={paymentOverrideSaving}>Confirm Override</BtnDanger>
+              <BtnDanger onClick={adminOverridePayment} loading={paymentOverrideSaving} disabled={paymentOverrideSaving}>Queue for Packing</BtnDanger>
             </div>
           </Modal>
         )}

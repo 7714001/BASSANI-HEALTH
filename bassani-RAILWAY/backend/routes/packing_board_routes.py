@@ -131,6 +131,8 @@ async def _sync_sales_ticket(order_id: str, outcome: str, reason: Optional[str] 
             updates["incomplete_reason"] = reason
         elif outcome == "partially_fulfilled":
             updates["status"] = "partially_fulfilled"
+        elif outcome == "ready_for_collection":
+            updates["status"] = "ready_for_collection"
         else:  # complete | cancelled — terminal exit
             updates["exit_status"] = outcome
         await col("tickets").update_one(
@@ -699,13 +701,58 @@ async def complete_entry(
         _bo_result = await col("packing_board").insert_one(_bo_entry)
         backorder_entry_id = str(_bo_result.inserted_id)
 
+    # ── Create and post Odoo invoice for delivered qty ────────────────────────
+    # Invoice is raised here (after QA + RP sign-off) so the customer can pay
+    # before or at collection. Sample tickets never produce an invoice.
+    invoice_id: Optional[int] = None
+    invoice_name: Optional[str] = None
+    invoice_warning: Optional[str] = None
+    if not entry.get("is_sample"):
+        try:
+            odoo = get_odoo_client()
+            sale_order_id = int(entry["order_id"])
+            wiz_id = odoo.create(
+                "sale.advance.payment.inv",
+                {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+            )
+            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
+            inv_rows = odoo.search_read(
+                "account.move",
+                [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
+                ["id", "name"],
+                order="id desc",
+                limit=1,
+            )
+            if inv_rows:
+                invoice_id = inv_rows[0]["id"]
+                invoice_name = inv_rows[0]["name"]
+                odoo.execute("account.move", "action_post", [invoice_id])
+        except Exception as e:
+            invoice_warning = f"Invoice creation failed: {e}"
+
+    # Stamp invoice_id on the linked sales ticket so Finance can register payment
+    if invoice_id:
+        try:
+            _st = await col("tickets").find_one(
+                {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None}
+            )
+            if _st:
+                await col("tickets").update_one({"_id": _st["_id"]}, {"$set": {"invoice_id": invoice_id}})
+        except Exception:
+            pass
+
+    _complete_set: dict = {
+        "status": "complete",
+        "completed_at": now,
+        "delivery_validated": delivery_result["success"],
+    }
+    if invoice_id:
+        _complete_set["inv_num"] = invoice_name or ""
+        _complete_set["invoice_id"] = invoice_id
+
     updated = await col("packing_board").find_one_and_update(
         {"order_id": body.order_id, "is_backorder": {"$ne": True}},
-        {"$set": {
-            "status": "complete",
-            "completed_at": now,
-            "delivery_validated": delivery_result["success"],
-        }},
+        {"$set": _complete_set},
         return_document=True,
     )
     if updated:
@@ -720,7 +767,7 @@ async def complete_entry(
         user=current_user,
         detail=delivery_result,
     )
-    await _sync_sales_ticket(body.order_id, "partially_fulfilled" if is_partial else "complete")
+    await _sync_sales_ticket(body.order_id, "partially_fulfilled" if is_partial else "ready_for_collection")
 
     _routing = await get_email_routing()
 
@@ -784,15 +831,25 @@ async def complete_entry(
                 supervisor_emails=_sup_emails,
             )
 
-    response: dict = {"success": True, "delivery_validated": delivery_result["success"]}
+    response: dict = {
+        "success": True,
+        "delivery_validated": delivery_result["success"],
+        "invoice_id": invoice_id,
+        "invoice_name": invoice_name,
+    }
     if is_partial:
         response["is_partial"] = True
         response["backorder_entry_id"] = backorder_entry_id
+    warnings: list = []
     if not delivery_result["success"]:
-        response["warning"] = (
+        warnings.append(
             delivery_result.get("error")
             or "Delivery could not be validated in Odoo. Stock levels may not reflect this completion."
         )
+    if invoice_warning:
+        warnings.append(invoice_warning)
+    if warnings:
+        response["warning"] = " | ".join(warnings)
     return response
 
 
@@ -822,37 +879,9 @@ async def mark_collected(
     now = datetime.now(timezone.utc)
     actor_name = current_user.get("name") or current_user.get("username", "")
 
-    # ── Create Odoo invoice for delivered qty ─────────────────────────────────
-    invoice_id: Optional[int] = None
-    invoice_name: Optional[str] = None
-    invoice_warning: Optional[str] = None
-    if entry.get("has_pending_invoice"):
-        try:
-            odoo = get_odoo_client()
-            sale_order_id = int(entry["order_id"])
-            wiz_id = odoo.create(
-                "sale.advance.payment.inv",
-                {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
-            )
-            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
-            inv_rows = odoo.search_read(
-                "account.move",
-                [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
-                ["id", "name"],
-                order="id desc",
-                limit=1,
-            )
-            if inv_rows:
-                invoice_id = inv_rows[0]["id"]
-                invoice_name = inv_rows[0]["name"]
-        except Exception as e:
-            invoice_warning = f"Invoice creation failed: {e}"
-
     # ── Mark entry collected ──────────────────────────────────────────────────
+    # Invoice was already created at mark_complete (after QA + RP sign-off).
     update_fields: dict = {"collected_at": now, "collected_by": actor_name}
-    if invoice_id:
-        update_fields["invoice_id"] = invoice_id
-        update_fields["invoice_name"] = invoice_name
 
     await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": update_fields})
     await audit_log(
@@ -861,7 +890,7 @@ async def mark_collected(
         body.order_id,
         entity_label=body.order_id,
         user=current_user,
-        detail={"picking_id": entry.get("odoo_picking_id"), "invoice_id": invoice_id},
+        detail={"picking_id": entry.get("odoo_picking_id")},
     )
 
     # ── Check if all pickings for this order are now collected ────────────────
@@ -872,16 +901,11 @@ async def mark_collected(
     if all_collected:
         await _sync_sales_ticket(body.order_id, "complete")
 
-    response: dict = {
+    return {
         "success": True,
         "collected_at": now.isoformat(),
-        "invoice_id": invoice_id,
-        "invoice_name": invoice_name,
         "order_complete": all_collected,
     }
-    if invoice_warning:
-        response["warning"] = invoice_warning
-    return response
 
 
 @router.get("/backorders/check-stock")

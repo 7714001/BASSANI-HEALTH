@@ -100,7 +100,7 @@ Go to **Users** in the sidebar. Create accounts for every person who will use th
 | `admin` | Full portal access with configurable permissions | Various |
 | `sales` | Sales Tickets only — direct inquiries and quote building | Merveille |
 | `orders_clerk` | Orders Tickets only — packing pipeline management | Tshidi |
-| `finance` | Register deposits and confirm payments on tickets | Kashi, Ragini |
+| `finance` | Register invoice payments on tickets at Ready for Collection stage | Kashi, Ragini |
 | `qa_manager` | Approve orders from a QA perspective before completion | Cullen Grant |
 | `responsible_pharmacist` | Approve orders from an RP perspective before completion | Rookshanna Hussain |
 | `warehouse_supervisor` | Packing floor — assign packers, manage queue, see full board | Warehouse supervisor |
@@ -486,22 +486,21 @@ Each step is handled by a different team member, and the portal enforces that no
 1. Merveille creates a **Sales Ticket** (Direct Inquiry) and builds a quote in the portal — no Odoo needed
 2. The quote is emailed to the pharmacy directly from the ticket
 3. The pharmacy confirms — Merveille advances the ticket to Sale Order stage
-4. Finance (Kashi or Ragini) registers the 50% deposit — no Odoo needed. The deposit invoice is created and reconciled in Odoo automatically
-5. Merveille confirms the order from the ticket — Odoo creates a confirmed sale order and the packing queue is updated automatically
-6. The full balance invoice is available in Odoo immediately after confirmation
-7. Once the customer pays the balance, Finance registers the balance payment against the full invoice directly from the ticket
-8. Tshidi sees the order in her Orders Tickets and marks it as Packing
-9. The warehouse packs the order — the packer ticks items on their handheld
-10. When packing is done, Tshidi marks it Ready
-11. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
-12. Tshidi marks it Complete — Merveille's Sales Ticket automatically updates to show Complete
+4. Merveille confirms the order from the ticket — Odoo creates a confirmed sale order and the packing queue is updated automatically (no deposit step)
+5. Tshidi sees the order in her Orders Tickets and marks it as Packing
+6. The warehouse packs the order — the packer ticks items on their handheld
+7. When packing is done, Tshidi marks it Ready
+8. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
+9. Tshidi marks it Complete — the invoice is created in Odoo automatically and the ticket advances to Ready for Collection
+10. Finance (Kashi or Ragini) sees the invoice on the ticket and registers payment when it arrives — no Odoo needed
+11. Customer collects their order — Tshidi marks it Collected — Merveille's Sales Ticket automatically updates to Complete
 
 **Example: A reseller places an order online.**
 
 1. Reseller logs in, browses the catalogue, and places an order — a Sales Ticket is created automatically
 2. The ticket is unassigned — Merveille sees it in her queue and claims it
-3. She confirms the order from the ticket (no deposit required for resellers on credit terms)
-4. The rest of the flow is identical: packing → QA/RP → complete
+3. She confirms the order from the ticket — it goes straight to the packing board
+4. The rest of the flow is identical: packing → QA/RP → Mark Complete (invoice created) → Finance confirms payment → customer collects
 
 ---
 
@@ -595,7 +594,7 @@ If the customer wants changes before confirming:
 
 ### Confirming an Order
 
-Once the customer confirms and (if required) finance has registered a deposit:
+Once the customer confirms their order:
 
 1. Click **Confirm Order** in the right sidebar
 2. If the customer is over their credit limit, you will be prompted to confirm the override
@@ -689,7 +688,7 @@ Once a customer is matched:
 Once created:
 - The green **View Ticket** button appears in the thread header — click it to go directly to the ticket
 - The green **Ticket** pill appears in the thread list row — click it to go to the ticket without opening the thread
-- All order lifecycle actions (quote, deposit, packing, payment confirmation) happen in the ticket from this point
+- All order lifecycle actions (quote building, confirmation, packing, payment confirmation) happen in the ticket from this point
 
 You can only create one ticket per thread.
 
@@ -924,37 +923,22 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 **Role in system:** `finance` (permissions: `tickets.finance_confirm`, `finance.bank_reconciliation`)  
 **Access:** Sales Tickets, Bank Reconciliation
 
-### Registering a Deposit
+### When Finance Acts
 
-For direct inquiry customers who require a 50% deposit before their order is confirmed:
+Finance is involved at one point in the order pipeline: after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the invoice in Odoo. The ticket advances to **Ready for Collection**.
 
-1. Open the Sales Ticket (Merveille will tell you which one, or you can search by customer name)
-2. Click **Register Deposit** in the right sidebar
-3. Enter the deposit amount (pre-filled at 50% of the order total — adjust if needed)
-4. Select the payment date
-5. Select the payment journal (which bank account the payment came in through)
-6. Click **Register Deposit in Odoo**
+At that point, you will see the invoice on the ticket and can register payment once the customer pays.
 
-The system creates a down payment invoice in Odoo and registers the payment against it. The ticket records who registered the deposit and when.
+### Registering Payment
 
-> **This is the only step Finance needs to do before the order is confirmed.** Merveille handles the confirmation itself.
-
-### Registering the Balance Payment
-
-Once an order is confirmed and the full invoice has been created in Odoo, the customer pays the outstanding balance. Register this directly from the portal:
-
-1. Open the Sales Ticket
+1. Open the Sales Ticket (it will be in **Ready for Collection** status)
 2. Click **Register Balance Payment** in the right sidebar
 3. The outstanding balance is pre-filled from the live Odoo invoice — verify the amount
 4. Select the payment journal (which bank account the funds arrived in)
 5. Select the payment date
 6. Click **Register Payment in Odoo**
 
-The payment is applied to the full sale invoice in Odoo immediately. The ticket records who registered it and when.
-
-> **This is separate from the deposit.** The deposit (if applicable) is registered before order confirmation against a down payment invoice. The balance payment is registered after confirmation against the full invoice.
-
-> If the customer is on credit terms with no deposit requirement, use this action to register the single full payment when it arrives.
+The payment is applied to the invoice in Odoo immediately. The ticket records who registered it and when.
 
 ### Confirming Payment Received
 

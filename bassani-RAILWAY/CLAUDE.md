@@ -115,7 +115,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign — TQA removed; CIF+CIPC at registration; admin generates docs for preview, then deliberately sends signing link; customer signs NDA+SOA at /sign/:token; countersign notification to Kashi/Dean; welcome pack sent by Dean; approval gates on all 4 docs + countersigns. 8.38 complete: Samples Account — `samples_account` flag on `customer_metadata`, auto-zero pricing, no invoice pipeline, recipient tracking. Staff account creation outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign. 8.38 complete: Samples Account. 8.39 complete: pipeline redesign — deposit step removed, invoice now raised at mark_complete (after QA+RP sign-off). Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
@@ -154,10 +154,11 @@ See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all su
 - **Onboarding Inbox:** Separate mailbox from the Sales Inbox, gated by `onboarding.inbox` permission. Configured under Settings > Connected Mailboxes > Onboarding Mailbox tab. Tracks document progress per thread. "Save to Application" maps email attachments to document slots on a reseller application.
 
 **Order pipeline:**
-- Reseller places order → Sales ticket created → Orders clerk confirms packing → QA approval → RP approval → Finance confirms payment → Complete.
-- Finance confirmation checks Odoo's real invoice payment_state — it is not a disconnected checkbox.
+- Reseller places order → Sales ticket created → Orders clerk confirms packing → QA approval → RP approval → Invoice created → Finance confirms payment → Complete.
+- **Invoice timing:** The invoice is created and posted in Odoo at `mark_complete` on the packing board (after QA + RP have both signed off). This is the "ready for collection" point — the customer can pay and collect. Finance confirmation checks Odoo's real invoice `payment_state` — it is not a disconnected checkbox.
+- There is no deposit step. Orders go directly to the packing board on confirmation with no upfront invoice.
 - **Partial fulfilment / backorders:** `GET /api/orders/{order_id}/stock-check` returns `is_partial`, `lines` (ships now vs backordered), `invoice_policy_block`, and `invoice_policy_blocked_products`. The stock-check modal shows the split before the user confirms. `invoice_policy_block = true` when any product has `invoice_policy = 'order'` in Odoo — this blocks the "Confirm with Backorder" button. All Bassani products must have `invoice_policy = 'delivery'` set in Odoo (Tristan instructed 2026-07-09). Staff see the Odoo fix path; resellers are told to contact Bassani.
-- After packing completes a partial order: Orders Clerk clicks "Mark as Collected" (creates partial Odoo invoice for delivered qty only). Backorder entries sit in `waiting_stock` state until Phase 13 production flow assigns stock.
+- For partial orders: each delivery goes through its own packing → QA/RP → mark_complete → invoice cycle. Backorder entries sit in `waiting_stock` state until Phase 13 production flow assigns stock.
 
 **Section 21 authorisation:**
 - Every order for a named patient requires a structured Section 21 Authorisation Letter (medicine-specific, quantity-specific). The current implementation stores a single s21script string — this is a known gap flagged for Phase 8 hardening.

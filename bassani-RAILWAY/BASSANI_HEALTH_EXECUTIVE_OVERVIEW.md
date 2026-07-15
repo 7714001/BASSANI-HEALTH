@@ -32,7 +32,7 @@ The result is a complete, unbroken digital record from the moment a plant is see
 Before the portal, Bassani's commercial operations ran on a combination of Odoo (the financial system), email threads, WhatsApp messages, and verbal handoffs. The practical consequences:
 
 - **Resellers had no self-service access.** Placing an order required emailing Bassani. Checking order status required calling someone. There was no single source of truth for what had been ordered, confirmed, or dispatched.
-- **The sales and fulfilment pipeline existed only in people's heads.** There was no formal record of who received a quote, who confirmed it, whether a deposit had been received, or where an order was in the packing process.
+- **The sales and fulfilment pipeline existed only in people's heads.** There was no formal record of who received a quote, who confirmed it, or where an order was in the packing process.
 - **Finance confirmed payments verbally.** Whether a customer had paid before an order was released was tracked informally, creating risk.
 - **QA and RP approvals happened outside the system.** There was no digital record of who signed off on what and when — a significant compliance gap.
 - **Audit logs identified "admin", not individuals.** When a record changed, there was no way to know which staff member made the change.
@@ -59,9 +59,9 @@ Every order — whether placed by a reseller or initiated by a direct customer i
 
 1. **Open** — a customer inquiry arrives (by email or directly in the system)
 2. **Quote** — the sales rep builds a formal quotation in the system, which is automatically sent to the customer via the company email address
-3. **Sale Confirmed** — the customer accepts; the order is formally created in the financial system
-4. **Deposit Registered** — if a deposit is required, finance registers it through the portal, which verifies against the actual financial record
-5. **Confirmed WIP** — the order moves to the warehouse
+3. **Sale Confirmed** — the customer accepts; the order is formally created in the financial system and immediately queued for packing
+4. **In Fulfilment** — the order moves to the warehouse
+5. **Ready for Collection** — after QA and RP sign-off, the invoice is automatically created and the customer is notified
 
 The sales team can see every ticket in their queue, claim unassigned orders, and see the full history of every action taken on every order.
 
@@ -294,7 +294,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
-| Sales ticket pipeline — inquiry → quote → deposit → confirm | Live |
+| Sales ticket pipeline — inquiry → quote → confirm → packing → QA/RP → invoice → collect | Live |
 | Email inbox integration — sales@ and orders@ mailboxes connected to the portal; documents saveable directly to onboarding applications from inbox | Live |
 | Packing board — real-time warehouse floor with QA/RP approval | Live |
 | Finance — invoice management, payment confirmation, credit limit enforcement | Live |

@@ -1631,6 +1631,50 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 ---
 
+#### 8.39 — Pipeline Redesign: Invoice at Collection, Remove Deposit Step — Complete 2026-07-15
+
+**Goal:** Remove the 50% deposit step from the sales/orders ticket pipeline. Orders go straight to the packing board on confirmation, the invoice is raised when the order is ready for collection (after QA + RP sign-off), and the customer pays and collects. This reflects how Bassani actually operates — there is no upfront deposit requirement.
+
+**Old pipeline:** Confirm order → Invoice created immediately → Finance registers deposit → Packing board queued → QA/RP → Mark Complete → Mark Collected
+
+**New pipeline:** Confirm order → Packing board queued immediately → Packing → QA/RP approve → Mark Complete → **Invoice created and posted in Odoo** → Ticket advances to `ready_for_collection` → Finance confirms payment → Customer collects → Mark Collected → Complete
+
+For backorders: each delivery goes through its own packing → QA/RP → Mark Complete → invoice cycle. Customer pays per delivery and collects.
+
+**Key decisions:**
+- `"invoice"` stage removed from `STATUSES` — `sale_order` advances directly to `confirmed_wip` on order confirmation
+- Invoice created via `sale.advance.payment.inv` wizard at `mark_complete` (after both QA + RP have signed off), not at `confirm_order`
+- Invoice posted (not draft) immediately at `mark_complete` — customer can pay on receipt of the notification
+- `invoice_id` stamped on the linked Sales ticket at `mark_complete` time so Finance sees it
+- Sample tickets continue to produce no invoice at any stage
+- `has_pending_invoice` flag on packing board entries is retained — still used to detect pre-confirmation stock shortfalls (partial orders) and drive backorder creation logic
+
+**What was removed:**
+- `register-deposit` endpoint (`POST /api/tickets/{id}/register-deposit`) — deleted
+- `list_payment_journals` endpoint (`GET /api/tickets/payment-journals`) — deleted
+- `TicketDepositRegister` Pydantic model — deleted
+- "Register Deposit" button and modal in `SalesTickets.js` — deleted
+- Deposit state variables in `SalesTickets.js` (`depositModal`, `depositJournals`, `depositForm`, `depositSaving`) — deleted
+
+**What was built:**
+- [x] `ticket_routes.py` — `STATUSES` list: removed `"invoice"` stage; auto-sync `_s2s` map now routes Odoo `sale/done` state directly to `confirmed_wip` (not via `sale_order` → `invoice` → `confirmed_wip`); auto-sync packing board creation triggered on `live_state in ("sale", "done")` (not gated on deposit payment state)
+- [x] `order_routes.py` — `confirm_order`: Step 2 (invoice creation) removed entirely; packing board doc now includes `is_sample` flag; `inv_num` starts empty (populated later at `mark_complete`); audit log and response no longer include `invoice_id`/`invoice_name`
+- [x] `order_routes.py` — `_passport_status`: removed `"invoice"` status entry; `sale_order` label updated to "Confirmed — Awaiting Packing"; `confirmed_wip` label updated to "In Fulfilment"
+- [x] `packing_board_routes.py` — `_sync_sales_ticket`: added `"ready_for_collection"` outcome case
+- [x] `packing_board_routes.py` — `complete_entry`: invoice created and posted in Odoo after delivery validation; `invoice_id` + `inv_num` stamped on packing board entry; `invoice_id` stamped on linked Sales ticket; `_sync_sales_ticket` now called with `"ready_for_collection"` (not `"complete"`) for full deliveries
+- [x] `packing_board_routes.py` — `mark_collected`: invoice creation block removed; audit log no longer includes `invoice_id`; response simplified
+- [x] `SalesTickets.js` — removed `"invoice"` from `STATUS_LABEL`, `STATUS_COLOR`, `FORWARD_STATUSES`, `PRE_CONFIRM`; `sale_order` label updated to "Confirmed"; removed all deposit state/functions/modal; "Queue for Packing" override button condition updated to `!detail.orders_ticket_ref` only (no longer requires `!payment_confirmed_at`)
+
+**Definition of Done:**
+- Sales staff confirms a quote → packing board entry created immediately, no invoice, ticket at `confirmed_wip`
+- Orders Clerk marks packing → QA approves → RP approves → Orders Clerk marks complete → invoice created and posted in Odoo → `inv_num` appears on packing board card → ticket advances to `ready_for_collection`
+- Finance sees the ticket at `ready_for_collection` with `invoice_id` set → can register balance payment
+- Customer pays → Finance confirms → Orders Clerk marks collected → ticket exits as `complete`
+- No "Register Deposit" button anywhere in the portal
+- Sample tickets: no invoice at any stage; packing board completes without invoice creation
+
+---
+
 #### 8.31 — Batch/Lot Numbers on Print Documents — Complete 2026-07-11
 
 **Goal:** Every A4 document the portal generates (order view, packing slip, invoice) shows the batch/lot number(s) that were physically dispatched with that order. Required for medicinal cannabis compliance traceability — the dispensed batch must be identifiable from the paper document.

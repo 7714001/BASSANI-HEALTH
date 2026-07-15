@@ -646,12 +646,11 @@ def _passport_status(order: dict, ticket: dict | None, invoice: dict | None, del
 
     has_backorder = any(d.get("is_backorder") for d in deliveries)
     _MAP = {
-        "open":                 ("Inquiry Open",          "blue",   "Sales team is working on this inquiry."),
-        "quote":                ("Building Quote",        "blue",   "Quotation is being prepared."),
-        "sale_order":           ("Awaiting Deposit",      "amber",  "Order confirmed — waiting for deposit payment."),
-        "invoice":              ("Deposit Invoice Raised","amber",  "Invoice raised — awaiting payment."),
-        "confirmed_wip":        ("Confirmed — In Progress","green", "Payment received. Order is in fulfilment."),
-        "ready_for_collection": ("Ready for Collection",  "green",  "Order packed and approved — ready for customer collection."),
+        "open":                 ("Inquiry Open",             "blue",  "Sales team is working on this inquiry."),
+        "quote":                ("Building Quote",           "blue",  "Quotation is being prepared."),
+        "sale_order":           ("Confirmed — Awaiting Packing", "blue", "Order confirmed. Packing will begin shortly."),
+        "confirmed_wip":        ("In Fulfilment",            "green", "Order is on the packing floor."),
+        "ready_for_collection": ("Ready for Collection",     "green", "Order packed and approved — invoice issued, awaiting customer collection."),
         "incomplete":           ("Marked Incomplete",     "orange", ticket.get("incomplete_reason") or "Order was marked incomplete."),
         "queued":               ("Queued for Packing",   "blue",   "Sent to packing board — awaiting packer assignment."),
         "packing":              ("Being Packed",          "blue",   "Packing in progress."),
@@ -1360,69 +1359,10 @@ async def confirm_order(
         logger.warning("confirm_shortfall_check_failed",
                        extra={"order_id": order_id, "error": str(_se)})
 
-    # ── Step 2: Customer invoice — create and post ─────────────────────────────
-    # Skipped for partial orders and sample tickets. Sample tickets never produce
-    # an invoice — stock is moved at zero cost for internal sampling purposes.
+    # Invoice creation is deferred to mark_complete on the packing board (after QA + RP
+    # sign-off). This is when the order is "ready for collection" and the customer is
+    # expected to pay before collecting. Sample tickets never produce an invoice.
     _is_sample_ticket = bool(_sales_ticket.get("is_sample")) if _sales_ticket else False
-    invoice_id: Optional[int] = None
-    invoice_name: Optional[str] = None
-    if not is_partial and not _is_sample_ticket:
-        try:
-            # Use the advance payment wizard — the only public XML-RPC route for
-            # creating invoices from a sale order (_create_invoices is private).
-            ctx = {
-                "active_ids": [order_id], "active_model": "sale.order", "active_id": order_id,
-                **company_context(order_company_id),
-            }
-            wizard_id = odoo_call(
-                "sale.advance.payment.inv", "create",
-                [{"advance_payment_method": "delivered"}],
-                {"context": ctx},
-            )
-        except Exception as e:
-            warnings.append(
-                f"Invoice creation failed: {str(e)} — "
-                "create the customer invoice manually in Odoo."
-            )
-            wizard_id = None
-
-        if wizard_id is not None:
-            try:
-                odoo_call(
-                    "sale.advance.payment.inv", "create_invoices",
-                    [[wizard_id]],
-                    {"context": ctx},
-                )
-            except Exception as e:
-                logger.warning("confirm_create_invoices_response_error",
-                               extra={"order_id": order_id, "error": str(e)})
-
-            try:
-                refreshed = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
-                inv_ids = refreshed[0].get("invoice_ids", []) if refreshed else []
-                invoice_id = inv_ids[0] if inv_ids else None
-
-                if invoice_id:
-                    odoo.execute("account.move", "action_post", [invoice_id])
-                    inv_rows = odoo.read("account.move", [invoice_id], fields=["name"])
-                    invoice_name = inv_rows[0]["name"] if inv_rows else None
-                else:
-                    warnings.append(
-                        "Customer invoice could not be created automatically — "
-                        "please create it manually from the sale order in Odoo."
-                    )
-            except Exception as e:
-                warnings.append(
-                    f"Invoice post/read failed: {str(e)} — "
-                    "check the invoice in Odoo."
-                )
-    elif _is_sample_ticket:
-        pass  # Sample orders intentionally have no invoice
-    else:
-        warnings.append(
-            "Invoice deferred: this order has items on backorder. "
-            "An invoice will be created for each delivery at collection time."
-        )
 
     # ── Step 3: Packing board (non-blocking) ─────────────────────────────────
     try:
@@ -1485,7 +1425,8 @@ async def confirm_order(
                     "customer_city": "",
                     "items": items,
                     "total_units": int(sum(i["qty_ordered"] for i in items)),
-                    "inv_num": invoice_name or "",
+                    "inv_num": "",
+                    "is_sample": _is_sample_ticket,
                     "dn_num": picking["name"],
                     "ps_num": order_data["name"],
                     "notes": order_data.get("note") or "",
@@ -1565,7 +1506,7 @@ async def confirm_order(
     await audit_log("order.confirm", "order", order_id,
                     entity_label=order_data.get("name", "") if order_data else "",
                     user=current_user,
-                    detail={"invoice_id": invoice_id, "invoice_name": invoice_name, "warnings": warnings},
+                    detail={"warnings": warnings},
                     reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
 
     _order_ref_str = pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}"
@@ -1616,8 +1557,6 @@ async def confirm_order(
 
     return {
         "success": True,
-        "invoice_id": invoice_id,
-        "invoice_name": invoice_name,
         "warnings": warnings,
     }
 
