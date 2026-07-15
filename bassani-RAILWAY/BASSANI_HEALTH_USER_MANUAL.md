@@ -1020,11 +1020,20 @@ The display refreshes automatically every 30 seconds.
 ### Reading the Monitor
 
 **KPI strip (top of screen):**
-- **Overdue** — orders past the 72-hour fulfilment deadline. Pulses red when non-zero.
-- **At Risk** — orders between 48 and 72 hours old. Focus here next.
-- **In Pipeline** — total active orders across packing, QA, RP, and awaiting payment.
-- **Completed Today** — orders marked complete since midnight.
-- **Open Quotes**, **Avg Completion**, **Pipeline Value**, **Revenue Today**, **MTD Revenue**, **Units Today** — secondary metrics.
+
+Row 1 — headline health indicators:
+- **Overdue** — orders past their deadline across all stages. Pulses red when non-zero. Requires immediate action.
+- **At Risk** — orders approaching the 72-hour deadline. Address these before they become overdue.
+- **Compliance Hold** — total orders currently in QA Review or RP Review. Elevated counts here mean compliance sign-off is the bottleneck.
+- **Completed Today** — orders fulfilled since midnight.
+
+Row 2 — live pipeline breakdown:
+- **Open Inquiries** — unconfirmed tickets (inquiry, quote, or confirmed but not yet on the packing board).
+- **In Packing** — orders actively being picked and packed.
+- **QA Pending** — packed orders awaiting QA sign-off.
+- **RP Pending** — QA-approved orders awaiting RP sign-off.
+- **Awaiting Collection** — invoice raised, customer has not yet collected.
+- **Oldest Active** — age of the oldest live order across all stages. Green = under 48h, orange = 48–72h, red = overdue.
 
 **Pipeline columns (left to right):**
 
@@ -1034,7 +1043,7 @@ The display refreshes automatically every 30 seconds.
 | Packing | Confirmed orders being packed (queued + in packing) |
 | QA Review | Orders packed and awaiting QA sign-off |
 | RP Review | QA approved — awaiting RP sign-off |
-| Awaiting Payment | Invoice issued — customer has not yet paid |
+| Ready to Collect | Invoice raised — customer has not yet collected |
 
 Within each column, orders are sorted **oldest first** (most urgent at top).
 

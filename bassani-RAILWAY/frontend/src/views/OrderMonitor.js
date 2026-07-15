@@ -11,7 +11,7 @@ const COLUMNS = [
   { key: "packing",    label: "Packing",           abbr: "PACKING",  accent: "#8b5cf6" },
   { key: "qa",         label: "QA Review",         abbr: "QA",       accent: "#06b6d4" },
   { key: "rp",         label: "RP Review",         abbr: "RP",       accent: "#14b8a6" },
-  { key: "collection", label: "Awaiting Payment",  abbr: "PAYMENT",  accent: "#f59e0b" },
+  { key: "collection", label: "Ready to Collect",   abbr: "COLLECT",  accent: "#f59e0b" },
 ];
 
 const TIER = {
@@ -350,8 +350,6 @@ export default function OrderMonitor() {
     ? lastUpdated.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—";
 
-  const totalCards = COLUMNS.reduce((n, c) => n + (columns[c.key]?.length || 0), 0);
-
   return (
     <div style={{
       minHeight: "100vh",
@@ -407,44 +405,53 @@ export default function OrderMonitor() {
 
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
       <div style={{ padding: "16px 20px 0", flexShrink: 0 }}>
-        {/* Row 1: Big operational KPIs */}
+        {/* Row 1: Pipeline health */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 10 }}>
           <KpiCard
             label="Overdue"
             value={kpis.overdue}
-            sub={kpis.overdue > 0 ? "past 72h limit" : "All on time"}
+            sub={kpis.overdue > 0 ? "Orders past deadline — act now" : "All orders on time"}
             color="#ef4444"
             pulse={kpis.overdue > 0}
           />
           <KpiCard
             label="At Risk"
             value={kpis.at_risk}
-            sub="48–72h window"
+            sub="Approaching 72h deadline"
             color="#f97316"
-            pulse={false}
           />
           <KpiCard
-            label="In Pipeline"
-            value={kpis.in_pipeline}
-            sub={`${totalCards} total across all stages`}
-            color="#6366f1"
+            label="Compliance Hold"
+            value={kpis.compliance_hold}
+            sub="Waiting on QA or RP sign-off"
+            color="#8b5cf6"
+            pulse={kpis.compliance_hold > 3}
           />
           <KpiCard
             label="Completed Today"
             value={kpis.completed_today}
-            sub={kpis.units_today ? `${kpis.units_today.toLocaleString()} units fulfilled` : undefined}
+            sub="Orders fulfilled today"
             color="#22c55e"
           />
         </div>
 
-        {/* Row 2: Secondary KPIs */}
+        {/* Row 2: Stage breakdown */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 16 }}>
-          <KpiSmall label="Open Quotes"     value={kpis.open_quotes}                                   color="#6366f1" />
-          <KpiSmall label="Avg Completion"  value={fmtHours(kpis.avg_time_hours)}                      color="#94a3b8" />
-          <KpiSmall label="Pipeline Value"  value={kpis.pipeline_value  > 0 ? fmtR(kpis.pipeline_value)  : "—"} color="#f59e0b" />
-          <KpiSmall label="Revenue Today"   value={kpis.revenue_today   > 0 ? fmtR(kpis.revenue_today)   : "—"} color="#22c55e" />
-          <KpiSmall label="Month to Date"   value={kpis.mtd_revenue     > 0 ? fmtR(kpis.mtd_revenue)     : "—"} color="#14b8a6" />
-          <KpiSmall label="Units Today"     value={kpis.units_today ? kpis.units_today.toLocaleString() : "0"} color="#94a3b8" />
+          <KpiSmall label="Open Inquiries"      value={kpis.open_quotes}         color="#6366f1" />
+          <KpiSmall label="In Packing"          value={kpis.in_packing}          color="#8b5cf6" />
+          <KpiSmall label="QA Pending"          value={kpis.qa_pending}          color={kpis.qa_pending  > 0 ? "#f59e0b" : "#475569"} />
+          <KpiSmall label="RP Pending"          value={kpis.rp_pending}          color={kpis.rp_pending  > 0 ? "#f59e0b" : "#475569"} />
+          <KpiSmall label="Awaiting Collection" value={kpis.awaiting_collection} color="#14b8a6" />
+          <KpiSmall
+            label="Oldest Active"
+            value={fmtHours(kpis.oldest_hours)}
+            color={
+              !kpis.oldest_hours ? "#475569"
+              : kpis.oldest_hours > 72 ? "#ef4444"
+              : kpis.oldest_hours > 48 ? "#f97316"
+              : "#22c55e"
+            }
+          />
         </div>
       </div>
 

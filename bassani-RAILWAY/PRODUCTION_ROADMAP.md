@@ -4133,8 +4133,9 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `frontend/src/views/OrderMonitor.js` — full-screen dark theme TV display
   - Token read from `?token=` URL param; validated on mount against `GET /api/monitor/validate`
   - 30-second polling of `GET /api/monitor/data`; 1-second `setInterval` for live countdown badges
-  - KPI strip: 4 large cards (overdue/at_risk/in_pipeline/completed_today) + 6 small cards (open_quotes/avg_time/pipeline_value/revenue_today/mtd_revenue/units_today)
-  - 5 Kanban columns: Open Quotes (indigo) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Awaiting Payment (amber)
+  - KPI strip Row 1: Overdue / At Risk / Compliance Hold / Completed Today (all 5 columns counted, no financials)
+  - KPI strip Row 2: Open Inquiries / In Packing / QA Pending / RP Pending / Awaiting Collection / Oldest Active
+  - 5 Kanban columns: Open Quotes (indigo) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Ready to Collect (amber)
   - Cards sorted oldest-first within each column (most urgent at top)
   - Age tier colour coding: ok=green, warning=amber, urgent=orange, overdue=red+animate-pulse
   - RESELLER and SAMPLE pill tags on cards; reseller name in card footer

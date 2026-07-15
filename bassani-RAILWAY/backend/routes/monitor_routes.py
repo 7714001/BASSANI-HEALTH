@@ -192,7 +192,6 @@ async def get_monitor_data(token: str = Query("")):
 
     now         = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     # ── Queries (all MongoDB — no Odoo call) ──────────────────────────────────
     board_active = await col("packing_board").find(
@@ -200,15 +199,9 @@ async def get_monitor_data(token: str = Query("")):
         NO_ID,
     ).to_list(length=1000)
 
-    board_done_today = await col("packing_board").find(
-        {"status": "complete", "completed_at": {"$gte": today_start}},
-        NO_ID,
-    ).to_list(length=1000)
-
-    board_done_month = await col("packing_board").find(
-        {"status": "complete", "completed_at": {"$gte": month_start}},
-        {"order_value": 1, "_id": 0},
-    ).to_list(length=5000)
+    completed_today = await col("packing_board").count_documents(
+        {"status": "complete", "completed_at": {"$gte": today_start}}
+    )
 
     # open/quote = unconfirmed; sale_order = confirmed but not yet on packing board
     open_quotes = await col("tickets").find(
@@ -276,38 +269,23 @@ async def get_monitor_data(token: str = Query("")):
         lst.sort(key=lambda x: x["hours_elapsed"], reverse=True)
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
-    pipeline_cards = packing_col + qa_col + rp_col
-    overdue_count  = sum(1 for c in pipeline_cards if c["age_tier"] == "overdue")
-    at_risk_count  = sum(1 for c in pipeline_cards if c["age_tier"] == "urgent")
-
-    units_today = sum(e.get("total_units", 0) for e in board_done_today)
-
-    times = []
-    for e in board_done_today:
-        q, c = e.get("queued_at"), e.get("completed_at")
-        if q and c:
-            times.append((_utc(c) - _utc(q)).total_seconds() / 3600)
-    avg_time = round(sum(times) / len(times), 1) if times else None
-
-    pipeline_value = sum(
-        (c.get("order_value") or 0)
-        for c in pipeline_cards + collection_col
-    )
-    revenue_today = sum((e.get("order_value") or 0) for e in board_done_today)
-    mtd_revenue   = sum((e.get("order_value") or 0) for e in board_done_month)
+    all_active    = quotes_col + packing_col + qa_col + rp_col + collection_col
+    overdue_count = sum(1 for c in all_active if c["age_tier"] == "overdue")
+    at_risk_count = sum(1 for c in all_active if c["age_tier"] == "urgent")
+    oldest_hours  = max((c["hours_elapsed"] for c in all_active), default=None)
 
     return {
         "kpis": {
-            "overdue":         overdue_count,
-            "at_risk":         at_risk_count,
-            "in_pipeline":     len(pipeline_cards) + len(collection_col),
-            "completed_today": len(board_done_today),
-            "units_today":     units_today,
-            "open_quotes":     len(open_quotes),
-            "avg_time_hours":  avg_time,
-            "pipeline_value":  pipeline_value,
-            "revenue_today":   revenue_today,
-            "mtd_revenue":     mtd_revenue,
+            "overdue":             overdue_count,
+            "at_risk":             at_risk_count,
+            "compliance_hold":     len(qa_col) + len(rp_col),
+            "completed_today":     completed_today,
+            "open_quotes":         len(quotes_col),
+            "in_packing":          len(packing_col),
+            "qa_pending":          len(qa_col),
+            "rp_pending":          len(rp_col),
+            "awaiting_collection": len(collection_col),
+            "oldest_hours":        round(oldest_hours, 1) if oldest_hours is not None else None,
         },
         "columns": {
             "quotes":     quotes_col,
