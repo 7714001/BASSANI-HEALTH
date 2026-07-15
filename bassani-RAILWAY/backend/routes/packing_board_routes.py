@@ -1193,7 +1193,9 @@ async def override_status(
     body: UpdateStatus,
     current_user: dict = Depends(require_permission("tickets.manage")),
 ):
-    """Admin override — set any status directly (tickets.manage permission required)."""
+    """Admin override — set any status directly (tickets.manage permission required).
+    When overriding to a terminal status, also syncs the linked sales ticket so
+    legacy or manually-corrected entries stay consistent with the sales pipeline."""
     entry = await col("packing_board").find_one({"order_id": body.order_id})
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
@@ -1209,6 +1211,17 @@ async def override_status(
     await audit_log("packing.override_status", "packing_board", body.order_id,
                     entity_label=body.order_id, user=current_user,
                     detail={"from": entry["status"], "to": body.status})
+
+    # Sync the linked sales ticket when overriding to a terminal packing status.
+    _ticket_outcome = {
+        "complete":   "ready_for_collection",
+        "incomplete": "incomplete",
+        "cancelled":  "cancelled",
+        "collected":  "complete",
+    }.get(body.status)
+    if _ticket_outcome:
+        await _sync_sales_ticket(body.order_id, _ticket_outcome)
+
     return {"success": True}
 
 
