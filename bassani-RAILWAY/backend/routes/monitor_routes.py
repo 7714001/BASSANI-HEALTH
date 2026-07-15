@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import require_admin
-from db import col
+from database import col
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
