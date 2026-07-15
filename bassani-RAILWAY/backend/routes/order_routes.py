@@ -488,20 +488,42 @@ _PICKING_STATE_LABEL = {
     "cancel":    "Cancelled",
 }
 
+
+def _order_int_id(odoo, raw: str) -> int:
+    """Resolve a URL param to an Odoo sale.order integer ID.
+    Accepts a numeric string ('1234') or an SO name ('S00602', 'S/00602').
+    Raises HTTP 404 if the name cannot be matched.
+    """
+    try:
+        return int(raw)
+    except ValueError:
+        rows = odoo.search_read("sale.order", [["name", "=", raw]], fields=["id"], limit=1)
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Order not found: {raw}")
+        return rows[0]["id"]
+
+
 @router.get("/{order_id}/deliveries")
 async def get_order_deliveries(
-    order_id: int,
+    order_id: str,
     current_user: dict = Depends(get_current_user),
 ):
     """
     Return stock.picking records linked to a sale order, including move-line
     detail so callers can show partially delivered quantities (backorders).
+    Accepts an Odoo integer ID or a sale.order name (e.g. S00602).
     """
     odoo = get_odoo_client()
     try:
+        resolved_id = _order_int_id(odoo, order_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    try:
         orders = odoo.search_read(
             "sale.order",
-            domain=[("id", "=", order_id)],
+            domain=[("id", "=", resolved_id)],
             fields=["picking_ids"],
             limit=1,
         )
@@ -663,13 +685,23 @@ def _passport_status(order: dict, ticket: dict | None, invoice: dict | None, del
 
 
 @router.get("/{order_id}/passport")
-async def get_order_passport(order_id: int, current_user: dict = Depends(get_current_user)):
-    """Aggregated lifecycle view of a single order — order + ticket + invoice + deliveries + MOs."""
+async def get_order_passport(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Aggregated lifecycle view of a single order — order + ticket + invoice + deliveries + MOs.
+    Accepts an Odoo integer ID or a sale.order name (e.g. S00602).
+    """
     odoo = get_odoo_client()
+
+    # Resolve SO name → integer Odoo ID
+    try:
+        resolved_id = _order_int_id(odoo, order_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
     # ── Sale order ────────────────────────────────────────────────────────────
     try:
-        orders = odoo.read("sale.order", [order_id], fields=[
+        orders = odoo.read("sale.order", [resolved_id], fields=[
             "name", "state", "partner_id", "date_order", "amount_total",
             "amount_tax", "invoice_ids", "picking_ids", "payment_term_id",
             "order_line",
@@ -684,9 +716,9 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     if current_user.get("role") == "reseller":
         reseller = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1})
         reseller_id = reseller["id"] if reseller else None
-        allowed = await col("order_commissions").find_one({"odoo_order_id": str(order_id), "reseller_id": reseller_id}, {"_id": 1})
+        allowed = await col("order_commissions").find_one({"odoo_order_id": str(resolved_id), "reseller_id": reseller_id}, {"_id": 1})
         if not allowed:
-            allowed = await col("tickets").find_one({"type": "sales", "order_id": order_id, "reseller_id": reseller_id}, {"_id": 1})
+            allowed = await col("tickets").find_one({"type": "sales", "order_id": {"$in": [resolved_id, order_id]}, "reseller_id": reseller_id}, {"_id": 1})
         if not allowed:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -713,7 +745,7 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
 
     # ── Sales ticket ──────────────────────────────────────────────────────────
     ticket = await col("tickets").find_one(
-        {"type": "sales", "order_id": order_id},
+        {"type": "sales", "order_id": {"$in": [resolved_id, order_id]}},
         {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1},
@@ -746,7 +778,7 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
 
     # ── Packing board entry ───────────────────────────────────────────────────
     packing_entry = await col("packing_board").find_one(
-        {"order_id": str(order_id)},
+        {"order_id": order.get("name", order_id)},
         {"_id": 0, "status": 1, "packer_name": 1, "ps_num": 1,
          "qa_approved_by": 1, "qa_approved_at": 1,
          "rp_approved_by": 1, "rp_approved_at": 1,
@@ -804,7 +836,7 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     # because sale.order.picking_ids is a computed field.
     deliveries = []
     try:
-        so_rows = odoo.search_read("sale.order", domain=[("id", "=", order_id)], fields=["picking_ids"], limit=1)
+        so_rows = odoo.search_read("sale.order", domain=[("id", "=", resolved_id)], fields=["picking_ids"], limit=1)
         picking_ids = so_rows[0]["picking_ids"] if so_rows else []
     except Exception:
         picking_ids = []
@@ -855,7 +887,7 @@ async def get_order_passport(order_id: int, current_user: dict = Depends(get_cur
     try:
         lot_pick_rows = odoo.search_read(
             "stock.picking",
-            domain=[("sale_id", "=", order_id), ("state", "=", "done")],
+            domain=[("sale_id", "=", resolved_id), ("state", "=", "done")],
             fields=["move_line_ids"],
             limit=20,
         )

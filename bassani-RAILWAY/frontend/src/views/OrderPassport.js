@@ -380,7 +380,8 @@ export default function OrderPassport() {
         deliveries: deliveriesRes.data.deliveries || [],
       });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to load order");
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Failed to load order");
     } finally {
       setLoading(false);
     }
