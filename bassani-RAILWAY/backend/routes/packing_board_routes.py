@@ -881,7 +881,7 @@ async def mark_collected(
 
     # ── Mark entry collected ──────────────────────────────────────────────────
     # Invoice was already created at mark_complete (after QA + RP sign-off).
-    update_fields: dict = {"collected_at": now, "collected_by": actor_name}
+    update_fields: dict = {"collected_at": now, "collected_by": actor_name, "status": "collected"}
 
     await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": update_fields})
     await audit_log(
