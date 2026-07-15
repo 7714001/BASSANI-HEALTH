@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ChevronRight, Plus, ArrowRight } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ChevronRight, Link2, ArrowRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, DataTable, FilterPill, ChipRow, fmtDate, BtnPrimary } from "../components/UI";
@@ -110,7 +110,7 @@ export default function ResellerApplications() {
         title="My Applications"
         subtitle={`${total} application${total !== 1 ? "s" : ""}`}
         onRefresh={load}
-        actions={<BtnPrimary onClick={() => navigate("/onboard")}><Plus size={14} className="mr-1" />Start Application</BtnPrimary>}
+        actions={<BtnPrimary onClick={() => navigate("/onboarding-docs")}><Link2 size={14} className="mr-1" />Send Registration Link</BtnPrimary>}
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4">
@@ -128,9 +128,7 @@ export default function ResellerApplications() {
           total={total}
           pagination={pagination}
           onPaginationChange={setPagination}
-          onRowClick={a => a.status === "awaiting_docs"
-            ? navigate(`/onboard?resume=${a.id}`)
-            : navigate(`/my-applications/${a.id}`)}
+          onRowClick={a => navigate(`/my-applications/${a.id}`)}
           manualPagination
         />
       </main>

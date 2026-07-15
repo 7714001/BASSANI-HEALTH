@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers, Link2 } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import GTINPickerModal from "../components/GTINPickerModal";
@@ -752,7 +752,7 @@ export function Customers() {
         subtitle={`${total} active accounts`}
         onRefresh={load}
         actions={isReseller
-          ? <BtnPrimary onClick={() => navigate("/onboard")}><Plus size={14}/>Onboard Customer</BtnPrimary>
+          ? <BtnPrimary onClick={() => navigate("/onboarding-docs")}><Link2 size={14}/>Send Registration Link</BtnPrimary>
           : <div className="flex gap-2">
               <BtnSecondary onClick={() => { setObInviteEmail(""); setShowOnboardingDocs(true); }}>
                 <FileText size={14} className="mr-1" />Onboarding Documents

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   CheckCircle, XCircle, Clock, ChevronDown, FileText,
-  Download, Eye, X, Loader2, AlertTriangle, Pencil,
+  Download, Eye, X, Loader2, Pencil,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -18,7 +18,6 @@ const REQUIRED_DOC_TYPES = {
   store_onboarding_agreement: "Signed Store Onboarding Agreement",
   customer_information_form:  "Signed Customer Information Form",
   nda:                        "Signed NDA",
-  tqa:                        "Signed TQA Document",
   cipc_certificate:           "CIPC Company Registration Certificate",
 };
 
@@ -85,6 +84,129 @@ function FieldTextarea({ label, value, onChange }) {
     </div>
   );
 }
+
+// ── Application progress stepper ──────────────────────────────────────────────
+
+function ProgressStepper({ app }) {
+  const appDocs = app.documents || [];
+  const nda = appDocs.find(d => d.doc_type === "nda");
+  const soa = appDocs.find(d => d.doc_type === "store_onboarding_agreement");
+
+  const stages = [
+    {
+      label: "Registration Submitted",
+      desc:  app.submitted_at ? `Submitted ${fmtDate(app.submitted_at)}` : "Submitted",
+      done:  true,
+    },
+    {
+      label: "Under Review",
+      desc:  app.signing_session_generated_at
+        ? "Application reviewed — agreements prepared"
+        : "Bassani is reviewing your application",
+      done:  !!(app.signing_session_generated_at),
+    },
+    {
+      label: "Agreements Sent for Signing",
+      desc:  app.signing_session_sent_at
+        ? `Sent to customer ${fmtDate(app.signing_session_sent_at)}`
+        : "NDA and Store Agreement will be sent to the customer to sign",
+      done:  !!(app.signing_session_sent_at),
+    },
+    {
+      label: "Agreements Signed",
+      desc:  nda?.signed_in_portal && soa?.signed_in_portal
+        ? "Customer has signed both agreements"
+        : "Waiting for the customer to sign",
+      done:  !!(nda?.signed_in_portal && soa?.signed_in_portal),
+    },
+    {
+      label: "Documents Countersigned",
+      desc:  nda?.countersigned_at && soa?.countersigned_at
+        ? "All agreements countersigned by Bassani"
+        : "Bassani will countersign the customer's agreements",
+      done:  !!(nda?.countersigned_at && soa?.countersigned_at),
+    },
+    {
+      label: "Welcome Pack Sent",
+      desc:  app.welcome_pack_sent_at
+        ? `Welcome pack sent ${fmtDate(app.welcome_pack_sent_at)}`
+        : "Welcome pack will be sent after countersigning",
+      done:  !!(app.welcome_pack_sent_at),
+    },
+    {
+      label: "Account Active",
+      desc:  app.status === "approved"
+        ? "Customer account is live and ready to place orders"
+        : "Account will be created once all steps are complete",
+      done:  app.status === "approved",
+    },
+  ];
+
+  const isRejected = app.status === "rejected";
+  const currentIdx = stages.findIndex(s => !s.done);
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-50">
+        <h3 className="text-sm font-bold text-gray-900">Application Progress</h3>
+      </div>
+      <div className="px-6 py-5">
+        <div className="relative">
+          {stages.map((stage, i) => {
+            const isDone    = stage.done;
+            const isCurrent = !isRejected && i === currentIdx;
+            return (
+              <div key={i} className="flex gap-4 pb-5 last:pb-0 relative">
+                {i < stages.length - 1 && (
+                  <div className={`absolute left-[15px] top-8 w-px bottom-0 ${isDone ? "bg-green-200" : "bg-gray-100"}`} />
+                )}
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10 ${
+                  isDone    ? "bg-green-100" :
+                  isCurrent ? "bg-bassani-50 ring-2 ring-bassani-200" :
+                              "bg-gray-50"
+                }`}>
+                  {isDone
+                    ? <CheckCircle size={15} className="text-green-600" />
+                    : isCurrent
+                      ? <Clock size={15} className="text-bassani-600" />
+                      : <div className="w-2 h-2 rounded-full bg-gray-200" />
+                  }
+                </div>
+                <div className="flex-1 min-w-0 pt-1">
+                  <p className={`text-xs font-semibold ${
+                    isDone    ? "text-green-700" :
+                    isCurrent ? "text-bassani-700" :
+                                "text-gray-400"
+                  }`}>{stage.label}</p>
+                  <p className={`text-[11px] mt-0.5 leading-relaxed ${
+                    isDone    ? "text-green-600" :
+                    isCurrent ? "text-gray-500" :
+                                "text-gray-300"
+                  }`}>{stage.desc}</p>
+                </div>
+              </div>
+            );
+          })}
+
+          {isRejected && (
+            <div className="flex gap-4 pt-4 border-t border-gray-100 mt-1">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-red-100">
+                <XCircle size={15} className="text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0 pt-1">
+                <p className="text-xs font-semibold text-red-700">Application Rejected</p>
+                <p className="text-[11px] mt-0.5 text-red-500">
+                  {app.rejection_reason || "Please contact Bassani Health for details."}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ── PDF viewer modal ───────────────────────────────────────────────────────────
 
@@ -273,22 +395,14 @@ export default function ResellerApplicationDetail() {
                 </p>
                 {app.status === "pending" && (
                   <p className="text-xs mt-1 opacity-70">
-                    Your application is awaiting review. You can update the details below until it is approved or rejected.
+                    Your application is under review. You can update the details below until it is approved or rejected.
                   </p>
                 )}
               </div>
             </div>
 
-            {/* Rejection reason */}
-            {app.status === "rejected" && app.rejection_reason && (
-              <div className="bg-red-50 border border-red-200 rounded-2xl px-6 py-4 flex gap-3">
-                <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold text-red-700 mb-1">Reason for Rejection</p>
-                  <p className="text-sm text-red-700">{app.rejection_reason}</p>
-                </div>
-              </div>
-            )}
+            {/* Application progress stepper */}
+            <ProgressStepper app={app} />
 
             {/* ── Business Details ── */}
             <Section title="Business Details">

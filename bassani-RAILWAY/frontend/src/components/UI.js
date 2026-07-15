@@ -11,7 +11,7 @@ import {
   DollarSign, Percent, BarChart3, Phone, FileText,
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
-  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock,
+  ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -75,7 +75,7 @@ const RESELLER_NAV = [
   { label: "Commission", path: "/commission", icon: Percent,       section: "Orders", requiresCommission: true },
   { label: "My Customers",    path: "/customers",        icon: Users,         section: "Customers" },
   { label: "My Applications", path: "/my-applications",  icon: ClipboardList, section: "Customers" },
-  { label: "Onboarding Docs", path: "/onboarding-docs",  icon: FileText,      section: "Customers" },
+  { label: "Invite Customer", path: "/onboarding-docs",  icon: Link2,         section: "Customers" },
 ];
 
 export function Sidebar() {

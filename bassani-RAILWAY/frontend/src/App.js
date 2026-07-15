@@ -203,7 +203,11 @@ export default function App() {
           <ProtectedRoute><AppLayout><OrderPassport /></AppLayout></ProtectedRoute>
         } />
         <Route path="/onboard" element={
-          <ProtectedRoute><AppLayout><CustomerOnboarding /></AppLayout></ProtectedRoute>
+          <ProtectedRoute>
+            {user?.role === "reseller"
+              ? <Navigate to="/onboarding-docs" replace />
+              : <AppLayout><CustomerOnboarding /></AppLayout>}
+          </ProtectedRoute>
         } />
         <Route path="/onboarding-docs" element={
           <ProtectedRoute><AppLayout><OnboardingDocs /></AppLayout></ProtectedRoute>
