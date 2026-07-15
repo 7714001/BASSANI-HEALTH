@@ -2325,6 +2325,23 @@ export default function SalesTickets() {
             </div>
           </Modal>
         )}
+        {purgeConfirm && (
+          <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
+            <p className="text-sm text-gray-700 font-medium mb-2">
+              Permanently delete this ticket and all traces of it from the database.
+            </p>
+            <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 mb-3">
+              <li>This sales ticket</li>
+              {detail.orders_ticket_ref && <li>Linked packing board entry ({detail.orders_ticket_ref}) and any backorders</li>}
+              <li>All audit log records for the above</li>
+            </ul>
+            <p className="text-xs text-red-600 font-medium">This cannot be undone. Use only for test data cleanup.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setPurgeConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={doPurgeTicket}>Permanently Delete</BtnDanger>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -2869,23 +2886,6 @@ export default function SalesTickets() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCancelQuoteOpen(false)}>Keep Quote</BtnSecondary>
             <BtnDanger onClick={doCancelQuote}>Cancel Quote</BtnDanger>
-          </div>
-        </Modal>
-      )}
-      {purgeConfirm && (
-        <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
-          <p className="text-sm text-gray-700 font-medium mb-2">
-            Permanently delete this ticket and all traces of it from the database.
-          </p>
-          <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 mb-3">
-            <li>This sales ticket</li>
-            {detail.orders_ticket_ref && <li>Linked packing board entry ({detail.orders_ticket_ref}) and any backorders</li>}
-            <li>All audit log records for the above</li>
-          </ul>
-          <p className="text-xs text-red-600 font-medium">This cannot be undone. Use only for test data cleanup.</p>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setPurgeConfirm(false)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={doPurgeTicket}>Permanently Delete</BtnDanger>
           </div>
         </Modal>
       )}
