@@ -437,6 +437,46 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+# ── Order line preview (for link-existing-order modal) ───────────────────────
+
+@router.get("/{order_id}/lines")
+async def get_order_lines(
+    order_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return order line items for a sale order — used by the link-order preview."""
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.search_read(
+            "sale.order",
+            domain=[("id", "=", order_id)],
+            fields=["name", "partner_id", "state", "amount_total", "order_line"],
+            limit=1,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order = rows[0]
+    lines = []
+    if order.get("order_line"):
+        try:
+            lines = odoo.read(
+                "sale.order.line",
+                order["order_line"],
+                fields=["product_id", "name", "product_uom_qty", "product_uom", "price_unit", "price_subtotal"],
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo line error: {str(e)}")
+    return {
+        "order_name":  order["name"],
+        "partner_name": order["partner_id"][1] if order.get("partner_id") else "—",
+        "state":       order.get("state"),
+        "amount_total": order.get("amount_total", 0),
+        "lines":       lines,
+    }
+
+
 # ── Deliveries (7.1 + 7.5) ───────────────────────────────────────────────────
 
 _PICKING_STATE_LABEL = {

@@ -244,6 +244,8 @@ export default function SalesTickets() {
   const [linkOrderSearching,   setLinkOrderSearching  ] = useState(false);
   const [linkOrderSelected,    setLinkOrderSelected   ] = useState(null);
   const [linkOrderSubmitting,  setLinkOrderSubmitting ] = useState(false);
+  const [linkOrderPreview,     setLinkOrderPreview    ] = useState(null);  // { lines, loading, order_id }
+  const [linkOrderPreviewId,   setLinkOrderPreviewId  ] = useState(null);
 
   // ── Link contact to company modal ────────────────────────────────────────
   const [linkCompanyOpen,      setLinkCompanyOpen     ] = useState(false);
@@ -394,7 +396,23 @@ export default function SalesTickets() {
 
   const openLinkOrderModal = () => {
     setLinkOrderQuery(""); setLinkOrderResults([]); setLinkOrderSelected(null);
+    setLinkOrderPreview(null); setLinkOrderPreviewId(null);
     setLinkOrderOpen(true);
+  };
+
+  const previewOrderLines = async (order) => {
+    if (linkOrderPreviewId === order.id) {
+      setLinkOrderPreview(null); setLinkOrderPreviewId(null);
+      return;
+    }
+    setLinkOrderPreviewId(order.id);
+    setLinkOrderPreview({ loading: true, lines: [], order_id: order.id });
+    try {
+      const r = await api.get(`/api/orders/${order.id}/lines`);
+      setLinkOrderPreview({ loading: false, lines: r.data.lines || [], order_id: order.id });
+    } catch {
+      setLinkOrderPreview({ loading: false, lines: [], order_id: order.id, error: true });
+    }
   };
 
   const linkOrder = async () => {
@@ -2189,22 +2207,81 @@ export default function SalesTickets() {
 
             {/* Search results */}
             {linkOrderResults.length > 0 && !linkOrderSelected && (
-              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 mb-3 max-h-52 overflow-y-auto">
+              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 mb-3 overflow-hidden">
                 {linkOrderResults.map(o => (
-                  <button
-                    key={o.id}
-                    onClick={() => { setLinkOrderSelected(o); setLinkOrderResults([]); }}
-                    className="w-full flex items-start justify-between gap-3 px-4 py-3 hover:bg-gray-50 text-left transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900">{o.name}</p>
-                      <p className="text-xs text-gray-500 truncate">{o.partner_id?.[1] || "—"}</p>
+                  <div key={o.id} className="bg-white">
+                    <div className="flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-900">{o.name}</p>
+                        <p className="text-xs text-gray-500 truncate">{o.partner_id?.[1] || "—"}</p>
+                      </div>
+                      <div className="shrink-0 text-right mr-2">
+                        <p className="text-xs font-medium text-gray-700">{fmtR(o.amount_total)}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{ORDER_STATE_LABEL[o.state] || o.state}</p>
+                      </div>
+                      <button
+                        onClick={() => previewOrderLines(o)}
+                        title={linkOrderPreviewId === o.id ? "Hide lines" : "Preview line items"}
+                        className={`shrink-0 flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
+                          linkOrderPreviewId === o.id
+                            ? "border-bassani-300 bg-bassani-50 text-bassani-700"
+                            : "border-gray-200 text-gray-500 hover:border-bassani-300 hover:text-bassani-600"
+                        }`}
+                      >
+                        {linkOrderPreviewId === o.id ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                        Lines
+                      </button>
+                      <button
+                        onClick={() => { setLinkOrderSelected(o); setLinkOrderPreview(null); setLinkOrderPreviewId(null); setLinkOrderResults([]); }}
+                        className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-bassani-300 bg-bassani-600 text-white hover:bg-bassani-700 transition-colors"
+                      >
+                        Select
+                      </button>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-xs font-medium text-gray-700">{fmtR(o.amount_total)}</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">{ORDER_STATE_LABEL[o.state] || o.state}</p>
-                    </div>
-                  </button>
+                    {/* Inline line-item preview */}
+                    {linkOrderPreviewId === o.id && (
+                      <div className="border-t border-gray-100 bg-gray-50 px-3 py-2">
+                        {linkOrderPreview?.loading ? (
+                          <div className="flex items-center gap-2 py-2 text-xs text-gray-400">
+                            <Loader2 size={12} className="animate-spin" /> Loading lines…
+                          </div>
+                        ) : linkOrderPreview?.error ? (
+                          <p className="text-xs text-red-500 py-1">Could not load lines.</p>
+                        ) : linkOrderPreview?.lines?.length === 0 ? (
+                          <p className="text-xs text-gray-400 py-1">No line items found.</p>
+                        ) : (
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-gray-400">
+                                <th className="pb-1 font-medium">Product</th>
+                                <th className="pb-1 font-medium text-right">Qty</th>
+                                <th className="pb-1 font-medium text-right">Unit price</th>
+                                <th className="pb-1 font-medium text-right">Subtotal</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {(linkOrderPreview?.lines || []).map(l => (
+                                <tr key={l.id}>
+                                  <td className="py-1 pr-2 text-gray-700 max-w-[180px] truncate">
+                                    {l.product_id?.[1] || l.name}
+                                  </td>
+                                  <td className="py-1 text-right text-gray-600 tabular-nums">
+                                    {l.product_uom_qty} {l.product_uom?.[1] || ""}
+                                  </td>
+                                  <td className="py-1 pl-2 text-right text-gray-600 tabular-nums">
+                                    {fmtR(l.price_unit)}
+                                  </td>
+                                  <td className="py-1 pl-2 text-right font-medium text-gray-800 tabular-nums">
+                                    {fmtR(l.price_subtotal)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
