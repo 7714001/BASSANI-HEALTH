@@ -927,7 +927,8 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
   const [contactMode,    setContactMode   ] = useState(false);
   const [contactSubject, setContactSubject] = useState("");
   const [contactMessage, setContactMessage] = useState("");
-  const [contactSending, setContactSending] = useState(false);
+  const [contactSending,  setContactSending ] = useState(false);
+  const [approveConfirm,  setApproveConfirm ] = useState(false);
 
   const isAwaitingDocs = app.status === "awaiting_docs";
   const isActionable   = app.status === "pending" || isAwaitingDocs;
@@ -1150,7 +1151,7 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
             )
           ) : canApprove && (
             <button
-              onClick={handleApprove}
+              onClick={() => setApproveConfirm(true)}
               disabled={loading || needsCountersign || (isAwaitingDocs && !companyName.trim())}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
             >
@@ -1195,6 +1196,42 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
             <p className="text-xs text-gray-400 text-center py-2">You do not have permission to action this application.</p>
           )}
         </div>
+      )}
+
+      {approveConfirm && (
+        <Modal title="Confirm Approval" onClose={() => setApproveConfirm(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              This will create a customer account for{" "}
+              <strong>{app.company_name || app.contact_name || "this applicant"}</strong> and make them active in the system.
+            </p>
+
+            {app.reseller_name ? (
+              <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 space-y-2">
+                <p className="text-xs font-semibold text-blue-800">Reseller-referred application</p>
+                <p className="text-xs text-blue-700">
+                  This customer will be linked to the{" "}
+                  <strong>{app.reseller_name}</strong> reseller account. They will appear in the reseller's customer list and any orders they place will be attributed to that reseller.
+                </p>
+                <p className="text-xs text-blue-700">
+                  If commissions are enabled for {app.reseller_name}, monthly commission statements will be generated automatically based on this customer's order turnover.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-gray-600 mb-1">Direct application</p>
+                <p className="text-xs text-gray-500">This application was submitted directly — no reseller is linked.</p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <BtnSecondary onClick={() => setApproveConfirm(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={async () => { setApproveConfirm(false); await handleApprove(); }}>
+                Approve &amp; Create Customer
+              </BtnPrimary>
+            </div>
+          </div>
+        </Modal>
       )}
     </Card>
   );
