@@ -174,6 +174,34 @@ def _collection_card(ticket: dict, board: dict) -> dict:
     }
 
 
+def _board_ready_card(entry: dict, assigned_name: str | None = None) -> dict:
+    """Card for a packing board 'complete' entry with no linked sales ticket.
+    Clock starts at completed_at — how long the order has been waiting for collection."""
+    clock   = entry.get("completed_at") or entry.get("queued_at", datetime.now(timezone.utc))
+    elapsed = _hours_elapsed(clock)
+    return {
+        "id":             entry.get("order_id", ""),
+        "type":           "order",
+        "customer_name":  entry.get("customer_name", ""),
+        "so_ref":         entry.get("ps_num") or entry.get("order_id", ""),
+        "clock_start":    _iso(clock),
+        "deadline_hours": OVERDUE_HOURS,
+        "hours_elapsed":  round(elapsed, 2),
+        "age_tier":       _age_tier(elapsed, OVERDUE_HOURS),
+        "total_units":    entry.get("total_units", 0),
+        "order_value":    entry.get("order_value"),
+        "is_sample":      entry.get("is_sample", False),
+        "is_reseller":    entry.get("is_reseller", False),
+        "reseller_name":  entry.get("reseller_name"),
+        "status":         "ready_for_collection",
+        "qa_approved_at": _iso(entry.get("qa_approved_at")),
+        "rp_approved_at": _iso(entry.get("rp_approved_at")),
+        "packer_name":    entry.get("packer_name") or entry.get("assigned_packer"),
+        "assigned_name":  assigned_name,
+        "warehouse_name": entry.get("warehouse_name"),
+    }
+
+
 # ── Public: validate ──────────────────────────────────────────────────────────
 
 @router.get("/validate")
@@ -216,7 +244,14 @@ async def get_monitor_data(token: str = Query("")):
         NO_ID,
     ).to_list(length=500)
 
-    # Board lookup for collection clock + value
+    # Packing board entries that are complete but not yet collected — catches orders
+    # that went through the packing board without a linked sales ticket.
+    board_complete = await col("packing_board").find(
+        {"status": "complete", "collected_at": None},
+        NO_ID,
+    ).to_list(length=500)
+
+    # Board lookup for collection clock + value (ticket-linked cards)
     coll_refs = [t.get("orders_ticket_ref") for t in collection_tickets if t.get("orders_ticket_ref")]
     board_coll_map: dict = {}
     if coll_refs:
@@ -226,6 +261,15 @@ async def get_monitor_data(token: str = Query("")):
              "total_units": 1, "ps_num": 1, "warehouse_name": 1, "_id": 0},
         ).to_list(length=500)
         board_coll_map = {e["order_id"]: e for e in extra}
+
+    # order_ids already covered by the ticket-based collection cards — used to
+    # deduplicate when _sync_sales_ticket did run successfully.
+    covered_order_ids: set = set()
+    for t in collection_tickets:
+        if t.get("orders_ticket_ref"):
+            covered_order_ids.add(t["orders_ticket_ref"])
+        if t.get("order_id") is not None:
+            covered_order_ids.add(str(t["order_id"]))
 
     # Ticket assignee lookup for packing board cards (board entries don't store assignee)
     board_order_ids = [e.get("order_id") for e in board_active if e.get("order_id")]
@@ -262,6 +306,10 @@ async def get_monitor_data(token: str = Query("")):
     collection_col = [
         _collection_card(t, board_coll_map.get(t.get("orders_ticket_ref", ""), {}))
         for t in collection_tickets
+    ] + [
+        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")))
+        for e in board_complete
+        if e.get("order_id") not in covered_order_ids
     ]
 
     # Sort all columns oldest-first so the most urgent card is always at the top
