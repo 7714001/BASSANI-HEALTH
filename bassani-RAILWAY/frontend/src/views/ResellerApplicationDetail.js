@@ -1,18 +1,10 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  CheckCircle, XCircle, Clock, ChevronDown, Pencil, Loader2,
-} from "lucide-react";
+import { CheckCircle, XCircle, Clock, ChevronDown } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { LoadingState, fmtDate, BtnPrimary, BtnSecondary } from "../components/UI";
+import { LoadingState, fmtDate } from "../components/UI";
 
-// ── Constants (mirrors CustomerOnboarding.js) ──────────────────────────────────
-
-const BUSINESS_TYPES  = ["Pharmacy", "Dispensary", "Healthcare Provider", "Wellness Centre", "Private Practice", "Other"];
-const PROVINCES       = ["Gauteng", "Western Cape", "KwaZulu-Natal", "Eastern Cape", "Limpopo", "Mpumalanga", "North West", "Free State", "Northern Cape"];
-const ORDER_VOLUMES   = ["Less than 10 orders/month", "10 – 50 orders/month", "50 – 100 orders/month", "More than 100 orders/month"];
-const REFERRAL_SOURCES = ["Bassani Health representative", "Referral from another reseller", "Social media", "Industry event / conference", "Online search"];
 // ── Status config ──────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
@@ -40,39 +32,6 @@ function Row({ label, value }) {
     <div className="flex justify-between py-2.5 border-b border-gray-50 last:border-0 gap-4">
       <span className="text-xs text-gray-400 font-medium shrink-0">{label}</span>
       <span className="text-xs font-semibold text-gray-800 text-right">{value || "—"}</span>
-    </div>
-  );
-}
-
-function FieldInput({ label, value, onChange, type = "text" }) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-500 font-medium mb-1">{label}</label>
-      <input type={type} value={value || ""} onChange={e => onChange(e.target.value)}
-        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-bassani-400 focus:ring-1 focus:ring-bassani-200" />
-    </div>
-  );
-}
-
-function FieldSelect({ label, value, onChange, options, placeholder }) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-500 font-medium mb-1">{label}</label>
-      <select value={value || ""} onChange={e => onChange(e.target.value)}
-        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-bassani-400 focus:ring-1 focus:ring-bassani-200 bg-white">
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function FieldTextarea({ label, value, onChange }) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-500 font-medium mb-1">{label}</label>
-      <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={3}
-        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-bassani-400 focus:ring-1 focus:ring-bassani-200 resize-none" />
     </div>
   );
 }
@@ -206,13 +165,8 @@ export default function ResellerApplicationDetail() {
   const { id }     = useParams();
   const navigate   = useNavigate();
 
-  const [app,         setApp        ] = useState(null);
-  const [loading,     setLoading    ] = useState(true);
-  const [editing,     setEditing    ] = useState(false);
-  const [form,        setForm       ] = useState({});
-  const [saving,      setSaving     ] = useState(false);
-
-  const isPending = app?.status === "pending";
+  const [app,     setApp   ] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // Load application
   useEffect(() => {
@@ -221,55 +175,6 @@ export default function ResellerApplicationDetail() {
       .catch(() => { toast.error("Application not found"); navigate("/my-applications"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
-
-  // Edit mode
-  const startEditing = () => {
-    setForm({
-      company_name:        app.company_name        || "",
-      trading_name:        app.trading_name        || "",
-      registration_number: app.registration_number || "",
-      vat_number:          app.vat_number          || "",
-      business_type:       app.business_type       || "Pharmacy",
-      contact_name:        app.contact_name        || "",
-      contact_position:    app.contact_position    || "",
-      contact_email:       app.contact_email       || "",
-      contact_phone:       app.contact_phone       || "",
-      contact_alt_phone:   app.contact_alt_phone   || "",
-      street:              app.street              || "",
-      suburb:              app.suburb              || "",
-      city:                app.city                || "",
-      province:            app.province            || "",
-      postal_code:         app.postal_code         || "",
-      country:             app.country             || "South Africa",
-      ordering_volume:     app.ordering_volume     || "",
-      referral_source:     app.referral_source     || "",
-      notes:               app.notes               || "",
-    });
-    setEditing(true);
-  };
-
-  const cancelEditing = () => setEditing(false);
-
-  const upd = key => val => setForm(f => ({ ...f, [key]: val }));
-
-  const saveChanges = async () => {
-    if (!form.company_name?.trim()) return toast.error("Business name is required");
-    if (!form.contact_name?.trim()) return toast.error("Contact name is required");
-    if (!form.contact_email?.trim()) return toast.error("Contact email is required");
-    if (!form.contact_phone?.trim()) return toast.error("Contact phone is required");
-    if (!form.street?.trim() || !form.city?.trim()) return toast.error("Address is required");
-    setSaving(true);
-    try {
-      await api.put(`/api/onboarding/${id}`, form);
-      setApp(prev => ({ ...prev, ...form }));
-      setEditing(false);
-      toast.success("Application updated");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to save changes");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   if (loading) return <LoadingState />;
   if (!app)    return null;
@@ -286,20 +191,6 @@ export default function ResellerApplicationDetail() {
             className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
             <ChevronDown size={14} className="-rotate-90" />Back to Applications
           </button>
-          {isPending && !editing && (
-            <BtnSecondary size="sm" onClick={startEditing}>
-              <Pencil size={13} className="mr-1.5" />Edit Application
-            </BtnSecondary>
-          )}
-          {editing && (
-            <div className="flex gap-2">
-              <BtnSecondary size="sm" onClick={cancelEditing} disabled={saving}>Cancel</BtnSecondary>
-              <BtnPrimary  size="sm" onClick={saveChanges}   disabled={saving}>
-                {saving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                Save Changes
-              </BtnPrimary>
-            </div>
-          )}
         </div>
 
         <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
@@ -316,9 +207,7 @@ export default function ResellerApplicationDetail() {
                   {app.reviewed_at  && <> · Reviewed {fmtDate(app.reviewed_at)}</>}
                 </p>
                 {app.status === "pending" && (
-                  <p className="text-xs mt-1 opacity-70">
-                    Your application is under review. You can update the details below until it is approved or rejected.
-                  </p>
+                  <p className="text-xs mt-1 opacity-70">Your application is under review.</p>
                 )}
               </div>
             </div>
@@ -328,99 +217,45 @@ export default function ResellerApplicationDetail() {
 
             {/* ── Business Details ── */}
             <Section title="Business Details">
-              {editing ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <FieldInput label="Business Name *"    value={form.company_name}        onChange={upd("company_name")} />
-                    <FieldInput label="Trading Name"       value={form.trading_name}        onChange={upd("trading_name")} />
-                    <FieldInput label="Registration No."   value={form.registration_number} onChange={upd("registration_number")} />
-                    <FieldInput label="VAT Number"         value={form.vat_number}          onChange={upd("vat_number")} />
-                  </div>
-                  <FieldSelect label="Business Type" value={form.business_type} onChange={upd("business_type")} options={BUSINESS_TYPES} />
-                </div>
-              ) : (
-                <>
-                  <Row label="Business Name"     value={app.company_name} />
-                  <Row label="Trading Name"      value={app.trading_name} />
-                  <Row label="Registration No."  value={app.registration_number} />
-                  <Row label="VAT Number"        value={app.vat_number} />
-                  <Row label="Business Type"     value={app.business_type} />
-                </>
-              )}
+              <Row label="Business Name"     value={app.company_name} />
+              <Row label="Trading Name"      value={app.trading_name} />
+              <Row label="Registration No."  value={app.registration_number} />
+              <Row label="VAT Number"        value={app.vat_number} />
+              <Row label="Business Type"     value={app.business_type} />
             </Section>
 
             {/* ── Contact Details ── */}
             <Section title="Primary Contact">
-              {editing ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <FieldInput label="Contact Name *"    value={form.contact_name}      onChange={upd("contact_name")} />
-                  <FieldInput label="Position / Title"  value={form.contact_position}  onChange={upd("contact_position")} />
-                  <FieldInput label="Email *"           value={form.contact_email}     onChange={upd("contact_email")} type="email" />
-                  <FieldInput label="Phone *"           value={form.contact_phone}     onChange={upd("contact_phone")} type="tel" />
-                  <FieldInput label="Alt. Phone"        value={form.contact_alt_phone} onChange={upd("contact_alt_phone")} type="tel" />
-                </div>
-              ) : (
-                <>
-                  <Row label="Name"      value={app.contact_name} />
-                  <Row label="Position"  value={app.contact_position} />
-                  <Row label="Email"     value={app.contact_email} />
-                  <Row label="Phone"     value={app.contact_phone} />
-                  <Row label="Alt. Phone" value={app.contact_alt_phone} />
-                </>
-              )}
+              <Row label="Name"       value={app.contact_name} />
+              <Row label="Position"   value={app.contact_position} />
+              <Row label="Email"      value={app.contact_email} />
+              <Row label="Phone"      value={app.contact_phone} />
+              <Row label="Alt. Phone" value={app.contact_alt_phone} />
             </Section>
 
             {/* ── Address ── */}
             <Section title="Business Address">
-              {editing ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2">
-                    <FieldInput label="Street Address *" value={form.street} onChange={upd("street")} />
-                  </div>
-                  <FieldInput label="Suburb"      value={form.suburb}      onChange={upd("suburb")} />
-                  <FieldInput label="City *"      value={form.city}        onChange={upd("city")} />
-                  <FieldSelect label="Province"   value={form.province}    onChange={upd("province")}
-                    options={PROVINCES} placeholder="— Select province —" />
-                  <FieldInput label="Postal Code" value={form.postal_code} onChange={upd("postal_code")} />
-                  <div className="sm:col-span-2">
-                    <FieldInput label="Country" value={form.country} onChange={upd("country")} />
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <Row label="Street"      value={app.street} />
-                  <Row label="Suburb"      value={app.suburb} />
-                  <Row label="City"        value={app.city} />
-                  <Row label="Province"    value={app.province} />
-                  <Row label="Postal Code" value={app.postal_code} />
-                  <Row label="Country"     value={app.country} />
-                </>
-              )}
+              <Row label="Street"      value={app.street} />
+              <Row label="Suburb"      value={app.suburb} />
+              <Row label="City"        value={app.city} />
+              <Row label="Province"    value={app.province} />
+              <Row label="Postal Code" value={app.postal_code} />
+              <Row label="Country"     value={app.country} />
             </Section>
 
             {/* ── Additional Information ── */}
-            <Section title="Additional Information">
-              {editing ? (
-                <div className="space-y-4">
-                  <FieldSelect label="Expected Monthly Order Volume" value={form.ordering_volume}
-                    onChange={upd("ordering_volume")} options={ORDER_VOLUMES} placeholder="— Select range —" />
-                  <FieldSelect label="How did you hear about Bassani Health?" value={form.referral_source}
-                    onChange={upd("referral_source")} options={REFERRAL_SOURCES} placeholder="— Select source —" />
-                  <FieldTextarea label="Additional Notes" value={form.notes} onChange={upd("notes")} />
-                </div>
-              ) : (
-                <>
-                  <Row label="Monthly Volume" value={app.ordering_volume} />
-                  <Row label="Referral Source" value={app.referral_source} />
-                  {app.notes && (
-                    <div className="pt-2.5">
-                      <p className="text-xs text-gray-400 font-medium mb-1">Notes</p>
-                      <p className="text-xs text-gray-700 whitespace-pre-line">{app.notes}</p>
-                    </div>
-                  )}
-                </>
-              )}
-            </Section>
+            {(app.ordering_volume || app.referral_source || app.notes) && (
+              <Section title="Additional Information">
+                <Row label="Monthly Volume" value={app.ordering_volume} />
+                <Row label="Referral Source" value={app.referral_source} />
+                {app.notes && (
+                  <div className="pt-2.5">
+                    <p className="text-xs text-gray-400 font-medium mb-1">Notes</p>
+                    <p className="text-xs text-gray-700 whitespace-pre-line">{app.notes}</p>
+                  </div>
+                )}
+              </Section>
+            )}
 
           </div>
         </main>

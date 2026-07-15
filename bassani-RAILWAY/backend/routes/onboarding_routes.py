@@ -845,18 +845,14 @@ async def update_application(
     body: UpdateApplicationBody,
     current_user: dict = Depends(get_current_user),
 ):
-    """Reseller updates the text fields of their own pending application."""
-    if current_user.get("role") != "reseller":
-        raise HTTPException(status_code=403, detail="Only resellers can update applications")
-    reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-    if not reseller:
-        raise HTTPException(status_code=403, detail="Reseller profile not found")
+    """Admin updates the text fields of a pending application."""
+    perms = current_user.get("permissions", {})
+    if not (current_user.get("is_super_admin") or perms.get("customers", {}).get("approve_onboarding")):
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app.get("reseller_id") != reseller["id"]:
-        raise HTTPException(status_code=403, detail="Access denied")
     if app.get("status") not in {"pending", "awaiting_docs"}:
         raise HTTPException(status_code=400, detail="Only pending or draft applications can be updated")
 
@@ -868,7 +864,7 @@ async def update_application(
     await col("customer_onboarding").update_one({"id": app_id}, {"$set": updates})
     await audit_log("onboarding.update", "customer_onboarding", app_id,
                     entity_label=app.get("company_name", ""), user=current_user,
-                    reseller_id=reseller["id"], after=updates)
+                    reseller_id=app.get("reseller_id"), after=updates)
     return {"success": True}
 
 
