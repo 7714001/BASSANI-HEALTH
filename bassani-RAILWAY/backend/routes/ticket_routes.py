@@ -20,7 +20,7 @@ from bson import ObjectId
 from config import get_settings
 from auth import (
     require_permission, require_any_permission, require_admin,
-    get_current_user, get_user_by_username, ADMIN_ROLES, TICKET_ROLES,
+    get_current_user, get_user_by_username, require_super_admin, ADMIN_ROLES, TICKET_ROLES,
 )
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
@@ -1987,6 +1987,65 @@ async def send_invoice(
     if warning:
         result["warning"] = warning
     return result
+
+
+# ── Super-admin: test data purge ──────────────────────────────────────────────
+
+@router.delete("/{ticket_id}/purge")
+async def purge_ticket(
+    ticket_id: str,
+    current_user: dict = Depends(require_super_admin),
+):
+    """
+    Permanently delete a sales ticket and all traces of it.
+    Cascades to the linked packing board entry (all backorders) and every
+    audit log record for both.  Irreversible — super_admin only.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    orders_ref = ticket.get("orders_ticket_ref")  # packing board order_id
+
+    deleted: dict = {"ticket": 0, "packing_board": 0, "audit_logs": 0}
+
+    # Cascade: packing board entries for this order (includes backorders)
+    if orders_ref:
+        pb_result = await col("packing_board").delete_many({"order_id": orders_ref})
+        deleted["packing_board"] = pb_result.deleted_count
+        al_pb = await col("audit_log").delete_many(
+            {"entity_type": "packing_board", "entity_id": orders_ref}
+        )
+        deleted["audit_logs"] += al_pb.deleted_count
+
+    # Audit logs for the ticket itself (two entity_type values used historically)
+    al_t = await col("audit_log").delete_many(
+        {"entity_type": {"$in": ["ticket", "tickets"]}, "entity_id": ticket_id}
+    )
+    deleted["audit_logs"] += al_t.deleted_count
+
+    # The ticket
+    await col("tickets").delete_one({"_id": oid})
+    deleted["ticket"] = 1
+
+    # Record the purge itself so there's a trace of who cleaned what
+    await audit_log(
+        "ticket.purge", "admin_purge", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"orders_ref": orders_ref, "deleted": deleted},
+    )
+
+    return {
+        "success": True,
+        "purged": deleted,
+        "customer_name": ticket.get("customer_name", ""),
+    }
 
 
 # ── 8.26 + 8.28 — Lookup endpoints ───────────────────────────────────────────

@@ -58,7 +58,7 @@ const TERMINAL = new Set(["complete", "incomplete", "cancelled", "collected", "c
 const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "incomplete", "cancelled", "cleared", "waiting_stock"];
 
 export default function OrdersTickets() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canOrders = can("tickets.orders");
   const canQa     = can("tickets.qa_approve");
   const canRp     = can("tickets.rp_approve");
@@ -97,6 +97,8 @@ export default function OrdersTickets() {
   const [orderLotMap, setOrderLotMap] = useState({});
   const [qtyPackedEdits,  setQtyPackedEdits ] = useState({});  // sku → draft string
   const [qtyPackedSaving, setQtyPackedSaving] = useState(new Set());
+  const [purgeConfirm,    setPurgeConfirm   ] = useState(false);
+  const [purging,         setPurging        ] = useState(false);
 
   // Fetch MOs when viewing a waiting_stock backorder entry
   useEffect(() => {
@@ -400,6 +402,21 @@ export default function OrdersTickets() {
     setTimeout(() => { win.print(); win.close(); }, 400);
   };
 
+  const doPurgeOrder = async () => {
+    setPurgeConfirm(false);
+    setPurging(true);
+    try {
+      const r = await api.delete("/api/packing/purge", { data: { order_id: detail.order_id } });
+      const { purged, order_id, customer_name } = r.data;
+      toast.success(`Purged: ${customer_name || order_id} — ${purged.packing_board} packing entr${purged.packing_board === 1 ? "y" : "ies"}${purged.ticket ? ", 1 sales ticket" : ""}, ${purged.audit_logs} audit logs`);
+      setDetail(null); setView("list"); load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Purge failed");
+    } finally {
+      setPurging(false);
+    }
+  };
+
   // ── Detail — full-page view ─────────────────────────────────────────────────
   if (view === "detail") {
     const isTerminal   = detail ? TERMINAL.has(detail.status) : false;
@@ -412,6 +429,11 @@ export default function OrdersTickets() {
           subtitle={detail ? `${detail.ps_num} — ${STATUS_LABEL[detail.status] || detail.status}` : ""}
           actions={
             <div className="flex items-center gap-2">
+              {user?.is_super_admin && (
+                <BtnDanger onClick={() => setPurgeConfirm(true)} disabled={purging}>
+                  {purging ? "Purging…" : "Purge Test Data"}
+                </BtnDanger>
+              )}
               {detail && (
                 <BtnSecondary onClick={printSlip}>
                   <Printer size={14} /> Print Packing Slip
@@ -990,6 +1012,23 @@ export default function OrdersTickets() {
               <BtnDanger onClick={submitIncomplete} loading={busyId === detail?.order_id}>
                 Confirm Issue
               </BtnDanger>
+            </div>
+          </Modal>
+        )}
+        {purgeConfirm && (
+          <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
+            <p className="text-sm text-gray-700 font-medium mb-2">
+              Permanently delete this packing entry and all traces of it from the database.
+            </p>
+            <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 mb-3">
+              <li>All packing board entries for order {detail.order_id} (including backorders)</li>
+              <li>Linked sales ticket (if any)</li>
+              <li>All audit log records for the above</li>
+            </ul>
+            <p className="text-xs text-red-600 font-medium">This cannot be undone. Use only for test data cleanup.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setPurgeConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={doPurgeOrder}>Permanently Delete</BtnDanger>
             </div>
           </Modal>
         )}

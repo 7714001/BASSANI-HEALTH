@@ -257,6 +257,8 @@ export default function SalesTickets() {
   const [exitConfirm,        setExitConfirm       ] = useState(null);
   const [confirmAnywayMsg,   setConfirmAnywayMsg  ] = useState(null);
   const [cancelQuoteOpen,    setCancelQuoteOpen   ] = useState(false);
+  const [purgeConfirm,       setPurgeConfirm      ] = useState(false);
+  const [purging,            setPurging           ] = useState(false);
 
   // ── Reseller pre-confirm stock-check modal ────────────────────────────────
   const [stockCheckModal, setStockCheckModal] = useState(false);
@@ -1037,6 +1039,21 @@ export default function SalesTickets() {
     return true;
   }), [tickets, sourceFilter, statusFilter, listSearch]);
 
+  const doPurgeTicket = async () => {
+    setPurgeConfirm(false);
+    setPurging(true);
+    try {
+      const r = await api.delete(`/api/tickets/${detail.id}/purge`);
+      const { purged, customer_name } = r.data;
+      toast.success(`Purged: ${customer_name} — ${purged.ticket} ticket, ${purged.packing_board} packing entr${purged.packing_board === 1 ? "y" : "ies"}, ${purged.audit_logs} audit logs`);
+      setDetail(null); setDetailOrder(null); setView("list"); load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Purge failed");
+    } finally {
+      setPurging(false);
+    }
+  };
+
   // ── Detail — full-page ticket view ────────────────────────────────────────
   if (view === "detail") {
     const orderStateLabel = ORDER_STATE_LABEL[detailOrder?.state] || "—";
@@ -1059,6 +1076,11 @@ export default function SalesTickets() {
           }
           actions={
             <div className="flex items-center gap-2">
+              {user.is_super_admin && (
+                <BtnDanger onClick={() => setPurgeConfirm(true)} disabled={purging}>
+                  {purging ? "Purging…" : "Purge Test Data"}
+                </BtnDanger>
+              )}
               {detailOrder && (
                 <BtnSecondary onClick={() => setPrintOrderOpen(true)}>
                   <Download size={14} /> Print Order
@@ -2847,6 +2869,23 @@ export default function SalesTickets() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCancelQuoteOpen(false)}>Keep Quote</BtnSecondary>
             <BtnDanger onClick={doCancelQuote}>Cancel Quote</BtnDanger>
+          </div>
+        </Modal>
+      )}
+      {purgeConfirm && (
+        <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
+          <p className="text-sm text-gray-700 font-medium mb-2">
+            Permanently delete this ticket and all traces of it from the database.
+          </p>
+          <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 mb-3">
+            <li>This sales ticket</li>
+            {detail.orders_ticket_ref && <li>Linked packing board entry ({detail.orders_ticket_ref}) and any backorders</li>}
+            <li>All audit log records for the above</li>
+          </ul>
+          <p className="text-xs text-red-600 font-medium">This cannot be undone. Use only for test data cleanup.</p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setPurgeConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doPurgeTicket}>Permanently Delete</BtnDanger>
           </div>
         </Modal>
       )}

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from auth import require_admin, get_current_user, get_user_by_username, require_permission, ADMIN_ROLES
+from auth import require_admin, get_current_user, get_user_by_username, require_permission, require_super_admin, ADMIN_ROLES
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
@@ -1401,3 +1401,62 @@ async def websocket_packer(ws: WebSocket):
                 print(f"⚠️  Packer WS error: {e}")
     except WebSocketDisconnect:
         manager.disconnect(ws)
+
+
+# ── Super-admin: test data purge ──────────────────────────────────────────────
+
+class PurgeOrderBody(BaseModel):
+    order_id: str
+
+
+@router.delete("/purge")
+async def purge_packing_entry(
+    body: PurgeOrderBody,
+    current_user: dict = Depends(require_super_admin),
+):
+    """
+    Permanently delete all packing board entries for an order_id and every
+    audit log trace.  Cascades to the linked sales ticket (and its audit logs).
+    Irreversible — super_admin only.
+    """
+    order_id = body.order_id
+
+    # Linked sales ticket (if any) — capture before deletion
+    linked_ticket = await col("tickets").find_one({"orders_ticket_ref": order_id})
+
+    deleted: dict = {"packing_board": 0, "ticket": 0, "audit_logs": 0}
+
+    # All packing board entries for this order (includes backorders)
+    pb_result = await col("packing_board").delete_many({"order_id": order_id})
+    deleted["packing_board"] = pb_result.deleted_count
+
+    # Audit logs for the packing board entries
+    al_pb = await col("audit_log").delete_many(
+        {"entity_type": "packing_board", "entity_id": order_id}
+    )
+    deleted["audit_logs"] += al_pb.deleted_count
+
+    # Cascade: linked sales ticket and its audit logs
+    if linked_ticket:
+        ticket_id = str(linked_ticket["_id"])
+        al_t = await col("audit_log").delete_many(
+            {"entity_type": {"$in": ["ticket", "tickets"]}, "entity_id": ticket_id}
+        )
+        deleted["audit_logs"] += al_t.deleted_count
+        await col("tickets").delete_one({"_id": linked_ticket["_id"]})
+        deleted["ticket"] = 1
+
+    # Record the purge itself
+    await audit_log(
+        "packing.purge", "admin_purge", order_id,
+        entity_label=order_id,
+        user=current_user,
+        detail={"linked_ticket": str(linked_ticket["_id"]) if linked_ticket else None, "deleted": deleted},
+    )
+
+    return {
+        "success": True,
+        "purged": deleted,
+        "order_id": order_id,
+        "customer_name": linked_ticket.get("customer_name", "") if linked_ticket else "",
+    }
