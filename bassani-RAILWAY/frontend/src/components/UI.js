@@ -543,31 +543,37 @@ export function DataTable({
   defaultPageSize = 25,
   pageSizeOptions = [10, 25, 50, 100],
 }) {
+  // Client-side pagination uses its own React state so goTo() reliably triggers
+  // a re-render — TanStack's internal state doesn't fire when sorting is partially
+  // controlled externally, causing the pagination arrows to silently do nothing.
+  const [internalPag, setInternalPag] = useState({ pageIndex: 0, pageSize: defaultPageSize });
+
+  const effectivePag = manualPagination
+    ? (pagination || { pageIndex: 0, pageSize: defaultPageSize })
+    : internalPag;
+  const effectivePagChange = manualPagination ? onPaginationChange : setInternalPag;
+
   const table = useReactTable({
     data,
     columns,
     state: {
       sorting,
-      ...(manualPagination ? { pagination: pagination || { pageIndex: 0, pageSize: defaultPageSize } } : {}),
+      pagination: effectivePag,
     },
     pageCount: manualPagination && total != null
-      ? Math.ceil(total / (pagination?.pageSize || defaultPageSize))
+      ? Math.ceil(total / (effectivePag.pageSize || defaultPageSize))
       : undefined,
     onSortingChange,
-    onPaginationChange: manualPagination ? onPaginationChange : undefined,
+    onPaginationChange: effectivePagChange,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: manualPagination ? undefined : getPaginationRowModel(),
     getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
     manualPagination,
     manualSorting,
     autoResetPageIndex: false,
-    initialState: !manualPagination ? { pagination: { pageSize: defaultPageSize } } : undefined,
   });
 
-  const pag = manualPagination
-    ? (pagination || { pageIndex: 0, pageSize: defaultPageSize })
-    : table.getState().pagination;
-  const { pageIndex, pageSize } = pag;
+  const { pageIndex, pageSize } = effectivePag;
   const pageCount = table.getPageCount();
   const totalRows = manualPagination ? (total ?? 0) : data.length;
   const from      = totalRows ? pageIndex * pageSize + 1 : 0;
@@ -576,12 +582,10 @@ export function DataTable({
   const canNext   = pageIndex < (pageCount > 0 ? pageCount - 1 : 0);
 
   const goTo = (idx) => {
-    if (manualPagination) onPaginationChange({ pageIndex: idx, pageSize });
-    else table.setPageIndex(idx);
+    effectivePagChange({ pageIndex: idx, pageSize });
   };
   const changeSize = (size) => {
-    if (manualPagination) onPaginationChange({ pageIndex: 0, pageSize: size });
-    else table.setPageSize(size);
+    effectivePagChange({ pageIndex: 0, pageSize: size });
   };
 
   return (
