@@ -541,7 +541,7 @@ When placing an order against the Bassani Samples Account (products distributed 
 
 The ticket is created as a **Sample order** (amber "Sample" badge on the ticket list; amber banner in ticket detail showing who the sample is for).
 
-In the quote builder, all product prices are automatically locked to R0.00 and cannot be changed. On confirmation, no invoice is created and no payment step appears — stock is moved at zero cost. The packing board pipeline runs as normal.
+In the quote builder, all product prices are automatically locked to R0.00 and cannot be changed. On confirmation, the order goes straight to the packing board — no invoice at this stage. The packing board pipeline runs as normal (packing → QA approval → RP approval). At Mark Complete, a R0.00 invoice is automatically created and posted in the financial system — it is marked paid immediately since nothing is owed. No Finance action is required on sample tickets; payment and invoice lifecycle buttons are hidden throughout.
 
 ### Handling a Follow-up Inquiry (Link Existing Order)
 

@@ -1592,15 +1592,15 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 
 #### 8.38 — Samples Account — Complete 2026-07-15
 
-**Goal:** Internal Bassani staff use a dedicated Bassani Samples customer account in Odoo for sample orders. These are real stock movements but have zero monetary value and must not produce invoices or payment steps. The portal must classify these as Sample tickets, enforce R0.00 pricing, record the intended recipient, and skip all finance pipeline steps.
+**Goal:** Internal Bassani staff use a dedicated Bassani Samples customer account in Odoo for sample orders. These are real stock movements with zero monetary value. The portal classifies them as Sample tickets, enforces R0.00 pricing, records the intended recipient, and hides all finance payment steps. A R0.00 invoice is created in Odoo at mark_complete (same trigger as regular orders) — Odoo marks it paid immediately since nothing is owed — providing a full financial record without requiring Finance to act.
 
 **Key decisions confirmed:**
 - `samples_account` flag lives in MongoDB `customer_metadata` collection (keyed by `odoo_partner_id`) — no Odoo changes required
 - Each sample ticket requires an Odoo customer lookup for the actual sample recipient (`sample_recipient_id` / `sample_recipient_name`) — free text not allowed
 - Portal auto-zeroes all `price_unit` on product select when `is_sample` is true; price field is locked read-only in the quote builder
 - Backend also enforces `price_unit = 0.0` for all lines in `create_order_from_ticket` — dual enforcement
-- `confirm_order` skips Step 2 (invoice creation) entirely for sample tickets — no `account.move` is created
-- Register Deposit, Confirm Payment, Register Balance Payment, and invoice lifecycle actions are all hidden in ticket detail for sample tickets
+- Invoice created at `mark_complete` (same as all orders) — R0.00 total; Odoo marks it paid immediately since `amount_residual = 0`
+- Register Deposit, Confirm Payment, Register Balance Payment, and invoice lifecycle actions are all hidden in ticket detail for sample tickets; invoice number IS shown for audit trail
 - Stock still moves through the full packing board pipeline
 
 **What was built:**
@@ -1610,7 +1610,8 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - [x] `ticket_routes.py` — `TicketCreate` model: added `sample_recipient_id: Optional[int]`, `sample_recipient_name: Optional[str]`
 - [x] `ticket_routes.py` — `create_ticket`: checks `customer_metadata` for `samples_account`; if set, requires `sample_recipient_id`; validates recipient exists in Odoo; stamps `is_sample: True`, `sample_recipient_id`, `sample_recipient_name` on ticket; audit-logs `is_sample`
 - [x] `ticket_routes.py` — `create_order_from_ticket`: forces `price_unit = 0.0` for all lines when `ticket.is_sample` is true
-- [x] `order_routes.py` — `confirm_order`: extended `_sales_ticket` projection to include `is_sample`; Step 2 (invoice creation) skipped when `_is_sample_ticket` is true
+- [x] `order_routes.py` — `confirm_order`: extended `_sales_ticket` projection to include `is_sample`; `is_sample` flag stamped on packing board doc at confirm time
+- [x] `packing_board_routes.py` — `complete_entry`: `is_sample` guard removed — invoice creation runs unconditionally for all orders; R0.00 sample invoices are posted and Odoo marks them paid immediately
 - [x] `CustomerProfile.js` — "Samples Account" section (admin only, `customers.manage` permission) with enable/disable toggle and confirmation modals; "Samples Account" badge in customer header; `samplesAccount` state initialized from profile 360 view response
 - [x] `SalesTickets.js` — create modal: shows "Samples Account" badge on matched customer; shows "Sample recipient" Odoo customer search field when customer is a samples account; required validation before create; `sample_recipient_id`/`sample_recipient_name` included in `POST /api/tickets/` body
 - [x] `SalesTickets.js` — ticket list: "Sample" badge (amber) replaces source badge for sample tickets; "For: [recipient name]" sub-line shown
@@ -1624,9 +1625,9 @@ Sourced from business process meeting minutes (2026-06-19). Two real-world mailb
 - Sales staff opens New Direct Inquiry → searches for the Samples customer → sees "Samples" label in results → selects it → "Sample recipient" search field appears with amber warning → selects actual recipient customer → creates ticket
 - Ticket is created with `is_sample: true`, `sample_recipient_id`, `sample_recipient_name`
 - Ticket list shows "Sample" amber badge and "For: [recipient]" sub-line
-- Ticket detail shows amber "Sample order — for [recipient]" banner; Register Deposit and finance actions are absent
+- Ticket detail shows amber "Sample order — for [recipient]" banner; finance payment actions are absent; invoice number IS shown once created
 - Quote builder: adding a product auto-sets price to R0.00; price field is a locked read-only display
-- Confirm Order skips invoice creation; order goes directly to packing board
+- Confirm Order goes directly to packing board (no invoice at this stage); at Mark Complete, a R0.00 invoice is created and posted in Odoo; Odoo marks it paid immediately
 - Backend rejects price override — `create_order_from_ticket` forces all `price_unit = 0.0` even if frontend sends non-zero
 
 ---

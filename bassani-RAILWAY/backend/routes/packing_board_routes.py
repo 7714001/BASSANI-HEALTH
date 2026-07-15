@@ -702,33 +702,32 @@ async def complete_entry(
         backorder_entry_id = str(_bo_result.inserted_id)
 
     # ── Create and post Odoo invoice for delivered qty ────────────────────────
-    # Invoice is raised here (after QA + RP sign-off) so the customer can pay
-    # before or at collection. Sample tickets never produce an invoice.
+    # Invoice is raised here (after QA + RP sign-off) for all orders including
+    # samples. Sample invoices total R0.00 and Odoo marks them paid immediately.
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
     invoice_warning: Optional[str] = None
-    if not entry.get("is_sample"):
-        try:
-            odoo = get_odoo_client()
-            sale_order_id = int(entry["order_id"])
-            wiz_id = odoo.create(
-                "sale.advance.payment.inv",
-                {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
-            )
-            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
-            inv_rows = odoo.search_read(
-                "account.move",
-                [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
-                ["id", "name"],
-                order="id desc",
-                limit=1,
-            )
-            if inv_rows:
-                invoice_id = inv_rows[0]["id"]
-                invoice_name = inv_rows[0]["name"]
-                odoo.execute("account.move", "action_post", [invoice_id])
-        except Exception as e:
-            invoice_warning = f"Invoice creation failed: {e}"
+    try:
+        odoo = get_odoo_client()
+        sale_order_id = int(entry["order_id"])
+        wiz_id = odoo.create(
+            "sale.advance.payment.inv",
+            {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+        )
+        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
+        inv_rows = odoo.search_read(
+            "account.move",
+            [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
+            ["id", "name"],
+            order="id desc",
+            limit=1,
+        )
+        if inv_rows:
+            invoice_id = inv_rows[0]["id"]
+            invoice_name = inv_rows[0]["name"]
+            odoo.execute("account.move", "action_post", [invoice_id])
+    except Exception as e:
+        invoice_warning = f"Invoice creation failed: {e}"
 
     # Stamp invoice_id on the linked sales ticket so Finance can register payment
     if invoice_id:
