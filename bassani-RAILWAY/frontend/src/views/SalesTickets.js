@@ -1005,6 +1005,24 @@ export default function SalesTickets() {
   const hasValidLines = quoteLines.some(l => l.product_id);
   const today         = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" });
 
+  // Must be declared before any early returns to satisfy Rules of Hooks.
+  const filteredTickets = useMemo(() => tickets.filter(t => {
+    if (sourceFilter === "internal" &&  t.reseller_id) return false;
+    if (sourceFilter === "external" && !t.reseller_id) return false;
+    if (statusFilter.size > 0) {
+      const key = t.exit_status ? `exit:${t.exit_status}` : t.status;
+      if (!statusFilter.has(key)) return false;
+    }
+    if (listSearch.trim()) {
+      const q = listSearch.trim().toLowerCase();
+      if (
+        !(t.customer_name         || "").toLowerCase().includes(q) &&
+        !(t.customer_company_name || "").toLowerCase().includes(q) &&
+        !String(t.order_id        || "").includes(q)
+      ) return false;
+    }
+    return true;
+  }), [tickets, sourceFilter, statusFilter, listSearch]);
 
   // ── Detail — full-page ticket view ────────────────────────────────────────
   if (view === "detail") {
@@ -2531,25 +2549,6 @@ export default function SalesTickets() {
     );
   }
 
-
-  // ── Filtered ticket list (client-side) ───────────────────────────────────
-  const filteredTickets = useMemo(() => tickets.filter(t => {
-    if (sourceFilter === "internal" &&  t.reseller_id) return false;
-    if (sourceFilter === "external" && !t.reseller_id) return false;
-    if (statusFilter.size > 0) {
-      const key = t.exit_status ? `exit:${t.exit_status}` : t.status;
-      if (!statusFilter.has(key)) return false;
-    }
-    if (listSearch.trim()) {
-      const q = listSearch.trim().toLowerCase();
-      if (
-        !(t.customer_name         || "").toLowerCase().includes(q) &&
-        !(t.customer_company_name || "").toLowerCase().includes(q) &&
-        !String(t.order_id        || "").includes(q)
-      ) return false;
-    }
-    return true;
-  }), [tickets, sourceFilter, statusFilter, listSearch]);
 
   // ── List + create modal ───────────────────────────────────────────────────
   return (
