@@ -54,7 +54,7 @@ Emails, push notifications, and non-critical writes always fire via FastAPI `Bac
 No statement can be marked paid without a corresponding `account.move` in Odoo.
 
 **10. Everything runs on Railway.**
-No new external services without an explicit decision. Approved additions: Resend (email), Sentry (errors), Cloudflare R2 (document storage).
+No new external services without an explicit decision. Approved additions: Resend (email), Sentry (errors), Cloudflare R2 (document storage), Google Places API (address autocomplete — proxied server-side via `places_routes.py`, key stored as `GOOGLE_PLACES_API_KEY` Railway env var, never exposed to the browser).
 
 ---
 
@@ -100,6 +100,8 @@ No new external services without an explicit decision. Approved additions: Resen
 - `frontend/src/views/SigningPage.js` — public page at `/sign/:token`. No auth. Customer signs NDA + Store Onboarding Agreement via 30-day signing session token. Pre-filled from form_data snapshot. POSTs signed PDFs to `POST /api/public/signing/{token}/sign/{doc_type}`.
 - `frontend/src/utils/pdfSigning.js` — shared PDF field detection, prefill mapping, and signing utilities. `DOC_CONFIGS` covers nda, store_onboarding_agreement, customer_information_form. Used by DocumentTemplates (admin test flow), PublicRegister (self-service CIF signing), and SigningPage (NDA + SOA customer signing).
 - `backend/routes/public_routes.py` — public endpoints including `GET /api/public/signing/{token}` (validate session + return form data) and `POST /api/public/signing/{token}/sign/{doc_type}` (accept signed PDF, update session + application).
+- `backend/routes/places_routes.py` — Google Places API proxy. Two rate-limited public endpoints: `GET /api/public/places/autocomplete?q=&session_token=` and `GET /api/public/places/details?place_id=&session_token=`. Key read from `GOOGLE_PLACES_API_KEY` env var; degrades to 503 if unset (frontend falls back silently to plain text input).
+- `frontend/src/components/AddressAutocomplete.js` — reusable SA-restricted address autocomplete input. Debounced predictions dropdown, keyboard nav, "Powered by Google" attribution, silent fallback if API unavailable. Used on the address step of both `PublicRegister.js` and `CustomerOnboarding.js`. On selection auto-populates street, suburb, city, province, and postal_code via `onAddressSelect` callback.
 - `frontend/src/views/CustomerApplicationDetail.js` — application detail for admin review. Two-step document flow: "Generate Documents" calls `POST /generate-signing-docs` (creates session with `status: "generated"`, no email); admin previews pre-filled NDA and SOA client-side via `generateSignedPdf`; "Send to Customer" calls `POST /send-signing-docs` (sends email, sets `status: "sent"`). Signing session panel shows three states: no session / generated / sent. Signing session status card shows which docs the customer has signed.
 - `frontend/src/views/LabelPrinters.js` — Settings tab for Zebra printer management (add/test/delete). Embedded into `Settings.js` as "Label Printers" tab.
 - `frontend/src/App.js` — all routes; role-based route branching (e.g. reseller sees `ResellerCatalog`, admin sees `Products`)

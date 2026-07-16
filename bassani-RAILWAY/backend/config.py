@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     r2_secret_access_key: str = ""
     r2_bucket:            str = "bassani-health-docs"
     r2_endpoint:          str = ""
+    google_places_api_key: str = ""
 
     class Config:
         env_file = ".env"

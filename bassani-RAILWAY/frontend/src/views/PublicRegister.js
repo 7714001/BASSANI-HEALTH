@@ -5,6 +5,7 @@ import {
   FileText, Upload, X, Loader2, AlertCircle, PenLine,
 } from "lucide-react";
 import { DOC_CONFIGS, detectFields, generateSignedPdf, buildPrefill } from "../utils/pdfSigning";
+import AddressAutocomplete from "../components/AddressAutocomplete";
 import api from "../api";
 import toast from "react-hot-toast";
 
@@ -693,7 +694,13 @@ export default function PublicRegister() {
     // Step 2 — Business Address
     <div key="2" className="space-y-4">
       <Field label="Street Address" required>
-        <TextInput value={form.street} onChange={upd("street")} placeholder="123 Health Street" autoFocus />
+        <AddressAutocomplete
+          value={form.street}
+          onChange={(v) => setForm(f => ({ ...f, street: v }))}
+          onAddressSelect={(fields) => setForm(f => ({ ...f, ...fields }))}
+          placeholder="123 Health Street"
+          autoFocus
+        />
       </Field>
       <Field label="Suburb">
         <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />

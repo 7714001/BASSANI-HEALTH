@@ -8,6 +8,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import { Modal, BtnSecondary, BtnDanger } from "../components/UI";
+import AddressAutocomplete from "../components/AddressAutocomplete";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -652,7 +653,13 @@ export default function CustomerOnboarding() {
     // Step 3 — Business Address
     <div key="3" className="space-y-4">
       <Field label="Street Address" required>
-        <TextInput value={form.street} onChange={upd("street")} placeholder="123 Health Street" autoFocus />
+        <AddressAutocomplete
+          value={form.street}
+          onChange={(v) => setForm(f => ({ ...f, street: v }))}
+          onAddressSelect={(fields) => setForm(f => ({ ...f, ...fields }))}
+          placeholder="123 Health Street"
+          autoFocus
+        />
       </Field>
       <Field label="Suburb">
         <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />

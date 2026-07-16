@@ -49,7 +49,7 @@ The portal is the single interface through which all commercial operations are m
 A reseller partner logs into the portal and sees their own workspace:
 
 - **Product catalogue** — only the products Bassani has enabled for resellers, with real-time stock figures from the warehouse. Where Bassani has set a minimum order quantity on a product, this is displayed on the product card and enforced when the reseller builds their order.
-- **Customer management** — their onboarded customers, each with full account history, outstanding invoices, and account statements. Onboarding new customers goes through a structured five-step application process with mandatory documentation, reviewed and approved by Bassani admin.
+- **Customer management** — their onboarded customers, each with full account history, outstanding invoices, and account statements. Onboarding new customers goes through a structured five-step application process with mandatory documentation, reviewed and approved by Bassani admin. The address step uses Google Maps-powered autocomplete restricted to South African addresses, ensuring accurate address capture without manual typing errors.
 - **Order placement** — select a customer, build an order from the catalogue, submit. The system checks stock availability, customer credit limits, and whether a valid Section 21 authorisation exists for controlled substances, before the order is accepted.
 - **Commission dashboard** — monthly statements showing turnover, tier rate, and projected commission. Resellers can dispute statements or track payment history without calling Bassani.
 

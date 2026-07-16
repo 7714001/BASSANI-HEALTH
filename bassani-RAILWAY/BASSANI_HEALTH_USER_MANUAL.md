@@ -1697,6 +1697,7 @@ Customers can register directly without contacting Bassani staff or going throug
 **For a customer registering directly:**
 1. Navigate to `portal.bassanihealth.com/apply`
 2. Complete the four data-collection steps: Business Details, Primary Contact, Business Address, Additional Information
+   - On the **Business Address** step, the street address field has smart autocomplete. Start typing the address and a dropdown of South African address suggestions appears. Selecting a suggestion fills in the street, suburb, city, province, and postal code automatically. All fields can still be edited by hand after selection.
 3. On the final step (Sign Documents), each of the four Bassani Health documents opens pre-filled with the details already entered — the customer reviews the data, draws their signature on the canvas, and clicks Sign
 4. Upload the CIPC Company Registration Certificate (the one document that cannot be pre-filled)
 5. Click Submit — a confirmation email with a reference number is sent immediately

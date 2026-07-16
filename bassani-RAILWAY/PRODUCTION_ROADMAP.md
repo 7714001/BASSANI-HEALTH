@@ -27,7 +27,7 @@
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Scoping In Progress | Odoo architecture confirmed (separate legal entities, intercompany PO correct, BoMs not yet built, sub-locations not yet configured). Track A (batch ID generation, GACP logbook, intercompany visibility) can start immediately. Track B gated on Odoo BoM + location setup. SAHPRA reporting requirements not yet obtained. |
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
-| 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.2 complete — 2026-07-06 |
+| 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.4 complete — 2026-07-16 |
 | 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07; 17.6 Welcome Pack slot-based management — 2026-07-14 |
 | 18 | In-Portal Customer Document Signing | 🟢 Complete | 18.0–18.4 complete — 2026-07-08 |
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
@@ -3456,6 +3456,12 @@ Step 0 of the existing CustomerOnboarding wizard gains a "Share self-registratio
 
 `send_registration_confirmation` sends the applicant a confirmation with reference number and expected timeline. `send_onboarding_submitted` updated with `source` parameter so the admin notification correctly labels self-service submissions.
 
+**16.4 — Google Places address autocomplete (2026-07-16)**
+
+The Business Address step (Step 2 on `/apply`, Step 3 in the reseller-initiated wizard) now has a smart address input backed by Google Places API. As the customer types, SA-restricted address predictions appear in a dropdown. Selecting a result auto-populates all five address fields (street, suburb, city, province, postal code) in a single click. All fields remain editable after selection.
+
+Implementation: Google Places API is called server-side (`places_routes.py`) — the API key (`GOOGLE_PLACES_API_KEY` Railway env var) is never exposed to the browser. Two rate-limited public endpoints proxy the autocomplete and details calls. Session tokens group each search+select pair into a single billing transaction. The `AddressAutocomplete` component degrades silently to a plain text input if the API key is not configured. Google's "Powered by Google" attribution is shown in the dropdown per their terms of service.
+
 **Future: reseller self-registration**
 
 Reseller self-registration (`/reseller-apply`) is architecturally similar but requires portal account creation on approval. Descoped from Phase 16 — implement when needed.
@@ -3474,6 +3480,7 @@ DocuSign requires a separate service decision and API credentials. The current d
 - [x] Admin notification email updated to distinguish self-service from reseller submissions
 - [x] Reseller referral link shown in CustomerOnboarding wizard step 0 (reseller role only)
 - [x] Approval of self-service app creates Odoo customer and reseller link (handled by existing approve endpoint, unchanged)
+- [x] Address autocomplete on Business Address step in both `/apply` and reseller-initiated wizard — SA-restricted, all address types, server-side proxy, silent fallback
 
 ---
 
