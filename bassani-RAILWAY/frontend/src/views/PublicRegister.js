@@ -710,32 +710,36 @@ export default function PublicRegister() {
           ))}
         </SelectInput>
       </Field>
-      <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
-        <TextInput
-          value={form.company_name}
-          onChange={upd("company_name")}
-          placeholder={isSoleProprietor ? "e.g. John Smith Trading" : "e.g. Wellness Pharma (Pty) Ltd"}
-          autoFocus
-        />
-      </Field>
-      {!isSoleProprietor && (
-        <Field label="Trading Name (if different)">
-          <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
-        </Field>
-      )}
-      {!isSoleProprietor ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Company Registration No." required>
-            <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+      {form.business_type && (
+        <>
+          <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
+            <TextInput
+              value={form.company_name}
+              onChange={upd("company_name")}
+              placeholder={isSoleProprietor ? "e.g. John Smith Trading" : "e.g. Wellness Pharma (Pty) Ltd"}
+              autoFocus
+            />
           </Field>
-          <Field label="VAT Number">
-            <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
-          </Field>
-        </div>
-      ) : (
-        <Field label="VAT Number">
-          <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
-        </Field>
+          {!isSoleProprietor && (
+            <Field label="Trading Name (if different)">
+              <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
+            </Field>
+          )}
+          {!isSoleProprietor ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Company Registration No." required>
+                <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+              </Field>
+              <Field label="VAT Number">
+                <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+              </Field>
+            </div>
+          ) : (
+            <Field label="VAT Number">
+              <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+            </Field>
+          )}
+        </>
       )}
     </div>,
 
