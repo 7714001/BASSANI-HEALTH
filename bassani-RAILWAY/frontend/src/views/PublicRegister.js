@@ -857,9 +857,7 @@ export default function PublicRegister() {
       <div className="bg-white border-b border-gray-100">
         <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-bassani-600 flex items-center justify-center shrink-0">
-              <span className="text-white font-bold text-xs">BH</span>
-            </div>
+            <img src="/favicon.ico" alt="Bassani Health" className="w-8 h-8 shrink-0" />
             <div>
               <p className="text-sm font-bold text-gray-900 leading-tight">Bassani Health</p>
               <p className="text-[10px] text-gray-400 leading-tight">Customer Registration</p>
