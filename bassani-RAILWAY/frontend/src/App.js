@@ -22,7 +22,6 @@ import CustomerProfile  from "./views/CustomerProfile";
 import Scripts          from "./views/Scripts";
 import HcpRegister      from "./views/HcpRegister";
 import Targets               from "./views/Targets";
-import CustomerOnboarding    from "./views/CustomerOnboarding";
 import CustomerApplications       from "./views/CustomerApplications";
 import CustomerApplicationDetail  from "./views/CustomerApplicationDetail";
 import OnboardingDocs             from "./views/OnboardingDocs";
@@ -203,13 +202,6 @@ export default function App() {
         } />
         <Route path="/orders/:orderId/passport" element={
           <ProtectedRoute><AppLayout><OrderPassport /></AppLayout></ProtectedRoute>
-        } />
-        <Route path="/onboard" element={
-          <ProtectedRoute>
-            {user?.role === "reseller"
-              ? <Navigate to="/onboarding-docs" replace />
-              : <AppLayout><CustomerOnboarding /></AppLayout>}
-          </ProtectedRoute>
         } />
         <Route path="/onboarding-docs" element={
           <ProtectedRoute><AppLayout><OnboardingDocs /></AppLayout></ProtectedRoute>

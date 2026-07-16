@@ -73,35 +73,38 @@ export const DOC_CONFIGS = {
   },
   customer_information_form: {
     hasBassaniSig: false,
+    allPrefilled: true,
     sections: [
       { title: "Business details", fields: [
-        { name: "business_name",      label: "Trading / Business Name",  testDefault: "Test Trading Name" },
-        { name: "company_name",       label: "Registered Company Name",  testDefault: "Test Company (Pty) Ltd" },
-        { name: "company_reg_number", label: "Registration Number",      testDefault: "2024/123456/07" },
-        { name: "vat_number",         label: "VAT Number",               testDefault: "4560123456" },
+        { name: "registered_business_name", label: "Registered Business Name",   testDefault: "Test Company (Pty) Ltd" },
+        { name: "trading_name",             label: "Trading Name (if different)", testDefault: "Test Trading Name" },
+        { name: "company_reg_number",       label: "Registration Number",         testDefault: "2024/123456/07" },
+        { name: "vat_number",               label: "VAT Number",                  testDefault: "4560123456" },
+      ]},
+      { title: "Authorised signatory", fields: [
+        { name: "authorised_full_name", label: "Full Name",        testDefault: "Test Customer" },
+        { name: "authorised_id_number", label: "ID Number",        testDefault: "9001010000087" },
+        { name: "authorised_title",     label: "Title / Position", testDefault: "Director" },
       ]},
       { title: "Contact details", fields: [
-        { name: "full_name",     label: "Full Name",         testDefault: "Test Customer" },
-        { name: "position",      label: "Position / Title",  testDefault: "Director" },
-        { name: "phone_number",  label: "Phone Number",      testDefault: "+27 11 000 0000" },
-        { name: "email_address", label: "Email Address",     testDefault: "test@example.com" },
-        { name: "alt_phone",     label: "Alternative Phone", testDefault: "" },
+        { name: "primary_contact_number", label: "Phone Number",  testDefault: "+27 11 000 0000" },
+        { name: "primary_email_address",  label: "Email Address", testDefault: "test@example.com" },
       ]},
       { title: "Business address", fields: [
         { name: "street_address", label: "Street Address", testDefault: "123 Main Road" },
         { name: "suburb",         label: "Suburb",         testDefault: "Sandton" },
-        { name: "city",           label: "City",           testDefault: "Johannesburg" },
+        { name: "city_town",      label: "City / Town",    testDefault: "Johannesburg" },
         { name: "province",       label: "Province",       testDefault: "Gauteng" },
         { name: "postal_code",    label: "Postal Code",    testDefault: "2196" },
       ]},
     ],
-    isAutoFill: (name) => name === "date_day" || name === "date_month" || name === "date_year",
+    isAutoFill: (name) => name === "day" || name === "month" || name === "year",
     getAutoFillValue: (name) => {
       const now  = new Date();
       const sast = { timeZone: "Africa/Johannesburg" };
-      if (name === "date_day")   return now.toLocaleDateString("en-ZA", { day: "2-digit", ...sast });
-      if (name === "date_month") return now.toLocaleString("en-ZA", { month: "long", ...sast });
-      if (name === "date_year")  return now.toLocaleDateString("en-ZA", { year: "numeric", ...sast });
+      if (name === "day")   return now.toLocaleDateString("en-ZA", { day: "2-digit", ...sast });
+      if (name === "month") return now.toLocaleString("en-ZA", { month: "long", ...sast });
+      if (name === "year")  return now.toLocaleDateString("en-ZA", { year: "numeric", ...sast });
       return "";
     },
   },
@@ -121,20 +124,20 @@ export function buildPrefill(docType, form) {
     customer_location:     form.city,
   };
   if (docType === "customer_information_form") return {
-    business_name:      form.trading_name || form.company_name,
-    company_name:       form.company_name,
-    company_reg_number: form.registration_number,
-    vat_number:         form.vat_number,
-    full_name:          form.contact_name,
-    position:           form.contact_position,
-    phone_number:       form.contact_phone,
-    email_address:      form.contact_email,
-    alt_phone:          form.contact_alt_phone,
-    street_address:     form.street,
-    suburb:             form.suburb,
-    city:               form.city,
-    province:           form.province,
-    postal_code:        form.postal_code,
+    registered_business_name: form.company_name,
+    trading_name:             form.trading_name,
+    company_reg_number:       form.registration_number,
+    vat_number:               form.vat_number,
+    authorised_full_name:     form.contact_name,
+    authorised_id_number:     form.signatory_id_number || "",
+    authorised_title:         form.contact_position,
+    primary_contact_number:   form.contact_phone,
+    primary_email_address:    form.contact_email,
+    street_address:           form.street,
+    suburb:                   form.suburb,
+    city_town:                form.city,
+    province:                 form.province,
+    postal_code:              form.postal_code,
   };
   if (docType === "store_onboarding_agreement") return {
     registered_business_name:    form.company_name,

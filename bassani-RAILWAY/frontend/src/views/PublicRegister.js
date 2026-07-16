@@ -133,11 +133,9 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
     ]).then(async ([pdfRes, metaRes]) => {
       const bytes = new Uint8Array(pdfRes.data);
       setPdfBytes(bytes);
-      url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-      setPdfUrl(url);
       setSigMeta(metaRes?.data || null);
 
-      const detected = await detectFields(bytes);
+      const detected  = await detectFields(bytes);
       setFields(detected);
 
       const cfg      = DOC_CONFIGS[docType];
@@ -152,6 +150,19 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
         })
       );
       setTextValues(init);
+
+      if (cfg?.allPrefilled) {
+        // Show the pre-filled PDF so the customer reviews their data before signing
+        const previewBytes = await generateSignedPdf(bytes, {
+          textValues: init, signingProfile: metaRes?.data || null,
+          mikeFieldName: null, mikeImageBytes: null,
+          customerSigDataUrl: null, config: cfg, addWatermark: false,
+        });
+        url = URL.createObjectURL(new Blob([previewBytes], { type: "application/pdf" }));
+      } else {
+        url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      }
+      setPdfUrl(url);
     }).catch(() => setError("Failed to load document. Please try again."))
       .finally(() => setLoading(false));
     return () => { if (url) URL.revokeObjectURL(url); };
@@ -271,7 +282,7 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
           <div className="w-full md:w-80 shrink-0 md:border-l border-gray-200 bg-white flex flex-col">
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-              {/* Bassani auto-fill card */}
+              {/* Bassani auto-fill card — only for docs with a Bassani countersignature */}
               {config?.hasBassaniSig && (
                 <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Bassani Health (auto-filled)</p>
@@ -289,8 +300,8 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
                 </div>
               )}
 
-              {/* Pre-filled form fields */}
-              {(config?.sections || []).map(section => {
+              {/* Pre-filled form fields — hidden when all data comes from the wizard */}
+              {!config?.allPrefilled && (config?.sections || []).map(section => {
                 const visible = section.fields.filter(f =>
                   detectedNames.has(f.name) && !config.isAutoFill(f.name)
                 );
@@ -314,6 +325,15 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
                   </div>
                 );
               })}
+
+              {/* Info note for pre-filled docs */}
+              {config?.allPrefilled && (
+                <div className="bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5">
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Your details have been pre-filled from the information you provided. Review the document on the left, then draw your signature below.
+                  </p>
+                </div>
+              )}
 
               {/* Signature canvas */}
               <div>
