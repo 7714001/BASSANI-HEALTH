@@ -58,34 +58,41 @@ const BLANK = {
 
 // ── Small UI components ────────────────────────────────────────────────────────
 
-function Field({ label, required, children }) {
+function Field({ label, required, error, children }) {
   return (
     <div>
       <label className="block text-xs font-semibold text-gray-600 mb-1">
         {label}{required && <span className="text-red-400 ml-0.5">*</span>}
       </label>
       {children}
+      {error && (
+        <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+          <AlertCircle size={11} className="shrink-0" />{error}
+        </p>
+      )}
     </div>
   );
 }
 
-function TextInput({ value, onChange, placeholder, type = "text", autoFocus }) {
+function TextInput({ value, onChange, placeholder, type = "text", autoFocus, maxLength, error }) {
   return (
     <input
       type={type} value={value} onChange={onChange}
-      placeholder={placeholder} autoFocus={autoFocus}
-      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
-        focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+      placeholder={placeholder} autoFocus={autoFocus} maxLength={maxLength}
+      className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 bg-white placeholder-gray-400 ${
+        error ? "border-red-300 focus:ring-red-200" : "border-gray-200 focus:ring-bassani-300"
+      }`}
     />
   );
 }
 
-function SelectInput({ value, onChange, children }) {
+function SelectInput({ value, onChange, children, error }) {
   return (
     <select
       value={value} onChange={onChange}
-      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
-        focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white text-gray-700"
+      className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 bg-white text-gray-700 ${
+        error ? "border-red-300 focus:ring-red-200" : "border-gray-200 focus:ring-bassani-300"
+      }`}
     >
       {children}
     </select>
@@ -392,7 +399,12 @@ export default function PublicRegister() {
   const [signingDoc,   setSigningDoc]   = useState(null); // doc type currently open in CustomerSigningModal
   const cipcFileRef = useRef(null);
 
-  const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+  const [errors, setErrors] = useState({});
+
+  const upd = (field) => (e) => {
+    setForm(f => ({ ...f, [field]: e.target.value }));
+    setErrors(prev => ({ ...prev, [field]: undefined }));
+  };
   const isSoleProprietor = form.business_type === "Sole Proprietor";
 
   useEffect(() => {
@@ -438,67 +450,65 @@ export default function PublicRegister() {
   // ── Validation ──────────────────────────────────────────────────────────────
 
   const validateStep = () => {
+    const errs = {};
     if (step === 0) {
-      if (!form.business_type) { toast.error("Please select your business type"); return false; }
-      if (form.business_type === "Other" && !form.business_type_other.trim()) {
-        toast.error("Please specify your business type"); return false;
-      }
-      if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
-      const reg = form.registration_number.trim();
+      if (!form.business_type)
+        errs.business_type = "Please select your business type";
+      if (form.business_type === "Other" && !form.business_type_other.trim())
+        errs.business_type_other = "Please specify your business type";
+      if (form.business_type && !form.company_name.trim())
+        errs.company_name = "Company name is required";
       if (!isSoleProprietor) {
-        if (!reg) { toast.error("Company registration number is required"); return false; }
-        if (!/^(\d{4}\/\d{4,7}\/\d{2}|CK.+)$/i.test(reg)) {
-          toast.error("Registration number format: 2024/123456/07 or CK####/######/##"); return false;
-        }
+        const reg = form.registration_number.trim();
+        if (!reg)
+          errs.registration_number = "Company registration number is required";
+        else if (!/^(\d{4}\/\d{4,7}\/\d{2}|CK.+)$/i.test(reg))
+          errs.registration_number = "Format: 2024/123456/07 or CK####/######/##";
       }
       const vat = form.vat_number.trim();
-      if (vat && !/^4\d{9}$/.test(vat)) {
-        toast.error("VAT number must be 10 digits starting with 4"); return false;
-      }
+      if (vat && !/^4\d{9}$/.test(vat))
+        errs.vat_number = "Must be 10 digits starting with 4";
     }
     if (step === 1) {
-      if (!form.contact_name.trim())     { toast.error("Full name is required"); return false; }
-      if (!form.contact_position.trim()) { toast.error("Position / title is required"); return false; }
+      if (!form.contact_name.trim())
+        errs.contact_name = "Full name is required";
+      if (!form.contact_position.trim())
+        errs.contact_position = "Position / title is required";
       const idNum = form.signatory_id_number.trim();
-      if (!idNum)               { toast.error("ID number is required"); return false; }
-      if (!validateSAID(idNum)) { toast.error("Please enter a valid 13-digit South African ID number"); return false; }
-      if (!form.contact_email.trim()) { toast.error("Email address is required"); return false; }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email.trim())) {
-        toast.error("Please enter a valid email address"); return false;
-      }
-      if (!form.contact_phone.trim()) { toast.error("Phone number is required"); return false; }
-      if (!validateSAPhone(form.contact_phone)) {
-        toast.error("Please enter a valid South African phone number (e.g. 011 555 1234 or +27 82 555 1234)"); return false;
-      }
-      if (form.contact_alt_phone.trim() && !validateSAPhone(form.contact_alt_phone)) {
-        toast.error("Alternative phone number is not a valid South African number"); return false;
-      }
+      if (!idNum)
+        errs.signatory_id_number = "ID number is required";
+      else if (!validateSAID(idNum))
+        errs.signatory_id_number = "Must be a valid 13-digit South African ID number";
+      if (!form.contact_email.trim())
+        errs.contact_email = "Email address is required";
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email.trim()))
+        errs.contact_email = "Enter a valid email address";
+      if (!form.contact_phone.trim())
+        errs.contact_phone = "Phone number is required";
+      else if (!validateSAPhone(form.contact_phone))
+        errs.contact_phone = "Enter a valid SA number (e.g. 011 555 1234 or +27 82 555 1234)";
+      if (form.contact_alt_phone.trim() && !validateSAPhone(form.contact_alt_phone))
+        errs.contact_alt_phone = "Enter a valid South African number";
     }
     if (step === 2) {
-      if (!form.street.trim())  { toast.error("Street address is required"); return false; }
-      if (!form.suburb.trim())  { toast.error("Suburb is required"); return false; }
-      if (!form.city.trim())    { toast.error("City is required"); return false; }
-      if (!form.province)       { toast.error("Province is required"); return false; }
+      if (!form.street.trim())  errs.street      = "Street address is required";
+      if (!form.suburb.trim())  errs.suburb      = "Suburb is required";
+      if (!form.city.trim())    errs.city        = "City is required";
+      if (!form.province)       errs.province    = "Province is required";
       const pc = form.postal_code.trim();
-      if (!pc)                  { toast.error("Postal code is required"); return false; }
-      if (!/^\d{4}$/.test(pc)) { toast.error("Postal code must be exactly 4 digits"); return false; }
+      if (!pc)                  errs.postal_code = "Postal code is required";
+      else if (!/^\d{4}$/.test(pc)) errs.postal_code = "Must be exactly 4 digits";
     }
+    setErrors(errs);
     if (step === 4) {
       const missingSigned = SIGN_DOCS.filter(d => !uploads[d.type]);
-      if (missingSigned.length) {
-        toast.error(`Sign all documents before submitting (${missingSigned.length} remaining)`);
-        return false;
-      }
-      if (!uploads.cipc_certificate) {
-        toast.error("Upload your CIPC Company Registration Certificate before submitting");
-        return false;
-      }
+      if (missingSigned.length || !uploads.cipc_certificate) return false;
     }
-    return true;
+    return Object.keys(errs).length === 0;
   };
 
-  const next = () => { if (validateStep()) setStep(s => s + 1); };
-  const back = () => setStep(s => s - 1);
+  const next = () => { if (validateStep()) { setErrors({}); setStep(s => s + 1); } };
+  const back = () => { setErrors({}); setStep(s => s - 1); };
 
   const submit = async () => {
     if (!validateStep()) return;
@@ -698,14 +708,18 @@ export default function PublicRegister() {
   const stepContent = [
     // Step 0 — Business Details
     <div key="0" className="space-y-4">
-      <Field label="Business Type" required>
+      <Field label="Business Type" required error={errors.business_type}>
         <SelectInput
           value={form.business_type}
-          onChange={(e) => setForm(f => ({
-            ...f,
-            business_type: e.target.value,
-            ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
-          }))}
+          error={!!errors.business_type}
+          onChange={(e) => {
+            setForm(f => ({
+              ...f,
+              business_type: e.target.value,
+              ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
+            }));
+            setErrors(prev => ({ ...prev, business_type: undefined }));
+          }}
         >
           <option value="">— Select business type —</option>
           {BUSINESS_TYPE_OPTIONS.map(({ value, label }) => (
@@ -714,22 +728,24 @@ export default function PublicRegister() {
         </SelectInput>
       </Field>
       {form.business_type === "Other" && (
-        <Field label="Please specify" required>
+        <Field label="Please specify" required error={errors.business_type_other}>
           <TextInput
             value={form.business_type_other}
             onChange={upd("business_type_other")}
             placeholder="e.g. Veterinary practice"
+            error={!!errors.business_type_other}
             autoFocus
           />
         </Field>
       )}
       {form.business_type && (
         <>
-          <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
+          <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required error={errors.company_name}>
             <TextInput
               value={form.company_name}
               onChange={upd("company_name")}
               placeholder={isSoleProprietor ? "e.g. John Smith Trading" : "e.g. Wellness Pharma (Pty) Ltd"}
+              error={!!errors.company_name}
               autoFocus
             />
           </Field>
@@ -740,16 +756,16 @@ export default function PublicRegister() {
           )}
           {!isSoleProprietor ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Company Registration No." required>
-                <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+              <Field label="Company Registration No." required error={errors.registration_number}>
+                <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" error={!!errors.registration_number} />
               </Field>
-              <Field label="VAT Number">
-                <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} />
+              <Field label="VAT Number" error={errors.vat_number}>
+                <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} error={!!errors.vat_number} />
               </Field>
             </div>
           ) : (
-            <Field label="VAT Number">
-              <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} />
+            <Field label="VAT Number" error={errors.vat_number}>
+              <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} error={!!errors.vat_number} />
             </Field>
           )}
         </>
@@ -762,54 +778,54 @@ export default function PublicRegister() {
         Please provide details for the person signing the onboarding documents.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Full Name" required>
-          <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" autoFocus />
+        <Field label="Full Name" required error={errors.contact_name}>
+          <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" error={!!errors.contact_name} autoFocus />
         </Field>
-        <Field label="Position / Title" required>
-          <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" />
+        <Field label="Position / Title" required error={errors.contact_position}>
+          <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" error={!!errors.contact_position} />
         </Field>
       </div>
-      <Field label="SA ID Number" required>
-        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="8001015009087" />
+      <Field label="SA ID Number" required error={errors.signatory_id_number}>
+        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="8001015009087" maxLength={13} error={!!errors.signatory_id_number} />
       </Field>
-      <Field label="Email Address" required>
-        <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" />
+      <Field label="Email Address" required error={errors.contact_email}>
+        <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" error={!!errors.contact_email} />
       </Field>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Phone Number" required>
-          <TextInput value={form.contact_phone} onChange={upd("contact_phone")} placeholder="+27 11 555 1234" />
+        <Field label="Phone Number" required error={errors.contact_phone}>
+          <TextInput value={form.contact_phone} onChange={upd("contact_phone")} placeholder="+27 11 555 1234" error={!!errors.contact_phone} />
         </Field>
-        <Field label="Alternative Phone">
-          <TextInput value={form.contact_alt_phone} onChange={upd("contact_alt_phone")} placeholder="+27 82 555 1234" />
+        <Field label="Alternative Phone" error={errors.contact_alt_phone}>
+          <TextInput value={form.contact_alt_phone} onChange={upd("contact_alt_phone")} placeholder="+27 82 555 1234" error={!!errors.contact_alt_phone} />
         </Field>
       </div>
     </div>,
 
     // Step 2 — Business Address
     <div key="2" className="space-y-4">
-      <Field label="Street Address" required>
+      <Field label="Street Address" required error={errors.street}>
         <AddressAutocomplete
           value={form.street}
-          onChange={(v) => setForm(f => ({ ...f, street: v }))}
+          onChange={(v) => { setForm(f => ({ ...f, street: v })); setErrors(prev => ({ ...prev, street: undefined })); }}
           onAddressSelect={(fields) => setForm(f => ({ ...f, ...fields }))}
           placeholder="123 Health Street"
           autoFocus
         />
       </Field>
-      <Field label="Suburb" required>
-        <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />
+      <Field label="Suburb" required error={errors.suburb}>
+        <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" error={!!errors.suburb} />
       </Field>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="City" required>
-          <TextInput value={form.city} onChange={upd("city")} placeholder="Johannesburg" />
+        <Field label="City" required error={errors.city}>
+          <TextInput value={form.city} onChange={upd("city")} placeholder="Johannesburg" error={!!errors.city} />
         </Field>
-        <Field label="Postal Code" required>
-          <TextInput value={form.postal_code} onChange={upd("postal_code")} placeholder="2196" />
+        <Field label="Postal Code" required error={errors.postal_code}>
+          <TextInput value={form.postal_code} onChange={upd("postal_code")} placeholder="2196" maxLength={4} error={!!errors.postal_code} />
         </Field>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Province" required>
-          <SelectInput value={form.province} onChange={upd("province")}>
+        <Field label="Province" required error={errors.province}>
+          <SelectInput value={form.province} onChange={upd("province")} error={!!errors.province}>
             <option value="">— Select province —</option>
             {PROVINCES.map(p => <option key={p}>{p}</option>)}
           </SelectInput>
