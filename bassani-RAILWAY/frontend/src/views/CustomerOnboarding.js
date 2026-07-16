@@ -34,9 +34,9 @@ const ORDER_VOLUMES = [
 ];
 
 const REFERRAL_SOURCES = [
-  "Bassani Health representative",
-  "Referral from another reseller",
-  "Social media",
+  "Bassani representative",
+  "Referred by another business",
+  "LinkedIn",
   "Industry event / conference",
   "Online search",
   "Other",

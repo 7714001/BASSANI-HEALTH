@@ -831,8 +831,9 @@ export default function PublicRegister() {
       <Field label="How did you hear about Bassani Health?">
         <SelectInput value={form.referral_source} onChange={upd("referral_source")}>
           <option value="">— Select source —</option>
-          <option>Referred by a healthcare representative</option>
-          <option>Social media</option>
+          <option>Bassani representative</option>
+          <option>Referred by another business</option>
+          <option>LinkedIn</option>
           <option>Industry event / conference</option>
           <option>Online search</option>
           <option>Other</option>
