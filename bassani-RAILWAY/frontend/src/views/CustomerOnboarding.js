@@ -17,8 +17,6 @@ const BUSINESS_TYPE_OPTIONS = [
   { value: "Dispensary",           label: "Dispensary",           desc: "Collection point / retail outlet" },
   { value: "Wellness Centre",      label: "Wellness Centre",      desc: "Health and wellness retail" },
   { value: "Section 22C Facility", label: "Section 22C Facility", desc: "Licensed complementary medicines facility" },
-  { value: "Company (Pty) Ltd",    label: "Company (Pty) Ltd",    desc: "Registered private company" },
-  { value: "Partnership",          label: "Partnership",          desc: "Registered business partnership" },
   { value: "Sole Proprietor",      label: "Sole Proprietor",      desc: "Unincorporated individual trader" },
   { value: "Other",                label: "Other",                desc: null },
 ];
