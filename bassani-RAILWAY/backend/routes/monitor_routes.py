@@ -12,7 +12,7 @@ Admin endpoints (JWT):
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from auth import require_admin
 from database import col
@@ -23,6 +23,39 @@ NO_ID         = {"_id": 0}
 OVERDUE_HOURS = 72
 QUOTE_HOURS   = 48   # softer deadline for unconfirmed quotes
 _TERMINAL     = {"complete", "cancelled", "collected", "cleared"}
+
+
+# ── Live-push WebSocket manager ───────────────────────────────────────────────
+
+class _MonitorManager:
+    """Holds all connected monitor WebSocket clients and broadcasts refresh nudges."""
+
+    def __init__(self):
+        self._connections: list[WebSocket] = []
+
+    def connect(self, ws: WebSocket):
+        self._connections.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        self._connections = [c for c in self._connections if c is not ws]
+
+    async def broadcast_refresh(self):
+        dead = []
+        for ws in list(self._connections):
+            try:
+                await ws.send_text('{"type":"refresh"}')
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+
+_monitor_manager = _MonitorManager()
+
+
+async def broadcast_monitor_refresh():
+    """Call from any route that changes ticket or packing board state."""
+    await _monitor_manager.broadcast_refresh()
 
 
 # ── Token helpers ─────────────────────────────────────────────────────────────
@@ -209,6 +242,24 @@ async def validate_token(token: str = Query("")):
     if not await _verify_token(token):
         raise HTTPException(status_code=403, detail="Invalid monitor token")
     return {"valid": True}
+
+
+# ── Public: live-push WebSocket ───────────────────────────────────────────────
+
+@router.websocket("/ws")
+async def monitor_ws(ws: WebSocket, token: str = Query("")):
+    """Token-verified WebSocket. Server pushes {type:'refresh'} on any pipeline change."""
+    await ws.accept()
+    if not await _verify_token(token):
+        await ws.send_text('{"type":"error","message":"Invalid monitor token"}')
+        await ws.close(code=1008)
+        return
+    _monitor_manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()   # block; raises WebSocketDisconnect on close
+    except WebSocketDisconnect:
+        _monitor_manager.disconnect(ws)
 
 
 # ── Public: full board data ───────────────────────────────────────────────────

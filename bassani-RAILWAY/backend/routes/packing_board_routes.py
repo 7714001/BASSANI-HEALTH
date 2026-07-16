@@ -26,6 +26,7 @@ from database import col, NO_ID
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
 from routes.settings_routes import get_email_routing
+from routes.monitor_routes import broadcast_monitor_refresh
 from services.email_service import (
     send_order_ready_for_collection,
     send_partial_delivery_ready,
@@ -266,6 +267,7 @@ async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Opti
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log(f"packing.{new_status}", "packing_board", order_id, entity_label=order_id, user=actor)
+    await broadcast_monitor_refresh()
     return updated
 
 
@@ -356,6 +358,7 @@ async def add_to_board(
     await push_update(doc)
     await audit_log("packing.queued", "packing_board", entry.order_id, entity_label=entry.customer_name,
                     user=current_user, detail={"customer": entry.customer_name, "units": entry.total_units})
+    await broadcast_monitor_refresh()
     return {"success": True, "order_id": entry.order_id}
 
 
@@ -459,6 +462,7 @@ async def qa_approve(
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.qa_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await broadcast_monitor_refresh()
     return {"success": True}
 
 
@@ -485,6 +489,7 @@ async def rp_approve(
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.rp_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await broadcast_monitor_refresh()
     return {"success": True}
 
 
@@ -901,6 +906,7 @@ async def mark_collected(
     if all_collected:
         await _sync_sales_ticket(body.order_id, "complete")
 
+    await broadcast_monitor_refresh()
     return {
         "success": True,
         "collected_at": now.isoformat(),

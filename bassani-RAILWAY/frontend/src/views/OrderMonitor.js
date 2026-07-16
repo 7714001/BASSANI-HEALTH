@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../api";
 
@@ -313,12 +313,42 @@ export default function OrderMonitor() {
       .catch(() => setValid(false));
   }, [token, fetchData]);
 
-  // Poll every 30 s
+  // Poll every 30 s as a fallback heartbeat (covers reconnects / network blips)
   useEffect(() => {
     if (!valid) return;
     const id = setInterval(fetchData, POLL_MS);
     return () => clearInterval(id);
   }, [valid, fetchData]);
+
+  // WebSocket — push refresh from server on any pipeline state change
+  const wsRef        = useRef(null);
+  const reconnectRef = useRef(null);
+  useEffect(() => {
+    if (!valid || !token) return;
+    let delay = 1000;
+    const connect = () => {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocol}://${window.location.host}/api/monitor/ws?token=${encodeURIComponent(token)}`);
+      wsRef.current = ws;
+      ws.onopen  = () => { delay = 1000; };
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "refresh") fetchData();
+        } catch {}
+      };
+      ws.onclose = () => {
+        reconnectRef.current = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 30_000);
+      };
+      ws.onerror = () => ws.close();
+    };
+    connect();
+    return () => {
+      clearTimeout(reconnectRef.current);
+      wsRef.current?.close();
+    };
+  }, [valid, token, fetchData]);
 
   // ── Invalid token screen ──────────────────────────────────────────────────
   if (valid === false) {

@@ -22,6 +22,7 @@ from auth import (
     require_permission, require_any_permission, require_admin,
     get_current_user, get_user_by_username, require_super_admin, ADMIN_ROLES, TICKET_ROLES,
 )
+from routes.monitor_routes import broadcast_monitor_refresh
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
 from database import col, NO_ID
@@ -333,6 +334,7 @@ async def create_ticket(
     await audit_log("ticket.create", "ticket", str(result.inserted_id), entity_label=_cust["name"],
                     user=current_user, after={"status": "open", "customer_id": body.customer_id, "is_sample": is_sample})
     await notify_ticket_assigned("sales", _cust["name"], doc["assigned_to"])
+    await broadcast_monitor_refresh()
     return {"success": True, "ticket_id": str(result.inserted_id)}
 
 
@@ -709,6 +711,7 @@ async def update_ticket_stage(
         before={"status": ticket["status"], "exit_status": ticket.get("exit_status")},
         after={"status": body.status, "exit_status": body.exit_status},
     )
+    await broadcast_monitor_refresh()
     rid = ticket.get("reseller_id")
     await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
     if _au and _au.get("email"):
