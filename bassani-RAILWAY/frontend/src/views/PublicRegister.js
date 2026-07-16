@@ -199,7 +199,7 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
   const config      = DOC_CONFIGS[docType];
   const sigFields   = fields.filter(f => f.type === "Signature");
   const mikeFieldName = config?.hasBassaniSig
-    ? (sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null)
+    ? (config.bassaniSigField ?? sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null)
     : null;
   const detectedNames = new Set(fields.map(f => f.name));
 

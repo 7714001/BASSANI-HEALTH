@@ -4,29 +4,55 @@
 
 export const DOC_CONFIGS = {
   nda: {
-    hasBassaniSig: true,
+    hasBassaniSig:    true,
+    allPrefilled:     true,
+    bassaniSigField:  "bassani_signature",
+    customerSigField: "counterparty_signature",
     sections: [
-      { title: "Company details", fields: [
-        { name: "company_name_1",        label: "Company Name",                   testDefault: "Test Company (Pty) Ltd" },
-        { name: "company_address",       label: "Company Address",                testDefault: "123 Main Road, Johannesburg, Gauteng, 2000" },
-        { name: "company_reg_number",    label: "Registration Number",            testDefault: "2024/123456/07" },
+      { title: "Counterparty details", fields: [
+        { name: "counterparty_registered_name",    label: "Registered Name",            testDefault: "Test Company (Pty) Ltd" },
+        { name: "counterparty_company_reg_number", label: "Registration Number",        testDefault: "2024/123456/07" },
+        { name: "counterparty_vat_number",         label: "VAT Number",                 testDefault: "4560123456" },
+        { name: "counterparty_address",            label: "Address",                    testDefault: "123 Main Road, Johannesburg, Gauteng, 2000" },
+        { name: "counterparty_signatory_name",     label: "Authorised Signatory Name",  testDefault: "Test Customer" },
+        { name: "counterparty_signatory_title",    label: "Authorised Signatory Title", testDefault: "Director" },
+        { name: "counterparty_email",              label: "Email",                      testDefault: "test@example.com" },
       ]},
-      { title: "Contact details", fields: [
-        { name: "customer_company_name", label: "Company Name (signature block)", testDefault: "Test Company (Pty) Ltd" },
-        { name: "customer_name",         label: "Full Name",                      testDefault: "Test Customer" },
-        { name: "customer_position",     label: "Position / Title",               testDefault: "Director" },
-        { name: "customer_location",     label: "City / Location of Signing",     testDefault: "Johannesburg" },
+      { title: "Signature block", fields: [
+        { name: "counterparty_signed_at",          label: "City / Location of Signing",  testDefault: "Johannesburg" },
+        { name: "counterparty_full_name",          label: "Full Name (signature block)", testDefault: "Test Customer" },
+        { name: "counterparty_capacity_title",     label: "Capacity / Title",            testDefault: "Director" },
+        { name: "counterparty_witness_name",       label: "Witness Name",                testDefault: "Test Witness" },
       ]},
     ],
-    isAutoFill: (name) => name.startsWith("bassani_") || name.startsWith("effective_date"),
+    isAutoFill: (name) =>
+      name === "bassani_signature" ||
+      name === "bassani_date" ||
+      name === "bassani_capacity_title" ||
+      name === "bassani_full_name" ||
+      name === "bassani_witness_name" ||
+      name === "bassani_witness_signature" ||
+      name === "counterparty_date" ||
+      name === "document_id_audit_ref" ||
+      name === "counterparty_email_audit_ref" ||
+      name === "completion_date_audit_ref" ||
+      name === "bassani_sent_by_email_audit_ref",
     getAutoFillValue: (name, profile) => {
-      if (name === "bassani_name")                 return profile?.name  || "";
-      if (name.toLowerCase().includes("position")) return profile?.title || "";
+      if (name === "bassani_full_name")      return profile?.name  || "Michael Stringer";
+      if (name === "bassani_capacity_title") return profile?.title || "Chief Executive Officer";
+      if (name === "bassani_witness_name" ||
+          name === "document_id_audit_ref" ||
+          name === "counterparty_email_audit_ref" ||
+          name === "completion_date_audit_ref" ||
+          name === "bassani_sent_by_email_audit_ref") return "";
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric", timeZone: "Africa/Johannesburg" });
     },
     bassaniTextFields: [
-      { name: "bassani_name",     description: "Full name of Bassani signing authority" },
-      { name: "effective_date_*", description: "Effective date of the agreement (set to today)" },
+      { name: "bassani_signature",      description: "Bassani signing authority signature image" },
+      { name: "bassani_full_name",      description: "Full name of Bassani signing authority" },
+      { name: "bassani_capacity_title", description: "Capacity / title of Bassani signing authority" },
+      { name: "bassani_date",           description: "Date of Bassani signing (set to today)" },
+      { name: "bassani_witness_name",   description: "Left blank — witness signs by hand" },
     ],
   },
   store_onboarding_agreement: {
@@ -115,13 +141,17 @@ export function buildPrefill(docType, form) {
   const addr = [form.street, form.suburb, form.city, form.province, form.postal_code]
     .filter(Boolean).join(", ");
   if (docType === "nda") return {
-    company_name_1:        form.company_name,
-    company_address:       addr,
-    company_reg_number:    form.registration_number,
-    customer_company_name: form.company_name,
-    customer_name:         form.contact_name,
-    customer_position:     form.contact_position,
-    customer_location:     form.city,
+    counterparty_registered_name:    form.company_name,
+    counterparty_company_reg_number: form.registration_number,
+    counterparty_vat_number:         form.vat_number,
+    counterparty_address:            addr,
+    counterparty_signatory_name:     form.contact_name,
+    counterparty_signatory_title:    form.contact_position,
+    counterparty_email:              form.contact_email,
+    counterparty_signed_at:          form.city,
+    counterparty_full_name:          form.contact_name,
+    counterparty_capacity_title:     form.contact_position,
+    counterparty_witness_name:       "",
   };
   if (docType === "customer_information_form") return {
     registered_business_name: form.company_name,
@@ -247,7 +277,8 @@ export async function generateSignedPdf(pdfBytes, {
     }
 
     const isMike         = mikeFieldName !== null && name === mikeFieldName;
-    const image          = isMike ? mikeImage : customerImage;
+    const isCustomerSig  = config?.customerSigField ? name === config.customerSigField : !isMike;
+    const image          = isMike ? mikeImage : (isCustomerSig ? customerImage : null);
     const isBassaniBlank = isMike && !mikeImage;
 
     for (const widget of field.acroField.getWidgets()) {
@@ -278,15 +309,15 @@ export async function generateSignedPdf(pdfBytes, {
         const sz = Math.min(10, rect.height * 0.35);
         page.drawText(label, { x: rect.x + 4, y: rect.y + (rect.height - sz) / 2,
           size: sz, font: fontBold, color: rgb(0.2, 0.4, 0.8), maxWidth: rect.width - 8 });
-      } else if (!isBassaniBlank) {
-        // No customer sig drawn — placeholder
+      } else if (!isBassaniBlank && isCustomerSig) {
+        // No customer sig drawn — placeholder (only on the designated customer sig field)
         page.drawRectangle({ x: rect.x, y: rect.y, width: rect.width, height: rect.height,
           color: rgb(0.95, 0.95, 0.95), borderColor: rgb(0.5, 0.5, 0.5), borderWidth: 1.5, opacity: 0.8 });
         const sz = Math.min(10, rect.height * 0.35);
         page.drawText("[ No signature drawn ]", { x: rect.x + 4, y: rect.y + (rect.height - sz) / 2,
           size: sz, font: fontBold, color: rgb(0.5, 0.5, 0.5), maxWidth: rect.width - 8 });
       }
-      // isBassaniBlank && !addWatermark: customer flow — leave Bassani's block blank
+      // witness sig fields and isBassaniBlank && !addWatermark: left completely blank
     }
   }
 
@@ -321,9 +352,9 @@ export async function countersignPdf(customerPdfBytes, blankTemplateBytes, docTy
 
   // Locate Bassani's signature field in the blank template
   const fields = await detectFields(blankTemplateBytes);
-  const bassaniField = fields.find(
-    f => f.type === "Signature" && config.isAutoFill(f.name)
-  );
+  const bassaniField = config.bassaniSigField
+    ? fields.find(f => f.name === config.bassaniSigField)
+    : fields.find(f => f.type === "Signature" && config.isAutoFill(f.name));
   if (!bassaniField?.rect) return customerPdfBytes;
 
   const pdfDoc = await PDFDocument.load(customerPdfBytes, { ignoreEncryption: true });

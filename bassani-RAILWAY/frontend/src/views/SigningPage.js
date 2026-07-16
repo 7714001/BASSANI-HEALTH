@@ -125,7 +125,7 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
       const cfg       = DOC_CONFIGS[docType];
       const sigFields = fields.filter(f => f.type === "Signature");
       const mikeField = cfg?.hasBassaniSig
-        ? sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null
+        ? (cfg.bassaniSigField ?? sigFields.find(f => f.name.startsWith("bassani_"))?.name ?? null)
         : null;
 
       const customerSigDataUrl = sigMode === "draw"
