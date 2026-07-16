@@ -744,12 +744,12 @@ export default function PublicRegister() {
                 <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
               </Field>
               <Field label="VAT Number">
-                <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+                <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} />
               </Field>
             </div>
           ) : (
             <Field label="VAT Number">
-              <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+              <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" maxLength={10} />
             </Field>
           )}
         </>
