@@ -45,11 +45,11 @@ const REFERRAL_SOURCES = [
 ];
 
 const STEPS = [
-  { label: "Documents",        icon: FileText },
-  { label: "Business Details", icon: Building2 },
-  { label: "Primary Contact",  icon: User },
-  { label: "Business Address", icon: MapPin },
-  { label: "Additional Info",  icon: ClipboardList },
+  { label: "Documents",        shortLabel: "Docs",    icon: FileText },
+  { label: "Business Details", shortLabel: "Details", icon: Building2 },
+  { label: "Primary Contact",  shortLabel: "Contact", icon: User },
+  { label: "Business Address", shortLabel: "Address", icon: MapPin },
+  { label: "Additional Info",  shortLabel: "Info",    icon: ClipboardList },
 ];
 
 const TEMPLATES = [
@@ -805,29 +805,51 @@ export default function CustomerOnboarding() {
             </div>
           )}
 
-          {/* Step indicators */}
-          <div className="flex items-center gap-0">
+          {/* Step indicators — mobile: progress bar; sm+: icon stepper */}
+          <div className="sm:hidden space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-bassani-700">{STEPS[step].label}</span>
+              <span className="text-xs text-gray-400">Step {step + 1} of {STEPS.length}</span>
+            </div>
+            <div className="flex gap-1">
+              {STEPS.map((_, i) => {
+                const forceComplete = isDraftMode && i === 0;
+                return (
+                  <div key={i} className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
+                    (i < step || forceComplete) ? "bg-bassani-400" : i === step ? "bg-bassani-600" : "bg-gray-200"
+                  }`} />
+                );
+              })}
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center">
             {STEPS.map((s, i) => {
-              const Icon    = s.icon;
-              const done    = i < step;
-              const current = i === step;
-              // In draft/resume mode, Step 0 is shown as complete
+              const Icon          = s.icon;
+              const done          = i < step;
+              const current       = i === step;
               const forceComplete = isDraftMode && i === 0;
               return (
-                <div key={i} className="flex items-center flex-1 last:flex-none">
-                  <div className={`flex items-center gap-2 shrink-0 ${current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"}`}>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors
-                      ${current ? "border-bassani-600 bg-bassani-600 text-white"
-                               : (done || forceComplete) ? "border-bassani-500 bg-bassani-50 text-bassani-600"
-                               : "border-gray-200 bg-white text-gray-300"}`}>
-                      {(done || forceComplete) ? <CheckCircle size={14} /> : <Icon size={14} />}
+                <div key={i} className="flex items-center flex-1 last:flex-none min-w-0">
+                  <div className={`flex items-center gap-1.5 shrink-0 ${
+                    current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"
+                  }`}>
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold border-2 shrink-0 transition-colors ${
+                      current           ? "border-bassani-600 bg-bassani-600 text-white"
+                      : (done || forceComplete) ? "border-bassani-500 bg-bassani-50 text-bassani-600"
+                      :                   "border-gray-200 bg-white text-gray-300"
+                    }`}>
+                      {(done || forceComplete) ? <CheckCircle size={12} /> : <Icon size={12} />}
                     </div>
-                    <span className={`text-xs font-semibold hidden sm:block ${current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"}`}>
-                      {s.label}
+                    <span className={`text-[11px] font-semibold whitespace-nowrap ${
+                      current ? "text-bassani-700" : (done || forceComplete) ? "text-bassani-500" : "text-gray-300"
+                    }`}>
+                      {s.shortLabel}
                     </span>
                   </div>
                   {i < STEPS.length - 1 && (
-                    <div className={`flex-1 h-px mx-3 ${(i < step || forceComplete) ? "bg-bassani-300" : "bg-gray-200"}`} />
+                    <div className={`flex-1 h-px mx-2 min-w-[8px] ${
+                      (i < step || forceComplete) ? "bg-bassani-300" : "bg-gray-200"
+                    }`} />
                   )}
                 </div>
               );
