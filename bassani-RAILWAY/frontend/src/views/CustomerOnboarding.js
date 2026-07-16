@@ -63,7 +63,7 @@ const REQUIRED_DOCS = [
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
-  vat_number: "", business_type: "",
+  vat_number: "", business_type: "", business_type_other: "",
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "",
   street: "", suburb: "", city: "", province: "",
@@ -164,6 +164,7 @@ export default function CustomerOnboarding() {
           registration_number: data.registration_number || "",
           vat_number:          data.vat_number          || "",
           business_type:       data.business_type       || "",
+          business_type_other: data.business_type_other || "",
           contact_name:        data.contact_name        || "",
           contact_position:    data.contact_position    || "",
           contact_email:       data.contact_email       || "",
@@ -283,6 +284,9 @@ export default function CustomerOnboarding() {
     }
     if (step === 1) {
       if (!form.business_type) { toast.error("Please select the customer's business type"); return false; }
+      if (form.business_type === "Other" && !form.business_type_other.trim()) {
+        toast.error("Please specify the customer's business type"); return false;
+      }
       if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
       const reg = form.registration_number.trim();
       if (!isSoleProprietor) {
@@ -655,6 +659,16 @@ export default function CustomerOnboarding() {
           ))}
         </SelectInput>
       </Field>
+      {form.business_type === "Other" && (
+        <Field label="Please specify" required>
+          <TextInput
+            value={form.business_type_other}
+            onChange={upd("business_type_other")}
+            placeholder="e.g. Veterinary practice"
+            autoFocus
+          />
+        </Field>
+      )}
       {form.business_type && (
         <>
           <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>

@@ -48,7 +48,7 @@ const SIGN_DOCS = [
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
-  vat_number: "", business_type: "",
+  vat_number: "", business_type: "", business_type_other: "",
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "", signatory_id_number: "",
   street: "", suburb: "", city: "", province: "",
@@ -440,6 +440,9 @@ export default function PublicRegister() {
   const validateStep = () => {
     if (step === 0) {
       if (!form.business_type) { toast.error("Please select your business type"); return false; }
+      if (form.business_type === "Other" && !form.business_type_other.trim()) {
+        toast.error("Please specify your business type"); return false;
+      }
       if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
       const reg = form.registration_number.trim();
       if (!isSoleProprietor) {
@@ -710,6 +713,16 @@ export default function PublicRegister() {
           ))}
         </SelectInput>
       </Field>
+      {form.business_type === "Other" && (
+        <Field label="Please specify" required>
+          <TextInput
+            value={form.business_type_other}
+            onChange={upd("business_type_other")}
+            placeholder="e.g. Veterinary practice"
+            autoFocus
+          />
+        </Field>
+      )}
       {form.business_type && (
         <>
           <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
