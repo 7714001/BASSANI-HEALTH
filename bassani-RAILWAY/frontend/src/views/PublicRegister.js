@@ -35,11 +35,10 @@ const ORDER_VOLUMES = [
 ];
 
 const STEPS = [
-  { label: "Business Type",    icon: Building2    },
-  { label: "Business Details", icon: ClipboardList },
+  { label: "Business Details", icon: Building2    },
   { label: "Primary Contact",  icon: User         },
   { label: "Business Address", icon: MapPin       },
-  { label: "Additional Info",  icon: FileText     },
+  { label: "Additional Info",  icon: ClipboardList },
   { label: "Sign Documents",   icon: PenLine      },
 ];
 
@@ -443,8 +442,6 @@ export default function PublicRegister() {
   const validateStep = () => {
     if (step === 0) {
       if (!form.business_type) { toast.error("Please select your business type"); return false; }
-    }
-    if (step === 1) {
       if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
       const reg = form.registration_number.trim();
       if (!isSoleProprietor) {
@@ -458,7 +455,7 @@ export default function PublicRegister() {
         toast.error("VAT number must be 10 digits starting with 4"); return false;
       }
     }
-    if (step === 2) {
+    if (step === 1) {
       if (!form.contact_name.trim())     { toast.error("Full name is required"); return false; }
       if (!form.contact_position.trim()) { toast.error("Position / title is required"); return false; }
       const idNum = form.signatory_id_number.trim();
@@ -476,7 +473,7 @@ export default function PublicRegister() {
         toast.error("Alternative phone number is not a valid South African number"); return false;
       }
     }
-    if (step === 3) {
+    if (step === 2) {
       if (!form.street.trim())  { toast.error("Street address is required"); return false; }
       if (!form.suburb.trim())  { toast.error("Suburb is required"); return false; }
       if (!form.city.trim())    { toast.error("City is required"); return false; }
@@ -485,7 +482,7 @@ export default function PublicRegister() {
       if (!pc)                  { toast.error("Postal code is required"); return false; }
       if (!/^\d{4}$/.test(pc)) { toast.error("Postal code must be exactly 4 digits"); return false; }
     }
-    if (step === 5) {
+    if (step === 4) {
       const missingSigned = SIGN_DOCS.filter(d => !uploads[d.type]);
       if (missingSigned.length) {
         toast.error(`Sign all documents before submitting (${missingSigned.length} remaining)`);
@@ -698,42 +695,23 @@ export default function PublicRegister() {
   // ── Step content ────────────────────────────────────────────────────────────
 
   const stepContent = [
-    // Step 0 — Business Type
-    <div key="0" className="space-y-3">
-      <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
-        Select the type of business you are registering. This helps us tailor the form to your requirements.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {BUSINESS_TYPE_OPTIONS.map(({ value, label, desc }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setForm(f => ({
-              ...f,
-              business_type: value,
-              ...(value === "Sole Proprietor" ? { registration_number: "" } : {}),
-            }))}
-            className={`text-left px-4 py-3 rounded-xl border-2 transition-all ${
-              form.business_type === value
-                ? "border-bassani-500 bg-bassani-50"
-                : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
-            }`}
-          >
-            <p className={`text-sm font-semibold ${form.business_type === value ? "text-bassani-700" : "text-gray-800"}`}>
-              {label}
-            </p>
-            {desc && (
-              <p className={`text-xs mt-0.5 ${form.business_type === value ? "text-bassani-500" : "text-gray-400"}`}>
-                {desc}
-              </p>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>,
-
-    // Step 1 — Business Details (adapts based on business type)
-    <div key="1" className="space-y-4">
+    // Step 0 — Business Details
+    <div key="0" className="space-y-4">
+      <Field label="Business Type" required>
+        <SelectInput
+          value={form.business_type}
+          onChange={(e) => setForm(f => ({
+            ...f,
+            business_type: e.target.value,
+            ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
+          }))}
+        >
+          <option value="">— Select business type —</option>
+          {BUSINESS_TYPE_OPTIONS.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </SelectInput>
+      </Field>
       <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
         <TextInput
           value={form.company_name}
@@ -763,8 +741,8 @@ export default function PublicRegister() {
       )}
     </div>,
 
-    // Step 2 — Primary Contact
-    <div key="2" className="space-y-4">
+    // Step 1 — Primary Contact
+    <div key="1" className="space-y-4">
       <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
         Please provide details for the person signing the onboarding documents.
       </p>
@@ -792,8 +770,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 3 — Business Address
-    <div key="3" className="space-y-4">
+    // Step 2 — Business Address
+    <div key="2" className="space-y-4">
       <Field label="Street Address" required>
         <AddressAutocomplete
           value={form.street}
@@ -827,8 +805,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 4 — Additional Information
-    <div key="4" className="space-y-4">
+    // Step 3 — Additional Information
+    <div key="3" className="space-y-4">
       <Field label="Expected Monthly Order Volume">
         <SelectInput value={form.ordering_volume} onChange={upd("ordering_volume")}>
           <option value="">— Select range —</option>
@@ -851,7 +829,7 @@ export default function PublicRegister() {
       </Field>
     </div>,
 
-    // Step 5 — Sign Documents
+    // Step 4 — Sign Documents
     step5Content,
   ];
 
@@ -980,10 +958,10 @@ export default function PublicRegister() {
             <div className="space-y-1.5 text-xs">
               {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
               {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}
-              {step > 2 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
-              {step > 2 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
-              {step > 3 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
-              {step >= 5 && (
+              {step > 1 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
+              {step > 1 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
+              {step > 2 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
+              {step >= 4 && (
                 <div className="flex justify-between">
                   <span className="text-gray-400">Documents</span>
                   <span className={`font-medium ${allSigned && hasCipc ? "text-green-700" : "text-amber-600"}`}>

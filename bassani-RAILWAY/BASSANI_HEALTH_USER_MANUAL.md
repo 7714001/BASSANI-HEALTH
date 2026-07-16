@@ -1696,19 +1696,18 @@ Customers can register directly without contacting Bassani staff or going throug
 
 **For a customer registering directly:**
 1. Navigate to `portal.bassanihealth.com/apply`
-2. **Step 1 — Business Type:** Select the type of business from 8 options (Pharmacy, Dispensary, Wellness Centre, Section 22C Facility, Company (Pty) Ltd, Partnership, Sole Proprietor, Other). This controls what the rest of the form asks for — Sole Proprietors do not see a Company Registration Number or Trading Name field.
-3. **Step 2 — Business Details:** Company name, registration number (all types except Sole Proprietor), and VAT number (optional). The form title and placeholder adapt to the business type.
-   - On the **Business Address** step, the street address field has smart autocomplete. Start typing the address and a dropdown of South African address suggestions appears. Selecting a suggestion fills in the street, suburb, city, province, and postal code automatically. All fields can still be edited by hand after selection.
-4. **Step 3 — Primary Contact:** Full name, position (required), SA ID number (13-digit, validated), email, and phone (SA format enforced). The ID number is embedded in the Customer Information Form for document signing.
-5. **Step 4 — Business Address:** Street, suburb, city, province, and 4-digit postal code — all required.
-6. **Step 5 — Additional Information:** Order volume, referral source, and notes — all optional.
-7. **Step 6 — Sign Documents:** The Customer Information Form opens pre-filled. The customer reviews, draws their signature, and clicks Sign. Upload the CIPC certificate. Click Submit.
-8. A confirmation email with a reference number is sent immediately. Bassani staff review the application within 2 to 3 business days.
+2. **Step 1 — Business Details:** Select the business type from the dropdown (Pharmacy, Dispensary, Wellness Centre, Section 22C Facility, Company (Pty) Ltd, Partnership, Sole Proprietor, Other). The rest of the step adapts instantly: Sole Proprietors see a simplified form without a Company Registration Number or Trading Name. All other types require a CIPC registration number in format `2024/123456/07`.
+3. **Step 2 — Primary Contact:** Full name, position (required), SA ID number (13-digit, Luhn-validated), email, and phone (SA format enforced). The ID number is embedded in the Customer Information Form for document signing.
+4. **Step 3 — Business Address:** Street, suburb (required), city, province (required), and 4-digit postal code (required).
+   - The street field has smart autocomplete — start typing and a dropdown of South African suggestions appears. Selecting one fills in street, suburb, city, province, and postal code automatically.
+5. **Step 4 — Additional Information:** Order volume, referral source, and notes — all optional.
+6. **Step 5 — Sign Documents:** The Customer Information Form opens pre-filled. The customer reviews, draws their signature, and clicks Sign. Upload the CIPC certificate. Click Submit.
+7. A confirmation email with a reference number is sent immediately. Bassani staff review the application within 2 to 3 business days.
 
 **For a customer referred by a reseller:**
 1. The reseller shares their personal referral link (see below)
 2. The customer opens the link — a "Referred by [Reseller Name]" banner confirms the association
-3. The customer completes the same six-step process
+3. The customer completes the same five-step process
 4. On approval, the customer account is automatically linked to the referring reseller — no manual linking required
 
 ### In-portal document signing

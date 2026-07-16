@@ -642,36 +642,21 @@ export default function CustomerOnboarding() {
 
     // Step 1 — Business Details (adapts based on business type)
     <div key="1" className="space-y-4">
-      <div>
-        <p className="text-xs font-semibold text-gray-500 mb-2">Business Type <span className="text-red-400">*</span></p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {BUSINESS_TYPE_OPTIONS.map(({ value, label, desc }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setForm(f => ({
-                ...f,
-                business_type: value,
-                ...(value === "Sole Proprietor" ? { registration_number: "" } : {}),
-              }))}
-              className={`text-left px-3 py-2.5 rounded-xl border-2 transition-all ${
-                form.business_type === value
-                  ? "border-bassani-500 bg-bassani-50"
-                  : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
-              }`}
-            >
-              <p className={`text-xs font-semibold ${form.business_type === value ? "text-bassani-700" : "text-gray-800"}`}>
-                {label}
-              </p>
-              {desc && (
-                <p className={`text-[10px] mt-0.5 ${form.business_type === value ? "text-bassani-500" : "text-gray-400"}`}>
-                  {desc}
-                </p>
-              )}
-            </button>
+      <Field label="Business Type" required>
+        <SelectInput
+          value={form.business_type}
+          onChange={(e) => setForm(f => ({
+            ...f,
+            business_type: e.target.value,
+            ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
+          }))}
+        >
+          <option value="">— Select business type —</option>
+          {BUSINESS_TYPE_OPTIONS.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
           ))}
-        </div>
-      </div>
+        </SelectInput>
+      </Field>
       <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
         <TextInput
           value={form.company_name}
