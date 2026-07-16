@@ -66,7 +66,6 @@ async def autocomplete(
         r = await client.get(_AUTOCOMPLETE_URL, params={
             "input":        q,
             "components":   "country:za",
-            "types":        "address",
             "sessiontoken": session_token,
             "key":          _key(),
         })
