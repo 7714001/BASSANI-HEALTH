@@ -30,8 +30,9 @@ export default function AddressAutocomplete({
   const [activeIndex,     setActiveIndex    ] = useState(-1);
   const [disabled,        setDisabled       ] = useState(false); // true if backend returns 503
 
-  const containerRef  = useRef(null);
-  const sessionToken  = useRef(crypto.randomUUID());
+  const containerRef    = useRef(null);
+  const sessionToken    = useRef(crypto.randomUUID());
+  const skipNextFetch   = useRef(false);
 
   const resetSession = () => { sessionToken.current = crypto.randomUUID(); };
 
@@ -40,6 +41,11 @@ export default function AddressAutocomplete({
   useEffect(() => {
     if (disabled || value.trim().length < 2) {
       setPredictions([]);
+      return;
+    }
+
+    if (skipNextFetch.current) {
+      skipNextFetch.current = false;
       return;
     }
 
@@ -77,8 +83,8 @@ export default function AddressAutocomplete({
   // ── Select a prediction ───────────────────────────────────────────────────
 
   const handleSelect = useCallback(async (prediction) => {
-    // Immediately close the dropdown and show street text optimistically
     const streetGuess = prediction.description.split(",")[0];
+    skipNextFetch.current = true;
     onChange(streetGuess);
     setPredictions([]);
     setLoadingDetails(true);
@@ -87,12 +93,12 @@ export default function AddressAutocomplete({
       const { data } = await api.get("/api/public/places/details", {
         params: { place_id: prediction.place_id, session_token: sessionToken.current },
       });
-      resetSession(); // new billing session for the next search
-      // street may come back empty if Google doesn't return street_number
+      resetSession();
+      skipNextFetch.current = true;
       onChange(data.street || streetGuess);
       onAddressSelect(data);
     } catch {
-      // details failed — at least the street text is already set
+      // details failed — street text already set optimistically
     } finally {
       setLoadingDetails(false);
     }
