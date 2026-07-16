@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
   UserPlus, KeyRound, PowerOff, Power, Copy, Check,
-  ChevronDown, ChevronUp, ShieldCheck, Warehouse,
+  ChevronDown, ChevronUp, ShieldCheck, Warehouse, Pencil,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
@@ -170,6 +170,18 @@ const ROLE_OPTIONS = [
   { value: "finance",                 label: "Finance",                     adminOnly: false },
   { value: "qa_manager",              label: "QA Manager",                  adminOnly: false },
   { value: "responsible_pharmacist",  label: "Responsible Pharmacist",      adminOnly: false },
+];
+
+const EDITABLE_ROLES = [
+  { value: "admin",                   label: "Admin"                    },
+  { value: "sales",                   label: "Sales"                    },
+  { value: "orders_clerk",            label: "Orders Clerk"             },
+  { value: "finance",                 label: "Finance"                  },
+  { value: "qa_manager",              label: "QA Manager"               },
+  { value: "responsible_pharmacist",  label: "Responsible Pharmacist"   },
+  { value: "warehouse_supervisor",    label: "Warehouse Supervisor"     },
+  { value: "packer",                  label: "Packer"                   },
+  { value: "reseller",                label: "Reseller"                 },
 ];
 
 const ROLE_COLORS = {
@@ -355,6 +367,10 @@ export default function Users() {
   const [warehouseTarget, setWarehouseTarget] = useState(null);
   const [warehouseValue,  setWarehouseValue ] = useState("");
 
+  // Edit user details modal
+  const [editTarget, setEditTarget] = useState(null);
+  const [editForm,   setEditForm  ] = useState({ name: "", email: "", display_name: "", role: "" });
+
   // Deactivate confirm
   const [deactivateConfirm, setDeactivateConfirm] = useState(null);
 
@@ -435,6 +451,29 @@ export default function Users() {
       });
       toast.success("Warehouse assignment updated");
       setWarehouseModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Update failed");
+    }
+  };
+
+  // ── Edit user details ────────────────────────────────────────────────────────
+
+  const openEdit = (u) => {
+    setEditTarget(u);
+    setEditForm({ name: u.name || "", email: u.email || "", display_name: u.display_name || "", role: u.role });
+  };
+
+  const saveEdit = async () => {
+    try {
+      await api.put(`/api/users/${editTarget.id}`, {
+        name:         editForm.name,
+        email:        editForm.email,
+        display_name: editForm.display_name,
+        role:         editForm.role,
+      });
+      toast.success("User updated");
+      setEditTarget(null);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Update failed");
@@ -697,6 +736,11 @@ export default function Users() {
               enableSorting: false,
               cell: ({ row: { original: u } }) => (
                 <div className="flex gap-1.5 flex-wrap">
+                  {canManageUsers && !u.is_super_admin && (
+                    <BtnSecondary size="sm" onClick={() => openEdit(u)} title="Edit user details">
+                      <Pencil size={12} />
+                    </BtnSecondary>
+                  )}
                   {canManageUsers && (u.role === "admin" || TICKET_ROLES.has(u.role)) && !u.is_super_admin && (
                     <BtnSecondary size="sm" onClick={() => openPerms(u)} title="Edit permissions">
                       <ShieldCheck size={12} />
@@ -721,6 +765,53 @@ export default function Users() {
           ]}
         />
       </main>
+
+      {/* ── Edit user details modal ── */}
+      {editTarget && (
+        <Modal title={`Edit: ${editTarget.username}`} onClose={() => setEditTarget(null)}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormGroup label="Full Name">
+              <Input
+                value={editForm.name}
+                onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                placeholder="Full name"
+              />
+            </FormGroup>
+            <FormGroup label="Email Address">
+              <Input
+                type="email"
+                value={editForm.email}
+                onChange={e => setEditForm({ ...editForm, email: e.target.value.toLowerCase() })}
+                placeholder="email@company.com"
+              />
+            </FormGroup>
+            <FormGroup label="Display Name">
+              <Input
+                value={editForm.display_name}
+                onChange={e => setEditForm({ ...editForm, display_name: e.target.value })}
+                placeholder="Shown on packing board"
+              />
+            </FormGroup>
+            <FormGroup label="Role" required>
+              <Select
+                value={editForm.role}
+                onChange={e => setEditForm({ ...editForm, role: e.target.value })}
+              >
+                {EDITABLE_ROLES.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </Select>
+            </FormGroup>
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Changing role does not automatically reset permissions. Update permissions separately after a role change.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setEditTarget(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={saveEdit}>Save Changes</BtnPrimary>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Create user modal ── */}
       {createModal && (

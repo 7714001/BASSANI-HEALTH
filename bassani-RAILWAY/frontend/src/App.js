@@ -115,8 +115,8 @@ function AuthRequired({ children }) {
   return children;
 }
 
-function ProtectedRoute({ children, adminOnly }) {
-  const { user, loading, isAdmin } = useAuth();
+function ProtectedRoute({ children, adminOnly, permission }) {
+  const { user, loading, isAdmin, can } = useAuth();
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
       <Spinner size="lg" />
@@ -126,6 +126,7 @@ function ProtectedRoute({ children, adminOnly }) {
   if (user.must_change_password) return <Navigate to="/change-password" replace />;
   if (PACKING_FLOOR_ROLES.has(user.role)) return <PackingFloorScreen />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
+  if (permission && !can(permission)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -186,7 +187,7 @@ export default function App() {
           <ProtectedRoute><AppLayout><CustomerProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/partners" element={
-          <ProtectedRoute adminOnly><AppLayout><PartnerDirectory /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="customers.manage"><AppLayout><PartnerDirectory /></AppLayout></ProtectedRoute>
         } />
         <Route path="/suppliers" element={
           <ProtectedRoute><AppLayout><Suppliers /></AppLayout></ProtectedRoute>
@@ -198,7 +199,7 @@ export default function App() {
           <ProtectedRoute><AppLayout><Orders /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders/backorders" element={
-          <ProtectedRoute adminOnly><AppLayout><Backorders /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="orders.view"><AppLayout><Backorders /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders/:orderId/passport" element={
           <ProtectedRoute><AppLayout><OrderPassport /></AppLayout></ProtectedRoute>
@@ -214,50 +215,50 @@ export default function App() {
           <ProtectedRoute><AppLayout><OnboardingDocs /></AppLayout></ProtectedRoute>
         } />
         <Route path="/applications" element={
-          <ProtectedRoute adminOnly><AppLayout><CustomerApplications /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="customers.view"><AppLayout><CustomerApplications /></AppLayout></ProtectedRoute>
         } />
         <Route path="/applications/:id" element={
-          <ProtectedRoute adminOnly><AppLayout><CustomerApplicationDetail /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="customers.view"><AppLayout><CustomerApplicationDetail /></AppLayout></ProtectedRoute>
         } />
         <Route path="/resellers" element={
-          <ProtectedRoute adminOnly><AppLayout><Resellers /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="resellers.view"><AppLayout><Resellers /></AppLayout></ProtectedRoute>
         } />
         <Route path="/resellers/:id" element={
-          <ProtectedRoute adminOnly><AppLayout><ResellerProfile /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="resellers.view"><AppLayout><ResellerProfile /></AppLayout></ProtectedRoute>
         } />
         <Route path="/commission" element={
           <ProtectedRoute><AppLayout><Commission /></AppLayout></ProtectedRoute>
         } />
         <Route path="/invoices" element={
-          <ProtectedRoute adminOnly><AppLayout><Invoices /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="invoices.view"><AppLayout><Invoices /></AppLayout></ProtectedRoute>
         } />
         <Route path="/finance/bank-recon" element={
-          <ProtectedRoute adminOnly><AppLayout><BankReconciliation /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="finance.bank_reconciliation"><AppLayout><BankReconciliation /></AppLayout></ProtectedRoute>
         } />
         <Route path="/targets" element={
-          <ProtectedRoute adminOnly><AppLayout><Targets /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="reports.view"><AppLayout><Targets /></AppLayout></ProtectedRoute>
         } />
         <Route path="/reports" element={
-          <ProtectedRoute adminOnly><AppLayout><Reports /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="reports.view"><AppLayout><Reports /></AppLayout></ProtectedRoute>
         } />
         <Route path="/stock-report" element={
           <ProtectedRoute adminOnly><AppLayout><StockReport /></AppLayout></ProtectedRoute>
         } />
         <Route path="/healthcare" element={
-          <ProtectedRoute adminOnly><AppLayout><Healthcare /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="healthcare.view"><AppLayout><Healthcare /></AppLayout></ProtectedRoute>
         } />
         <Route path="/scripts" element={
           <ProtectedRoute adminOnly><AppLayout><Scripts /></AppLayout></ProtectedRoute>
         } />
         <Route path="/users" element={
-          <ProtectedRoute adminOnly><AppLayout><Users /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="users.manage"><AppLayout><Users /></AppLayout></ProtectedRoute>
         } />
         <Route path="/audit" element={
-          <ProtectedRoute adminOnly><AppLayout><AuditTrail /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="audit.view"><AppLayout><AuditTrail /></AppLayout></ProtectedRoute>
         } />
         <Route path="/warehouses" element={<Navigate to="/settings?tab=warehouses" replace />} />
         <Route path="/settings" element={
-          <ProtectedRoute adminOnly><AppLayout><Settings /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="settings.manage"><AppLayout><Settings /></AppLayout></ProtectedRoute>
         } />
         <Route path="/inbox" element={
           <ProtectedRoute><AppLayout><SalesInbox /></AppLayout></ProtectedRoute>
@@ -275,7 +276,7 @@ export default function App() {
           <ProtectedRoute><AppLayout><OrdersTickets /></AppLayout></ProtectedRoute>
         } />
         <Route path="/catalogue/categories" element={
-          <ProtectedRoute adminOnly><AppLayout><ProductCategories /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="products.manage"><AppLayout><ProductCategories /></AppLayout></ProtectedRoute>
         } />
         <Route path="/catalogue/uom" element={
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
