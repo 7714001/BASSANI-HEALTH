@@ -11,11 +11,15 @@ import toast from "react-hot-toast";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const BUSINESS_TYPES = [
-  "Pharmacy", "Dispensary", "Healthcare Provider",
-  "Wellness Centre", "Private Practice",
-  "Section 22C Facility", "Sole Proprietor", "Company (Pty) Ltd", "Partnership",
-  "Other",
+const BUSINESS_TYPE_OPTIONS = [
+  { value: "Pharmacy",             label: "Pharmacy",             desc: "Licensed retail pharmacy" },
+  { value: "Dispensary",           label: "Dispensary",           desc: "Collection point / retail outlet" },
+  { value: "Wellness Centre",      label: "Wellness Centre",      desc: "Health and wellness retail" },
+  { value: "Section 22C Facility", label: "Section 22C Facility", desc: "Licensed complementary medicines facility" },
+  { value: "Company (Pty) Ltd",    label: "Company (Pty) Ltd",    desc: "Registered private company" },
+  { value: "Partnership",          label: "Partnership",          desc: "Registered business partnership" },
+  { value: "Sole Proprietor",      label: "Sole Proprietor",      desc: "Unincorporated individual trader" },
+  { value: "Other",                label: "Other",                desc: null },
 ];
 
 const PROVINCES = [
@@ -31,10 +35,11 @@ const ORDER_VOLUMES = [
 ];
 
 const STEPS = [
-  { label: "Business Details", icon: Building2    },
+  { label: "Business Type",    icon: Building2    },
+  { label: "Business Details", icon: ClipboardList },
   { label: "Primary Contact",  icon: User         },
   { label: "Business Address", icon: MapPin       },
-  { label: "Additional Info",  icon: ClipboardList },
+  { label: "Additional Info",  icon: FileText     },
   { label: "Sign Documents",   icon: PenLine      },
 ];
 
@@ -46,7 +51,7 @@ const SIGN_DOCS = [
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
-  vat_number: "", business_type: "Pharmacy",
+  vat_number: "", business_type: "",
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "", signatory_id_number: "",
   street: "", suburb: "", city: "", province: "",
@@ -348,6 +353,27 @@ function CustomerSigningModal({ docType, docLabel, filename, form: wizardForm, s
   );
 }
 
+// ── Validation helpers ─────────────────────────────────────────────────────────
+
+function validateSAID(id) {
+  if (!/^\d{13}$/.test(id)) return false;
+  const month = parseInt(id.substring(2, 4), 10);
+  const day   = parseInt(id.substring(4, 6), 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  let sum = 0;
+  for (let pos = 1; pos <= 13; pos++) {
+    let d = parseInt(id[13 - pos], 10);
+    if (pos % 2 === 0) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+function validateSAPhone(phone) {
+  const stripped = phone.trim().replace(/[\s\-()]/g, "");
+  return /^(\+27|0)\d{9}$/.test(stripped);
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function PublicRegister() {
@@ -370,6 +396,7 @@ export default function PublicRegister() {
   const cipcFileRef = useRef(null);
 
   const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+  const isSoleProprietor = form.business_type === "Sole Proprietor";
 
   useEffect(() => {
     if (!refCode) return;
@@ -415,21 +442,53 @@ export default function PublicRegister() {
 
   const validateStep = () => {
     if (step === 0) {
-      if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
+      if (!form.business_type) { toast.error("Please select your business type"); return false; }
     }
     if (step === 1) {
-      if (!form.contact_name.trim())  { toast.error("Contact name is required"); return false; }
-      if (!form.contact_email.trim()) { toast.error("Contact email is required"); return false; }
-      if (!form.contact_phone.trim()) { toast.error("Contact phone is required"); return false; }
+      if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
+      const reg = form.registration_number.trim();
+      if (!isSoleProprietor) {
+        if (!reg) { toast.error("Company registration number is required"); return false; }
+        if (!/^(\d{4}\/\d{4,7}\/\d{2}|CK.+)$/i.test(reg)) {
+          toast.error("Registration number format: 2024/123456/07 or CK####/######/##"); return false;
+        }
+      }
+      const vat = form.vat_number.trim();
+      if (vat && !/^4\d{9}$/.test(vat)) {
+        toast.error("VAT number must be 10 digits starting with 4"); return false;
+      }
     }
     if (step === 2) {
-      if (!form.street.trim()) { toast.error("Street address is required"); return false; }
-      if (!form.city.trim())   { toast.error("City is required"); return false; }
+      if (!form.contact_name.trim())     { toast.error("Full name is required"); return false; }
+      if (!form.contact_position.trim()) { toast.error("Position / title is required"); return false; }
+      const idNum = form.signatory_id_number.trim();
+      if (!idNum)               { toast.error("ID number is required"); return false; }
+      if (!validateSAID(idNum)) { toast.error("Please enter a valid 13-digit South African ID number"); return false; }
+      if (!form.contact_email.trim()) { toast.error("Email address is required"); return false; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email.trim())) {
+        toast.error("Please enter a valid email address"); return false;
+      }
+      if (!form.contact_phone.trim()) { toast.error("Phone number is required"); return false; }
+      if (!validateSAPhone(form.contact_phone)) {
+        toast.error("Please enter a valid South African phone number (e.g. 011 555 1234 or +27 82 555 1234)"); return false;
+      }
+      if (form.contact_alt_phone.trim() && !validateSAPhone(form.contact_alt_phone)) {
+        toast.error("Alternative phone number is not a valid South African number"); return false;
+      }
     }
-    if (step === 4) {
+    if (step === 3) {
+      if (!form.street.trim())  { toast.error("Street address is required"); return false; }
+      if (!form.suburb.trim())  { toast.error("Suburb is required"); return false; }
+      if (!form.city.trim())    { toast.error("City is required"); return false; }
+      if (!form.province)       { toast.error("Province is required"); return false; }
+      const pc = form.postal_code.trim();
+      if (!pc)                  { toast.error("Postal code is required"); return false; }
+      if (!/^\d{4}$/.test(pc)) { toast.error("Postal code must be exactly 4 digits"); return false; }
+    }
+    if (step === 5) {
       const missingSigned = SIGN_DOCS.filter(d => !uploads[d.type]);
       if (missingSigned.length) {
-        toast.error(`Sign all 4 documents before submitting (${missingSigned.length} remaining)`);
+        toast.error(`Sign all documents before submitting (${missingSigned.length} remaining)`);
         return false;
       }
       if (!uploads.cipc_certificate) {
@@ -496,7 +555,7 @@ export default function PublicRegister() {
   const hasCipc     = !!uploads.cipc_certificate;
   const readyToSubmit = allSigned && hasCipc;
 
-  const step4Content = (
+  const step5Content = (
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
         <p className="text-xs font-semibold text-blue-800 mb-1">Sign your onboarding documents</p>
@@ -639,31 +698,73 @@ export default function PublicRegister() {
   // ── Step content ────────────────────────────────────────────────────────────
 
   const stepContent = [
-    // Step 0 — Business Details
-    <div key="0" className="space-y-4">
-      <Field label="Registered Company Name" required>
-        <TextInput value={form.company_name} onChange={upd("company_name")} placeholder="e.g. Wellness Pharma (Pty) Ltd" autoFocus />
+    // Step 0 — Business Type
+    <div key="0" className="space-y-3">
+      <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+        Select the type of business you are registering. This helps us tailor the form to your requirements.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {BUSINESS_TYPE_OPTIONS.map(({ value, label, desc }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setForm(f => ({
+              ...f,
+              business_type: value,
+              ...(value === "Sole Proprietor" ? { registration_number: "" } : {}),
+            }))}
+            className={`text-left px-4 py-3 rounded-xl border-2 transition-all ${
+              form.business_type === value
+                ? "border-bassani-500 bg-bassani-50"
+                : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+            }`}
+          >
+            <p className={`text-sm font-semibold ${form.business_type === value ? "text-bassani-700" : "text-gray-800"}`}>
+              {label}
+            </p>
+            {desc && (
+              <p className={`text-xs mt-0.5 ${form.business_type === value ? "text-bassani-500" : "text-gray-400"}`}>
+                {desc}
+              </p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>,
+
+    // Step 1 — Business Details (adapts based on business type)
+    <div key="1" className="space-y-4">
+      <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
+        <TextInput
+          value={form.company_name}
+          onChange={upd("company_name")}
+          placeholder={isSoleProprietor ? "e.g. John Smith Trading" : "e.g. Wellness Pharma (Pty) Ltd"}
+          autoFocus
+        />
       </Field>
-      <Field label="Trading Name (if different)">
-        <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
-      </Field>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Company Registration No.">
-          <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+      {!isSoleProprietor && (
+        <Field label="Trading Name (if different)">
+          <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
         </Field>
+      )}
+      {!isSoleProprietor ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Company Registration No." required>
+            <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+          </Field>
+          <Field label="VAT Number">
+            <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+          </Field>
+        </div>
+      ) : (
         <Field label="VAT Number">
           <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
         </Field>
-      </div>
-      <Field label="Business Type" required>
-        <SelectInput value={form.business_type} onChange={upd("business_type")}>
-          {BUSINESS_TYPES.map(t => <option key={t}>{t}</option>)}
-        </SelectInput>
-      </Field>
+      )}
     </div>,
 
-    // Step 1 — Primary Contact
-    <div key="1" className="space-y-4">
+    // Step 2 — Primary Contact
+    <div key="2" className="space-y-4">
       <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
         Please provide details for the person signing the onboarding documents.
       </p>
@@ -671,12 +772,12 @@ export default function PublicRegister() {
         <Field label="Full Name" required>
           <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" autoFocus />
         </Field>
-        <Field label="Position / Title">
+        <Field label="Position / Title" required>
           <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" />
         </Field>
       </div>
-      <Field label="ID Number">
-        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="9001010000087" />
+      <Field label="SA ID Number" required>
+        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="8001015009087" />
       </Field>
       <Field label="Email Address" required>
         <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" />
@@ -691,8 +792,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 2 — Business Address
-    <div key="2" className="space-y-4">
+    // Step 3 — Business Address
+    <div key="3" className="space-y-4">
       <Field label="Street Address" required>
         <AddressAutocomplete
           value={form.street}
@@ -702,19 +803,19 @@ export default function PublicRegister() {
           autoFocus
         />
       </Field>
-      <Field label="Suburb">
+      <Field label="Suburb" required>
         <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />
       </Field>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="City" required>
           <TextInput value={form.city} onChange={upd("city")} placeholder="Johannesburg" />
         </Field>
-        <Field label="Postal Code">
+        <Field label="Postal Code" required>
           <TextInput value={form.postal_code} onChange={upd("postal_code")} placeholder="2196" />
         </Field>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Province">
+        <Field label="Province" required>
           <SelectInput value={form.province} onChange={upd("province")}>
             <option value="">— Select province —</option>
             {PROVINCES.map(p => <option key={p}>{p}</option>)}
@@ -726,8 +827,8 @@ export default function PublicRegister() {
       </div>
     </div>,
 
-    // Step 3 — Additional Information
-    <div key="3" className="space-y-4">
+    // Step 4 — Additional Information
+    <div key="4" className="space-y-4">
       <Field label="Expected Monthly Order Volume">
         <SelectInput value={form.ordering_volume} onChange={upd("ordering_volume")}>
           <option value="">— Select range —</option>
@@ -750,8 +851,8 @@ export default function PublicRegister() {
       </Field>
     </div>,
 
-    // Step 4 — Sign Documents
-    step4Content,
+    // Step 5 — Sign Documents
+    step5Content,
   ];
 
   // ── Page layout ─────────────────────────────────────────────────────────────
@@ -879,10 +980,10 @@ export default function PublicRegister() {
             <div className="space-y-1.5 text-xs">
               {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
               {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}
-              {step > 1 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
-              {step > 1 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
-              {step > 2 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
-              {step >= 4 && (
+              {step > 2 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
+              {step > 2 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
+              {step > 3 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}
+              {step >= 5 && (
                 <div className="flex justify-between">
                   <span className="text-gray-400">Documents</span>
                   <span className={`font-medium ${allSigned && hasCipc ? "text-green-700" : "text-amber-600"}`}>

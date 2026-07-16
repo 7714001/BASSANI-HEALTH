@@ -12,9 +12,15 @@ import AddressAutocomplete from "../components/AddressAutocomplete";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const BUSINESS_TYPES = [
-  "Pharmacy", "Dispensary", "Healthcare Provider",
-  "Wellness Centre", "Private Practice", "Other",
+const BUSINESS_TYPE_OPTIONS = [
+  { value: "Pharmacy",             label: "Pharmacy",             desc: "Licensed retail pharmacy" },
+  { value: "Dispensary",           label: "Dispensary",           desc: "Collection point / retail outlet" },
+  { value: "Wellness Centre",      label: "Wellness Centre",      desc: "Health and wellness retail" },
+  { value: "Section 22C Facility", label: "Section 22C Facility", desc: "Licensed complementary medicines facility" },
+  { value: "Company (Pty) Ltd",    label: "Company (Pty) Ltd",    desc: "Registered private company" },
+  { value: "Partnership",          label: "Partnership",          desc: "Registered business partnership" },
+  { value: "Sole Proprietor",      label: "Sole Proprietor",      desc: "Unincorporated individual trader" },
+  { value: "Other",                label: "Other",                desc: null },
 ];
 
 const PROVINCES = [
@@ -59,7 +65,7 @@ const REQUIRED_DOCS = [
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
-  vat_number: "", business_type: "Pharmacy",
+  vat_number: "", business_type: "",
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "",
   street: "", suburb: "", city: "", province: "",
@@ -103,6 +109,13 @@ function Textarea({ value, onChange, placeholder, rows = 3 }) {
   );
 }
 
+// ── Validation helpers ─────────────────────────────────────────────────────────
+
+function validateSAPhone(phone) {
+  const stripped = phone.trim().replace(/[\s\-()]/g, "");
+  return /^(\+27|0)\d{9}$/.test(stripped);
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function CustomerOnboarding() {
@@ -137,6 +150,7 @@ export default function CustomerOnboarding() {
   const fileInputRefs = useRef({});
 
   const upd = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+  const isSoleProprietor = form.business_type === "Sole Proprietor";
 
   // ── Resume: load existing draft application ─────────────────────────────────
 
@@ -151,7 +165,7 @@ export default function CustomerOnboarding() {
           trading_name:        data.trading_name        || "",
           registration_number: data.registration_number || "",
           vat_number:          data.vat_number          || "",
-          business_type:       data.business_type       || "Pharmacy",
+          business_type:       data.business_type       || "",
           contact_name:        data.contact_name        || "",
           contact_position:    data.contact_position    || "",
           contact_email:       data.contact_email       || "",
@@ -262,9 +276,7 @@ export default function CustomerOnboarding() {
 
   const validateStep = () => {
     if (step === 0) {
-      // Email path: allow continue — docs will arrive via inbox
       if (emailSent) return true;
-      // Upload path: require all 5 docs
       const missing = REQUIRED_DOCS.filter(d => !uploads[d.type]);
       if (missing.length) {
         toast.error(`Upload all required documents (${missing.length} remaining) or use the invitation link`);
@@ -272,16 +284,43 @@ export default function CustomerOnboarding() {
       }
     }
     if (step === 1) {
+      if (!form.business_type) { toast.error("Please select the customer's business type"); return false; }
       if (!form.company_name.trim()) { toast.error("Company name is required"); return false; }
+      const reg = form.registration_number.trim();
+      if (!isSoleProprietor) {
+        if (!reg) { toast.error("Company registration number is required"); return false; }
+        if (!/^(\d{4}\/\d{4,7}\/\d{2}|CK.+)$/i.test(reg)) {
+          toast.error("Registration number format: 2024/123456/07 or CK####/######/##"); return false;
+        }
+      }
+      const vat = form.vat_number.trim();
+      if (vat && !/^4\d{9}$/.test(vat)) {
+        toast.error("VAT number must be 10 digits starting with 4"); return false;
+      }
     }
     if (step === 2) {
-      if (!form.contact_name.trim())  { toast.error("Contact name is required"); return false; }
-      if (!form.contact_email.trim()) { toast.error("Contact email is required"); return false; }
-      if (!form.contact_phone.trim()) { toast.error("Contact phone is required"); return false; }
+      if (!form.contact_name.trim())     { toast.error("Full name is required"); return false; }
+      if (!form.contact_position.trim()) { toast.error("Position / title is required"); return false; }
+      if (!form.contact_email.trim())    { toast.error("Email address is required"); return false; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email.trim())) {
+        toast.error("Please enter a valid email address"); return false;
+      }
+      if (!form.contact_phone.trim()) { toast.error("Phone number is required"); return false; }
+      if (!validateSAPhone(form.contact_phone)) {
+        toast.error("Please enter a valid South African phone number (e.g. 011 555 1234 or +27 82 555 1234)"); return false;
+      }
+      if (form.contact_alt_phone.trim() && !validateSAPhone(form.contact_alt_phone)) {
+        toast.error("Alternative phone number is not a valid South African number"); return false;
+      }
     }
     if (step === 3) {
-      if (!form.street.trim()) { toast.error("Street address is required"); return false; }
-      if (!form.city.trim())   { toast.error("City is required"); return false; }
+      if (!form.street.trim())  { toast.error("Street address is required"); return false; }
+      if (!form.suburb.trim())  { toast.error("Suburb is required"); return false; }
+      if (!form.city.trim())    { toast.error("City is required"); return false; }
+      if (!form.province)       { toast.error("Province is required"); return false; }
+      const pc = form.postal_code.trim();
+      if (!pc)                  { toast.error("Postal code is required"); return false; }
+      if (!/^\d{4}$/.test(pc)) { toast.error("Postal code must be exactly 4 digits"); return false; }
     }
     return true;
   };
@@ -601,27 +640,65 @@ export default function CustomerOnboarding() {
   const stepContent = [
     step0Content,
 
-    // Step 1 — Business Details
+    // Step 1 — Business Details (adapts based on business type)
     <div key="1" className="space-y-4">
-      <Field label="Registered Company Name" required>
-        <TextInput value={form.company_name} onChange={upd("company_name")} placeholder="e.g. Wellness Pharma (Pty) Ltd" autoFocus />
+      <div>
+        <p className="text-xs font-semibold text-gray-500 mb-2">Business Type <span className="text-red-400">*</span></p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {BUSINESS_TYPE_OPTIONS.map(({ value, label, desc }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setForm(f => ({
+                ...f,
+                business_type: value,
+                ...(value === "Sole Proprietor" ? { registration_number: "" } : {}),
+              }))}
+              className={`text-left px-3 py-2.5 rounded-xl border-2 transition-all ${
+                form.business_type === value
+                  ? "border-bassani-500 bg-bassani-50"
+                  : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+              }`}
+            >
+              <p className={`text-xs font-semibold ${form.business_type === value ? "text-bassani-700" : "text-gray-800"}`}>
+                {label}
+              </p>
+              {desc && (
+                <p className={`text-[10px] mt-0.5 ${form.business_type === value ? "text-bassani-500" : "text-gray-400"}`}>
+                  {desc}
+                </p>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required>
+        <TextInput
+          value={form.company_name}
+          onChange={upd("company_name")}
+          placeholder={isSoleProprietor ? "e.g. John Smith Trading" : "e.g. Wellness Pharma (Pty) Ltd"}
+          autoFocus
+        />
       </Field>
-      <Field label="Trading Name (if different)">
-        <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
-      </Field>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Company Registration No.">
-          <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+      {!isSoleProprietor && (
+        <Field label="Trading Name (if different)">
+          <TextInput value={form.trading_name} onChange={upd("trading_name")} placeholder="e.g. City Pharmacy" />
         </Field>
+      )}
+      {!isSoleProprietor ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Company Registration No." required>
+            <TextInput value={form.registration_number} onChange={upd("registration_number")} placeholder="2024/123456/07" />
+          </Field>
+          <Field label="VAT Number">
+            <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
+          </Field>
+        </div>
+      ) : (
         <Field label="VAT Number">
           <TextInput value={form.vat_number} onChange={upd("vat_number")} placeholder="4xxxxxxxxx" />
         </Field>
-      </div>
-      <Field label="Business Type" required>
-        <SelectInput value={form.business_type} onChange={upd("business_type")}>
-          {BUSINESS_TYPES.map(t => <option key={t}>{t}</option>)}
-        </SelectInput>
-      </Field>
+      )}
     </div>,
 
     // Step 2 — Primary Contact
@@ -633,7 +710,7 @@ export default function CustomerOnboarding() {
         <Field label="Full Name" required>
           <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" autoFocus />
         </Field>
-        <Field label="Position / Title">
+        <Field label="Position / Title" required>
           <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" />
         </Field>
       </div>
@@ -661,19 +738,19 @@ export default function CustomerOnboarding() {
           autoFocus
         />
       </Field>
-      <Field label="Suburb">
+      <Field label="Suburb" required>
         <TextInput value={form.suburb} onChange={upd("suburb")} placeholder="Sandton" />
       </Field>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="City" required>
           <TextInput value={form.city} onChange={upd("city")} placeholder="Johannesburg" />
         </Field>
-        <Field label="Postal Code">
+        <Field label="Postal Code" required>
           <TextInput value={form.postal_code} onChange={upd("postal_code")} placeholder="2196" />
         </Field>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Province">
+        <Field label="Province" required>
           <SelectInput value={form.province} onChange={upd("province")}>
             <option value="">— Select province —</option>
             {PROVINCES.map(p => <option key={p}>{p}</option>)}

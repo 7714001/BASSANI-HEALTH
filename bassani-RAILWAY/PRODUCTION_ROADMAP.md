@@ -3462,6 +3462,19 @@ The Business Address step (Step 2 on `/apply`, Step 3 in the reseller-initiated 
 
 Implementation: Google Places API is called server-side (`places_routes.py`) — the API key (`GOOGLE_PLACES_API_KEY` Railway env var) is never exposed to the browser. Two rate-limited public endpoints proxy the autocomplete and details calls. Session tokens group each search+select pair into a single billing transaction. The `AddressAutocomplete` component degrades silently to a plain text input if the API key is not configured. Google's "Powered by Google" attribution is shown in the dropdown per their terms of service.
 
+**16.5 — Adaptive wizard: Business Type first step + field validation (2026-07-16)**
+
+Business Type is now the first step of the `/apply` wizard (Step 0), presented as a card selector. The wizard adapts to the selection: Sole Proprietors see a "Business / Trading Name" label, no Company Registration Number field, and no Trading Name field. All other types (Pharmacy, Dispensary, Wellness Centre, Section 22C Facility, Company (Pty) Ltd, Partnership, Other) require a CIPC registration number. Healthcare Provider and Private Practice removed — Bassani's customer base is businesses purchasing stock, not individual practitioners.
+
+Full format validation added at each step:
+- Step 1: Company reg required + CIPC format check (`YYYY/NNNNNN/NN` or `CK...`). VAT format-checked if provided (10 digits, starts with 4).
+- Step 2: Contact position required. SA ID required + 13-digit Luhn validation + embedded DOB validity. Email format. SA phone format (`0XXXXXXXXX` or `+27XXXXXXXXX`), applied to alt phone if provided.
+- Step 3: Suburb, province, and postal code all required. Postal code validated as exactly 4 digits.
+
+Same business type card selector added to the top of Step 1 (Business Details) in `CustomerOnboarding.js` (reseller-initiated wizard), with identical adaptive field logic. Same format validation applied to Steps 1–3 of that wizard (no SA ID field in the reseller wizard — that only applies to `/apply` signatories).
+
+`validateSAID()` and `validateSAPhone()` defined as module-level helpers in each file.
+
 **Future: reseller self-registration**
 
 Reseller self-registration (`/reseller-apply`) is architecturally similar but requires portal account creation on approval. Descoped from Phase 16 — implement when needed.
@@ -3481,6 +3494,10 @@ DocuSign requires a separate service decision and API credentials. The current d
 - [x] Reseller referral link shown in CustomerOnboarding wizard step 0 (reseller role only)
 - [x] Approval of self-service app creates Odoo customer and reseller link (handled by existing approve endpoint, unchanged)
 - [x] Address autocomplete on Business Address step in both `/apply` and reseller-initiated wizard — SA-restricted, all address types, server-side proxy, silent fallback
+- [x] Business Type as first step in `/apply` wizard — card selector, 8 business types, Healthcare Provider and Private Practice removed
+- [x] Adaptive form fields — Sole Proprietor hides Company Reg, Trading Name, relabels Company Name
+- [x] Full field validation — SA ID (Luhn), SA phone format, VAT format, reg number format, postal code 4 digits, suburb/province required
+- [x] Same adaptive business type + validation applied to reseller-initiated `CustomerOnboarding.js` wizard
 
 ---
 
