@@ -1638,7 +1638,11 @@ async def send_signing_docs(
 
     await col("signing_sessions").update_one(
         {"token": token},
-        {"$set": {"status": "sent", "sent_at": now}},
+        {"$set": {
+            "status":        "sent",
+            "sent_at":       now,
+            "sent_by_email": current_user.get("email") or current_user.get("username", ""),
+        }},
     )
     await col("customer_onboarding").update_one(
         {"id": app_id},

@@ -20,7 +20,7 @@ const DOC_META = {
 
 // ── In-page signing modal ──────────────────────────────────────────────────────
 
-function SigningModal({ token, docType, formData, onSigned, onClose }) {
+function SigningModal({ token, docType, formData, sentByEmail, sessionToken, onSigned, onClose }) {
   const meta = DOC_META[docType];
   const [loading,    setLoading   ] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -132,8 +132,16 @@ function SigningModal({ token, docType, formData, onSigned, onClose }) {
         ? canvasRef.current.toDataURL("image/png")
         : uploadedSig;
 
+      const now = new Date();
+      const auditValues = docType === "nda" ? {
+        document_id_audit_ref:           sessionToken || token,
+        bassani_sent_by_email_audit_ref:  sentByEmail || "",
+        counterparty_email_audit_ref:     formData.contact_email || "",
+        completion_date_audit_ref:        now.toISOString().replace("T", " ").slice(0, 19) + " UTC",
+      } : {};
+
       const result = await generateSignedPdf(pdfBytes, {
-        textValues,
+        textValues: { ...textValues, ...auditValues },
         signingProfile: sigMeta,
         mikeFieldName:  mikeField,
         customerSigDataUrl,
@@ -362,6 +370,8 @@ export default function SigningPage() {
           token={token}
           docType={signing}
           formData={formData}
+          sentByEmail={session?.sent_by_email || ""}
+          sessionToken={session?.token || token}
           onSigned={handleSigned}
           onClose={() => setSigning(null)}
         />

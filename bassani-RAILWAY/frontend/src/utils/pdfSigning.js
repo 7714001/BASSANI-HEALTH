@@ -32,19 +32,11 @@ export const DOC_CONFIGS = {
       name === "bassani_full_name" ||
       name === "bassani_witness_name" ||
       name === "bassani_witness_signature" ||
-      name === "counterparty_date" ||
-      name === "document_id_audit_ref" ||
-      name === "counterparty_email_audit_ref" ||
-      name === "completion_date_audit_ref" ||
-      name === "bassani_sent_by_email_audit_ref",
+      name === "counterparty_date",
     getAutoFillValue: (name, profile) => {
       if (name === "bassani_full_name")      return profile?.name  || "Michael Stringer";
       if (name === "bassani_capacity_title") return profile?.title || "Chief Executive Officer";
-      if (name === "bassani_witness_name" ||
-          name === "document_id_audit_ref" ||
-          name === "counterparty_email_audit_ref" ||
-          name === "completion_date_audit_ref" ||
-          name === "bassani_sent_by_email_audit_ref") return "";
+      if (name === "bassani_witness_name")   return "";
       return new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric", timeZone: "Africa/Johannesburg" });
     },
     bassaniTextFields: [

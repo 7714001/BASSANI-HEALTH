@@ -418,10 +418,12 @@ async def get_signing_session(token: str):
         raise HTTPException(status_code=403, detail="This signing link is not yet active. Please contact Bassani Health.")
 
     return {
-        "form_data":    session.get("form_data", {}),
-        "docs_to_sign": session.get("docs_to_sign", []),
-        "signed":       session.get("signed", {}),
-        "expires_at":   expires_at.isoformat() if expires_at else None,
+        "token":          token,
+        "form_data":      session.get("form_data", {}),
+        "docs_to_sign":   session.get("docs_to_sign", []),
+        "signed":         session.get("signed", {}),
+        "expires_at":     expires_at.isoformat() if expires_at else None,
+        "sent_by_email":  session.get("sent_by_email", ""),
     }
 
 
