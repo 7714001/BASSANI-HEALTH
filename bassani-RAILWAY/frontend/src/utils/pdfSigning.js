@@ -24,6 +24,12 @@ export const DOC_CONFIGS = {
         { name: "counterparty_capacity_title",     label: "Capacity / Title",            testDefault: "Director" },
         { name: "counterparty_witness_name",       label: "Witness Name",                testDefault: "Test Witness" },
       ]},
+      { title: "Electronic Execution Record", fields: [
+        { name: "document_id_audit_ref",            label: "Document / Session ID",   testDefault: "TEST-SESSION-123456789" },
+        { name: "bassani_sent_by_email_audit_ref",  label: "Sent By (Bassani email)", testDefault: "admin@bassanihealth.com" },
+        { name: "counterparty_email_audit_ref",     label: "Counterparty Email",      testDefault: "test@example.com" },
+        { name: "completion_date_audit_ref",        label: "Completion Date (UTC)",   testDefault: "2026-01-01 10:00:00 UTC" },
+      ]},
     ],
     isAutoFill: (name) =>
       name === "bassani_signature" ||
@@ -32,7 +38,8 @@ export const DOC_CONFIGS = {
       name === "bassani_full_name" ||
       name === "bassani_witness_name" ||
       name === "bassani_witness_signature" ||
-      name === "counterparty_date",
+      name === "counterparty_date" ||
+      name === "effective_date",
     getAutoFillValue: (name, profile) => {
       if (name === "bassani_full_name")      return profile?.name  || "Michael Stringer";
       if (name === "bassani_capacity_title") return profile?.title || "Chief Executive Officer";
