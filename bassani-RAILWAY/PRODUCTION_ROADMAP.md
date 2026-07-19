@@ -2,8 +2,8 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Stack:** FastAPI · React 18 · MongoDB · Odoo v17 (XML-RPC) · Railway  
-**Last Updated:** 2026-07-15  
-**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 8.36 Ticket linking + inbox integration — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 21 Customer data model hardening — 2026-07-09; Phase 23 Operations Monitor live — 2026-07-15  
+**Last Updated:** 2026-07-19  
+**Overall Status:** 🟡 Pre-Production — Phases 0, 1, 2, 4, 6, 7, 9 complete; Phase 3 in progress (2 live VAT verification items remaining); Phase 8 DoD 9/10 complete — only staff account creation outstanding (operational, no code required); Phase 8 sub-deploys 1–17 complete (8.1–8.22) — partner directory, ticket reassignment, customer contact surfacing, document upload request, Sentry noise fixes — 2026-07-07; Phase 8.23 partial fulfilment + backorder pipeline — 2026-07-09; Phase 8.33 Order Passport — 2026-07-11; Phase 8.34 Reseller traceability across all views — 2026-07-12; Phase 8.35 Per-line qty packed + packing-time shortfall handling — 2026-07-13; Phase 8.36 Ticket linking + inbox integration — 2026-07-13; Phase 10 responsive UI in progress (10.0–10.4 complete, 10.5 large-screen caps pending, 10.6 pagination complete); Phase 11 dual-mailbox inbox live — 11.C.1–11.C.5 complete — 2026-07-05; Phase 12 in progress (12.0 complete, 12.4 GS1 label printing complete, 12.5 GTIN Pool management complete — 2026-07-11); Phase 15 stock report live — 2026-07-06; Phase 16 self-service registration live — 2026-07-06; Phase 17 document template management live — 2026-07-07; Phase 18 multi-authority signing + My Profile live — 2026-07-08; Phase 19 My Profile + per-user signing complete — 2026-07-08; Phase 20 Sales Agents rename + commission_eligible flag — 2026-07-08; Phase 20 reseller wizard simplified (docs removed, global warehouse default) — 2026-07-17; Phase 21 Customer data model hardening — 2026-07-09; Phase 23 Operations Monitor live — 2026-07-15; Phase 1.9 path traversal protection — 2026-07-17  
 
 ---
 
@@ -288,7 +288,7 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 **Goal:** Safe to expose to real users. No known exploitable vulnerabilities.  
 **Estimate:** 1–3 days  
 **Status:** 🟢 Complete  
-**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23 · Sub-deploy 3 (1.2 CORS lockdown + 1.5 email OTP 2FA) — 2026-06-29 · Sub-deploy 4 (1.8 Self-Serve Password Reset) — 2026-07-05  
+**Completed:** Sub-deploy 1 (1.1, 1.3, 1.4, 1.6) — 2026-06-19 · Sub-deploy 2 (1.7 Forced Password Reset) — 2026-06-23 · Sub-deploy 3 (1.2 CORS lockdown + 1.5 email OTP 2FA) — 2026-06-29 · Sub-deploy 4 (1.8 Self-Serve Password Reset) — 2026-07-05 · Sub-deploy 5 (1.9 Path Traversal Protection) — 2026-07-17  
 
 ### Tasks
 
@@ -357,6 +357,17 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 
 **Security properties:** Token stored hashed at rest; 15-minute TTL; single-use deletion; enumeration-safe response; rate-limited; full session invalidation via `token_version`; both request and completion audit-logged with actor and timestamp.
 
+#### 1.9 Path Traversal Protection
+
+**Goal:** Prevent the SPA catch-all route from serving files outside the static build directory.
+
+The SPA catch-all in `server.py` previously used `os.path.join(static_dir, full_path)` without any confinement check. On Linux, `/proc/self/cmdline` is a real pseudo-file that passes `os.path.isfile()` — a scanner discovered this and read it (process command line only — not sensitive). All other traversal targets (`.env`, PHP config files, log files) do not exist on the Railway container and returned `index.html` harmlessly.
+
+- [x] Capture `_static_real = os.path.realpath(static_dir)` at server startup
+- [x] In the catch-all handler, compute `resolved = os.path.realpath(os.path.join(static_dir, full_path))`
+- [x] Gate the `FileResponse(resolved)` path on `resolved == _static_real or resolved.startswith(_static_real + os.sep)` — anything else serves `index.html` with no-cache headers
+- [x] `os.path.realpath` resolves all `..` segments and symlinks to a canonical absolute path, making it impossible for `../` traversal sequences to escape the build directory boundary
+
 ### Definition of Done
 - [x] Cannot log in as admin with `admin123` on any deployed environment _(legacy account auto-deactivated on startup)_
 - [x] Browser console shows no CORS errors from the correct domain
@@ -367,8 +378,11 @@ This must be fixed before Phase 1+ adds more write-actions on top of an inconsis
 - [x] Admin-initiated password reset re-triggers the same forced-change gate
 - [x] Self-serve password reset link expires after 15 minutes and cannot be reused
 - [x] Completing a password reset invalidates all other active sessions for that user
+- [x] URL paths that resolve outside the static build directory (path traversal attempts) serve `index.html` rather than the target file
 
 ### Notes
+> **Sub-deploy 5 (2026-07-17):** 1.9 Path Traversal Protection. The SPA catch-all route in `server.py` used `os.path.join(static_dir, full_path)` to resolve arbitrary URL paths to filesystem files. Because `os.path.isfile()` returns `True` for Linux `/proc/self/cmdline` (a real pseudo-file), a scanner exploiting this pattern was able to open that file; all other traversal targets (`.env`, config files, log files) returned `index.html` because those paths do not exist on the Railway container. Fixed by capturing `os.path.realpath(static_dir)` at startup and rejecting any resolved path that does not start with it before checking `os.path.isfile()` — paths outside the static build directory silently serve `index.html` with no-cache headers instead. No data was exposed; `/proc/self/cmdline` contains only the process start command.
+
 > **Sub-deploy 4 (2026-07-05):** 1.8 Self-Serve Password Reset. Two new public routes: `POST /api/auth/forgot-password` (enumeration-safe, rate-limited 3/hour, 15-min token TTL, SHA-256 hash at rest, Resend delivery) and `POST /api/auth/reset-password` (single-use token deletion, bcrypt update, `token_version` bump). `token_version` added to user documents and included as `tv` claim in all new JWTs; `get_current_user` rejects mismatched `tv`, providing stateless session invalidation after reset. Frontend: `ForgotPassword.js` and `ResetPassword.js` views on public routes; "Forgot your password?" link added to `Login.js`.
 
 > **Sub-deploy 2 (2026-06-23):** 1.7 Forced Password Reset. `must_change_password: True` is now set on `POST /api/users/` and `POST /api/users/{id}/reset-password`. `_user_payload()` exposes the flag in every login/me response. New `POST /api/auth/change-password` verifies the current password (bcrypt), validates min-8-char and differs-from-current rules, updates the hash, and clears the flag — audit-logged as `user.change_password`. Frontend: `ProtectedRoute` now redirects authenticated users with `must_change_password` to `/change-password` before any other page renders; a new `AuthRequired` wrapper used by that specific route lets you be authenticated without triggering the redirect loop; new `ChangePassword.js` view handles the form. Existing accounts are unaffected — the field's absence is treated as `False` everywhere.
@@ -540,6 +554,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Replace the hardcoded `location_id: 8` in `return_routes.py` — resolves the restock location from the original sale order's `warehouse_id` → `lot_stock_id`, with graceful fallback to the previous default if resolution fails
 - [x] Tag packing board entries with `warehouse_id` at queue time; replaced `PACKING_BOARD_DISPLAY_TOKEN` with Mongo-stored per-warehouse tokens (admin-managed via the new Warehouses page); `BoardManager` and all three WebSocket endpoints (screen/supervisor/packer) now filter connections and broadcasts by `warehouse_id`
 - [x] Low-stock alerts and reports (`dashboard_stats`, `dead_stock`) are computed per-warehouse, not company-wide
+- [x] **Global default warehouse** — super admin sets a system-wide default via Settings > Warehouses; stored in `portal_settings._id: "default_warehouse"`. `warehouse_context.py::_get_global_default_warehouse_id()` reads this. `resolve_warehouse_id()` falls back to the global default for: resellers with no profile warehouse set, admins with no active selection, and all other staff roles. Resellers never see the warehouse switcher in the top nav — it is hidden for the `reseller` role. The switcher displays the global default when the admin has no active selection. This replaces the previous behaviour of returning `None` when no warehouse was resolved, which caused un-scoped Odoo reads.
 
 #### 3.8 Stock Reservation Visibility
 > **Why this exists:** Discovered during 3.7 live testing — an admin saw a product with 150 on hand but 0 forecasted and assumed something was broken. It wasn't: `virtual_available = on_hand + incoming - outgoing`, so 0 forecasted means ~150 units are reserved against open (confirmed but undelivered) orders. The business's stated goal for this whole portal is to help admins who aren't fluent in Odoo understand what their Odoo configuration is actually telling them — so instead of just explaining this once, the portal should surface it directly wherever the confusion happens.
@@ -3966,9 +3981,10 @@ No external-facing API breaking changes — existing resellers without the field
 - [x] `Views.js` Resellers component: all user-facing text updated — page title "Sales Agents", add button "Add Sales Agent", modal titles "Add Sales Agent" / "Edit Sales Agent", toasts "Sales agent created" / "Sales agent updated"
 - [x] `BLANK_FORM` and `editForm` default state: `commission_eligible: true` added
 - [x] `openEdit`: populates `commission_eligible` from reseller data (`r.commission_eligible !== false`)
-- [x] Add wizard Step 1: commission_eligible checkbox added at top; Odoo partner search + onboarding docs sections hidden for non-eligible agents; Next button validation skips partner/docs checks when `commission_eligible` is false
+- [x] Add wizard Step 1 renamed "Odoo Partner": commission_eligible checkbox at top; Odoo partner search shown for commission-eligible agents; for non-eligible agents, neither partner search nor any document upload is shown; Next button validates partner selection only for commission-eligible agents
+- [x] Document upload removed entirely from the Add wizard — onboarding documents belong to the Customer Applications flow. If a customer does not yet exist in Odoo, the admin completes their onboarding via Customer Applications first, then returns to create the sales agent
+- [x] "No partners found" empty state in the Odoo partner dropdown displays a clear hint: complete the customer's onboarding via Customer Applications first, then return to create the agent
 - [x] Edit modal: commission_eligible checkbox added; Odoo vendor profile section + banking section conditional on `editForm.commission_eligible`
-- [x] `rSellerDocsRequired` computation: gated on `form.commission_eligible` — non-eligible agents never require onboarding docs
 - [x] `ResellerCommissionView`: renders a "Commission not applicable" screen when `user?.commission_eligible === false`, replacing the data-loading flow
 
 ### Definition of Done
@@ -3976,7 +3992,7 @@ No external-facing API breaking changes — existing resellers without the field
 - [x] Internal staff accounts (reseller role, `commission_eligible: false`) can be created without an Odoo vendor partner
 - [x] Non-eligible agents do not appear in bulk commission statement generation
 - [x] Commission nav item hidden for non-eligible agents; navigating to `/commission` directly shows "not applicable" screen
-- [x] Odoo partner + onboarding docs steps in the Add wizard are hidden for non-eligible agents
+- [x] Odoo partner step in the Add wizard is shown only for commission-eligible agents; document upload is not part of the wizard at all (documents belong to Customer Applications)
 - [x] Banking details section in Edit modal hidden for non-eligible agents
 - [x] Existing resellers without the `commission_eligible` field default to `true` — no data migration required
 - [x] Admin-targeted single-agent commission statement generation is not affected by the eligibility filter

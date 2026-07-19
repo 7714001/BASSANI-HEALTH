@@ -2,7 +2,7 @@
 
 **System:** Bassani Health B2B Sales & Reseller Portal  
 **Audience:** Super Admins, Operations Staff, Resellers  
-**Last Updated:** 15 July 2026
+**Last Updated:** 19 July 2026
 
 ---
 
@@ -82,10 +82,13 @@ Before creating any users or resellers, make sure your warehouses are set up cor
 
 1. Go to **Warehouses** in the left sidebar (only visible to super admin)
 2. The system reads warehouses directly from Odoo — they should appear automatically
-3. For each physical warehouse/vault, generate a **Display Token** — this is the unique URL your 85" packing board screen will use (no login required on the screen, just the token in the URL)
-4. Keep a record of each warehouse's display token URL somewhere safe
+3. Set a **Default Warehouse** — this is the system-wide fallback used whenever no specific warehouse has been selected. Stock reads, order routing, and the product catalogue all fall back to this warehouse for any user who does not have a warehouse explicitly assigned or selected.
+4. For each physical warehouse/vault, generate a **Display Token** — this is the unique URL your 85" packing board screen will use (no login required on the screen, just the token in the URL)
+5. Keep a record of each warehouse's display token URL somewhere safe
 
 > **Each warehouse gets its own packing board screen and its own display token.** If you have two vaults, you need two screens, two tokens, and two URLs.
+
+> **The warehouse selector in the top navigation bar** is visible to all staff roles (admin, sales, finance, etc.) and lets them switch between warehouses for stock queries. It is not visible to sales agents (reseller role) — their warehouse is governed by their profile assignment, falling back to the global default set above.
 
 ---
 
@@ -179,15 +182,19 @@ The distinction is controlled by the **Applicable for commission** checkbox in t
 
 To add a sales agent — go to **Sales Agents** in the sidebar and click **Add Sales Agent**. The wizard has 4 steps:
 
-**Step 1 — Commission Eligibility, Odoo Partner, and Documents**
+**Step 1 — Odoo Partner**
 
 The first control on this step is the **Applicable for commission** checkbox. Make your decision here before proceeding:
 
-- **For external (commission-eligible) agents:** Leave the checkbox ticked. An Odoo partner search and document upload section appear below. Search Odoo partners by name — results show whether each partner is a Customer, Supplier, or both. Select the correct partner (their business details will pre-fill on Step 2). If the partner does not yet have onboarding documents on file, upload all 5 required documents. If documents are already on file, a confirmation banner replaces the upload section.
+- **For external (commission-eligible) agents:** Leave the checkbox ticked. An Odoo partner search field appears below. Search Odoo partners by name — results show whether each partner is a Customer, Supplier, or both. Select the correct partner (their business details will pre-fill on Step 2).
 
   **Why the Odoo partner link is required for commission agents:** When a commission statement is paid, the system creates a vendor bill in Odoo against the agent's partner record. Without this link, Odoo cannot raise the bill. The partner does not need to be set up as a supplier in Odoo — a customer-only partner works just as well.
 
-- **For internal (non-commission) agents:** Untick the checkbox. The Odoo partner search and document upload section are hidden — neither is required for internal staff.
+  **If the customer does not yet exist in Odoo:** Do not try to create them here. Complete their customer onboarding first via Customer Applications, wait for approval (which creates the Odoo customer record), then return to this wizard to create the sales agent.
+
+- **For internal (non-commission) agents:** Untick the checkbox. The Odoo partner search is hidden — no partner link is required for internal staff.
+
+> **Documents are not uploaded in this wizard.** Onboarding documents (NDA, Store Onboarding Agreement, etc.) are managed through the Customer Applications flow, not through the Sales Agent creation wizard.
 
 **Step 2 — Business Details**
 Review and adjust the name, email, phone, and seller code. For commission-eligible agents, these pre-fill from the selected Odoo partner. The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
@@ -2097,6 +2104,6 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 
 ---
 
-**Last Updated:** 15 July 2026
+**Last Updated:** 19 July 2026
 
 *This manual covers the system as built through Phase 20 and Phase 12.5, including: Phase 8 Sales Ticket pipeline (deposit registration, balance payment registration, full order-to-payment cycle), real-time ticket updates via WebSocket (live indicator, instant cross-user sync), automatic ticket closure when an Odoo order is cancelled, the 3-step Add Customer wizard with hard duplicate prevention, mandatory onboarding documents for all creation paths, admin document upload, sales agent creation document step with conditional skip, the approve-link flow for duplicate-blocked applications, multi-authority per-user signing via My Profile (Phase 19), the Sales Agent commission_eligible flag with commission exclusion (Phase 20), GS1 pharmaceutical label printing from the Products page (Phase 12.4 — requires Zebra ZT411 printer and valid GTINs from GS1 South Africa), and GTIN Pool management (Phase 12.5 — upload purchased GS1 GTIN codes, assign to products from the Products page, track availability across the pool). For questions about features not covered here, contact your system administrator or refer to the Production Roadmap document for the full technical specification.*

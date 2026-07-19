@@ -2,8 +2,8 @@
 ## Executive Overview
 
 **Prepared by:** DynamicTech SA  
-**Date:** 9 July 2026  
-**Status:** Phases 1–9 + Phase 11 + Phase 15–23 live at portal.bassanihealth.com · Phase 12 in progress (12.4 GS1 label printing + 12.5 GTIN Pool live) · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept
+**Date:** 19 July 2026  
+**Status:** Phases 1–9 + Phase 11 + Phase 15–23 live at portal.bassanihealth.com · Phase 12 in progress (12.4 GS1 label printing + 12.5 GTIN Pool live) · Phase 13 (Production Module) — Proposal · Phase 14 (Ecommerce API) — Concept · Security: path traversal vulnerability patched 2026-07-17
 
 ---
 
