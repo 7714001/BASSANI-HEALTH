@@ -321,15 +321,14 @@ function GlobalSearch() {
 
 // ── Top bar ───────────────────────────────────────────────────────────────────
 function WarehouseSwitcher() {
-  const { user, isAdmin, setActiveWarehouse } = useAuth();
+  const { user, setActiveWarehouse } = useAuth();
   const [warehouses, setWarehouses] = useState([]);
 
   useEffect(() => {
-    if (!isAdmin) return;
     api.get("/api/warehouses/").then((r) => setWarehouses(r.data.warehouses || [])).catch(() => {});
-  }, [isAdmin]);
+  }, []);
 
-  if (!isAdmin || warehouses.length === 0) return null;
+  if (warehouses.length === 0) return null;
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">

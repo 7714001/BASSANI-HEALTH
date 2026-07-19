@@ -1670,21 +1670,7 @@ export function Resellers() {
   const [saving,                 setSaving                ] = useState(false);
   const [editSaving,             setEditSaving            ] = useState(false);
 
-  // Reseller add-wizard — doc staging
-  const RESELLER_REQUIRED_DOC_TYPES = [
-    { key:"store_onboarding_agreement", label:"Signed Store Onboarding Agreement" },
-    { key:"customer_information_form",  label:"Signed Customer Information Form"  },
-    { key:"nda",                        label:"Signed NDA"                        },
-    { key:"tqa",                        label:"Signed TQA Document"               },
-    { key:"cipc_certificate",           label:"CIPC Company Registration Certificate" },
-  ];
-  const [rSellerSessionId,    setRSellerSessionId   ] = useState("");
-  const [rSellerStagedDocs,   setRSellerStagedDocs  ] = useState([]);
-  const [rSellerUploadingDoc, setRSellerUploadingDoc] = useState(null);
-  const [rSellerRemovingDoc,      setRSellerRemovingDoc     ] = useState(null);
-  const [rSellerRemoveDocConfirm, setRSellerRemoveDocConfirm] = useState(null);
-  const [rSellerCustHasDocs,  setRSellerCustHasDocs ] = useState(null); // null=unknown, true/false
-  const [rStep,               setRStep              ] = useState(1);
+  const [rStep, setRStep] = useState(1);
 
   const load = async () => {
     setLoading(true);
@@ -1722,7 +1708,6 @@ export function Resellers() {
     setCustDropdownOpen(false);
     setCustomers([]);
     setCustomerSearch("");
-    setRSellerCustHasDocs(null);
     setForm(f => ({
       ...f,
       odoo_partner_id: c.id,
@@ -1731,31 +1716,18 @@ export function Resellers() {
       phone:       f.phone       || c.phone        || "",
       seller_code: f.seller_code || c.ref          || "",
     }));
-    // Check if this customer already has onboarding docs on file
-    api.get(`/api/customers/${c.id}/has-documents`)
-      .then(r => setRSellerCustHasDocs(r.data.has_documents))
-      .catch(() => setRSellerCustHasDocs(false));
   };
 
   const clearCustomer = () => {
     setSelectedCustomer(null);
-    setRSellerCustHasDocs(null);
     setForm(f => ({ ...f, odoo_partner_id: "" }));
     setCustomerSearch("");
     setCustDropdownOpen(true);
   };
 
-  const rSellerGenSession = () => (
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
-
   const openModal = () => {
     setForm({ ...BLANK_FORM, warehouse_id: defaultWarehouseId ? String(defaultWarehouseId) : "" });
     setSelectedCustomer(null); setCustomerSearch(""); setCustomers([]); setCustDropdownOpen(false);
-    setRSellerSessionId(rSellerGenSession()); setRSellerStagedDocs([]);
-    setRSellerUploadingDoc(null); setRSellerRemovingDoc(null); setRSellerCustHasDocs(null);
     setRStep(1);
     setModal(true);
   };
@@ -1783,6 +1755,7 @@ export function Resellers() {
   };
 
   const editSelectCustomer = (c) => {
+
     setEditSelectedCustomer(c);
     setCustDropdownOpen(false);
     setCustomers([]);
@@ -1812,47 +1785,10 @@ export function Resellers() {
     finally { setEditSaving(false); }
   };
 
-  // Docs only required for commission-eligible agents without existing docs on file
-  const rSellerDocsRequired = form.commission_eligible && (!selectedCustomer || rSellerCustHasDocs !== true);
-
-  const rSellerUploadDoc = async (docKey, docLabel, file) => {
-    setRSellerUploadingDoc(docKey);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await api.post(
-        `/api/onboarding/documents/upload?session_id=${rSellerSessionId}&doc_type=${docKey}`,
-        fd, { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      setRSellerStagedDocs(prev => {
-        const without = prev.filter(d => d.doc_type !== docKey);
-        return [...without, { ...r.data, label: docLabel }];
-      });
-    } catch { toast.error(`Failed to upload ${docLabel}`); }
-    finally { setRSellerUploadingDoc(null); }
-  };
-
-  const rSellerRemoveDoc = (docKey) => setRSellerRemoveDocConfirm(docKey);
-
-  const doRSellerRemoveDoc = async () => {
-    const docKey = rSellerRemoveDocConfirm;
-    setRSellerRemoveDocConfirm(null);
-    setRSellerRemovingDoc(docKey);
-    try {
-      await api.delete(`/api/onboarding/documents/${rSellerSessionId}/${docKey}`);
-      setRSellerStagedDocs(prev => prev.filter(d => d.doc_type !== docKey));
-    } catch { toast.error("Failed to remove document"); }
-    finally { setRSellerRemovingDoc(null); }
-  };
-
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
-    if (rSellerDocsRequired) {
-      const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
-      if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
-    }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -1860,8 +1796,6 @@ export function Resellers() {
       else delete payload.odoo_partner_id;
       if (payload.warehouse_id) payload.warehouse_id = parseInt(payload.warehouse_id);
       else delete payload.warehouse_id;
-      payload.document_session_id = rSellerSessionId;
-      payload.documents = rSellerDocsRequired ? rSellerStagedDocs : [];
       await api.post("/api/resellers/", payload);
       toast.success("Sales agent created");
       setModal(false);
@@ -1896,7 +1830,7 @@ export function Resellers() {
 
           {/* Step indicator */}
           {(() => {
-            const STEPS = ["Odoo & Docs", "Business", "Login", "Financials"];
+            const STEPS = ["Odoo Partner", "Business", "Login", "Financials"];
             return (
               <div className="flex items-center gap-0 mb-6">
                 {STEPS.map((label, i) => {
@@ -1978,7 +1912,12 @@ export function Resellers() {
                   {custDropdownOpen && !selectedCustomer && (
                     <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
                       {customerLoading && <p className="px-4 py-3 text-xs text-gray-400">Loading partners…</p>}
-                      {!customerLoading && customers.length === 0 && <p className="px-4 py-3 text-xs text-gray-400">No partners found</p>}
+                      {!customerLoading && customers.length === 0 && (
+                        <div className="px-4 py-3">
+                          <p className="text-xs text-gray-400">No partners found.</p>
+                          <p className="text-xs text-gray-400 mt-1">If the customer does not exist yet, complete their onboarding via Customer Applications first, then return here to create the sales agent.</p>
+                        </div>
+                      )}
                       {customers.map(c=>(
                         <button key={c.id} onMouseDown={()=>selectCustomer(c)}
                           className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
@@ -2002,64 +1941,16 @@ export function Resellers() {
                   )}
                 </div>
               </div>
-
-              <div>
-                <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
-                  Onboarding Documents
-                  {selectedCustomer && rSellerCustHasDocs === null && <span className="text-gray-300 font-normal normal-case ml-1">(checking…)</span>}
-                </p>
-                {!rSellerDocsRequired ? (
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-green-200 bg-green-50">
-                    <span className="text-green-600 text-sm">✓</span>
-                    <p className="text-xs text-green-700 font-medium">Onboarding documents already on file for {selectedCustomer?.name}.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {RESELLER_REQUIRED_DOC_TYPES.map(dt => {
-                      const uploaded    = rSellerStagedDocs.find(d => d.doc_type === dt.key);
-                      const isUploading = rSellerUploadingDoc === dt.key;
-                      const isRemoving  = rSellerRemovingDoc  === dt.key;
-                      return (
-                        <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
-                            {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
-                          </div>
-                          {uploaded ? (
-                            <button onClick={()=>rSellerRemoveDoc(dt.key)} disabled={isRemoving}
-                              className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
-                              {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
-                            </button>
-                          ) : (
-                            <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
-                              {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
-                              Upload
-                              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
-                                onChange={e=>{ if(e.target.files[0]) rSellerUploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
-                            </label>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <p className="text-[11px] text-gray-400">{rSellerStagedDocs.length} of {RESELLER_REQUIRED_DOC_TYPES.length} uploaded</p>
-                  </div>
-                )}
-              </div>
               </>) : (
                 <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                  <p className="text-xs text-gray-500">Internal staff accounts do not require an Odoo vendor profile or commission onboarding documents.</p>
+                  <p className="text-xs text-gray-500">Internal staff accounts do not require an Odoo vendor profile.</p>
                 </div>
               )}
 
               <div className="flex justify-end">
                 <BtnPrimary onClick={() => {
-                  if (form.commission_eligible) {
-                    if (!selectedCustomer) return toast.error("An Odoo partner link is required for commission-eligible sales agents. Search and select a partner above.");
-                    if (rSellerDocsRequired) {
-                      const missing = RESELLER_REQUIRED_DOC_TYPES.filter(t => !rSellerStagedDocs.find(d => d.doc_type === t.key));
-                      if (missing.length) return toast.error(`Please upload: ${missing.map(d => d.label).join(", ")}`);
-                    }
-                  }
+                  if (form.commission_eligible && !selectedCustomer)
+                    return toast.error("An Odoo partner link is required for commission-eligible sales agents.");
                   setRStep(2);
                 }}>Next →</BtnPrimary>
               </div>
@@ -2276,12 +2167,7 @@ export function Resellers() {
           <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setEditModal(false)} disabled={editSaving}>Cancel</BtnSecondary><BtnPrimary onClick={saveEdit} loading={editSaving}>Save Changes</BtnPrimary></div>
         </Modal>
       )}
-      {rSellerRemoveDocConfirm && (
-        <Modal title="Remove Document" onClose={()=>setRSellerRemoveDocConfirm(null)}>
-          <p className="text-sm text-gray-600">Remove this document from the application? You will need to re-upload it to continue.</p>
-          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setRSellerRemoveDocConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doRSellerRemoveDoc}>Remove</BtnDanger></div>
-        </Modal>
-      )}
+
     </div>
   );
 }
