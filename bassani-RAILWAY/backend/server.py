@@ -599,11 +599,16 @@ if os.path.exists(static_dir):
     async def manifest():
         return FileResponse(os.path.join(static_dir, "manifest.json"))
 
+    _static_real = os.path.realpath(static_dir)
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        file_path = os.path.join(static_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
+        # Resolve symlinks and .. segments, then verify the result stays inside
+        # static_dir before serving.  Without this check, paths like
+        # /../../../proc/self/cmdline traverse out of the build tree.
+        resolved = os.path.realpath(os.path.join(static_dir, full_path))
+        if (resolved == _static_real or resolved.startswith(_static_real + os.sep)) and os.path.isfile(resolved):
+            return FileResponse(resolved)
         return FileResponse(
             os.path.join(static_dir, "index.html"),
             headers={
