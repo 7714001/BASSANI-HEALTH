@@ -5,12 +5,20 @@ or writes warehouse-specific stock data (products, forecasts, reports, stock
 levels, order/packing-board creation):
 
   - warehouse_supervisor / packer — fixed `warehouse_id` on their user document
-  - reseller                       — `warehouse_id` on their reseller profile
-  - admin / super_admin            — `active_warehouse_id` they've selected in
-                                      the top-nav switcher (None = all warehouses)
+  - reseller                       — `warehouse_id` on their reseller profile,
+                                      falls back to the global admin-set default
+  - admin / super_admin            — `active_warehouse_id` selected in the
+                                      top-nav switcher, falls back to the global
+                                      admin-set default when not explicitly set
+  - all other staff roles          — global admin-set default warehouse
 """
 from typing import Optional
 from database import col
+
+
+async def _get_global_default_warehouse_id() -> Optional[int]:
+    doc = await col("portal_settings").find_one({"_id": "default_warehouse"})
+    return doc.get("warehouse_id") if doc else None
 
 
 def get_company_id(odoo_client, warehouse_id: Optional[int]) -> Optional[int]:
@@ -42,16 +50,25 @@ def company_context(company_id: Optional[int]) -> dict:
 
 async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
     role = current_user.get("role")
+
+    # Supervisor / packer: fixed to their assigned warehouse
     if role in ("warehouse_supervisor", "packer"):
         return current_user.get("warehouse_id")
+
+    # Reseller: use their profile warehouse; fall back to global default
     if role == "reseller":
         reseller = await col("resellers").find_one(
             {"user_id": current_user.get("id")}, {"_id": 0, "warehouse_id": 1}
         )
-        return reseller.get("warehouse_id") if reseller else None
+        wh_id = reseller.get("warehouse_id") if reseller else None
+        return wh_id or await _get_global_default_warehouse_id()
+
+    # Admin / super_admin: use their active selection; fall back to global default
     if role in ("admin", "super_admin"):
-        return current_user.get("active_warehouse_id")
-    return None
+        return current_user.get("active_warehouse_id") or await _get_global_default_warehouse_id()
+
+    # All other staff roles (sales, finance, qa_manager, etc.): global default
+    return await _get_global_default_warehouse_id()
 
 
 def odoo_context(warehouse_id: Optional[int], company_id: Optional[int] = None) -> Optional[dict]:

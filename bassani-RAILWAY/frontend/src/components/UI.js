@@ -322,19 +322,29 @@ function GlobalSearch() {
 // ── Top bar ───────────────────────────────────────────────────────────────────
 function WarehouseSwitcher() {
   const { user, setActiveWarehouse } = useAuth();
-  const [warehouses, setWarehouses] = useState([]);
+  const [warehouses,        setWarehouses       ] = useState([]);
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(null);
 
   useEffect(() => {
-    api.get("/api/warehouses/").then((r) => setWarehouses(r.data.warehouses || [])).catch(() => {});
-  }, []);
+    if (user?.role === "reseller") return;
+    api.get("/api/warehouses/").then((r) => {
+      setWarehouses(r.data.warehouses || []);
+      setDefaultWarehouseId(r.data.default_warehouse_id || null);
+    }).catch(() => {});
+  }, [user?.role]);
 
+  // Resellers have a fixed warehouse — picker is not shown
+  if (user?.role === "reseller") return null;
   if (warehouses.length === 0) return null;
+
+  // When no warehouse has been explicitly selected, display the global default
+  const effectiveValue = user?.active_warehouse_id ?? defaultWarehouseId ?? "";
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">
       <Warehouse size={13} className="text-gray-400" />
       <select
-        value={user?.active_warehouse_id || ""}
+        value={effectiveValue}
         onChange={(e) => setActiveWarehouse(e.target.value ? parseInt(e.target.value) : null)}
         className="bg-transparent outline-none text-xs text-gray-700 max-w-[140px]"
       >
