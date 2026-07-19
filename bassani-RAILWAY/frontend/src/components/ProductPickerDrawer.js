@@ -217,8 +217,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
   const variantOptions = useMemo(() => {
     const seen = new Set();
     products.forEach(p => {
-      const m = (p.display_name || p.name || "").match(/\((.+)\)$/);
-      if (m) seen.add(m[1]);
+      parseDisplayName(p.display_name || p.name || "").groups.forEach(g => seen.add(g));
     });
     return [...seen].sort().map(v => ({ value: v, label: v }));
   }, [products]);
@@ -226,7 +225,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
   // Client-side variant filter + in-stock-first sort
   const displayed = useMemo(() => {
     const list = selectedVariant
-      ? products.filter(p => (p.display_name || p.name || "").includes(`(${selectedVariant})`))
+      ? products.filter(p => parseDisplayName(p.display_name || p.name || "").groups.includes(selectedVariant))
       : products;
     return [...list].sort((a, b) => {
       const aIn = (a.virtual_available || 0) > 0;
