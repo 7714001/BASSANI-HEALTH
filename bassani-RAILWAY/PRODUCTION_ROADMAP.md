@@ -1692,6 +1692,46 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.40 — Reseller Order Notifications and Portal Progress Visibility — Complete 2026-07-21
+
+**Goal:** Resellers receive proactive email notifications at every stage of their order so they do not need to call Bassani for status updates. The portal's order progress stepper must advance correctly for resellers as the order moves through the pipeline.
+
+**Root cause fixed:** The packing board document created at `confirm_order` was missing the `reseller_id` field entirely — it stored `is_reseller: bool` and `reseller_name: str` but not `reseller_id`. This meant every reseller email lookup in `mark_packing` and `mark_complete` silently skipped, and the reseller's portal progress stepper was always stuck at "Confirmed" because `GET /api/packing/entry` returned 403 for resellers.
+
+- [x] `order_routes.py` — `confirm_order`: `"reseller_id": _ticket_reseller_id or None` added to packing board document on creation (critical data fix)
+- [x] `packing_board_routes.py` — `get_entry`: rewritten to allow resellers to access their own order's packing entry (ownership check via `reseller_id` field match); staff gate preserved for non-resellers
+- [x] `email_service.py` — `send_order_packing_started(reseller_email, order_ref, customer_name, reseller_name, cc)`: fires when orders clerk marks packing; blue info box, "Track your order" CTA
+- [x] `email_service.py` — `send_order_ready_for_collection_reseller(reseller_email, order_ref, customer_name, reseller_name, cc)`: fires at `mark_complete` for full-delivery reseller orders; green info box, "View order" CTA
+- [x] `packing_board_routes.py` — `mark_packing`: accepts `BackgroundTasks`; fires `send_order_packing_started` to reseller via background task; routes through `get_email_routing()` for `order_cc`
+- [x] `packing_board_routes.py` — `mark_complete`: full-delivery branch fires `send_order_ready_for_collection_reseller` via background task after warehouse supervisor notification
+
+**Definition of Done:**
+- Reseller receives "Packing Started" email when orders clerk marks their order as packing
+- Reseller receives "Ready for Collection" email when their order passes QA+RP and is marked complete
+- Reseller portal progress stepper advances to "Packing" and "Ready for Collection" correctly as the order moves through the board
+- All reseller email lookups succeed (no silent skips due to missing reseller_id)
+
+---
+
+#### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
+
+**Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.
+
+**Previous behaviour:** The staff sales queue excluded reseller tickets with status `open` or `quote`. Staff could not see a reseller order until the reseller confirmed it (advancing it to `sale_order`).
+
+**New behaviour:** Reseller tickets at all statuses (including `quote`) appear in the staff queue. The existing source filter on the ticket list (Internal / Reseller chips) lets staff filter these out if they want to focus on direct tickets only.
+
+- [x] `ticket_routes.py` — `list_tickets`: for `sales` role, removed `"quote"` from `$nin` exclusion in the reseller ticket sub-query; updated comment to reflect new intent
+- [x] `order_routes.py` — `confirm_order` / `_require_confirm_access`: staff with `orders.confirm` permission could already confirm any order (reseller ownership check only fires for the `reseller` role); no code change required
+
+**Definition of Done:**
+- A reseller submits a quote → it immediately appears in the staff sales ticket queue
+- Staff can assign the ticket to a team member for tracking at the quote stage
+- Staff can confirm the order on the reseller's behalf if needed
+- Reseller can still confirm their own quote through the normal portal flow
+
+---
+
 #### 8.31 — Batch/Lot Numbers on Print Documents — Complete 2026-07-11
 
 **Goal:** Every A4 document the portal generates (order view, packing slip, invoice) shows the batch/lot number(s) that were physically dispatched with that order. Required for medicinal cannabis compliance traceability — the dispensed batch must be identifiable from the paper document.
@@ -3969,6 +4009,7 @@ No external-facing API breaking changes — existing resellers without the field
 
 - [x] `generate_statements` in `commission_routes.py`: when no specific `reseller_id` is targeted, fetches eligible IDs from the `resellers` collection (`commission_eligible != false` and `active != false`) and filters the aggregated rows before generating statements
 - [x] Agents with `commission_eligible: false` are silently excluded from bulk statement runs; targeted single-agent runs (for admin review / correction) are unaffected
+- [x] **2026-07-21 fix:** `confirm_order` in `order_routes.py` now checks `commission_eligible` at order confirmation time before creating the `order_commissions` record. Previously the check only happened at statement generation time, meaning toggling the flag off retroactively excluded all past orders from statements. Now the cut-off is at the moment of confirmation: orders confirmed while eligible produce a commission record; orders confirmed after the flag is toggled off produce no record. Past `order_commissions` records for orders confirmed while eligible are untouched and included in statements normally.
 
 ### 20.2 — Frontend: Nav and Sidebar
 
@@ -3991,6 +4032,7 @@ No external-facing API breaking changes — existing resellers without the field
 
 - [x] Internal staff accounts (reseller role, `commission_eligible: false`) can be created without an Odoo vendor partner
 - [x] Non-eligible agents do not appear in bulk commission statement generation
+- [x] Toggling `commission_eligible` off only affects orders confirmed after the change — past orders retain their commission records and appear in statements for the months they were placed
 - [x] Commission nav item hidden for non-eligible agents; navigating to `/commission` directly shows "not applicable" screen
 - [x] Odoo partner step in the Add wizard is shown only for commission-eligible agents; document upload is not part of the wizard at all (documents belong to Customer Applications)
 - [x] Banking details section in Edit modal hidden for non-eligible agents

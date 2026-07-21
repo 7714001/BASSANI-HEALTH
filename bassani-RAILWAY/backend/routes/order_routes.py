@@ -1510,30 +1510,34 @@ async def confirm_order(
     # For reseller quotes the record was deferred from order creation — create it
     # now at the first moment the order is financially committed.
     # (_ticket_reseller_id is already resolved above, before the packing board step.)
+    # commission_eligible is checked here (at confirm time) so that toggling the flag
+    # off only affects orders confirmed after the change — past confirmed orders keep
+    # their records and are included in statements for the months they were placed.
     comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
     if _ticket_reseller_id and not comm_lookup:
         try:
             _reseller_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, NO_ID)
-            _reseller_name_val = _reseller_doc["name"] if _reseller_doc else ""
-            _cust_name_val = order_data["partner_id"][1] if order_data and order_data.get("partner_id") else ""
-            _order_subtotal = float(pre_rows[0].get("amount_untaxed", 0)) if pre_rows else 0
-            _comm_doc = {
-                "odoo_order_id": str(order_id),
-                "reseller_id": _ticket_reseller_id,
-                "reseller_name": _reseller_name_val,
-                "customer_partner_id": partner[0] if partner else None,
-                "customer_name": _cust_name_val,
-                "original_subtotal": _order_subtotal,
-                "commission_total": 0,
-                "payout_status": "pending",
-                "created_at": datetime.now(timezone.utc),
-            }
-            await col("order_commissions").insert_one(_comm_doc)
-            await col("resellers").update_one(
-                {"id": _ticket_reseller_id},
-                {"$inc": {"total_sales": _order_subtotal}},
-            )
-            comm_lookup = _comm_doc
+            if _reseller_doc and _reseller_doc.get("commission_eligible") is not False:
+                _reseller_name_val = _reseller_doc["name"] if _reseller_doc else ""
+                _cust_name_val = order_data["partner_id"][1] if order_data and order_data.get("partner_id") else ""
+                _order_subtotal = float(pre_rows[0].get("amount_untaxed", 0)) if pre_rows else 0
+                _comm_doc = {
+                    "odoo_order_id": str(order_id),
+                    "reseller_id": _ticket_reseller_id,
+                    "reseller_name": _reseller_name_val,
+                    "customer_partner_id": partner[0] if partner else None,
+                    "customer_name": _cust_name_val,
+                    "original_subtotal": _order_subtotal,
+                    "commission_total": 0,
+                    "payout_status": "pending",
+                    "created_at": datetime.now(timezone.utc),
+                }
+                await col("order_commissions").insert_one(_comm_doc)
+                await col("resellers").update_one(
+                    {"id": _ticket_reseller_id},
+                    {"$inc": {"total_sales": _order_subtotal}},
+                )
+                comm_lookup = _comm_doc
         except Exception as _ce:
             print(f"⚠️  Commission record creation failed at confirm for order {order_id}: {_ce}")
 

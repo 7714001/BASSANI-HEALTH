@@ -290,7 +290,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Capability | Status |
 |---|---|
 | Sales Agent portal — product catalogue, order placement, commission (eligibility-gated per agent) | Live |
-| Reseller quote flow — resellers build draft quotes via cart, manage them in My Quotes, edit/send/confirm without Bassani staff involvement; draft quotes hidden from staff queue until confirmed | Live |
+| Reseller quote flow — resellers build draft quotes via cart, manage them in My Quotes, edit/send/confirm; draft quotes visible to Bassani staff immediately so they can assign, track, and confirm on the reseller's behalf if needed | Live |
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
@@ -313,7 +313,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Supplier visibility — vendor bills, purchase history, goods receipts | Live |
 | Product barcode — field exposed, scanning foundation in place | Live |
 | Custom domain (portal.bassanihealth.com), SSL, 2FA | Live |
-| Sales agent accounts — internal Bassani staff can hold sales agent accounts (managing customer portfolios) without appearing in commission statements; `commission_eligible` flag controls visibility and inclusion | Live |
+| Sales agent accounts — internal Bassani staff can hold sales agent accounts (managing customer portfolios) without appearing in commission statements; `commission_eligible` flag controls inclusion and is applied at order confirmation time so toggling the flag off only affects future orders, not past ones | Live |
 | My Profile — all users manage their display name, password, and (if authorised) personal signature from a single profile page accessible via the top bar | Live |
 | Phase 12 (partial): GS1 pharmaceutical label printing — warehouse staff can print GS1 DataMatrix unit labels and GS1-128 carton labels directly from the Products page to a Zebra ZT411 printer with one click. Live preview in the browser. Requires official GTINs from GS1 South Africa (registration process initiated). | In progress |
 | Phase 12.5: GTIN Pool management — Bassani's purchased block of GS1 GTIN codes is tracked centrally in the portal. Staff can see at a glance how many codes are available versus assigned, upload new codes in bulk, and assign a code to a product directly from the Products page. Assignment writes the barcode field in Odoo automatically. No more spreadsheet tracking or risk of assigning the same GTIN twice. | Live |

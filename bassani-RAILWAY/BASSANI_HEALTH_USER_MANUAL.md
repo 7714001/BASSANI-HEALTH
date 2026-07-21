@@ -420,7 +420,9 @@ The table below documents every automated email the portal sends, when it fires,
 | **Commission Statement Ready** | An admin generates a monthly commission statement | The reseller |
 | **Commission Paid** | An admin marks a commission statement as paid | The reseller |
 | **Commission Dispute Resolved** | An admin resolves a commission dispute | The reseller |
+| **Packing Started** | An orders clerk marks a reseller order as packing | The reseller who placed the order + Order CC list (if configured) |
 | **Ready for Collection** | An order passes both QA and RP approval on the packing board | All `warehouse_supervisor` portal users + any extra addresses in the Order Ready list |
+| **Order Ready for Collection** (reseller) | Same mark-complete event on a full-delivery reseller order | The reseller who placed the order + Order CC list (if configured) |
 
 **Notes:**
 
@@ -520,7 +522,8 @@ Each step is handled by a different team member, and the portal enforces that no
 
 When you log in, you land on **Sales Tickets** (`/tickets/sales`). This shows:
 - **Your queue** — tickets assigned to you
-- **Unassigned** — tickets waiting to be claimed (reseller orders that came in while you were offline, or new direct inquiries)
+- **Unassigned** — tickets waiting to be claimed (direct inquiries with no assigned staff member)
+- **Reseller orders** — reseller-created quotes appear in the ticket list from the moment they are submitted, even before the reseller has confirmed them. You can assign them to yourself or a colleague for tracking, and confirm them on the reseller's behalf if needed
 
 **Identifying reseller orders:** The Customer column in the ticket list shows a purple **Reseller Order** badge and the reseller's name beneath the customer name for any order that came through a reseller partner. Internal orders show a blue **Portal Order** or **Direct Inquiry** badge. Opening a reseller ticket shows a purple "Via reseller: [name]" banner above the customer billing section.
 
@@ -1274,14 +1277,13 @@ Type the customer's business name and wait for the search to run. The search che
 
 **Step 2 — Documents**
 
-Upload both of the following documents before continuing:
+Upload all three of the following documents before continuing:
 
+- Signed Store Onboarding Agreement
 - Signed Customer Information Form
-- CIPC Company Registration Certificate
+- Signed NDA
 
-Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 2 uploaded`. The **Continue to Details** button is disabled until both slots are filled.
-
-> The NDA and Store Onboarding Agreement are sent to the customer by the admin after the application is reviewed — they are not required at this stage.
+Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 3 uploaded`. The **Continue to Details** button is disabled until all three slots are filled.
 
 > Documents are staged to Cloudflare R2 as you upload them and will be attached to the customer's profile the moment the customer is created. If you close the browser before completing Step 3, you will need to start a new session and re-upload.
 

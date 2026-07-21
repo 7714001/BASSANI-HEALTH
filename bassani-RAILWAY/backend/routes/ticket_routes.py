@@ -375,14 +375,13 @@ async def list_tickets(
     elif assigned_to:
         query["assigned_to"] = assigned_to
     elif role == "sales":
-        # Staff sales queue: own tickets + unassigned internal + reseller tickets
-        # that have been confirmed and handed to Bassani (sale_order and beyond).
-        # Pre-confirm reseller quotes (open/quote) are hidden — the reseller is
-        # still working on them and they haven't entered the Bassani pipeline yet.
+        # Staff sales queue: own tickets + unassigned internal + all reseller tickets
+        # (including quote-status drafts so staff can assign, track, and confirm on
+        # the reseller's behalf if needed).
         query["$or"] = [
             {"assigned_to": current_user["id"]},
             {"assigned_to": None, "reseller_id": None},
-            {"reseller_id": {"$ne": None}, "status": {"$nin": ["open", "quote"]}},
+            {"reseller_id": {"$ne": None}},
         ]
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)

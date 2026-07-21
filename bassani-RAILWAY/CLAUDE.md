@@ -120,14 +120,14 @@ No new external services without an explicit decision. Approved additions: Resen
 | 5 | Reliability and Resilience | Not Started |
 | 6 | Observability and Operations | Complete |
 | 7 | Missing Commercial Workflows | Complete |
-| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign. 8.38 complete: Samples Account. 8.39 complete: pipeline redesign — deposit step removed, invoice now raised at mark_complete (after QA+RP sign-off). Staff account creation outstanding. |
+| 8 | Order Workflow and Ticketing System | In Progress — core pipeline built; partial fulfilment/backorder flow, invoice_policy_block safeguard, per-user document signing, self-service customer registration, product picker drawer all built. 8.24–8.36 complete: invoice lifecycle actions, credit notes, address management, Order Passport, reseller traceability, ticket linking + inbox integration, SO # column on ticket list. 8.37 complete: customer onboarding redesign. 8.38 complete: Samples Account. 8.39 complete: pipeline redesign — deposit step removed, invoice now raised at mark_complete (after QA+RP sign-off). 8.40 complete: reseller order notifications (packing-started + ready-for-collection emails) + portal progress stepper visibility fix. 8.41 complete: reseller draft quotes now visible to staff queue immediately. Staff account creation outstanding. |
 | 9 | Go-Live Infrastructure | Complete — portal.bassanihealth.com live |
 | 10 | Responsive UI | In Progress (10.5 pending) |
 | 11 | Microsoft 365 Mailbox Integration | Sales Inbox + Onboarding Inbox both built (IMAP + O365 Graph paths). Blocked on Azure credentials from M365 admin. |
 | 12 | Barcode Integration | In Progress — 12.0 backend done; 12.4 GS1 backend + Products-page label modal built; 12.5 GTIN Pool management complete; 12.6 Global Barcode Search + Order Barcode complete; serial tracking + packing-board integration pending |
 | 13 | Production and Cultivation Module | Concept — needs SAHPRA scoping |
 | 19 | Per-User Document Signing | Complete — `signing_authority.sign` permission, My Profile setup, countersignature flow |
-| 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag, internal agents excluded from bulk runs |
+| 20 | Commission Eligibility Flag | Complete — `commission_eligible` flag; eligibility checked at order confirm time (not generation time) so toggling off only affects future orders; internal agents excluded from bulk runs |
 | 22 | Automated Bank Reconciliation | Complete — 22.1 auto-payment detection (15-min Odoo poll); 22.2 CSV import + auto-match; 22.3 manual match/exclude/unmatch (registers Odoo payment via account.payment.register); 22.4 Finance dashboard (statements list + line review); 22.5 FNB Business + Nedbank Business CSV parsers. Permission: `finance.bank_reconciliation`. Routes: `bank_recon_routes.py`. View: `BankReconciliation.js` |
 | 23 | Operations Monitor | Complete — token-verified public TV display at `/monitor?token=`; 5 Kanban columns (Ready to Collect renamed from Awaiting Payment); process-focused KPI strip (no financials): Overdue/At Risk/Compliance Hold/Completed Today + per-stage breakdown + Oldest Active order. Overdue and at-risk counts cover all 5 columns. Route: `monitor_routes.py`. Views: `OrderMonitor.js`, `MonitorSettings.js`. Settings tab: Monitor Display. |
 
@@ -141,7 +141,9 @@ See `PRODUCTION_ROADMAP.md` for the full Definition of Done per phase and all su
 - Resellers are external business partners who place orders on behalf of their own customers.
 - Each reseller can only place orders for customers linked to their profile (onboarded by them or linked by an admin).
 - Resellers have a read-only product catalog view — they never see stock history, barcodes, or admin controls.
-- Commission is calculated as a percentage of monthly turnover using configurable tier bands.
+- Commission is calculated as a percentage of monthly turnover using configurable tier bands. The `commission_eligible` flag is checked at order confirmation time: orders confirmed while the flag is off produce no `order_commissions` record and will never appear in any statement. Toggling the flag off does not retroactively affect past confirmed orders.
+- Reseller draft quotes (at `quote` status) are visible to Bassani sales staff immediately on creation — staff can assign, track, and confirm them. Resellers only see their own orders (filtered by `reseller_id`); they cannot see orders placed directly by Bassani staff for their customers.
+- Resellers receive email notifications at key pipeline milestones: order placed, order confirmed, packing started, and ready for collection (full delivery). Partial-delivery backorder notifications also fire.
 
 **Customer onboarding:**
 - Resellers initiate customer onboarding via a 5-step wizard (Step 0 gates: send/download template docs, Step 1: company details, Step 2: contact, Step 3: banking, Step 4: documents).
