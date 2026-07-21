@@ -946,6 +946,68 @@ def send_order_ready_for_collection(
           _wrap(body))
 
 
+def send_order_packing_started(
+    reseller_email: str,
+    order_ref: str,
+    customer_name: str,
+    reseller_name: str,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the reseller when the orders clerk moves their order into active packing."""
+    if not reseller_email:
+        return
+    body = (
+        _h1("Your order is being packed")
+        + _p(f"Hi {reseller_name},")
+        + _p(
+            f"We have started packing your order for <strong>{customer_name}</strong>. "
+            "Once packing is complete it will go through our QA and Responsible Pharmacist "
+            "review before being cleared for collection."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Status", _badge("Packing in progress", "#2563eb")),
+        ], tint="#eff6ff", border="#bfdbfe")
+        + _button("Track your order", f"{settings.portal_url}/tickets/sales")
+    )
+    _send(reseller_email, f"Packing Started: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
+def send_order_ready_for_collection_reseller(
+    reseller_email: str,
+    order_ref: str,
+    customer_name: str,
+    reseller_name: str,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the reseller when their full order has passed QA and RP review and is ready."""
+    if not reseller_email:
+        return
+    body = (
+        _h1("Your order is ready for collection")
+        + _p(f"Hi {reseller_name},")
+        + _p(
+            f"Your order for <strong>{customer_name}</strong> has been packed and cleared "
+            "by our QA and Responsible Pharmacist. It is now ready for collection."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Status", _badge("Ready for collection", "#059669")),
+        ], tint="#f0fdf4", border="#86efac")
+        + _divider()
+        + _p(
+            "Please visit our facility to collect or contact us to arrange dispatch.",
+            muted=True,
+        )
+        + _button("View order", f"{settings.portal_url}/tickets/sales")
+    )
+    _send(reseller_email, f"Ready for Collection: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
 # ── Partial fulfilment and backorder emails (Phase 8.23) ──────────────────────
 
 def _item_rows(items: list, qty_key: str = "qty") -> str:

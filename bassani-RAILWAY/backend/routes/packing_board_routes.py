@@ -28,7 +28,9 @@ from odoo_client import get_odoo_client
 from routes.settings_routes import get_email_routing
 from routes.monitor_routes import broadcast_monitor_refresh
 from services.email_service import (
+    send_order_packing_started,
     send_order_ready_for_collection,
+    send_order_ready_for_collection_reseller,
     send_partial_delivery_ready,
     send_backorder_created_internal,
     send_backorder_stock_ready,
@@ -818,7 +820,7 @@ async def complete_entry(
                 backorder_lines=_backorder_items,
             )
     else:
-        # ── Full delivery: notify supervisors for collection ──────────────────
+        # ── Full delivery: notify supervisors + reseller for collection ────────
         _sups = await col("users").find(
             {"role": "warehouse_supervisor", "email": {"$exists": True, "$ne": ""}},
             {"email": 1, "_id": 0},
@@ -835,6 +837,19 @@ async def complete_entry(
                 packer_name=(updated or entry).get("assigned_packer", "") or (updated or entry).get("packer_name", ""),
                 supervisor_emails=_sup_emails,
             )
+        if (updated or entry).get("reseller_id"):
+            _full_res = await col("resellers").find_one(
+                {"id": (updated or entry)["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
+            )
+            if _full_res and _full_res.get("email"):
+                background_tasks.add_task(
+                    send_order_ready_for_collection_reseller,
+                    reseller_email=_full_res["email"],
+                    order_ref=str((updated or entry).get("order_id", body.order_id)),
+                    customer_name=(updated or entry).get("customer_name", ""),
+                    reseller_name=_full_res.get("name", ""),
+                    cc=_routing.get("order_cc") or None,
+                )
 
     response: dict = {
         "success": True,
@@ -1034,7 +1049,21 @@ async def cancel_entry(
 
 
 @router.get("/entry/{order_id}")
-async def get_entry(order_id: str, _: dict = Depends(require_board_access)):
+async def get_entry(order_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "reseller":
+        res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
+        rid = res_doc["id"] if res_doc else None
+        entry = await col("packing_board").find_one({"order_id": order_id, "reseller_id": rid}, NO_ID)
+        if not entry:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return entry
+    # Staff: enforce board access
+    if not (
+        current_user.get("is_super_admin")
+        or current_user.get("role") in ADMIN_ROLES
+        or current_user.get("role") in _BOARD_VIEW_ROLES
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
     entry = await col("packing_board").find_one({"order_id": order_id}, NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -1163,6 +1192,7 @@ async def adopt_order(
 @router.put("/mark-packing")
 async def mark_packing(
     body: OrderIdBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk: advance a queued order to packing."""
@@ -1174,6 +1204,20 @@ async def mark_packing(
     updated = await _do_update_status(body.order_id, "packing", current_user)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
+    if entry.get("reseller_id"):
+        _res = await col("resellers").find_one(
+            {"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
+        )
+        if _res and _res.get("email"):
+            _routing = await get_email_routing()
+            background_tasks.add_task(
+                send_order_packing_started,
+                reseller_email=_res["email"],
+                order_ref=entry.get("order_id", body.order_id),
+                customer_name=entry.get("customer_name", ""),
+                reseller_name=_res.get("name", ""),
+                cc=_routing.get("order_cc") or None,
+            )
     return {"success": True}
 
 
