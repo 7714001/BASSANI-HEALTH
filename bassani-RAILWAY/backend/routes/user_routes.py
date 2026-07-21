@@ -345,6 +345,52 @@ async def deactivate_user(
     return {"success": True}
 
 
+@router.delete("/{user_id}/permanent")
+async def delete_user_permanent(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Permanently delete a user account. Super admin only.
+    Audit trail entries are preserved — they are immutable compliance records.
+    Cannot delete your own account or another super admin.
+    Cannot delete a user who is linked to a reseller (unlink first).
+    """
+    if not current_user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Only the super admin can permanently delete accounts")
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if user_id == current_user.get("id"):
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    target = await col("users").find_one({"_id": oid})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Super admin accounts cannot be deleted")
+
+    if target.get("reseller_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="This user is linked to a reseller account. Remove the reseller link before deleting.",
+        )
+
+    username = target.get("username", "")
+    await col("users").delete_one({"_id": oid})
+    await audit_log(
+        "user.delete_permanent", "user", user_id,
+        entity_label=username,
+        user=current_user,
+        before={"username": username, "role": target.get("role"), "active": target.get("active")},
+    )
+    return {"success": True}
+
+
 @router.post("/{user_id}/reactivate")
 async def reactivate_user(
     user_id: str,

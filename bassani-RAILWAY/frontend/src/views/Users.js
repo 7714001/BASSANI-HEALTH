@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
   UserPlus, KeyRound, PowerOff, Power, Copy, Check,
-  ChevronDown, ChevronUp, ShieldCheck, Warehouse, Pencil,
+  ChevronDown, ChevronUp, ShieldCheck, Warehouse, Pencil, Trash2,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
@@ -181,7 +181,6 @@ const EDITABLE_ROLES = [
   { value: "responsible_pharmacist",  label: "Responsible Pharmacist"   },
   { value: "warehouse_supervisor",    label: "Warehouse Supervisor"     },
   { value: "packer",                  label: "Packer"                   },
-  { value: "reseller",                label: "Reseller"                 },
 ];
 
 const ROLE_COLORS = {
@@ -374,6 +373,9 @@ export default function Users() {
   // Deactivate confirm
   const [deactivateConfirm, setDeactivateConfirm] = useState(null);
 
+  // Permanent delete confirm
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+
   // Reset password modal
   const [resetModal,    setResetModal   ] = useState(false);
   const [resetTarget,   setResetTarget  ] = useState(null);
@@ -521,6 +523,20 @@ export default function Users() {
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Action failed");
+    }
+  };
+
+  // ── Permanent delete ────────────────────────────────────────────────────────
+
+  const doDeleteUser = async () => {
+    const u = deleteConfirm;
+    setDeleteConfirm(null);
+    try {
+      await api.delete(`/api/users/${u.id}/permanent`);
+      toast.success(`${u.username} has been permanently deleted`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Delete failed");
     }
   };
 
@@ -758,6 +774,9 @@ export default function Users() {
                     u.active !== false
                       ? <BtnDanger onClick={() => toggleActive(u)} title="Deactivate"><PowerOff size={12} /></BtnDanger>
                       : <BtnSecondary size="sm" onClick={() => toggleActive(u)} title="Reactivate"><Power size={12} /></BtnSecondary>
+                  )}
+                  {isSuperAdmin && !u.is_super_admin && (
+                    <BtnDanger onClick={() => setDeleteConfirm(u)} title="Permanently delete account"><Trash2 size={12} /></BtnDanger>
                   )}
                 </div>
               ),
@@ -1007,6 +1026,22 @@ export default function Users() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setDeactivateConfirm(null)}>Cancel</BtnSecondary>
             <BtnDanger onClick={() => doToggleActive(deactivateConfirm)}>Deactivate</BtnDanger>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Permanent delete confirm modal ── */}
+      {deleteConfirm && (
+        <Modal title="Permanently Delete Account" onClose={() => setDeleteConfirm(null)}>
+          <p className="text-sm text-gray-600 mb-2">
+            This will permanently delete <strong>{deleteConfirm.username}</strong>. This cannot be undone.
+          </p>
+          <p className="text-sm text-gray-600 mb-4">
+            Audit trail entries for this account are kept as a compliance record. Create the correct account through the Sales Agents flow if this was a mislinked reseller.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setDeleteConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doDeleteUser}>Delete Permanently</BtnDanger>
           </div>
         </Modal>
       )}
