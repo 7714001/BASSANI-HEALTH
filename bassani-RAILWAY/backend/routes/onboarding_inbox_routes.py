@@ -704,7 +704,6 @@ async def send_docs(
         ("store-onboarding-agreement.pdf", "Bassani Health Store Onboarding Agreement"),
         ("customer-information-form.pdf",  "Bassani Health Customer Information Form"),
         ("nda.pdf",                        "Bassani Health NDA"),
-        ("tqa.pdf",                        "Bassani Health TQA Document"),
     ]
     file_attachments = []
     for filename, display_name in _TEMPLATES:
@@ -1030,7 +1029,6 @@ _REQUIRED_DOC_TYPES: dict[str, str] = {
     "store_onboarding_agreement": "Signed Store Onboarding Agreement",
     "customer_information_form":  "Signed Customer Information Form",
     "nda":                        "Signed NDA",
-    "tqa":                        "Signed TQA Document",
     "cipc_certificate":           "CIPC Company Registration Certificate",
 }
 
@@ -1299,13 +1297,11 @@ async def save_documents(
         saved_docs.append(record)
 
     # Stamp received_doc_types on the thread root and advance workflow status.
-    # in_progress = some required docs saved; docs_complete = all five present.
+    # in_progress = some required docs saved; docs_complete = all three present.
     _REQUIRED_DOC_KEYS = {
         "store_onboarding_agreement",
         "customer_information_form",
         "nda",
-        "tqa",
-        "cipc_certificate",
     }
     newly_saved_types = {
         r["doc_type"] for r in saved_docs

@@ -618,8 +618,6 @@ export function Customers() {
     { key:"store_onboarding_agreement", label:"Signed Store Onboarding Agreement" },
     { key:"customer_information_form",  label:"Signed Customer Information Form"  },
     { key:"nda",                        label:"Signed NDA"                        },
-    { key:"tqa",                        label:"Signed TQA Document"               },
-    { key:"cipc_certificate",           label:"CIPC Company Registration Certificate" },
   ];
   const [form,           setForm          ] = useState(BLANK_FORM);
   const [nameSearch,     setNameSearch    ] = useState("");

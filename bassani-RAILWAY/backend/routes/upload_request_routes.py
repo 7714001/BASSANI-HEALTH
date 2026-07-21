@@ -31,7 +31,6 @@ DOC_LABELS = {
     "store_onboarding_agreement": "Signed Store Onboarding Agreement",
     "customer_information_form":  "Signed Customer Information Form",
     "nda":                        "Signed NDA",
-    "tqa":                        "Signed TQA Document",
     "cipc_certificate":           "CIPC Company Registration Certificate",
 }
 ALL_DOC_TYPES = list(DOC_LABELS.keys())

@@ -134,7 +134,6 @@ function PdfViewer({ doc, onClose }) {
 
 const TEMPLATE_FILENAMES = {
   nda:                        "nda.pdf",
-  tqa:                        "tqa.pdf",
   store_onboarding_agreement: "store-onboarding-agreement.pdf",
 };
 
@@ -533,7 +532,7 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
       {/* Signing session panel */}
       {canSendDocs && (() => {
         const submittedTypes = new Set((docs || []).map(d => d.doc_type));
-        const hasInitialDocs = submittedTypes.has("customer_information_form") && submittedTypes.has("cipc_certificate");
+        const hasInitialDocs = submittedTypes.has("customer_information_form");
         const ndaSigned = submittedTypes.has("nda");
         const soaSigned = submittedTypes.has("store_onboarding_agreement");
         const allSigningDone = ndaSigned && soaSigned;
@@ -552,7 +551,7 @@ function DocumentsCard({ appId, docs, loading, isHolder, onDocUpdate, signingSes
               <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
                 <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
                 <p className="text-xs text-amber-700">
-                  The Customer Information Form and CIPC certificate must be submitted before you can generate the NDA and Store Agreement.
+                  The Customer Information Form must be submitted before you can generate the NDA and Store Agreement.
                 </p>
               </div>
             ) : sessionSent ? (

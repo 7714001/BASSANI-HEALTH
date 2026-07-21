@@ -9,16 +9,14 @@ const DOC_LABELS = {
   store_onboarding_agreement: "Signed Store Onboarding Agreement",
   customer_information_form:  "Signed Customer Information Form",
   nda:                        "Signed NDA",
-  tqa:                        "Signed TQA Document",
   cipc_certificate:           "CIPC Company Registration Certificate",
 };
 
-// Template files for the 4 Bassani-issued documents (cipc_certificate is the customer's own doc)
+// Template files for the 3 Bassani-issued documents (cipc_certificate is the customer's own doc)
 const DOC_TEMPLATES = {
   store_onboarding_agreement: { filename: "store-onboarding-agreement.pdf", label: "Store Onboarding Agreement" },
   customer_information_form:  { filename: "customer-information-form.pdf",  label: "Customer Information Form"  },
   nda:                        { filename: "nda.pdf",                        label: "NDA"                        },
-  tqa:                        { filename: "tqa.pdf",                        label: "TQA Document"               },
 };
 
 export default function PublicDocUpload() {

@@ -39,8 +39,6 @@ const ONBOARDING_DOC_TYPES = [
   { key: "store_onboarding_agreement", label: "Signed Store Onboarding Agreement" },
   { key: "customer_information_form",  label: "Signed Customer Information Form"  },
   { key: "nda",                        label: "Signed NDA"                        },
-  { key: "tqa",                        label: "Signed TQA Document"               },
-  { key: "cipc_certificate",           label: "CIPC Company Registration Certificate" },
 ];
 
 const KNOWN_DOC_KEYS = new Set(ONBOARDING_DOC_TYPES.map(d => d.key));
@@ -570,8 +568,6 @@ export default function CustomerProfile() {
     "store_onboarding_agreement",
     "customer_information_form",
     "nda",
-    "tqa",
-    "cipc_certificate",
   ];
 
   const openReqModal = (existingDocTypes = []) => {
@@ -1292,7 +1288,7 @@ export default function CustomerProfile() {
         <Modal title="Send onboarding documents?" onClose={() => setSendDocsConfirmOpen(false)}>
           <div className="space-y-4">
             <p className="text-sm text-gray-600">
-              This will email the four Bassani onboarding templates (NDA, Store Agreement, TQA, Customer Information Form) to <strong>{data?.customer?.email}</strong>.
+              This will email the three Bassani onboarding templates (NDA, Store Agreement, Customer Information Form) to <strong>{data?.customer?.email}</strong>.
             </p>
             {docsSentInfo?.sent && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
