@@ -404,6 +404,7 @@ async def monthly_turnover(
                 domain=[
                     ("state", "in", ["sale", "done"]),
                     *odoo_date_domain("date_order", fd, ld),
+                    *_wh_filter,
                 ],
                 fields=["amount_total"],
                 limit=5000,
@@ -600,12 +601,14 @@ async def dead_stock(
             context=odoo_context(warehouse_id),
         )
 
-        # Recent order lines (within threshold)
+        # Recent order lines (within threshold), scoped to selected warehouse
+        _wh_filter = [("order_id.warehouse_id", "=", warehouse_id)] if warehouse_id else []
         recent_lines = odoo.search_read(
             "sale.order.line",
             domain=[
                 ("order_id.state", "in", ["sale", "done"]),
                 ("order_id.date_order", ">=", cutoff),
+                *_wh_filter,
             ],
             fields=["product_id"],
             limit=10000,
