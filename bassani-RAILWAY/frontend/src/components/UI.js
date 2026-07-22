@@ -337,8 +337,10 @@ function WarehouseSwitcher() {
   if (user?.role === "reseller") return null;
   if (warehouses.length === 0) return null;
 
-  // When no warehouse has been explicitly selected, display the global default
-  const effectiveValue = user?.active_warehouse_id ?? defaultWarehouseId ?? "";
+  // null = user explicitly chose "All warehouses"; undefined = never set (show global default as hint)
+  const effectiveValue = user?.active_warehouse_id !== undefined
+    ? (user.active_warehouse_id ?? "")
+    : (defaultWarehouseId ?? "");
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">
