@@ -38,6 +38,13 @@ def odoo_date_domain(field: str, from_date: str, to_date: str) -> list:
         (field, "<=", to_date),
     ]
 
+def parse_date_str(s: str, end_of_day: bool = False) -> datetime:
+    """Parse YYYY-MM-DD string to UTC datetime."""
+    d = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if end_of_day:
+        d = d.replace(hour=23, minute=59, second=59)
+    return d
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
@@ -310,27 +317,35 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
 async def monthly_turnover(
     year: int = Query(default=None),
     month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
     """
     Monthly revenue split — direct vs reseller sales.
-    Pulls order totals from Odoo, commission data from MongoDB.
+    Accepts either year/month or from_date/to_date (ISO date strings) for range mode.
     """
     odoo = get_odoo_client()
     today = date.today()
-    year  = year  or today.year
-    month = month or today.month
-
-    from_date = first_day_of_month(year, month).strftime("%Y-%m-%d")
-    to_date   = last_day_of_month(year, month).strftime("%Y-%m-%d")
+    if from_date and to_date:
+        _from, _to = from_date, to_date
+        _from_dt = parse_date_str(from_date)
+        _to_dt   = parse_date_str(to_date, end_of_day=True)
+    else:
+        year  = year  or today.year
+        month = month or today.month
+        _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
+        _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
+        _from_dt = first_day_of_month(year, month)
+        _to_dt   = last_day_of_month(year, month)
 
     try:
-        # All confirmed orders this month from Odoo
+        # All confirmed orders in the period from Odoo
         orders = odoo.search_read(
             "sale.order",
             domain=[
                 ("state", "in", ["sale", "done"]),
-                *odoo_date_domain("date_order", from_date, to_date),
+                *odoo_date_domain("date_order", _from, _to),
             ],
             fields=["id", "name", "amount_untaxed", "amount_tax", "amount_total", "date_order"],
             limit=5000,
@@ -345,8 +360,8 @@ async def monthly_turnover(
             {
                 "$match": {
                     "created_at": {
-                        "$gte": first_day_of_month(year, month),
-                        "$lte": last_day_of_month(year, month),
+                        "$gte": _from_dt,
+                        "$lte": _to_dt,
                     }
                 }
             },
@@ -366,8 +381,8 @@ async def monthly_turnover(
         reseller_order_ids = set()
         async for doc in col("order_commissions").find(
             {"created_at": {
-                "$gte": first_day_of_month(year, month),
-                "$lte": last_day_of_month(year, month),
+                "$gte": _from_dt,
+                "$lte": _to_dt,
             }},
             {"odoo_order_id": 1}
         ):
@@ -405,7 +420,7 @@ async def monthly_turnover(
             })
 
         return {
-            "period": {"year": year, "month": month, "from": from_date, "to": to_date},
+            "period": {"year": year, "month": month, "from": _from, "to": _to},
             "revenue": {
                 "total": total_revenue,
                 "subtotal": total_subtotal,
@@ -433,24 +448,28 @@ def best_sellers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
     """Top products by revenue — pulled from Odoo sale order lines."""
     odoo = get_odoo_client()
     today = date.today()
-    year  = year  or today.year
-    month = month or today.month
-
-    from_date = first_day_of_month(year, month).strftime("%Y-%m-%d")
-    to_date   = last_day_of_month(year, month).strftime("%Y-%m-%d")
+    if from_date and to_date:
+        _from, _to = from_date, to_date
+    else:
+        year  = year  or today.year
+        month = month or today.month
+        _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
+        _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
     try:
         lines = odoo.search_read(
             "sale.order.line",
             domain=[
                 ("order_id.state", "in", ["sale", "done"]),
-                ("order_id.date_order", ">=", from_date),
-                ("order_id.date_order", "<=", to_date),
+                ("order_id.date_order", ">=", _from),
+                ("order_id.date_order", "<=", _to),
             ],
             fields=["product_id", "product_uom_qty", "price_subtotal", "price_unit"],
             limit=10000,
@@ -494,24 +513,28 @@ def best_customers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
     """Top customers by spend — pulled from Odoo sale orders."""
     odoo = get_odoo_client()
     today = date.today()
-    year  = year  or today.year
-    month = month or today.month
-
-    from_date = first_day_of_month(year, month).strftime("%Y-%m-%d")
-    to_date   = last_day_of_month(year, month).strftime("%Y-%m-%d")
+    if from_date and to_date:
+        _from, _to = from_date, to_date
+    else:
+        year  = year  or today.year
+        month = month or today.month
+        _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
+        _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
     try:
         orders = odoo.search_read(
             "sale.order",
             domain=[
                 ("state", "in", ["sale", "done"]),
-                ("date_order", ">=", from_date),
-                ("date_order", "<=", to_date),
+                ("date_order", ">=", _from),
+                ("date_order", "<=", _to),
             ],
             fields=["partner_id", "amount_total", "invoice_status"],
             limit=5000,
@@ -619,24 +642,28 @@ async def dead_stock(
 def category_performance(
     year: int = Query(default=None),
     month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
     """Revenue and order count broken down by product category."""
     odoo = get_odoo_client()
     today = date.today()
-    year  = year  or today.year
-    month = month or today.month
-
-    from_date = first_day_of_month(year, month).strftime("%Y-%m-%d")
-    to_date   = last_day_of_month(year, month).strftime("%Y-%m-%d")
+    if from_date and to_date:
+        _from, _to = from_date, to_date
+    else:
+        year  = year  or today.year
+        month = month or today.month
+        _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
+        _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
     try:
         lines = odoo.search_read(
             "sale.order.line",
             domain=[
                 ("order_id.state", "in", ["sale", "done"]),
-                ("order_id.date_order", ">=", from_date),
-                ("order_id.date_order", "<=", to_date),
+                ("order_id.date_order", ">=", _from),
+                ("order_id.date_order", "<=", _to),
             ],
             fields=["product_id", "price_subtotal", "product_uom_qty"],
             limit=10000,
@@ -681,13 +708,23 @@ def category_performance(
 # ── Best Resellers ────────────────────────────────────────────────────────────
 
 @router.get("/best-resellers")
-async def best_resellers_report(current_user: dict = Depends(require_admin)):
+async def best_resellers_report(
+    fy_start_year: Optional[int] = Query(default=None),
+    current_user: dict = Depends(require_admin),
+):
     """
     FY reseller performance — orders processed, revenue generated, customers onboarded.
     Uses SA financial year: 1 March → end of February.
+    Pass fy_start_year to select a specific FY; defaults to the current FY.
     """
     today = date.today()
-    fy_start, fy_end, fy_label = financial_year_bounds(today)
+    if fy_start_year:
+        fy_end_year = fy_start_year + 1
+        fy_start = datetime(fy_start_year, 3, 1, tzinfo=timezone.utc)
+        fy_end   = datetime(fy_end_year, 2, _cal.monthrange(fy_end_year, 2)[1], 23, 59, 59, tzinfo=timezone.utc)
+        fy_label = f"FY{fy_start_year}/{str(fy_end_year)[2:]}"
+    else:
+        fy_start, fy_end, fy_label = financial_year_bounds(today)
     odoo = get_odoo_client()
 
     try:

@@ -1713,6 +1713,31 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.42 — Reports Export and Period Selection — Complete 2026-07-22
+
+**Goal:** Give operations managers and finance the ability to view reports for any SA financial year or any specific month within a FY, and export all analytics reports to Excel for offline use.
+
+**Previous behaviour:** Reports always showed the current calendar month with no way to change the period, and no export capability.
+
+**New behaviour:** A period selector bar sits above the report content area. Users can select any of the 3 most recent SA financial years (FY selector dropdown), then choose a specific month within that FY (month pills in Mar–Feb order) or "Full Year" to aggregate the entire FY. The Export Excel button (gated by `reports.export`) fetches all 6 reports for the current period in parallel and generates a multi-tab `.xlsx` file client-side using SheetJS.
+
+- [x] `frontend/package.json` — added `"xlsx": "^0.18.5"` (SheetJS) dependency
+- [x] `backend/routes/report_routes.py` — added `parse_date_str()` helper; added `from_date`/`to_date` Optional params to `monthly_turnover`, `best_sellers`, `best_customers`, `category_performance` (override month-based bounds when provided); added `fy_start_year` Optional param to `best_resellers` (selects which SA FY to display)
+- [x] `frontend/src/views/Views.js` — `Reports` component rewritten: `fyStart`/`selectedMonth` state; `getPeriodParams()` computes `from_date`/`to_date` for selected period; `load()` passes params to backend; `exportToExcel()` dynamically imports `xlsx`, fetches all 6 reports in parallel via `Promise.allSettled`, builds 6-tab workbook, downloads as `Bassani Health Analytics {period}.xlsx`; Export button hidden if `!can("reports.export")`
+- [x] `reports.export` permission already defined in `auth.py` (DEFAULT_ADMIN_PERMISSIONS, FULL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS) and in `Users.js` (PERMISSION_GROUPS, DEFAULT_ADMIN_PERMS, ROLE_DEFAULT_PERMS) — no changes needed to permission infrastructure
+
+**Definition of Done:**
+- FY selector shows current FY and 2 previous FYs
+- Month pills display in SA FY order (Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec, Jan, Feb)
+- Full Year pill aggregates the entire selected FY for all date-sensitive reports
+- Best Resellers report always shows FY-scoped data regardless of month pill selection (uses `fy_start_year` param)
+- Dead Stock report ignores the period selector (it reflects current stock position)
+- Export Excel button produces a `.xlsx` with 6 tabs: Turnover, Best Sellers, Best Customers, Best Resellers, Dead Stock, Categories
+- Export button only visible to users with `reports.export` permission
+- Period change immediately reloads the active report
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.

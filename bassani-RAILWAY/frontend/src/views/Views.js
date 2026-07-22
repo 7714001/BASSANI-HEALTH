@@ -2894,10 +2894,25 @@ export function Commission() {
 // Reports view
 // ─────────────────────────────────────────────────────────────────────────────
 export function Reports() {
-  const [activeReport, setActiveReport] = useState("monthly-turnover");
-  const [data,   setData  ] = useState(null);
-  const [loading,setLoading] = useState(false);
+  const today = new Date();
+  const currentFyStart = today.getMonth() >= 2 ? today.getFullYear() : today.getFullYear() - 1;
+  const [fyStart,       setFyStart      ] = useState(currentFyStart);
+  const [selectedMonth, setSelectedMonth] = useState(null); // null = Full Year
+  const [activeReport,  setActiveReport ] = useState("monthly-turnover");
+  const [data,          setData         ] = useState(null);
+  const [loading,       setLoading      ] = useState(false);
+  const [exporting,     setExporting    ] = useState(false);
   const navigate = useNavigate();
+  const { user, can } = useAuth();
+
+  // SA FY month order: Mar → Feb
+  const SA_FY_MONTHS = [3,4,5,6,7,8,9,10,11,12,1,2];
+  const MONTH_SHORT   = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const FY_OPTIONS = [0,1,2].map(offset => {
+    const s = currentFyStart - offset;
+    return { start: s, label: `FY${s}/${String(s+1).slice(2)}` };
+  });
 
   const ANALYTICS = [
     { key:"monthly-turnover",      label:"Monthly Turnover"      },
@@ -2912,16 +2927,117 @@ export function Reports() {
     { key:"stock-positions", label:"Stock Positions", href:"/stock-report" },
   ];
 
-  const { user } = useAuth();
+  const getPeriodParams = () => {
+    if (selectedMonth === null) {
+      const fyEndYear  = fyStart + 1;
+      const lastFebDay = new Date(fyEndYear, 2, 0).getDate();
+      return { from_date: `${fyStart}-03-01`, to_date: `${fyEndYear}-02-${String(lastFebDay).padStart(2,'0')}` };
+    }
+    const year    = (selectedMonth === 1 || selectedMonth === 2) ? fyStart + 1 : fyStart;
+    const lastDay = new Date(year, selectedMonth, 0).getDate();
+    return {
+      from_date: `${year}-${String(selectedMonth).padStart(2,'0')}-01`,
+      to_date:   `${year}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`,
+    };
+  };
 
   const load = async (key) => {
     setLoading(true);
-    try { const r = await api.get(`/api/reports/${key}`); setData(r.data); }
-    catch { toast.error("Failed to load report"); }
+    try {
+      const params = key === 'best-resellers' ? { fy_start_year: fyStart }
+                   : key === 'dead-stock'     ? {}
+                   : getPeriodParams();
+      const r = await api.get(`/api/reports/${key}`, { params });
+      setData(r.data);
+    } catch { toast.error("Failed to load report"); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(activeReport); }, [activeReport, user?.active_warehouse_id]);
+  useEffect(() => { load(activeReport); }, [activeReport, fyStart, selectedMonth, user?.active_warehouse_id]); // eslint-disable-line
+
+  const exportToExcel = async () => {
+    setExporting(true);
+    try {
+      const XLSX   = await import('xlsx');
+      const params = getPeriodParams();
+      const [t0,t1,t2,t3,t4,t5] = await Promise.allSettled([
+        api.get('/api/reports/monthly-turnover',     { params }),
+        api.get('/api/reports/best-sellers',         { params }),
+        api.get('/api/reports/best-customers',       { params }),
+        api.get('/api/reports/best-resellers',       { params: { fy_start_year: fyStart } }),
+        api.get('/api/reports/dead-stock'),
+        api.get('/api/reports/category-performance', { params }),
+      ]);
+      const wb = XLSX.utils.book_new();
+
+      if (t0.status==='fulfilled') {
+        const d = t0.value.data;
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+          { Metric:'Total Revenue (R)',   Value: d.revenue?.total?.toFixed(2) },
+          { Metric:'Direct Sales (R)',    Value: d.revenue?.direct?.toFixed(2) },
+          { Metric:'Reseller Sales (R)',  Value: d.revenue?.reseller?.toFixed(2) },
+          { Metric:'Total VAT (R)',       Value: d.revenue?.vat?.toFixed(2) },
+          { Metric:'Commission Paid (R)', Value: d.commission?.total?.toFixed(2) },
+          { Metric:'Net to Bassani (R)',  Value: d.commission?.net_to_bassani?.toFixed(2) },
+          { Metric:'Orders',             Value: d.order_count },
+        ]), 'Turnover');
+      }
+      if (t1.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t1.value.data.products||[]).map(p=>({
+            Rank: p.rank, Product: p.product_name,
+            'Units Sold': Math.round(p.units_sold), 'Revenue (R)': p.revenue?.toFixed(2),
+          }))
+        ), 'Best Sellers');
+      }
+      if (t2.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t2.value.data.customers||[]).map(c=>({
+            Rank: c.rank, Customer: c.customer_name,
+            Orders: c.order_count, 'Total Spend (R)': c.total_spend?.toFixed(2),
+            'Avg Order (R)': c.avg_order?.toFixed(2),
+          }))
+        ), 'Best Customers');
+      }
+      if (t3.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t3.value.data.resellers||[]).map(r=>({
+            Rank: r.rank, Reseller: r.reseller_name,
+            'FY Orders': r.fy_orders, 'FY Revenue (R)': r.fy_revenue?.toFixed(2),
+            'FY Commission (R)': r.fy_commission?.toFixed(2),
+            'Avg Order (R)': r.avg_order_value?.toFixed(2),
+            'Customers Onboarded': r.customers_onboarded, 'All-time Orders': r.all_time_orders,
+          }))
+        ), 'Best Resellers');
+      }
+      if (t4.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t4.value.data.dead_stock||[]).map(p=>({
+            Product: p.product_name, SKU: p.sku, Category: p.category,
+            Stock: p.stock, UOM: p.uom, 'Last Sold': p.last_sold||'Never',
+            Status: p.status==='never_sold'?'Never sold':'Slow moving',
+          }))
+        ), 'Dead Stock');
+      }
+      if (t5.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t5.value.data.categories||[]).map(c=>({
+            Category: c.category, 'Order Lines': c.order_lines,
+            'Revenue (R)': c.revenue?.toFixed(2), 'Share %': c.pct,
+          }))
+        ), 'Categories');
+      }
+
+      const fyLabel     = `FY${fyStart}-${String(fyStart+1).slice(2)}`;
+      const periodLabel = selectedMonth === null ? fyLabel
+        : `${MONTH_SHORT[selectedMonth]} ${(selectedMonth===1||selectedMonth===2)?fyStart+1:fyStart}`;
+      XLSX.writeFile(wb, `Bassani Health Analytics ${periodLabel}.xlsx`);
+      toast.success('Export ready');
+    } catch(e) {
+      toast.error('Export failed');
+      console.error(e);
+    } finally { setExporting(false); }
+  };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -2951,7 +3067,33 @@ export function Reports() {
         </div>
 
         {/* Report content */}
-        <div className="flex-1 space-y-4">
+        <div className="flex-1 min-w-0 space-y-4">
+          {/* Period selector + export */}
+          <div className="bg-white border border-gray-100 rounded-xl p-3 flex flex-wrap items-center gap-2">
+            <select value={fyStart} onChange={e=>{setFyStart(Number(e.target.value));setData(null);}}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 text-gray-700 font-medium bg-white focus:outline-none focus:ring-1 focus:ring-bassani-500">
+              {FY_OPTIONS.map(fy=><option key={fy.start} value={fy.start}>{fy.label}</option>)}
+            </select>
+            <div className="w-px h-5 bg-gray-200 hidden sm:block" />
+            <button onClick={()=>{setSelectedMonth(null);setData(null);}}
+              className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${selectedMonth===null?'bg-bassani-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+              Full Year
+            </button>
+            {SA_FY_MONTHS.map(m=>(
+              <button key={m} onClick={()=>{setSelectedMonth(m);setData(null);}}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${selectedMonth===m?'bg-bassani-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                {MONTH_SHORT[m]}
+              </button>
+            ))}
+            <div className="flex-1" />
+            {can("reports.export") && (
+              <button onClick={exportToExcel} disabled={exporting}
+                className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors whitespace-nowrap">
+                <Download className="w-3.5 h-3.5" />
+                {exporting ? 'Exporting...' : 'Export Excel'}
+              </button>
+            )}
+          </div>
           {loading && <LoadingState />}
           {!loading && data && <ReportContent type={activeReport} data={data} />}
         </div>
