@@ -5,7 +5,7 @@ import calendar as _cal
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client
 from database import col, NO_ID
-from warehouse_context import resolve_warehouse_id, odoo_context
+from warehouse_context import odoo_context
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -57,7 +57,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     today = date.today()
     month_start = first_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
     month_end = last_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
-    warehouse_id = await resolve_warehouse_id(current_user)
+    warehouse_id = current_user.get("active_warehouse_id")
     ctx = odoo_context(warehouse_id)
 
     try:
@@ -326,6 +326,7 @@ async def monthly_turnover(
     Accepts either year/month or from_date/to_date (ISO date strings) for range mode.
     """
     odoo = get_odoo_client()
+    warehouse_id = current_user.get("active_warehouse_id")
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -339,13 +340,16 @@ async def monthly_turnover(
         _from_dt = first_day_of_month(year, month)
         _to_dt   = last_day_of_month(year, month)
 
+    _wh_filter = [("warehouse_id", "=", warehouse_id)] if warehouse_id else []
+
     try:
-        # All confirmed orders in the period from Odoo
+        # All confirmed orders in the period from Odoo, scoped to selected warehouse
         orders = odoo.search_read(
             "sale.order",
             domain=[
                 ("state", "in", ["sale", "done"]),
                 *odoo_date_domain("date_order", _from, _to),
+                *_wh_filter,
             ],
             fields=["id", "name", "amount_untaxed", "amount_tax", "amount_total", "date_order"],
             limit=5000,
@@ -355,16 +359,14 @@ async def monthly_turnover(
         total_subtotal = sum(o["amount_untaxed"] for o in orders)
         total_vat      = sum(o["amount_tax"]     for o in orders)
 
-        # Commission from MongoDB
+        # Commission from MongoDB — scoped to the warehouse-filtered order IDs
+        order_id_strs = [str(o["id"]) for o in orders]
+        comm_match: dict = {"created_at": {"$gte": _from_dt, "$lte": _to_dt}}
+        if warehouse_id:
+            comm_match["odoo_order_id"] = {"$in": order_id_strs}
+
         pipeline = [
-            {
-                "$match": {
-                    "created_at": {
-                        "$gte": _from_dt,
-                        "$lte": _to_dt,
-                    }
-                }
-            },
+            {"$match": comm_match},
             {
                 "$group": {
                     "_id": "$reseller_id",
@@ -377,15 +379,9 @@ async def monthly_turnover(
         commission_by_reseller = await col("order_commissions").aggregate(pipeline).to_list(100)
         total_commission = sum(r["commission_total"] for r in commission_by_reseller)
 
-        # Reseller vs direct split
+        # Reseller vs direct split (cross-reference with warehouse-filtered orders)
         reseller_order_ids = set()
-        async for doc in col("order_commissions").find(
-            {"created_at": {
-                "$gte": _from_dt,
-                "$lte": _to_dt,
-            }},
-            {"odoo_order_id": 1}
-        ):
+        async for doc in col("order_commissions").find(comm_match, {"odoo_order_id": 1}):
             reseller_order_ids.add(doc["odoo_order_id"])
 
         reseller_revenue = sum(
@@ -444,7 +440,7 @@ async def monthly_turnover(
 # ── Best Sellers ──────────────────────────────────────────────────────────────
 
 @router.get("/best-sellers")
-def best_sellers(
+async def best_sellers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
@@ -454,6 +450,7 @@ def best_sellers(
 ):
     """Top products by revenue — pulled from Odoo sale order lines."""
     odoo = get_odoo_client()
+    warehouse_id = current_user.get("active_warehouse_id")
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -463,6 +460,8 @@ def best_sellers(
         _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
         _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
+    _wh_filter = [("order_id.warehouse_id", "=", warehouse_id)] if warehouse_id else []
+
     try:
         lines = odoo.search_read(
             "sale.order.line",
@@ -470,6 +469,7 @@ def best_sellers(
                 ("order_id.state", "in", ["sale", "done"]),
                 ("order_id.date_order", ">=", _from),
                 ("order_id.date_order", "<=", _to),
+                *_wh_filter,
             ],
             fields=["product_id", "product_uom_qty", "price_subtotal", "price_unit"],
             limit=10000,
@@ -509,7 +509,7 @@ def best_sellers(
 # ── Best Customers ────────────────────────────────────────────────────────────
 
 @router.get("/best-customers")
-def best_customers(
+async def best_customers(
     limit: int = Query(10, le=50),
     year: int = Query(default=None),
     month: int = Query(default=None),
@@ -519,6 +519,7 @@ def best_customers(
 ):
     """Top customers by spend — pulled from Odoo sale orders."""
     odoo = get_odoo_client()
+    warehouse_id = current_user.get("active_warehouse_id")
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -528,6 +529,8 @@ def best_customers(
         _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
         _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
+    _wh_filter = [("warehouse_id", "=", warehouse_id)] if warehouse_id else []
+
     try:
         orders = odoo.search_read(
             "sale.order",
@@ -535,6 +538,7 @@ def best_customers(
                 ("state", "in", ["sale", "done"]),
                 ("date_order", ">=", _from),
                 ("date_order", "<=", _to),
+                *_wh_filter,
             ],
             fields=["partner_id", "amount_total", "invoice_status"],
             limit=5000,
@@ -584,7 +588,7 @@ async def dead_stock(
     """
     odoo = get_odoo_client()
     cutoff = (date.today() - timedelta(days=days_threshold)).strftime("%Y-%m-%d")
-    warehouse_id = await resolve_warehouse_id(current_user)
+    warehouse_id = current_user.get("active_warehouse_id")
 
     try:
         # Products with stock (per-variant so cross-variant aggregation can't hide shortages)
@@ -639,7 +643,7 @@ async def dead_stock(
 # ── Category Performance ──────────────────────────────────────────────────────
 
 @router.get("/category-performance")
-def category_performance(
+async def category_performance(
     year: int = Query(default=None),
     month: int = Query(default=None),
     from_date: Optional[str] = Query(default=None),
@@ -648,6 +652,7 @@ def category_performance(
 ):
     """Revenue and order count broken down by product category."""
     odoo = get_odoo_client()
+    warehouse_id = current_user.get("active_warehouse_id")
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -657,6 +662,8 @@ def category_performance(
         _from = first_day_of_month(year, month).strftime("%Y-%m-%d")
         _to   = last_day_of_month(year, month).strftime("%Y-%m-%d")
 
+    _wh_filter = [("order_id.warehouse_id", "=", warehouse_id)] if warehouse_id else []
+
     try:
         lines = odoo.search_read(
             "sale.order.line",
@@ -664,6 +671,7 @@ def category_performance(
                 ("order_id.state", "in", ["sale", "done"]),
                 ("order_id.date_order", ">=", _from),
                 ("order_id.date_order", "<=", _to),
+                *_wh_filter,
             ],
             fields=["product_id", "price_subtotal", "product_uom_qty"],
             limit=10000,
@@ -726,6 +734,7 @@ async def best_resellers_report(
     else:
         fy_start, fy_end, fy_label = financial_year_bounds(today)
     odoo = get_odoo_client()
+    warehouse_id = current_user.get("active_warehouse_id")
 
     try:
         # Per-reseller FY aggregates from order_commissions
@@ -765,9 +774,10 @@ async def best_resellers_report(
         ]
         odoo_amounts: dict = {}
         if all_odoo_ids:
+            _wh_filter = [("warehouse_id", "=", warehouse_id)] if warehouse_id else []
             orders = odoo.search_read(
                 "sale.order",
-                domain=[("id", "in", all_odoo_ids)],
+                domain=[("id", "in", all_odoo_ids), *_wh_filter],
                 fields=["id", "amount_total"],
                 limit=len(all_odoo_ids) + 1,
             )
