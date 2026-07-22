@@ -3088,7 +3088,7 @@ export function Reports() {
             <div className="flex-1" />
             {can("reports.export") && (
               <button onClick={exportToExcel} disabled={exporting}
-                className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors whitespace-nowrap">
+                className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors whitespace-nowrap">
                 <Download className="w-3.5 h-3.5" />
                 {exporting ? 'Exporting...' : 'Export Excel'}
               </button>
