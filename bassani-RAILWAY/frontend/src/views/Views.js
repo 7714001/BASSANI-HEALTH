@@ -1702,14 +1702,24 @@ export function Resellers() {
   }, [customerSearch, custDropdownOpen]);
 
   const selectCustomer = (c) => {
-    setSelectedCustomer(c);
+    // If the selected result is an individual contact linked to a parent company,
+    // auto-resolve to the company for the vendor bill link. The contact's name is
+    // preserved as _resolvedFrom so the UI can show "Contact: John Smith" beneath
+    // the company name, making it clear what happened.
+    const parentId   = Array.isArray(c.parent_id) ? c.parent_id[0] : null;
+    const parentName = Array.isArray(c.parent_id) ? c.parent_id[1] : null;
+    const effective  = parentId
+      ? { ...c, id: parentId, name: parentName, _resolvedFrom: c.name }
+      : c;
+
+    setSelectedCustomer(effective);
     setCustDropdownOpen(false);
     setCustomers([]);
     setCustomerSearch("");
     setForm(f => ({
       ...f,
-      odoo_partner_id: c.id,
-      name:        f.name        || c.name        || "",
+      odoo_partner_id: effective.id,
+      name:        f.name        || effective.name || "",
       email:       f.email       || c.email        || "",
       phone:       f.phone       || c.phone        || "",
       seller_code: f.seller_code || c.ref          || "",
@@ -1886,14 +1896,17 @@ export function Resellers() {
                       <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-bassani-800 truncate">{selectedCustomer.name}</p>
-                        {selectedCustomer.email && <p className="text-xs text-gray-400 truncate">{selectedCustomer.email}</p>}
+                        {selectedCustomer._resolvedFrom && <p className="text-xs text-gray-400 truncate">Contact: {selectedCustomer._resolvedFrom}</p>}
+                        {!selectedCustomer._resolvedFrom && selectedCustomer.email && <p className="text-xs text-gray-400 truncate">{selectedCustomer.email}</p>}
                       </div>
                       {(() => {
+                        if (selectedCustomer._resolvedFrom) return <span className="text-[9px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded shrink-0">Company</span>;
                         const isCust = (selectedCustomer.customer_rank || 0) > 0;
                         const isSupp = (selectedCustomer.supplier_rank || 0) > 0;
                         if (isCust && isSupp) return <span className="text-[9px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded shrink-0">Cust & Supplier</span>;
                         if (isSupp) return <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0">Supplier</span>;
-                        return <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded shrink-0">Customer</span>;
+                        if (isCust) return <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded shrink-0">Customer</span>;
+                        return null;
                       })()}
                       <button onClick={clearCustomer} className="text-gray-400 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
                     </div>
@@ -1916,25 +1929,31 @@ export function Resellers() {
                           <p className="text-xs text-gray-400 mt-1">If the customer does not exist yet, complete their onboarding via Customer Applications first, then return here to create the sales agent.</p>
                         </div>
                       )}
-                      {customers.map(c=>(
-                        <button key={c.id} onMouseDown={()=>selectCustomer(c)}
-                          className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-medium text-gray-900">{c.name}</span>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
-                              {(() => {
-                                const isCust = (c.customer_rank || 0) > 0;
-                                const isSupp = (c.supplier_rank || 0) > 0;
-                                if (isCust && isSupp) return <span className="text-[9px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Cust & Supplier</span>;
-                                if (isSupp) return <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Supplier</span>;
-                                return <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Customer</span>;
-                              })()}
+                      {customers.map(c=>{
+                        const cParentName = Array.isArray(c.parent_id) ? c.parent_id[1] : null;
+                        const isCust = (c.customer_rank || 0) > 0;
+                        const isSupp = (c.supplier_rank || 0) > 0;
+                        const isContact = !c.is_company && cParentName;
+                        return (
+                          <button key={c.id} onMouseDown={()=>selectCustomer(c)}
+                            className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="font-medium text-gray-900">{c.name}</span>
+                                {isContact && <span className="text-gray-400 text-xs ml-1.5">@ {cParentName}</span>}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {c.ref && <span className="font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{c.ref}</span>}
+                                {isCust && isSupp && <span className="text-[9px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Cust & Supplier</span>}
+                                {!isCust && isSupp && <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Supplier</span>}
+                                {isCust && !isSupp && <span className="text-[9px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Customer</span>}
+                                {isContact && !isCust && !isSupp && <span className="text-[9px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Contact</span>}
+                              </div>
                             </div>
-                          </div>
-                          {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
-                        </button>
-                      ))}
+                            {c.email && <span className="text-gray-400 text-xs">{c.email}</span>}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

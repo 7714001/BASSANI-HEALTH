@@ -82,7 +82,7 @@ class LinkCompanyBody(BaseModel):
 CUSTOMER_FIELDS = [
     "id", "name", "ref", "email", "phone", "street", "city", "zip",
     "country_id", "customer_rank", "supplier_rank", "credit_limit", "credit",
-    "property_payment_term_id", "active", "comment", "is_company",
+    "property_payment_term_id", "active", "comment", "is_company", "parent_id",
 ]
 
 ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "email", "function"]
@@ -124,11 +124,12 @@ async def list_customers(
     sort_dir = sort_dir if sort_dir in ("asc", "desc") else "asc"
     odoo = get_odoo_client()
 
-    # mode=partner: search all active company contacts — used by reseller wizard.
-    # Includes customer, supplier, or any company (is_company=True) so newly created Odoo
-    # partners with no order history are still discoverable.
+    # mode=partner: search all active partners — used by reseller wizard.
+    # Includes companies (any rank), individual contacts linked to a company (parent_id set),
+    # plus standalone customers/suppliers. Individual contacts are surfaced so users can
+    # search by person name — the frontend auto-resolves to the parent company on selection.
     if mode == "partner":
-        domain = [("active", "=", True), "|", "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0), ("is_company", "=", True)]
+        domain = [("active", "=", True), "|", "|", "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0), ("is_company", "=", True), ("parent_id", "!=", False)]
     else:
         domain = [("customer_rank", ">", 0), ("active", "=", True)]
 
@@ -375,7 +376,7 @@ def check_duplicate_customer(
     if not email and not vat:
         return {"duplicates": []}
     odoo = get_odoo_client()
-    domain = [("customer_rank", ">", 0), ("active", "=", True)]
+    domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]
     conditions = []
     if email:
         conditions.append(("email", "=", email.strip().lower()))
@@ -525,7 +526,7 @@ async def create_customer(
         if customer.vat:
             dup_conditions.append(("vat", "=", customer.vat.strip()))
         if dup_conditions:
-            dup_domain = [("customer_rank", ">", 0), ("active", "=", True)]
+            dup_domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]
             if len(dup_conditions) == 2:
                 dup_domain += ["|"] + dup_conditions
             else:

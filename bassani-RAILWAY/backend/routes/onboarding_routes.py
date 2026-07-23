@@ -1322,7 +1322,7 @@ async def approve_application(
     if app.get("vat_number"):
         dup_conditions.append(("vat", "=", app["vat_number"].strip()))
     if dup_conditions:
-        dup_domain = [("customer_rank", ">", 0), ("active", "=", True)]
+        dup_domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]
         if len(dup_conditions) == 2:
             dup_domain += ["|"] + dup_conditions
         else:
