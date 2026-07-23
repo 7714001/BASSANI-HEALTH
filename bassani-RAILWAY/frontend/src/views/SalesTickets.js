@@ -680,6 +680,16 @@ export default function SalesTickets() {
   const [quoteSaving, setQuoteSaving]           = useState(false);
   const [lastAddedId, setLastAddedId]           = useState(null);
   const [quoteMode, setQuoteMode]               = useState("create"); // "create" | "edit"
+  // If an individual contact is selected, resolve to their parent company so
+  // the order is raised against the company, not the contact person.
+  const resolveCustomer = (c) => {
+    const parentId   = Array.isArray(c.parent_id) ? c.parent_id[0] : null;
+    const parentName = Array.isArray(c.parent_id) ? c.parent_id[1] : null;
+    return parentId
+      ? { ...c, id: parentId, name: parentName, _resolvedFrom: c.name }
+      : c;
+  };
+
   const [quoteCustomer, setQuoteCustomer]               = useState(null); // {id, name} — edit mode only
   const [quoteCustomerSearch, setQuoteCustomerSearch]   = useState("");
   const [quoteCustomerResults, setQuoteCustomerResults] = useState([]);
@@ -2401,21 +2411,29 @@ export default function SalesTickets() {
                         />
                         {quoteCustomerResults.length > 0 && (
                           <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-36 overflow-y-auto">
-                            {quoteCustomerResults.map(c => (
-                              <button
-                                key={c.id}
-                                onClick={() => {
-                                  setQuoteCustomer(c);
-                                  setQuoteCustomerEditing(false);
-                                  setQuoteCustomerSearch("");
-                                  setQuoteCustomerResults([]);
-                                  if (c.id) loadQuoteCustomerContext(c.id);
-                                }}
-                                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
-                              >
-                                {c.name}{c.city && <span className="text-xs text-gray-400"> — {c.city}</span>}
-                              </button>
-                            ))}
+                            {quoteCustomerResults.map(c => {
+                              const isContact = Array.isArray(c.parent_id) && c.parent_id[0];
+                              return (
+                                <button
+                                  key={c.id}
+                                  onClick={() => {
+                                    const resolved = resolveCustomer(c);
+                                    setQuoteCustomer(resolved);
+                                    setQuoteCustomerEditing(false);
+                                    setQuoteCustomerSearch("");
+                                    setQuoteCustomerResults([]);
+                                    if (resolved.id) loadQuoteCustomerContext(resolved.id);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+                                >
+                                  <span>{c.name}</span>
+                                  {isContact
+                                    ? <span className="text-xs text-gray-400"> @ {c.parent_id[1]}</span>
+                                    : c.city && <span className="text-xs text-gray-400"> — {c.city}</span>
+                                  }
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                         <button
@@ -2428,6 +2446,9 @@ export default function SalesTickets() {
                     ) : (
                       <div>
                         <p className="text-base font-semibold text-gray-900">{quoteCustomer?.name}</p>
+                        {quoteCustomer?._resolvedFrom && (
+                          <p className="text-xs text-gray-400 mt-0.5">Contact: {quoteCustomer._resolvedFrom}</p>
+                        )}
                         <button
                           onClick={() => setQuoteCustomerEditing(true)}
                           className="text-xs text-bassani-600 hover:text-bassani-700 mt-0.5"
@@ -2810,14 +2831,20 @@ export default function SalesTickets() {
                 <Input value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} placeholder="Search customers…" />
                 {customerResults.length > 0 && (
                   <div className="mt-1 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
-                    {customerResults.map(c => (
-                      <button key={c.id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(""); setCustomerResults([]); }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">
-                        <span>{c.name}</span>
-                        {c.city && <span className="text-xs text-gray-400">— {c.city}</span>}
-                        {c.samples_account && <span className="ml-auto text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 uppercase tracking-wide">Samples</span>}
-                      </button>
-                    ))}
+                    {customerResults.map(c => {
+                      const isContact = Array.isArray(c.parent_id) && c.parent_id[0];
+                      return (
+                        <button key={c.id} onClick={() => { setSelectedCustomer(resolveCustomer(c)); setCustomerSearch(""); setCustomerResults([]); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">
+                          <span>{c.name}</span>
+                          {isContact
+                            ? <span className="text-xs text-gray-400">@ {c.parent_id[1]}</span>
+                            : c.city && <span className="text-xs text-gray-400">— {c.city}</span>
+                          }
+                          {c.samples_account && <span className="ml-auto text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 uppercase tracking-wide">Samples</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </>

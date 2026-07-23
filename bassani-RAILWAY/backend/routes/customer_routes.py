@@ -428,13 +428,13 @@ async def search_all_customers(
     domain = [
         ("active", "=", True),
         "|", ("name", "ilike", q), ("email", "ilike", q),
-        "|", ("customer_rank", ">", 0), ("is_company", "=", True),
+        "|", "|", ("customer_rank", ">", 0), ("is_company", "=", True), ("parent_id", "!=", False),
     ]
     try:
         customers = odoo.search_read(
             "res.partner",
             domain=domain,
-            fields=["id", "name", "email", "city"],
+            fields=["id", "name", "email", "city", "parent_id", "is_company"],
             limit=limit,
             order="name asc",
         )
