@@ -49,8 +49,9 @@ class AddressCreate(BaseModel):
     name: str
     type: str = "delivery"   # delivery | invoice | other
     street: Optional[str] = None
-    street2: Optional[str] = None
+    street2: Optional[str] = None   # suburb
     city: Optional[str] = None
+    province: Optional[str] = None  # resolved to state_id before writing to Odoo
     zip: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -59,8 +60,9 @@ class AddressUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
     street: Optional[str] = None
-    street2: Optional[str] = None
+    street2: Optional[str] = None   # suburb
     city: Optional[str] = None
+    province: Optional[str] = None  # resolved to state_id before writing to Odoo
     zip: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -85,7 +87,7 @@ CUSTOMER_FIELDS = [
     "property_payment_term_id", "active", "comment", "is_company", "parent_id",
 ]
 
-ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "zip", "country_id", "phone", "email", "function"]
+ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "state_id", "zip", "country_id", "phone", "email", "function"]
 
 
 def _format_address(r: dict) -> dict:
@@ -94,8 +96,35 @@ def _format_address(r: dict) -> dict:
             r[k] = None
     cid = r.get("country_id")
     r["country_name"] = cid[1] if cid else None
-    r["country_id"] = cid[0] if cid else None
+    r["country_id"]   = cid[0] if cid else None
+    sid = r.get("state_id")
+    r["state_name"] = sid[1] if sid else None
+    r["state_id"]   = sid[0] if sid else None
     return r
+
+
+def _resolve_za_state_id(odoo, province_name: str) -> Optional[int]:
+    """Return the Odoo res.country.state id for a South African province name, or None."""
+    if not province_name:
+        return None
+    try:
+        ids = odoo.search(
+            "res.country.state",
+            [["country_id.code", "=", "ZA"], ["name", "ilike", province_name]],
+            limit=1,
+        )
+        return ids[0] if ids else None
+    except Exception:
+        return None
+
+
+def _get_za_country_id(odoo) -> Optional[int]:
+    """Return the Odoo res.country id for South Africa."""
+    try:
+        ids = odoo.search("res.country", [["code", "=", "ZA"]], limit=1)
+        return ids[0] if ids else None
+    except Exception:
+        return None
 
 
 def _attach_credit_hold(customers: list) -> None:
@@ -694,6 +723,13 @@ def create_customer_address(
         v = getattr(body, f)
         if v:
             vals[f] = v
+    if body.province:
+        sid = _resolve_za_state_id(odoo, body.province)
+        if sid:
+            vals["state_id"] = sid
+    za_id = _get_za_country_id(odoo)
+    if za_id:
+        vals["country_id"] = za_id
     try:
         address_id = odoo.create("res.partner", vals)
         return {"success": True, "address_id": address_id}
@@ -719,7 +755,14 @@ def update_customer_address(
     pid = parent[0] if isinstance(parent, (list, tuple)) else parent
     if pid != customer_id:
         raise HTTPException(status_code=404, detail="Address not found on this customer")
-    vals = {k: v for k, v in body.model_dump().items() if v is not None}
+    vals = {k: v for k, v in body.model_dump().items() if v is not None and k != "province"}
+    if body.province:
+        sid = _resolve_za_state_id(odoo, body.province)
+        if sid:
+            vals["state_id"] = sid
+        za_id = _get_za_country_id(odoo)
+        if za_id:
+            vals["country_id"] = za_id
     if not vals:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:

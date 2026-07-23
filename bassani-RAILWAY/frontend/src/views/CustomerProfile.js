@@ -5,6 +5,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import { Badge, BtnPrimary, BtnSecondary, BtnDanger, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
+import AddressAutocomplete from "../components/AddressAutocomplete";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -447,7 +448,7 @@ export default function CustomerProfile() {
   const [addrLoading,setAddrLoading] = useState(false);
   const [addrModal,  setAddrModal ] = useState(false);
   const [addrTarget, setAddrTarget] = useState(null);
-  const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
+  const [addrForm,   setAddrForm  ] = useState({ name: "", type: "delivery", street: "", street2: "", city: "", province: "", zip: "", phone: "", email: "" });
   const [addrSaving,        setAddrSaving       ] = useState(false);
   const [addrArchiveConfirm, setAddrArchiveConfirm] = useState(null); // null | address object
 
@@ -516,7 +517,7 @@ export default function CustomerProfile() {
   };
 
   const openAddrCreate = () => {
-    setAddrForm({ name: "", type: "delivery", street: "", street2: "", city: "", zip: "", phone: "", email: "" });
+    setAddrForm({ name: "", type: "delivery", street: "", street2: "", city: "", province: "", zip: "", phone: "", email: "" });
     setAddrTarget(null);
     setAddrModal(true);
   };
@@ -525,8 +526,8 @@ export default function CustomerProfile() {
     setAddrForm({
       name: addr.name || "", type: addr.type || "delivery",
       street: addr.street || "", street2: addr.street2 || "",
-      city: addr.city || "", zip: addr.zip || "",
-      phone: addr.phone || "", email: addr.email || "",
+      city: addr.city || "", province: addr.state_name || "",
+      zip: addr.zip || "", phone: addr.phone || "", email: addr.email || "",
     });
     setAddrTarget(addr);
     setAddrModal(true);
@@ -1361,20 +1362,40 @@ export default function CustomerProfile() {
                 <option value="other">Other</option>
               </Select>
             </FormGroup>
-            <FormGroup label="Street">
-              <Input value={addrForm.street} onChange={e => setAddrForm(f => ({ ...f, street: e.target.value }))} placeholder="Street address" />
+            <FormGroup label="Street Address">
+              <AddressAutocomplete
+                value={addrForm.street}
+                onChange={v => setAddrForm(f => ({ ...f, street: v }))}
+                onAddressSelect={fields => setAddrForm(f => ({
+                  ...f,
+                  street:   fields.street   || f.street,
+                  street2:  fields.suburb   || f.street2,
+                  city:     fields.city     || f.city,
+                  province: fields.province || f.province,
+                  zip:      fields.postal_code || f.zip,
+                }))}
+                placeholder="Start typing to search…"
+              />
             </FormGroup>
-            <FormGroup label="Street 2">
-              <Input value={addrForm.street2} onChange={e => setAddrForm(f => ({ ...f, street2: e.target.value }))} placeholder="Unit / Suite / Floor" />
+            <FormGroup label="Suburb">
+              <Input value={addrForm.street2} onChange={e => setAddrForm(f => ({ ...f, street2: e.target.value }))} placeholder="Suburb" />
             </FormGroup>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormGroup label="City">
                 <Input value={addrForm.city} onChange={e => setAddrForm(f => ({ ...f, city: e.target.value }))} />
               </FormGroup>
-              <FormGroup label="Postal Code">
-                <Input value={addrForm.zip} onChange={e => setAddrForm(f => ({ ...f, zip: e.target.value }))} />
+              <FormGroup label="Province">
+                <Select value={addrForm.province} onChange={e => setAddrForm(f => ({ ...f, province: e.target.value }))}>
+                  <option value="">— Select —</option>
+                  {["Gauteng","Western Cape","KwaZulu-Natal","Eastern Cape","Limpopo","Mpumalanga","North West","Free State","Northern Cape"].map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </Select>
               </FormGroup>
             </div>
+            <FormGroup label="Postal Code">
+              <Input value={addrForm.zip} onChange={e => setAddrForm(f => ({ ...f, zip: e.target.value }))} placeholder="0000" maxLength={4} />
+            </FormGroup>
             <FormGroup label="Phone">
               <Input value={addrForm.phone} onChange={e => setAddrForm(f => ({ ...f, phone: e.target.value }))} placeholder="+27 …" />
             </FormGroup>

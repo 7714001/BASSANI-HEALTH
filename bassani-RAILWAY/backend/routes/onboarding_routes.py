@@ -1375,6 +1375,15 @@ async def approve_application(
     if app.get("city"):           vals["city"]    = app["city"]
     if app.get("postal_code"):    vals["zip"]     = app["postal_code"]
     if app.get("vat_number"):     vals["vat"]     = app["vat_number"]
+    # Province → Odoo state_id; country always South Africa
+    from routes.customer_routes import _resolve_za_state_id, _get_za_country_id
+    if app.get("province"):
+        sid = _resolve_za_state_id(odoo, app["province"])
+        if sid:
+            vals["state_id"] = sid
+    za_id = _get_za_country_id(odoo)
+    if za_id:
+        vals["country_id"] = za_id
 
     try:
         partner_id = odoo.create("res.partner", vals)
