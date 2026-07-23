@@ -406,17 +406,21 @@ async def search_all_customers(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Search all Odoo customers by name — used in the add-customer modal so resellers
-    can find existing Bassani customers before deciding to create a new one.
+    Search Odoo partners by name/email — used in the quote builder and add-customer
+    modal. Includes any active company record (not just those with confirmed orders)
+    so sales clerks can raise a first order against a newly created Odoo contact.
+    Individuals with no order history are excluded (they're typically vendor contacts
+    or employees, not customers).
     No ownership filter applied. Overlays samples_account flag from customer_metadata.
     """
     odoo = get_odoo_client()
+    # Match: (name or email) AND active AND (customer_rank > 0 OR is a company record)
+    # The is_company arm catches new customers added directly in Odoo before their
+    # first order (which would otherwise have customer_rank = 0 and be invisible).
     domain = [
-        ("customer_rank", ">", 0),
         ("active", "=", True),
-        "|",
-        ("name", "ilike", q),
-        ("email", "ilike", q),
+        "|", ("name", "ilike", q), ("email", "ilike", q),
+        "|", ("customer_rank", ">", 0), ("is_company", "=", True),
     ]
     try:
         customers = odoo.search_read(

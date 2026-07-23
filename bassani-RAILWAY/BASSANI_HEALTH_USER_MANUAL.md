@@ -1663,6 +1663,8 @@ The Reports page provides six analytics reports sourced from Odoo's confirmed sa
 
 **Period selector:** A selector bar at the top of the report area lets you choose which period to view. Select the SA financial year (current year or up to 2 previous years) from the dropdown, then choose a specific month (displayed in SA FY order: Mar through Feb) or **Full Year** to see the entire FY aggregated. Changing the period immediately reloads the active report.
 
+**Warehouse scoping:** Reports filter to the warehouse you have selected in the top-navigation warehouse picker. Select **All warehouses** to see unfiltered data across all warehouses. The period selector and warehouse scope work together — change either and the report reloads automatically.
+
 **Reports available:**
 - **Monthly Turnover** — total revenue, direct vs reseller split, VAT, commission paid out, and a 6-month revenue trend
 - **Best Sellers** — top products by revenue for the selected period

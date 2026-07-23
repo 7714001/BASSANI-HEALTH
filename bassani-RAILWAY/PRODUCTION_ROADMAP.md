@@ -1726,6 +1726,11 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] `frontend/src/views/Views.js` — `Reports` component rewritten: `fyStart`/`selectedMonth` state; `getPeriodParams()` computes `from_date`/`to_date` for selected period; `load()` passes params to backend; `exportToExcel()` dynamically imports `xlsx`, fetches all 6 reports in parallel via `Promise.allSettled`, builds 6-tab workbook, downloads as `Bassani Health Analytics {period}.xlsx`; Export button hidden if `!can("reports.export")`
 - [x] `reports.export` permission already defined in `auth.py` (DEFAULT_ADMIN_PERMISSIONS, FULL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS) and in `Users.js` (PERMISSION_GROUPS, DEFAULT_ADMIN_PERMS, ROLE_DEFAULT_PERMS) — no changes needed to permission infrastructure
 
+- [x] All report endpoints warehouse-scoped: use `current_user.get("active_warehouse_id")` directly (not `resolve_warehouse_id` which falls back to global default and breaks "All warehouses"). `_wh_filter` spreads cleanly into Odoo domains; `null` = no filter (all warehouses).
+- [x] `monthly_turnover` 6-month trend loop warehouse-scoped (had its own separate Odoo `sale.order` query that previously ignored `_wh_filter`)
+- [x] `dead_stock` `recent_lines` query warehouse-scoped (stock quant query already used `odoo_context`; the `sale.order.line` recency check was missing the filter)
+- [x] `WarehouseSwitcher` in `UI.js` fixed: `active_warehouse_id !== undefined` check distinguishes `null` ("All warehouses" explicitly selected) from `undefined` (never set) — `??` was collapsing both to the global default, causing the picker to show the wrong selection after choosing "All warehouses"
+
 **Definition of Done:**
 - FY selector shows current FY and 2 previous FYs
 - Month pills display in SA FY order (Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec, Jan, Feb)
@@ -1735,6 +1740,25 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - Export Excel button produces a `.xlsx` with 6 tabs: Turnover, Best Sellers, Best Customers, Best Resellers, Dead Stock, Categories
 - Export button only visible to users with `reports.export` permission
 - Period change immediately reloads the active report
+- All six reports filter to the user's selected warehouse; "All warehouses" correctly returns unfiltered data
+- Warehouse picker displays "All warehouses" when `active_warehouse_id = null` (not the global default)
+
+---
+
+#### 8.43 — Customer Search Gap — Company Contacts with No Order History — Complete 2026-07-23
+
+**Goal:** Staff must be able to search for and select any Odoo company contact when building a quote, not just contacts that have an existing confirmed sale order.
+
+**Previous behaviour:** `/api/customers/search` filtered by `customer_rank > 0`, which Odoo only sets after a confirmed SO exists. A customer contact created directly in Odoo without any orders was invisible to the quote builder, reseller creation form, partner directory, and all other surfaces using this endpoint.
+
+**New behaviour:** The domain is widened to `customer_rank > 0 OR is_company = True`. Any active Odoo company contact is now searchable regardless of order history. Individual contacts (vendor reps, employees) without prior order history are still excluded.
+
+- [x] `backend/routes/customer_routes.py` — `search_all_customers` domain updated to `[("active", "=", True), "|", ("name", "ilike", q), ("email", "ilike", q), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]`
+- [x] Fix covers all 7 frontend surfaces that call `/api/customers/search`: quote builder (`SalesTickets.js`), reseller creation (`ResellerProfile.js`), partner directory (`Views.js`), onboarding inbox (`OnboardingInbox.js`), sales inbox (`SalesInbox.js`), scripts (`Scripts.js`)
+
+**Definition of Done:**
+- A company contact created in Odoo with no prior orders appears in the quote builder customer search
+- Existing behaviour (only confirmed-order customers in the list view) is unchanged — the widened search applies to the `/search` endpoint only, not the main customer list
 
 ---
 
