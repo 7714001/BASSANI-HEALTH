@@ -588,10 +588,8 @@ export function Customers() {
   const [total,     setTotal    ] = useState(0);
   const [loading,   setLoading  ] = useState(true);
   const [search,    setSearch   ] = useState("");
-  const [modal,     setModal    ] = useState(false);
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
-  const [saving,    setSaving   ] = useState(false);
   const [hasOrders, setHasOrders] = useState(false);
 
   // Onboarding invite modal state
@@ -613,25 +611,6 @@ export function Customers() {
     finally { setObInviteSending(false); }
   };
 
-  // Admin add-customer modal state
-  const BLANK_FORM = { name:"", email:"", phone:"", street:"", city:"", zip:"", vat:"", credit_limit:"", customer_type:"Pharmacy", section21_registered:false };
-  const REQUIRED_DOC_TYPES = [
-    { key:"store_onboarding_agreement", label:"Signed Store Onboarding Agreement" },
-    { key:"customer_information_form",  label:"Signed Customer Information Form"  },
-    { key:"nda",                        label:"Signed NDA"                        },
-  ];
-  const [form,           setForm          ] = useState(BLANK_FORM);
-  const [nameSearch,     setNameSearch    ] = useState("");
-  const [nameResults,    setNameResults   ] = useState([]);
-  const [nameSearching,  setNameSearching ] = useState(false);
-  const [step,           setStep          ] = useState("search");
-  const [claiming,       setClaiming      ] = useState(false);
-  const [sessionId,      setSessionId     ] = useState("");
-  const [stagedDocs,     setStagedDocs    ] = useState([]);
-  const [uploadingDoc,   setUploadingDoc  ] = useState(null);
-  const [removingDoc,       setRemovingDoc      ] = useState(null);
-  const [removeDocConfirm,  setRemoveDocConfirm ] = useState(null);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -648,101 +627,6 @@ export function Customers() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Debounced Odoo search for admin add-customer modal
-  useEffect(() => {
-    if (!modal || step !== "search") return;
-    if (nameSearch.length < 2) { setNameResults([]); return; }
-    const t = setTimeout(async () => {
-      setNameSearching(true);
-      try {
-        const r = await api.get("/api/customers/search", { params: { q: nameSearch, limit: 8 } });
-        setNameResults(r.data.customers || []);
-      } catch { setNameResults([]); }
-      finally { setNameSearching(false); }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [nameSearch, modal, step]);
-
-  const genSessionId = () => (
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
-
-  const openModal = () => {
-    const sid = genSessionId();
-    setForm(BLANK_FORM); setNameSearch(""); setNameResults([]);
-    setStep("search"); setSessionId(sid); setStagedDocs([]);
-    setUploadingDoc(null); setRemovingDoc(null);
-    setModal(true);
-  };
-
-  const uploadDoc = async (docKey, docLabel, file) => {
-    setUploadingDoc(docKey);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await api.post(
-        `/api/onboarding/documents/upload?session_id=${sessionId}&doc_type=${docKey}`,
-        fd, { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      setStagedDocs(prev => {
-        const without = prev.filter(d => d.doc_type !== docKey);
-        return [...without, { ...r.data, label: docLabel }];
-      });
-    } catch { toast.error(`Failed to upload ${docLabel}`); }
-    finally { setUploadingDoc(null); }
-  };
-
-  const removeDoc = (docKey) => setRemoveDocConfirm(docKey);
-
-  const doRemoveDoc = async () => {
-    const docKey = removeDocConfirm;
-    setRemoveDocConfirm(null);
-    setRemovingDoc(docKey);
-    try {
-      await api.delete(`/api/onboarding/documents/${sessionId}/${docKey}`);
-      setStagedDocs(prev => prev.filter(d => d.doc_type !== docKey));
-    } catch { toast.error("Failed to remove document"); }
-    finally { setRemovingDoc(null); }
-  };
-
-  const claim = async (customer) => {
-    setClaiming(true);
-    try {
-      await api.post(`/api/customers/${customer.id}/claim`);
-      toast.success(`${customer.name} linked to your account`);
-      setModal(false); load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not link customer"); }
-    finally { setClaiming(false); }
-  };
-
-  const save = async () => {
-    if (!form.name) return toast.error("Name required");
-    const missingDocs = REQUIRED_DOC_TYPES.filter(t => !stagedDocs.find(d => d.doc_type === t.key));
-    if (missingDocs.length) return toast.error(`Please upload: ${missingDocs.map(d => d.label).join(", ")}`);
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        credit_limit: parseFloat(form.credit_limit) || 0,
-        document_session_id: sessionId,
-        documents: stagedDocs,
-      };
-      await api.post("/api/customers/", payload);
-      toast.success("Customer created"); setModal(false); load();
-    } catch (e) {
-      const detail = e.response?.data?.detail;
-      if (detail && typeof detail === "object" && detail.existing) {
-        toast.error(`Duplicate found: ${detail.existing.name} already exists with this email or VAT number.`);
-      } else {
-        toast.error(typeof detail === "string" ? detail : "Save failed");
-      }
-    }
-    finally { setSaving(false); }
-  };
-
-  const TYPES = ["Pharmacy","Dispensary","Clinic","Hospital","Retail"];
   const balanceColor = (b, l) => !l ? "text-gray-600" : b/l >= 1 ? "text-red-600" : b/l >= 0.75 ? "text-amber-600" : "text-bassani-700";
 
   return (
@@ -753,12 +637,9 @@ export function Customers() {
         onRefresh={load}
         actions={isReseller
           ? <BtnPrimary onClick={() => navigate("/onboarding-docs")}><Link2 size={14}/>Send Registration Link</BtnPrimary>
-          : <div className="flex gap-2">
-              <BtnSecondary onClick={() => { setObInviteEmail(""); setShowOnboardingDocs(true); }}>
-                <FileText size={14} className="mr-1" />Onboarding Documents
-              </BtnSecondary>
-              <BtnPrimary onClick={openModal}><Plus size={14}/>Add Customer</BtnPrimary>
-            </div>
+          : <BtnPrimary onClick={() => { setObInviteEmail(""); setShowOnboardingDocs(true); }}>
+              <Mail size={14} className="mr-1" />Onboard Customer
+            </BtnPrimary>
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
@@ -850,136 +731,6 @@ export function Customers() {
         </Modal>
       )}
 
-      {modal && (
-        <Modal title="Add Customer" onClose={()=>setModal(false)}>
-          {/* Step indicator */}
-          <div className="flex items-center gap-2 mb-5">
-            {["search","docs","create"].map((s,i)=>(
-              <div key={s} className="flex items-center gap-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${step===s?"bg-bassani-600 text-white":["search","docs","create"].indexOf(step)>i?"bg-green-500 text-white":"bg-gray-100 text-gray-400"}`}>{["search","docs","create"].indexOf(step)>i?"✓":i+1}</div>
-                <span className={`text-xs font-medium ${step===s?"text-bassani-700":"text-gray-400"}`}>{["Search","Documents","Details"][i]}</span>
-                {i<2&&<div className="w-6 h-px bg-gray-200 mx-1"/>}
-              </div>
-            ))}
-          </div>
-
-          {/* ── Step 1: Search ── */}
-          {step === "search" && (
-            <>
-              <p className="text-sm text-gray-500 mb-3">
-                Search for the customer first. If they already exist, select them rather than creating a duplicate.
-              </p>
-              <FormGroup label="Customer Name">
-                <div className="relative">
-                  <Input value={nameSearch} onChange={e=>setNameSearch(e.target.value)} placeholder="Start typing a business name…" autoFocus />
-                  {nameSearching && <Loader2 size={13} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />}
-                </div>
-              </FormGroup>
-              {nameResults.length > 0 && (
-                <>
-                  <div className="mt-2 border border-amber-100 rounded-xl overflow-hidden">
-                    <p className="text-xs text-amber-700 px-3 py-2 bg-amber-50 font-medium">Existing customers found — select one below or refine your search to confirm this is a new customer</p>
-                    {nameResults.map(c => (
-                      <div key={c.id} className="flex items-center justify-between px-3 py-2.5 border-t border-gray-50 hover:bg-gray-50">
-                        <div>
-                          <p className="text-sm font-medium text-gray-800">{c.name}</p>
-                          <p className="text-xs text-gray-400">{[c.city, c.email].filter(Boolean).join(" · ") || "No contact info"}</p>
-                        </div>
-                        <BtnPrimary size="sm" onClick={()=>claim(c)} loading={claiming}>Select</BtnPrimary>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-2 text-center">None of these match? Refine your search until no results appear, then you can proceed.</p>
-                </>
-              )}
-              {nameSearch.length >= 2 && !nameSearching && nameResults.length === 0 && (
-                <p className="text-xs text-green-600 mt-2 text-center font-medium">No existing customers found for "{nameSearch}"</p>
-              )}
-              <div className="flex justify-between items-center mt-4 pt-3 border-t border-gray-100">
-                <span className="text-xs text-gray-400">
-                  {nameSearch.length < 2 ? "Type at least 2 characters to search first" : nameResults.length > 0 ? "Select a match above or keep searching" : "Customer confirmed as new"}
-                </span>
-                <BtnSecondary
-                  onClick={()=>{ setForm({...BLANK_FORM, name:nameSearch}); setStep("docs"); }}
-                  disabled={nameSearch.length < 2 || nameSearching || nameResults.length > 0}
-                >
-                  Continue
-                </BtnSecondary>
-              </div>
-            </>
-          )}
-
-          {/* ── Step 2: Documents ── */}
-          {step === "docs" && (
-            <>
-              <button onClick={()=>setStep("search")} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
-                <ChevronDown size={12} className="-rotate-90"/>Back to search
-              </button>
-              <p className="text-sm text-gray-500 mb-4">Upload all five signed onboarding documents before creating the customer record.</p>
-              <div className="space-y-2 mb-5">
-                {REQUIRED_DOC_TYPES.map(dt => {
-                  const uploaded = stagedDocs.find(d => d.doc_type === dt.key);
-                  const isUploading = uploadingDoc === dt.key;
-                  const isRemoving  = removingDoc  === dt.key;
-                  return (
-                    <div key={dt.key} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${uploaded?"border-green-200 bg-green-50":"border-gray-100 bg-gray-50"}`}>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-semibold truncate ${uploaded?"text-green-800":"text-gray-700"}`}>{dt.label}</p>
-                        {uploaded && <p className="text-[11px] text-green-600 truncate">{uploaded.filename}</p>}
-                      </div>
-                      {uploaded ? (
-                        <button onClick={()=>removeDoc(dt.key)} disabled={isRemoving}
-                          className="text-red-400 hover:text-red-600 text-xs font-semibold disabled:opacity-50 shrink-0">
-                          {isRemoving ? <Loader2 size={12} className="animate-spin"/> : "Remove"}
-                        </button>
-                      ) : (
-                        <label className={`flex items-center gap-1.5 text-xs font-semibold text-bassani-600 hover:text-bassani-700 cursor-pointer shrink-0 ${isUploading?"opacity-50 pointer-events-none":""}`}>
-                          {isUploading ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
-                          Upload
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden"
-                            onChange={e=>{ if(e.target.files[0]) uploadDoc(dt.key, dt.label, e.target.files[0]); e.target.value=""; }} />
-                        </label>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
-                <span className="text-xs text-gray-400">{stagedDocs.length} of {REQUIRED_DOC_TYPES.length} documents uploaded</span>
-                <BtnPrimary onClick={()=>setStep("create")} disabled={stagedDocs.length < REQUIRED_DOC_TYPES.length}>Continue to Details</BtnPrimary>
-              </div>
-            </>
-          )}
-
-          {/* ── Step 3: Customer details ── */}
-          {step === "create" && (
-            <>
-              <button onClick={()=>setStep("docs")} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
-                <ChevronDown size={12} className="-rotate-90"/>Back to documents
-              </button>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Wellness Pharmacy" /></FormGroup>
-                <FormGroup label="Type"><Select value={form.customer_type} onChange={e=>setForm({...form,customer_type:e.target.value})}>{TYPES.map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
-                <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="orders@example.co.za" /></FormGroup>
-                <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="+27 11 555 1234" /></FormGroup>
-                <FormGroup label="VAT Registration Number"><Input value={form.vat} onChange={e=>setForm({...form,vat:e.target.value})} placeholder="e.g. 4123456789" /></FormGroup>
-                <FormGroup label="Credit Limit (ZAR)"><Input type="number" value={form.credit_limit} onChange={e=>setForm({...form,credit_limit:e.target.value})} placeholder="50000" /></FormGroup>
-                <FormGroup label="Street Address" className="sm:col-span-2"><Input value={form.street} onChange={e=>setForm({...form,street:e.target.value})} placeholder="123 Health Street, Sandton" /></FormGroup>
-                <FormGroup label="City"><Input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} placeholder="Johannesburg" /></FormGroup>
-                <FormGroup label="Postal Code"><Input value={form.zip} onChange={e=>setForm({...form,zip:e.target.value})} placeholder="2196" /></FormGroup>
-              </div>
-              <div className="flex items-center gap-2 my-3"><input type="checkbox" id="s21" checked={form.section21_registered} onChange={e=>setForm({...form,section21_registered:e.target.checked})} className="accent-bassani-600" /><label htmlFor="s21" className="text-sm text-gray-600">Section 21 registered</label></div>
-              <div className="flex justify-end gap-2"><BtnSecondary onClick={()=>setModal(false)} disabled={saving}>Cancel</BtnSecondary><BtnPrimary onClick={save} loading={saving}>Create Customer</BtnPrimary></div>
-            </>
-          )}
-        </Modal>
-      )}
-      {removeDocConfirm && (
-        <Modal title="Remove Document" onClose={()=>setRemoveDocConfirm(null)}>
-          <p className="text-sm text-gray-600">Remove this document from the application? You will need to re-upload it to continue.</p>
-          <div className="flex justify-end gap-2 mt-4"><BtnSecondary onClick={()=>setRemoveDocConfirm(null)}>Cancel</BtnSecondary><BtnDanger onClick={doRemoveDoc}>Remove</BtnDanger></div>
-        </Modal>
-      )}
     </div>
   );
 }
