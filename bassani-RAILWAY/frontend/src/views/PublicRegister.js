@@ -11,13 +11,21 @@ import toast from "react-hot-toast";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const BUSINESS_TYPE_OPTIONS = [
-  { value: "Pharmacy",             label: "Pharmacy",             desc: "Licensed retail pharmacy" },
-  { value: "Dispensary",           label: "Dispensary",           desc: "Collection point / retail outlet" },
-  { value: "Wellness Centre",      label: "Wellness Centre",      desc: "Health and wellness retail" },
-  { value: "Section 22C Facility", label: "Section 22C Facility", desc: "Licensed complementary medicines facility" },
-  { value: "Sole Proprietor",      label: "Sole Proprietor",      desc: "Unincorporated individual trader" },
-  { value: "Other",                label: "Other",                desc: null },
+const BUSINESS_CATEGORIES = [
+  { value: "Pharmacy",       label: "Pharmacy"       },
+  { value: "Dispensary",     label: "Dispensary"     },
+  { value: "Wellness Centre",label: "Wellness Centre"},
+  { value: "Medical Clinic", label: "Medical Clinic" },
+  { value: "Health Retailer",label: "Health Retailer"},
+  { value: "Other",          label: "Other"          },
+];
+
+const ENTITY_TYPES = [
+  { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
+  { value: "Close Corporation (CC)",      label: "Close Corporation (CC)"      },
+  { value: "Sole Proprietor",             label: "Sole Proprietor"             },
+  { value: "Partnership",                 label: "Partnership"                 },
+  { value: "Other",                       label: "Other"                       },
 ];
 
 const PROVINCES = [
@@ -48,7 +56,10 @@ const SIGN_DOCS = [
 
 const BLANK = {
   company_name: "", trading_name: "", registration_number: "",
-  vat_number: "", business_type: "", business_type_other: "",
+  vat_number: "",
+  business_category: "", business_category_other: "",
+  entity_type: "", entity_type_other: "",
+  section22c_licensed: false,
   contact_name: "", contact_position: "", contact_email: "",
   contact_phone: "", contact_alt_phone: "", signatory_id_number: "",
   street: "", suburb: "", city: "", province: "",
@@ -425,7 +436,7 @@ export default function PublicRegister() {
     setForm(f => ({ ...f, [field]: e.target.value }));
     setErrors(prev => ({ ...prev, [field]: undefined }));
   };
-  const isSoleProprietor = form.business_type === "Sole Proprietor";
+  const isSoleProprietor = form.entity_type === "Sole Proprietor";
 
   useEffect(() => {
     if (!refCode) return;
@@ -472,13 +483,17 @@ export default function PublicRegister() {
   const validateStep = () => {
     const errs = {};
     if (step === 0) {
-      if (!form.business_type)
-        errs.business_type = "Please select your business type";
-      if (form.business_type === "Other" && !form.business_type_other.trim())
-        errs.business_type_other = "Please specify your business type";
-      if (form.business_type && !form.company_name.trim())
+      if (!form.business_category)
+        errs.business_category = "Please select a business category";
+      if (form.business_category === "Other" && !form.business_category_other.trim())
+        errs.business_category_other = "Please specify your business category";
+      if (!form.entity_type)
+        errs.entity_type = "Please select a legal entity type";
+      if (form.entity_type === "Other" && !form.entity_type_other.trim())
+        errs.entity_type_other = "Please specify your entity type";
+      if (form.entity_type && !form.company_name.trim())
         errs.company_name = "Company name is required";
-      if (!isSoleProprietor) {
+      if (form.entity_type && !isSoleProprietor) {
         const reg = form.registration_number.trim();
         if (!reg)
           errs.registration_number = "Company registration number is required";
@@ -728,37 +743,80 @@ export default function PublicRegister() {
   const stepContent = [
     // Step 0 — Business Details
     <div key="0" className="space-y-4">
-      <Field label="Business Type" required error={errors.business_type}>
+      <Field label="Business Category" required error={errors.business_category}>
         <SelectInput
-          value={form.business_type}
-          error={!!errors.business_type}
+          value={form.business_category}
+          error={!!errors.business_category}
           onChange={(e) => {
-            setForm(f => ({
-              ...f,
-              business_type: e.target.value,
-              ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
-            }));
-            setErrors(prev => ({ ...prev, business_type: undefined }));
+            setForm(f => ({ ...f, business_category: e.target.value, business_category_other: "" }));
+            setErrors(prev => ({ ...prev, business_category: undefined, business_category_other: undefined }));
           }}
         >
-          <option value="">— Select business type —</option>
-          {BUSINESS_TYPE_OPTIONS.map(({ value, label }) => (
+          <option value="">— Select business category —</option>
+          {BUSINESS_CATEGORIES.map(({ value, label }) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </SelectInput>
       </Field>
-      {form.business_type === "Other" && (
-        <Field label="Please specify" required error={errors.business_type_other}>
+      {form.business_category === "Other" && (
+        <Field label="Please specify your business category" required error={errors.business_category_other}>
           <TextInput
-            value={form.business_type_other}
-            onChange={upd("business_type_other")}
-            placeholder="e.g. Veterinary practice"
-            error={!!errors.business_type_other}
+            value={form.business_category_other}
+            onChange={upd("business_category_other")}
+            placeholder="e.g. Veterinary clinic"
+            error={!!errors.business_category_other}
             autoFocus
           />
         </Field>
       )}
-      {form.business_type && (
+
+      <Field label="Legal Entity Type" required error={errors.entity_type}>
+        <SelectInput
+          value={form.entity_type}
+          error={!!errors.entity_type}
+          onChange={(e) => {
+            setForm(f => ({
+              ...f,
+              entity_type: e.target.value,
+              entity_type_other: "",
+              ...(e.target.value === "Sole Proprietor" ? { registration_number: "" } : {}),
+            }));
+            setErrors(prev => ({ ...prev, entity_type: undefined, entity_type_other: undefined }));
+          }}
+        >
+          <option value="">— Select legal entity type —</option>
+          {ENTITY_TYPES.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </SelectInput>
+      </Field>
+      {form.entity_type === "Other" && (
+        <Field label="Please specify your entity type" required error={errors.entity_type_other}>
+          <TextInput
+            value={form.entity_type_other}
+            onChange={upd("entity_type_other")}
+            placeholder="e.g. Non-profit organisation"
+            error={!!errors.entity_type_other}
+          />
+        </Field>
+      )}
+
+      <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={form.section22c_licensed}
+          onChange={e => setForm(f => ({ ...f, section22c_licensed: e.target.checked }))}
+          className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-bassani-600"
+        />
+        <div>
+          <p className="text-sm font-medium text-gray-800">Section 22C Licensed Facility</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Our premises are licensed under Section 22C of the Medicines and Related Substances Act
+          </p>
+        </div>
+      </label>
+
+      {form.entity_type && (
         <>
           <Field label={isSoleProprietor ? "Business / Trading Name" : "Registered Company Name"} required error={errors.company_name}>
             <TextInput
@@ -1020,7 +1078,8 @@ export default function PublicRegister() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Application Summary</p>
             <div className="space-y-1.5 text-xs">
               {form.company_name && <div className="flex justify-between"><span className="text-gray-400">Company</span><span className="font-medium text-gray-700">{form.company_name}</span></div>}
-              {form.business_type && <div className="flex justify-between"><span className="text-gray-400">Type</span><span className="font-medium text-gray-700">{form.business_type}</span></div>}
+              {form.business_category && <div className="flex justify-between"><span className="text-gray-400">Category</span><span className="font-medium text-gray-700">{form.business_category === "Other" ? (form.business_category_other || "Other") : form.business_category}</span></div>}
+              {form.entity_type && <div className="flex justify-between"><span className="text-gray-400">Entity</span><span className="font-medium text-gray-700">{form.entity_type === "Other" ? (form.entity_type_other || "Other") : form.entity_type}</span></div>}
               {step > 1 && form.contact_name  && <div className="flex justify-between"><span className="text-gray-400">Contact</span><span className="font-medium text-gray-700">{form.contact_name}</span></div>}
               {step > 1 && form.contact_email && <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium text-gray-700 truncate max-w-[160px]">{form.contact_email}</span></div>}
               {step > 2 && form.city && <div className="flex justify-between"><span className="text-gray-400">City</span><span className="font-medium text-gray-700">{form.city}{form.province ? `, ${form.province}` : ""}</span></div>}

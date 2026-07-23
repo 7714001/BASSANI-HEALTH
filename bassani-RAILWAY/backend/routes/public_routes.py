@@ -43,11 +43,16 @@ class PublicRegistration(BaseModel):
     referral_code:       Optional[str] = None   # reseller portal user_id from ?ref= param
 
     # Step 1 — Business details
-    company_name:        str
-    trading_name:        Optional[str] = ""
-    registration_number: Optional[str] = ""
-    vat_number:          Optional[str] = ""
-    business_type:       str = "Pharmacy"
+    company_name:             str
+    trading_name:             Optional[str] = ""
+    registration_number:      Optional[str] = ""
+    vat_number:               Optional[str] = ""
+    business_category:        Optional[str] = ""
+    business_category_other:  Optional[str] = ""
+    entity_type:              Optional[str] = ""
+    entity_type_other:        Optional[str] = ""
+    section22c_licensed:      bool = False
+    business_type:            Optional[str] = ""   # legacy — kept for old applications
 
     # Step 2 — Primary contact
     contact_name:        str

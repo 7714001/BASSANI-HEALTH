@@ -1762,6 +1762,38 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.44 — Business Type Restructure + Customer Page All-Accounts View — Complete 2026-07-23
+
+**Goal:** Replace the single confusing "Business Type" dropdown on `/apply` with three separate, semantically correct fields. Additionally, restructure the Customers page to show all Odoo accounts (not just those with orders), move Partner Directory under the Customers nav section, and remove the manual "Add Customer" button in favour of the onboarding flow.
+
+**Business rationale:** The old Business Type dropdown mixed legal entity types (Sole Proprietor), business functions (Pharmacy, Dispensary), and regulatory status (Section 22C Facility) — three independent dimensions. Separating them produces cleaner data for admin review and is closer to industry standard practice.
+
+**Business Type restructure:**
+- [x] `PublicRegister.js` — replaced `BUSINESS_TYPE_OPTIONS` with two constants: `BUSINESS_CATEGORIES` (Pharmacy, Dispensary, Wellness Centre, Medical Clinic, Health Retailer, Other) and `ENTITY_TYPES` (Private Company (Pty) Ltd, Close Corporation (CC), Sole Proprietor, Partnership, Other). Both show a required text input when "Other" selected. Added `section22c_licensed` boolean checkbox (Section 22C Licensed Facility). `isSoleProprietor` now derives from `entity_type === "Sole Proprietor"`. Step 0 validation updated. Summary sidebar updated.
+- [x] `BLANK` form updated: removed `business_type` / `business_type_other`; added `business_category`, `business_category_other`, `entity_type`, `entity_type_other`, `section22c_licensed`
+- [x] `backend/routes/public_routes.py` — `PublicRegistration` model: added five new fields; `business_type` kept as `Optional[str] = ""` for legacy document reads
+
+**Customer page all-accounts view:**
+- [x] `Customers.js` — `has_orders` filter param; "Has Orders" filter pill; all active Odoo companies shown by default; info note explains unfiltered view
+- [x] `backend/routes/customer_routes.py` — `has_orders: bool = Query(False)` param on list endpoint; domain logic branches on `has_orders`, `mode`, and defaults
+- [x] Partner Directory nav item moved from Admin section to Customers section in `UI.js`
+- [x] `PartnerDirectory.js` — Profile link and row click-through enabled for all companies (not just `customer_rank > 0`)
+- [x] "Add Customer" button removed from `Customers.js`; replaced with "Onboard Customer" button (BtnPrimary, green) that triggers the onboarding invitation modal
+
+**Reseller modal fixes:**
+- [x] `mode=partner` domain in `customer_routes.py` widened to include individual contacts (`parent_id != False`)
+- [x] Reseller creation wizard auto-resolves selected individual contact to parent company (`_resolvedFrom` field)
+- [x] Modal width increased to `max-w-2xl`; step 1 container gets `min-h-80` to prevent dropdown scroll
+
+**Definition of Done:**
+- `/apply` wizard step 0 shows Business Category, Legal Entity Type, and Section 22C toggle as three independent fields
+- "Other" on either dropdown reveals a required text input
+- Sole Proprietor entity type hides Company Reg field and changes company name label
+- Staff can see all active Odoo accounts on the Customers page; "Has Orders" pill reverts to order-only view
+- Partner Directory is discoverable from the Customers nav section; clicking any company row opens its profile
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.

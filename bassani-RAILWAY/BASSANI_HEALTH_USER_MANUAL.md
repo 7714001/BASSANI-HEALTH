@@ -1260,49 +1260,17 @@ If no match is found, a red toast appears. Press Escape to clear the search bar 
 
 ### Customers
 
-Go to **Customers** to see your active account list (pulled from Odoo).
+Go to **Customers** to see all active Odoo accounts — companies and individuals, including those that have not yet placed an order. Toggle the **Has Orders** filter pill to narrow the list to accounts with at least one confirmed sale order. The **Partner Directory** (also under Customers in the sidebar) shows every Odoo contact record including individual contacts not linked to a company.
 
-**Adding a New Customer** *(requires `customers.manage` permission)*
+**Adding a New Customer**
 
-Click **Add Customer** to open the 3-step wizard. All three steps must be completed before the customer is created.
+Customers are not created manually through the portal. All new customers follow the onboarding flow:
 
-**Step 1 — Search (duplicate check)**
+- Click **Onboard Customer** to send a registration invitation email to a prospective customer. They complete the self-service `/apply` wizard (Business Details, Primary Contact, Address, Additional Info, Sign CIF + upload CIPC) and submit their application.
+- Admin reviews the application, generates and sends signing documents (NDA + SOA), countersigns, sends the Welcome Pack, and approves — which creates the customer in Odoo.
+- If a customer exists in Odoo but has not yet placed an order, they are visible in the Customers list without toggling "Has Orders".
 
-Type the customer's business name and wait for the search to run. The search checks Odoo live for any existing customers with a matching name.
-
-- If results appear, review them carefully. If none of them are the same business, refine your search and try variations of the name until no results appear. You cannot proceed while results are shown.
-- Once the search returns zero results, the **Continue** button activates and you can move to Step 2.
-
-> This step is a hard gate. The system also checks for duplicate email and VAT at Step 3 submission — if a match is found there, the creation is blocked with a clear message identifying the existing customer. There is no override. Investigate before creating.
-
-**Step 2 — Documents**
-
-Upload all three of the following documents before continuing:
-
-- Signed Store Onboarding Agreement
-- Signed Customer Information Form
-- Signed NDA
-
-Click the upload slot for each document, select the file, and wait for the green tick. You can remove and re-upload any document. The progress counter shows `{n} of 3 uploaded`. The **Continue to Details** button is disabled until all three slots are filled.
-
-> Documents are staged to Cloudflare R2 as you upload them and will be attached to the customer's profile the moment the customer is created. If you close the browser before completing Step 3, you will need to start a new session and re-upload.
-
-**Step 3 — Details**
-
-Fill in the customer's information:
-
-- Business name (pre-filled from your Step 1 search)
-- Customer type (e.g. Pharmacy, Clinic)
-- Email address
-- Phone number
-- VAT registration number — required for compliance
-- Credit limit
-- Street address, city, postal code
-- Section 21 — tick this if the customer holds a SAHPRA Section 21 authorisation
-
-Click **Create Customer**. The customer is created in Odoo immediately and their documents are attached to their profile.
-
-> Banking details are not collected at the customer level. Bassani invoices customers directly and receives payment from them — banking details are a reseller-level concern (Bassani pays resellers commission) and are not needed here.
+> If an emergency manual creation is needed, it must be done directly in Odoo by a super admin.
 
 ---
 
@@ -1716,7 +1684,11 @@ Customers can register directly without contacting Bassani staff or going throug
 
 **For a customer registering directly:**
 1. Navigate to `portal.bassanihealth.com/apply`
-2. **Step 1 — Business Details:** Select the business type from the dropdown (Pharmacy, Dispensary, Wellness Centre, Section 22C Facility, Company (Pty) Ltd, Partnership, Sole Proprietor, Other). The rest of the step adapts instantly: Sole Proprietors see a simplified form without a Company Registration Number or Trading Name. All other types require a CIPC registration number in format `2024/123456/07`.
+2. **Step 1 — Business Details:** Complete three fields at the top of this step:
+   - **Business Category** — what type of business they operate (Pharmacy, Dispensary, Wellness Centre, Medical Clinic, Health Retailer, or Other). "Other" reveals a required text input.
+   - **Legal Entity Type** — the legal structure of the business (Private Company (Pty) Ltd, Close Corporation (CC), Sole Proprietor, Partnership, or Other). "Other" reveals a required text input. Selecting "Sole Proprietor" simplifies the form: Company Reg field is hidden, and "Registered Company Name" becomes "Business / Trading Name".
+   - **Section 22C Licensed Facility** — tick this box if the business holds a Section 22C licence under the Medicines and Related Substances Act.
+   Once Legal Entity Type is selected, the company name, registration number, and VAT fields appear below.
 3. **Step 2 — Primary Contact:** Full name, position (required), SA ID number (13-digit, Luhn-validated), email, and phone (SA format enforced). The ID number is embedded in the Customer Information Form for document signing.
 4. **Step 3 — Business Address:** Street, suburb (required), city, province (required), and 4-digit postal code (required).
    - The street field has smart autocomplete — start typing and a dropdown of South African suggestions appears. Selecting one fills in street, suburb, city, province, and postal code automatically.

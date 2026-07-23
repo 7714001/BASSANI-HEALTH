@@ -300,7 +300,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Finance — invoice management, payment confirmation, credit limit enforcement | Live |
 | Stock management — per-warehouse, real-time, with reservation visibility | Live |
 | Stock Report — per-product lot/batch breakdown with movement history (traceability), warehouse-scoped | Live |
-| Self-service customer registration — public /apply page with referral link support; applications land in existing admin review queue | Live |
+| Self-service customer registration — public /apply page with referral link support; applications land in existing admin review queue. The registration form now captures Business Category (what the business does), Legal Entity Type (legal structure — drives Sole Proprietor form adaptation), and a Section 22C Licensed Facility checkbox — three separate, independently meaningful fields replacing a single confusing combined dropdown. | Live |
 | Document template management — version-controlled PDF uploads, rollback, audit trail; no redeployment required | Live |
 | Multi-authority signing — every authorised staff member configures their own personal signature on their profile; multiple people can countersign simultaneously; application claim mechanism prevents accidental dual countersigning | Live |
 | Test signing flow — super admin previews the exact customer signing experience for any document with pre-filled dummy data | Live |
