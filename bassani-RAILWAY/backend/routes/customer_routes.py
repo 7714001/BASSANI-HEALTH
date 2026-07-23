@@ -124,9 +124,11 @@ async def list_customers(
     sort_dir = sort_dir if sort_dir in ("asc", "desc") else "asc"
     odoo = get_odoo_client()
 
-    # mode=partner: search all active partners (customer or supplier) — used by reseller wizard
+    # mode=partner: search all active company contacts — used by reseller wizard.
+    # Includes customer, supplier, or any company (is_company=True) so newly created Odoo
+    # partners with no order history are still discoverable.
     if mode == "partner":
-        domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0)]
+        domain = [("active", "=", True), "|", "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0), ("is_company", "=", True)]
     else:
         domain = [("customer_rank", ">", 0), ("active", "=", True)]
 

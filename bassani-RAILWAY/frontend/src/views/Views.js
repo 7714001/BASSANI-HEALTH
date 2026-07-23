@@ -1824,7 +1824,7 @@ export function Resellers() {
       </main>
 
       {modal && (
-        <Modal title="Add Sales Agent" onClose={()=>setModal(false)} width="max-w-xl">
+        <Modal title="Add Sales Agent" onClose={()=>setModal(false)} width="max-w-2xl">
 
           {/* Step indicator */}
           {(() => {
@@ -1858,7 +1858,7 @@ export function Resellers() {
 
           {/* ── Step 1: Commission Eligibility + Odoo Partner + Documents ── */}
           {rStep === 1 && (
-            <div className="space-y-4">
+            <div className="space-y-4 min-h-80">
 
               {/* Commission eligibility toggle */}
               <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
