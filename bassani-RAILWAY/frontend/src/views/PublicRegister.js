@@ -12,13 +12,20 @@ import toast from "react-hot-toast";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const BUSINESS_CATEGORIES = [
-  { value: "Pharmacy",       label: "Pharmacy"       },
-  { value: "Dispensary",     label: "Dispensary"     },
-  { value: "Wellness Centre",label: "Wellness Centre"},
-  { value: "Medical Clinic", label: "Medical Clinic" },
-  { value: "Health Retailer",label: "Health Retailer"},
-  { value: "Other",          label: "Other"          },
+  { value: "Pharmacy",                  label: "Pharmacy"                  },
+  { value: "Dispensary",                label: "Dispensary"                },
+  { value: "Wellness Centre",           label: "Wellness Centre"           },
+  { value: "Medical Clinic",            label: "Medical Clinic"            },
+  { value: "Health Retailer",           label: "Health Retailer"           },
+  { value: "Licensed Cannabis Producer",label: "Licensed Cannabis Producer"},
+  { value: "Other",                     label: "Other"                     },
 ];
+
+// Section 22C licences apply to manufacturers, distributors, and retailers of
+// scheduled medicines. Only show the toggle for categories where this is relevant.
+const SECTION_22C_CATEGORIES = new Set([
+  "Pharmacy", "Dispensary", "Medical Clinic", "Licensed Cannabis Producer", "Other",
+]);
 
 const ENTITY_TYPES = [
   { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
@@ -748,7 +755,14 @@ export default function PublicRegister() {
           value={form.business_category}
           error={!!errors.business_category}
           onChange={(e) => {
-            setForm(f => ({ ...f, business_category: e.target.value, business_category_other: "" }));
+            const cat = e.target.value;
+            setForm(f => ({
+              ...f,
+              business_category: cat,
+              business_category_other: "",
+              // Clear Section 22C if switching to a non-applicable category
+              ...(!SECTION_22C_CATEGORIES.has(cat) ? { section22c_licensed: false } : {}),
+            }));
             setErrors(prev => ({ ...prev, business_category: undefined, business_category_other: undefined }));
           }}
         >
@@ -801,20 +815,22 @@ export default function PublicRegister() {
         </Field>
       )}
 
-      <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={form.section22c_licensed}
-          onChange={e => setForm(f => ({ ...f, section22c_licensed: e.target.checked }))}
-          className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-bassani-600"
-        />
-        <div>
-          <p className="text-sm font-medium text-gray-800">Section 22C Licensed Facility</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Our premises are licensed under Section 22C of the Medicines and Related Substances Act
-          </p>
-        </div>
-      </label>
+      {SECTION_22C_CATEGORIES.has(form.business_category) && (
+        <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={form.section22c_licensed}
+            onChange={e => setForm(f => ({ ...f, section22c_licensed: e.target.checked }))}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-bassani-600"
+          />
+          <div>
+            <p className="text-sm font-medium text-gray-800">Section 22C Licensed Facility</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Our premises are licensed under Section 22C of the Medicines and Related Substances Act
+            </p>
+          </div>
+        </label>
+      )}
 
       {form.entity_type && (
         <>
