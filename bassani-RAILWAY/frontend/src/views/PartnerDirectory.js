@@ -156,7 +156,7 @@ export default function PartnerDirectory() {
       id: "actions",
       cell: ({ row: { original: p } }) => (
         <div className="flex items-center justify-end gap-2">
-          {p.customer_rank > 0 && (
+          {p.is_company && (
             <button
               onClick={e => { e.stopPropagation(); navigate(`/customers/${p.id}`); }}
               className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors"
@@ -236,6 +236,7 @@ export default function PartnerDirectory() {
           total={total}
           pagination={pagination}
           onPaginationChange={setPagination}
+          onRowClick={p => p.is_company && navigate(`/customers/${p.id}`)}
           manualPagination
         />
       </main>

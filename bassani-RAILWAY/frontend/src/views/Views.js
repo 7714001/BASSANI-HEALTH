@@ -592,6 +592,7 @@ export function Customers() {
   const [custPag,   setCustPag  ] = useState({ pageIndex: 0, pageSize: 25 });
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
   const [saving,    setSaving   ] = useState(false);
+  const [hasOrders, setHasOrders] = useState(false);
 
   // Onboarding invite modal state
   const [showOnboardingDocs,   setShowOnboardingDocs  ] = useState(false);
@@ -638,11 +639,12 @@ export function Customers() {
       const params = { limit: custPag.pageSize, offset: custPag.pageIndex * custPag.pageSize };
       if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search = search;
+      if (hasOrders) params.has_orders = true;
       const r = await api.get("/api/customers/", { params });
       setCustomers(r.data.customers); setTotal(r.data.total);
     } catch { toast.error("Failed to load customers"); }
     finally { setLoading(false); }
-  }, [search, custPag, custSort]);
+  }, [search, custPag, custSort, hasOrders]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -747,7 +749,7 @@ export function Customers() {
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title={isReseller ? "My Customers" : "Customers"}
-        subtitle={`${total} active accounts`}
+        subtitle={`${total} ${hasOrders ? "accounts with orders" : "active accounts"}`}
         onRefresh={load}
         actions={isReseller
           ? <BtnPrimary onClick={() => navigate("/onboarding-docs")}><Link2 size={14}/>Send Registration Link</BtnPrimary>
@@ -760,7 +762,20 @@ export function Customers() {
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4"><SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" /></div>
+        <div className="flex items-center gap-2 mb-4">
+          <SearchBar value={search} onChange={v=>{ setSearch(v); setCustPag(p=>({...p,pageIndex:0})); }} placeholder="Search customers, city…" />
+          {!isReseller && (
+            <button
+              onClick={() => { setHasOrders(v => !v); setCustPag(p => ({ ...p, pageIndex: 0 })); }}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${hasOrders ? "bg-bassani-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              Has Orders
+            </button>
+          )}
+        </div>
+        {!isReseller && !hasOrders && (
+          <p className="text-xs text-gray-400 mb-4">Showing all active accounts. Toggle <span className="font-medium text-gray-600">Has Orders</span> to see only accounts with confirmed orders.</p>
+        )}
         <DataTable
           columns={[
             { accessorKey:"name", header:"Customer", cell:({row:{original:c}})=><p className="font-medium">{c.name}</p> },

@@ -113,6 +113,7 @@ async def list_customers(
     search: Optional[str] = None,
     customer_type: Optional[str] = None,
     mode: Optional[str] = None,
+    has_orders: bool = Query(False),
     limit: int = Query(50, le=200),
     offset: int = 0,
     sort_by: str = Query("name"),
@@ -130,8 +131,12 @@ async def list_customers(
     # search by person name — the frontend auto-resolves to the parent company on selection.
     if mode == "partner":
         domain = [("active", "=", True), "|", "|", "|", ("customer_rank", ">", 0), ("supplier_rank", ">", 0), ("is_company", "=", True), ("parent_id", "!=", False)]
-    else:
+    elif has_orders:
+        # Explicit filter: only accounts that have at least one confirmed sale order
         domain = [("customer_rank", ">", 0), ("active", "=", True)]
+    else:
+        # Default: all active companies — newly onboarded accounts appear before their first order
+        domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]
 
     if search:
         domain.append("|")
