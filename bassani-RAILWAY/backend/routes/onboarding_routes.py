@@ -1346,13 +1346,20 @@ async def approve_application(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Odoo duplicate check failed: {str(e)}")
 
-    notes_parts = [f"Type: {app.get('business_type', '')}"]
-    if app.get("registration_number"):
-        notes_parts.append(f"Reg: {app['registration_number']}")
-    if app.get("vat_number"):
-        notes_parts.append(f"VAT: {app['vat_number']}")
-    if app.get("trading_name"):
-        notes_parts.append(f"Trading as: {app['trading_name']}")
+    # Build internal notes — prefer new structured fields, fall back to legacy business_type
+    category  = app.get("business_category") or app.get("business_type") or ""
+    entity    = app.get("entity_type", "")
+    if app.get("business_category") == "Other":
+        category = app.get("business_category_other") or "Other"
+    if app.get("entity_type") == "Other":
+        entity = app.get("entity_type_other") or "Other"
+    notes_parts = []
+    if category:  notes_parts.append(f"Category: {category}")
+    if entity:    notes_parts.append(f"Entity: {entity}")
+    if app.get("section22c_licensed"): notes_parts.append("Section 22C Licensed")
+    if app.get("registration_number"): notes_parts.append(f"Reg: {app['registration_number']}")
+    if app.get("vat_number"):          notes_parts.append(f"VAT: {app['vat_number']}")
+    if app.get("trading_name"):        notes_parts.append(f"Trading as: {app['trading_name']}")
     notes_parts.append(f"Onboarded via: {app_id}")
 
     vals: dict = {
@@ -1373,6 +1380,22 @@ async def approve_application(
         partner_id = odoo.create("res.partner", vals)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to create Odoo customer: {str(e)}")
+
+    # Create a child contact person for the primary signatory
+    if app.get("contact_name"):
+        contact_vals: dict = {
+            "name":      app["contact_name"],
+            "parent_id": partner_id,
+            "type":      "contact",
+        }
+        if app.get("contact_position"):    contact_vals["function"] = app["contact_position"]
+        if app.get("contact_email"):       contact_vals["email"]    = app["contact_email"]
+        if app.get("contact_phone"):       contact_vals["phone"]    = app["contact_phone"]
+        if app.get("signatory_id_number"): contact_vals["comment"]  = f"SA ID: {app['signatory_id_number']}"
+        try:
+            odoo.create("res.partner", contact_vals)
+        except Exception:
+            pass  # non-fatal — company is already created
 
     now_approved = datetime.now(timezone.utc)
 

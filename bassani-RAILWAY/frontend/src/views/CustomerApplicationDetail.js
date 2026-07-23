@@ -1461,11 +1461,19 @@ export default function CustomerApplicationDetail() {
             <div className="lg:col-span-2 space-y-5">
 
               <Card icon={Building2} title="Business Details">
-                <Row label="Registered Company Name" value={app.company_name} />
-                <Row label="Trading Name"             value={app.trading_name} />
-                <Row label="Business Type"            value={app.business_type} />
-                <Row label="Registration Number"      value={app.registration_number} mono />
-                <Row label="VAT Number"               value={app.vat_number} mono />
+                <Row label={app.entity_type === "Sole Proprietor" ? "Business / Trading Name" : "Registered Company Name"} value={app.company_name} />
+                <Row label="Trading Name"         value={app.trading_name} />
+                {(app.business_category || app.entity_type) ? (
+                  <>
+                    <Row label="Business Category" value={app.business_category === "Other" ? (app.business_category_other || "Other") : app.business_category} />
+                    <Row label="Legal Entity Type" value={app.entity_type === "Other" ? (app.entity_type_other || "Other") : app.entity_type} />
+                    {app.section22c_licensed && <Row label="Section 22C Licensed" value="Yes" />}
+                  </>
+                ) : (
+                  <Row label="Business Type" value={app.business_type} />
+                )}
+                <Row label="Registration Number" value={app.registration_number} mono />
+                <Row label="VAT Number"          value={app.vat_number} mono />
               </Card>
 
               <Card icon={User} title="Primary Contact">
@@ -1514,11 +1522,19 @@ export default function CustomerApplicationDetail() {
             <div className="space-y-5">
 
               <Card title="Application Details">
-                <MetaRow label="Reference"     value={app.id} />
-                <MetaRow label="Status"        value={<StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />} />
-                <MetaRow label="Business Type" value={app.business_type} />
-                <MetaRow label="Submitted by"  value={app.reseller_name} />
-                <MetaRow label="Submitted on"  value={fmtDate(app.submitted_at)} />
+                <MetaRow label="Reference"    value={app.id} />
+                <MetaRow label="Status"       value={<StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />} />
+                {(app.business_category || app.entity_type) ? (
+                  <>
+                    <MetaRow label="Category" value={app.business_category === "Other" ? (app.business_category_other || "Other") : app.business_category} />
+                    <MetaRow label="Entity"   value={app.entity_type === "Other" ? (app.entity_type_other || "Other") : app.entity_type} />
+                    {app.section22c_licensed && <MetaRow label="Sec 22C" value="Licensed" />}
+                  </>
+                ) : (
+                  <MetaRow label="Business Type" value={app.business_type} />
+                )}
+                <MetaRow label="Submitted by" value={app.reseller_name} />
+                <MetaRow label="Submitted on" value={fmtDate(app.submitted_at)} />
               </Card>
 
               {/* Countersign assignment — only relevant once customer has signed back */}
