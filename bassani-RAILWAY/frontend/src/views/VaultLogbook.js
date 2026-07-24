@@ -7,7 +7,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
-import { SyncBadge, fmtWhen } from "./BatchRegistry";
+import { SyncBadge, fmtWhen, stageLabel, batchTitle } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
 /* Phase 13.0.3 + 13.0.4 — Vault Transaction Logbook + Vault Ledger.
@@ -56,6 +56,11 @@ export default function VaultLogbook() {
   const [saving, setSaving]       = useState(false);
   const batchBoxRef = useRef(null);
 
+  // Batches currently out at manicuring (issued more than returned) — used to
+  // narrow the picker when recording a return, so the operator can only pick
+  // from batches that are actually out.
+  const [manicuringOut, setManicuringOut] = useState(null);   // Set | null (null = no filter)
+
   // Sync
   const [syncConfirm, setSyncConfirm] = useState(false);
   const [syncing, setSyncing]         = useState(false);
@@ -100,6 +105,41 @@ export default function VaultLogbook() {
   const canSubmit = batch && (isReturn
     ? (parseFloat(mQty) > 0 || parseFloat(tQty) > 0)
     : parseFloat(qty) > 0);
+
+  // Work out which batches are still out at manicuring whenever Return is selected
+  useEffect(() => {
+    if (!isReturn) { setManicuringOut(null); return; }
+    let stale = false;
+    (async () => {
+      try {
+        const [iss, ret] = await Promise.all([
+          api.get("/api/production/vault/movements", { params: { type: "issue_manicuring", limit: 500 } }),
+          api.get("/api/production/vault/movements", { params: { type: "return_manicuring", limit: 500 } }),
+        ]);
+        const out = {};
+        iss.data.items.forEach(m => { out[m.batch_id] = (out[m.batch_id] || 0) + (m.qty_g || 0); });
+        ret.data.items.forEach(m => {
+          const back = (m.outputs || []).reduce((s, o) => s + (o.qty_g || 0), 0) + (m.waste_g || 0);
+          if (out[m.batch_id] != null) out[m.batch_id] -= back;
+        });
+        if (!stale) setManicuringOut(new Set(Object.keys(out).filter(k => out[k] > 0.001)));
+      } catch {
+        if (!stale) setManicuringOut(null);   // on failure, fall back to unfiltered
+      }
+    })();
+    return () => { stale = true; };
+  }, [isReturn]);
+
+  const displayOptions = isReturn && manicuringOut
+    ? batchOptions.filter(b => manicuringOut.has(b.batch_id))
+    : batchOptions;
+
+  // Current recorded vault balance for the selected batch (null when none selected)
+  const vaultBalance = batch
+    ? (ledger.rows.find(r => r.batch_id === batch.batch_id)?.qty_g ?? 0)
+    : null;
+  const overIssue = batch && !isReturn && type !== "receive"
+    && parseFloat(qty) > 0 && parseFloat(qty) > vaultBalance;
 
   async function submit() {
     if (!canSubmit) return;
@@ -226,21 +266,49 @@ export default function VaultLogbook() {
                 />
                 {batchOpen && (
                   <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
-                    {batchOptions.length === 0 ? (
-                      <p className="text-xs text-gray-400 px-3 py-2">No matching batches. Generate it on the Batch Registry page first.</p>
-                    ) : batchOptions.map(b => (
+                    {displayOptions.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-3 py-2">
+                        {isReturn
+                          ? "No batches are recorded as out at manicuring. Record the Issue to Manicuring first."
+                          : "No matching batches. Generate it on the Batch Registry page first."}
+                      </p>
+                    ) : displayOptions.map(b => (
                       <button
                         key={b.batch_id}
                         onClick={() => { setBatch(b); setBatchQuery(""); setBatchOpen(false); }}
                         className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 flex justify-between items-center gap-2"
+                        title={batchTitle(b.batch_id, b.product_name)}
                       >
                         <span className="font-mono text-gray-800 dark:text-gray-200 truncate">{b.batch_id}</span>
-                        <span className="text-xs text-gray-400 truncate">{b.product_name}</span>
+                        <span className="text-xs text-gray-400 truncate shrink-0">
+                          {b.product_name}{stageLabel(b.batch_id) ? ` · ${stageLabel(b.batch_id)}` : ""}
+                        </span>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
+
+              {/* Selected batch summary — plain-language confirmation of what was picked */}
+              {batch && (
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2.5">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Product: <span className="font-semibold text-gray-800 dark:text-gray-100">{batch.product_name}</span>
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Stage: <span className="font-semibold text-gray-800 dark:text-gray-100">{stageLabel(batch.batch_id) || "Base batch"}</span>
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">
+                    In vault now: <span className={`font-semibold ${vaultBalance > 0 ? "text-gray-800 dark:text-gray-100" : "text-amber-600 dark:text-amber-400"}`}>{fmtQty(vaultBalance)}</span>
+                  </span>
+                </div>
+              )}
+
+              {overIssue && (
+                <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">
+                  This is more than the {fmtQty(vaultBalance)} recorded in the vault for this batch. You can still record it, but double-check the weight and the batch before saving.
+                </p>
+              )}
 
               {!isReturn && (
                 <div>
@@ -349,7 +417,12 @@ export default function VaultLogbook() {
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {ledger.rows.map(r => (
                       <tr key={r.batch_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">{r.batch_id}</td>
+                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap" title={batchTitle(r.batch_id, r.product_name)}>
+                          {r.batch_id}
+                          {stageLabel(r.batch_id) && (
+                            <span className="block font-sans text-xs text-gray-400 mt-0.5">{stageLabel(r.batch_id)}</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{r.product_name}</td>
                         <td className={`px-5 py-3 text-right font-semibold whitespace-nowrap ${
                           r.qty_g < 0 ? "text-red-600 dark:text-red-400" : r.qty_g === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-800 dark:text-gray-100"
@@ -391,10 +464,13 @@ export default function VaultLogbook() {
                       <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors align-top">
                         <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(m.created_at)}</td>
                         <td className="px-5 py-3 text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap">{MOVE_LABEL[m.type] || m.type}</td>
-                        <td className="px-5 py-3 font-mono text-xs text-gray-700 dark:text-gray-200">
-                          {m.batch_id}
+                        <td className="px-5 py-3 text-xs" title={batchTitle(m.batch_id, m.product_name)}>
+                          <span className="font-mono text-gray-700 dark:text-gray-200">{m.batch_id}</span>
+                          <span className="block text-gray-500 dark:text-gray-400 mt-0.5">
+                            {m.product_name}{stageLabel(m.batch_id) ? ` · ${stageLabel(m.batch_id)}` : ""}
+                          </span>
                           {(m.outputs || []).length > 0 && (
-                            <span className="block text-gray-400 mt-0.5">
+                            <span className="block font-mono text-gray-400 mt-0.5">
                               {m.outputs.map(o => `${o.batch_id} (+${fmtQty(o.qty_g)})`).join(", ")}
                               {m.waste_g != null && m.waste_g > 0 && `, waste ${fmtQty(m.waste_g)}`}
                             </span>

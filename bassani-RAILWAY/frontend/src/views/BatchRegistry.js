@@ -23,6 +23,27 @@ export function SyncBadge({ status }) {
 export const fmtWhen = (v) =>
   v ? new Date(v).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg" }) : "";
 
+// Plain-language stage names, keyed by the batch ID's trailing suffix.
+// Mirrors STAGE_SUFFIXES in backend services/batch_id.py.
+export const STAGE_LABELS = {
+  D: "Drying", U: "Unmanicured", M: "Manicured", P: "Pops", T: "Trim",
+  PC: "Crushed (standard)", TC: "Crushed (budget)",
+  PCPR: "Pre Roll (standard)", TCPR: "Pre Roll (budget)",
+  PCPRPTT: "Pop Top Tube (standard)", TCPRPTT: "Pop Top Tube (budget)",
+  PCPRPJR: "Jar (standard)", TCPRPJR: "Jar (budget)",
+  MP1G: "Mylar 1g (Manicured)", MP3G: "Mylar 3g (Manicured)", MP5G: "Mylar 5g (Manicured)",
+  PP1G: "Mylar 1g (Pops)", PP3G: "Mylar 3g (Pops)", PP5G: "Mylar 5g (Pops)",
+};
+
+export const stageLabel = (batchId) => {
+  const tail = (batchId || "").split("-").pop();
+  return STAGE_LABELS[tail] || null;
+};
+
+// Hover text for any batch ID: "Dantes Inferno — Unmanicured"
+export const batchTitle = (batchId, productName) =>
+  [productName, stageLabel(batchId)].filter(Boolean).join(" — ");
+
 export default function BatchRegistry() {
   const { can } = useAuth();
   const [meta, setMeta]         = useState(null);
@@ -354,11 +375,11 @@ export default function BatchRegistry() {
                         onClick={() => openTimeline(b.batch_id)}
                         className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer"
                       >
-                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">{b.batch_id}</td>
+                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap" title={batchTitle(b.batch_id, b.product_name)}>{b.batch_id}</td>
                         <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{b.product_name}</td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400">
+                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                           {b.stage_suffix
-                            ? <span className="font-mono">-{b.stage_suffix}</span>
+                            ? <><span className="font-mono">-{b.stage_suffix}</span><span className="text-gray-400"> · {STAGE_LABELS[b.stage_suffix] || ""}</span></>
                             : <span className="text-gray-300 dark:text-gray-600">Base</span>}
                         </td>
                         <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(b.created_at)}</td>
@@ -487,12 +508,13 @@ export default function BatchRegistry() {
                 <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Stages of this batch</p>
                 <div className="flex flex-wrap gap-1.5">
                   {timeline.stages.map(s => (
-                    <span key={s.batch_id} className={`font-mono text-xs px-2 py-1 rounded-lg border ${
+                    <span key={s.batch_id} title={batchTitle(s.batch_id, s.product_name)} className={`font-mono text-xs px-2 py-1 rounded-lg border ${
                       s.batch_id === timeline.batch.batch_id
                         ? "border-bassani-300 bg-bassani-50 text-bassani-700 dark:bg-bassani-900/30 dark:border-bassani-700 dark:text-bassani-300"
                         : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
                     }`}>
                       {s.batch_id}
+                      {stageLabel(s.batch_id) && <span className="font-sans text-gray-400"> · {stageLabel(s.batch_id)}</span>}
                     </span>
                   ))}
                 </div>

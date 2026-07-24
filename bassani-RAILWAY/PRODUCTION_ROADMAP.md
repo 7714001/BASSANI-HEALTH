@@ -3025,6 +3025,7 @@ Work splits into two tracks based on Odoo prerequisites. Track A can start immed
 - [x] Batch field is a registry picker only — no free-text batch entry exists anywhere in the module
 - [x] Quantities normalised to grams; actor + timestamp captured from the logged-in user automatically
 - [x] Every movement audit-logged via `audit_log()`
+- [x] Usability hardening (2026-07-24): selected-batch summary panel (product, plain-language stage, current vault balance) shown before saving; soft warning when issuing more than the recorded vault balance (does not block); Return from Manicuring picker limited to batches actually out at manicuring (issued minus returned, computed client-side); plain-language stage labels and hover tooltips (`product — stage`) on batch IDs across the picker, registry, ledger, movement history, and timeline
 
 **13.0.4 — Vault Ledger + batch timeline — Complete 2026-07-24**
 - [x] Vault holdings per batch computed from the movement log, badged "pending sync" while `GACP_ODOO_WRITES=off` (once live and flushed, Odoo `stock.quant` is the authoritative figure)

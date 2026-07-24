@@ -1236,9 +1236,10 @@ Both production pages have a **Guide** button at the top right. It opens a plain
    - **Issue to Packing** — stock going out to the packing room
    - **Issue to Manicuring** — unmanicured bulk going out for manicuring
    - **Return from Manicuring** — manicured flower and trim coming back in
-2. Search for the batch in the registry picker
-3. Enter the weight in grams (for a return, enter the manicured weight and the trim weight separately — the system books them in under the correct `-M` and `-T` batch numbers and works out the processing waste)
-4. Add a note if anything was unusual, then click **Record Movement**
+2. Search for the batch in the registry picker. Every entry shows the product name and stage next to the batch number, so you never need to memorise the numbering. When recording a Return from Manicuring, the picker only offers batches that are actually out at manicuring.
+3. Check the summary bar that appears under the picker: it shows the product, the stage in plain language, and how much of that batch is in the vault right now. If you try to issue more than the vault holds, a warning appears (you can still save it, but check the weight and batch first).
+4. Enter the weight in grams (for a return, enter the manicured weight and the trim weight separately — the system books them in under the correct `-M` and `-T` batch numbers and works out the processing waste)
+5. Add a note if anything was unusual, then click **Record Movement**
 
 **The Vault Ledger:**
 The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.
