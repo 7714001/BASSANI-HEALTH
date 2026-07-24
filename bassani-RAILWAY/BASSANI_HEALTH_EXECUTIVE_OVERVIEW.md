@@ -344,6 +344,16 @@ Building the Production Module in-house, integrated directly into this system, g
 
 **Cost.** A purpose-built integrated module is a one-time development cost. A third-party platform is a recurring subscription for as long as Bassani operates, with pricing that Bassani does not control.
 
+### First Delivery — The Vault Movement Module (Built)
+
+The first piece of Phase 13 is already built and ready to demonstrate: a digital replacement for the vault's paper transaction logbook.
+
+- **Batch numbers are generated, never typed.** The operator picks the batch type and strain; the system builds the batch number to Bassani's own V6 standard, with the correct sequence and date. This eliminates the formatting inconsistencies present in the current spreadsheets, which are a real audit exposure.
+- **Every vault movement is recorded against a batch** — stock received, issued to packing, issued to manicuring, and returned from manicuring — with the operator's name and the exact time captured automatically.
+- **A live vault ledger** answers the question the spreadsheet never could: how much of each batch is in the vault right now. Every figure traces to a named person and a recorded movement.
+- **Stock system integration is built in and ready.** Every movement is queued as a real stock transaction. The moment access to the production facility's stock system is confirmed, the queue is synchronised and all future movements write through automatically — nothing recorded in the interim is lost.
+- **A dedicated vault custodian login** sees only the vault screens — none of the commercial system.
+
 ---
 
 *For technical documentation, API references, and the full phase-by-phase roadmap, see `PRODUCTION_ROADMAP.md`.*

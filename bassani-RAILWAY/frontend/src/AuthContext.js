@@ -4,8 +4,8 @@ import api from "./api";
 const AuthContext = createContext(null);
 
 // Roles evaluated against their stored `permissions` object — mirrors
-// backend auth.py's ADMIN_ROLES | TICKET_ROLES gate in require_permission().
-const PERMISSION_ROLES = ["admin", "super_admin", "sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"];
+// backend auth.py's ADMIN_ROLES | TICKET_ROLES | PRODUCTION_ROLES gate in require_permission().
+const PERMISSION_ROLES = ["admin", "super_admin", "sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist", "vault_custodian"];
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);

@@ -51,9 +51,11 @@ def company_context(company_id: Optional[int]) -> dict:
 async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
     role = current_user.get("role")
 
-    # Supervisor / packer: fixed to their assigned warehouse
-    if role in ("warehouse_supervisor", "packer"):
-        return current_user.get("warehouse_id")
+    # Supervisor / packer / vault custodian: fixed to their assigned warehouse
+    # (vault_custodian will be pinned to the GACP warehouse once access to it
+    # is confirmed; falls through to the global default until then)
+    if role in ("warehouse_supervisor", "packer", "vault_custodian"):
+        return current_user.get("warehouse_id") or await _get_global_default_warehouse_id()
 
     # Reseller: use their profile warehouse; fall back to global default
     if role == "reseller":

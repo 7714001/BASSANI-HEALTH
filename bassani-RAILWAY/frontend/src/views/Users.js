@@ -159,6 +159,15 @@ const PERMISSION_GROUPS = [
       { key: "bank_reconciliation", label: "Import bank statements and match credits to open invoices" },
     ],
   },
+  {
+    domain: "production",
+    label: "Production (GACP Facility)",
+    actions: [
+      { key: "batch_generate", label: "Generate batch IDs and view the batch registry" },
+      { key: "vault",          label: "Record vault movements and view the vault ledger" },
+      { key: "manage",         label: "Sync staged stock records, readiness probe and strain list (admin)" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -170,6 +179,7 @@ const ROLE_OPTIONS = [
   { value: "finance",                 label: "Finance",                     adminOnly: false },
   { value: "qa_manager",              label: "QA Manager",                  adminOnly: false },
   { value: "responsible_pharmacist",  label: "Responsible Pharmacist",      adminOnly: false },
+  { value: "vault_custodian",         label: "Vault Custodian (production)", adminOnly: false },
 ];
 
 const EDITABLE_ROLES = [
@@ -181,6 +191,7 @@ const EDITABLE_ROLES = [
   { value: "responsible_pharmacist",  label: "Responsible Pharmacist"   },
   { value: "warehouse_supervisor",    label: "Warehouse Supervisor"     },
   { value: "packer",                  label: "Packer"                   },
+  { value: "vault_custodian",         label: "Vault Custodian"          },
 ];
 
 const ROLE_COLORS = {
@@ -188,6 +199,7 @@ const ROLE_COLORS = {
   admin:                   "blue",
   warehouse_supervisor:    "amber",
   packer:                  "green",
+  vault_custodian:         "teal",
   reseller:                "teal",
   sales:                   "pink",
   orders_clerk:            "amber",
@@ -223,10 +235,13 @@ const DEFAULT_ADMIN_PERMS = {
   settings:          { manage: false },
   signing_authority: { sign: false },
   finance:           { bank_reconciliation: false },
+  production:        { batch_generate: false, vault: false, manage: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
 const TICKET_ROLES = new Set(["sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"]);
+// Phase 13 production roles — same fixed-defaults model as ticket roles.
+const PRODUCTION_ROLES = new Set(["vault_custodian"]);
 
 const ROLE_DEFAULT_PERMS = {
   sales: {
@@ -324,6 +339,26 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: true },
     finance:           { bank_reconciliation: false },
   },
+  vault_custodian: {
+    products:   { manage: false },
+    orders:     { view: false, confirm: false, cancel: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
+    commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
+    resellers:  { view: false, manage: false },
+    invoices:   { view: false, record_payment: false },
+    reports:    { view: false, export: false },
+    healthcare: { view: false, manage: false },
+    users:      { manage: false },
+    warehouse:  { view: false, supervise: false },
+    audit:      { view: false },
+    tickets:           { sales: false, orders: false, finance_confirm: false, qa_approve: false, rp_approve: false, manage: false },
+    inbox:             { view: false },
+    orders_inbox:      { view: false },
+    onboarding:        { inbox: false },
+    signing_authority: { sign: false },
+    finance:           { bank_reconciliation: false },
+    production:        { batch_generate: true, vault: true, manage: false },
+  },
 };
 
 // The core ticket permission per role — always checked and cannot be toggled off in the UI.
@@ -333,6 +368,7 @@ const ROLE_LOCKED_PERMS = {
   finance:                { tickets: { finance_confirm: true } },
   qa_manager:             { tickets: { qa_approve: true } },
   responsible_pharmacist: { tickets: { rp_approve: true } },
+  vault_custodian:        { production: { batch_generate: true, vault: true } },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -406,7 +442,7 @@ export default function Users() {
 
   const permsForRole = (role) => {
     if (role === "admin") return JSON.parse(JSON.stringify(DEFAULT_ADMIN_PERMS));
-    if (TICKET_ROLES.has(role)) return JSON.parse(JSON.stringify(ROLE_DEFAULT_PERMS[role]));
+    if (TICKET_ROLES.has(role) || PRODUCTION_ROLES.has(role)) return JSON.parse(JSON.stringify(ROLE_DEFAULT_PERMS[role]));
     return JSON.parse(JSON.stringify(EMPTY_PERMISSIONS));
   };
 
@@ -424,7 +460,7 @@ export default function Users() {
       const body = { ...createForm };
       if (createForm.role === "admin" || TICKET_ROLES.has(createForm.role)) body.permissions = createPerms;
       if (createForm.role !== "packer") delete body.display_name;
-      if (["warehouse_supervisor", "packer"].includes(createForm.role) && createForm.warehouse_id) {
+      if (["warehouse_supervisor", "packer", "vault_custodian"].includes(createForm.role) && createForm.warehouse_id) {
         body.warehouse_id = parseInt(createForm.warehouse_id);
       } else {
         delete body.warehouse_id;
@@ -646,6 +682,7 @@ export default function Users() {
               { value: "finance",                label: "Finance" },
               { value: "qa_manager",             label: "QA Manager" },
               { value: "responsible_pharmacist", label: "RP" },
+              { value: "vault_custodian",        label: "Vault" },
             ].map(r => (
               <FilterPill key={r.value} label={r.label} active={roleFilter === r.value}
                 onClick={() => setRoleFilter(r.value)} />
@@ -717,7 +754,7 @@ export default function Users() {
               enableSorting: false,
               meta: { className: "hidden md:table-cell" },
               cell: ({ row: { original: u } }) => (
-                ["warehouse_supervisor", "packer"].includes(u.role)
+                ["warehouse_supervisor", "packer", "vault_custodian"].includes(u.role)
                   ? (warehouseName(u.warehouse_id)
                       ? <span className="text-xs text-gray-600">{warehouseName(u.warehouse_id)}</span>
                       : <span className="text-xs text-amber-600 italic">Unassigned</span>)
@@ -762,7 +799,7 @@ export default function Users() {
                       <ShieldCheck size={12} />
                     </BtnSecondary>
                   )}
-                  {["warehouse_supervisor", "packer"].includes(u.role) && (
+                  {["warehouse_supervisor", "packer", "vault_custodian"].includes(u.role) && (
                     <BtnSecondary size="sm" onClick={() => openWarehouse(u)} title="Assign warehouse">
                       <Warehouse size={12} />
                     </BtnSecondary>
@@ -889,7 +926,7 @@ export default function Users() {
                 />
               </FormGroup>
             )}
-            {["warehouse_supervisor", "packer"].includes(createForm.role) && (
+            {["warehouse_supervisor", "packer", "vault_custodian"].includes(createForm.role) && (
               <FormGroup label="Warehouse" className="col-span-2">
                 <Select
                   value={createForm.warehouse_id}

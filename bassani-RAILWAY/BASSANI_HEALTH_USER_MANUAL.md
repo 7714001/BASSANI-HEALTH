@@ -1211,6 +1211,43 @@ Tap each item as you pack it. The item ticks in real time on both the supervisor
 
 ---
 
+## Vault Custodian (Production Facility)
+
+**Role in system:** `vault_custodian`  
+**Access:** Batch Registry and Vault Logbook only — nothing from the sales side
+
+The vault custodian records every movement of stock into and out of the production vault. This replaces the paper Vault Transaction Logbook. Your name and the exact time are recorded automatically on every entry, and batch numbers are always generated or picked from a list — never typed by hand.
+
+**Logging in:**
+Log in at the normal portal address. You land directly on the Vault Logbook.
+
+**The Guide button:**
+Both production pages have a **Guide** button at the top right. It opens a plain-language reference explaining how batch numbers are put together (the four batch types, the stage letters and what each one means, and the finished goods packaging codes), what each of the four vault movements is for, and what the "Staged" label means. Use it any time you are unsure — you never need the paper standard.
+
+**Generating a batch number (Batch Registry page):**
+1. Pick the batch type: Single Strain, Mixed Room (API), Blend, or Gummy / Product Lot
+2. Search for the strain (or flavour) by name or shortcode
+3. The next batch number appears automatically in the preview box, built to the Bassani standard with the correct sequence number and today's date
+4. Click **Create Batch**. The number is now in the registry and ready to use on movements
+
+**Recording a vault movement (Vault Logbook page):**
+1. Choose the movement type:
+   - **Receive to Vault** — stock arriving into the vault (from production, from an external supplier, or an opening balance when first setting up)
+   - **Issue to Packing** — stock going out to the packing room
+   - **Issue to Manicuring** — unmanicured bulk going out for manicuring
+   - **Return from Manicuring** — manicured flower and trim coming back in
+2. Search for the batch in the registry picker
+3. Enter the weight in grams (for a return, enter the manicured weight and the trim weight separately — the system books them in under the correct `-M` and `-T` batch numbers and works out the processing waste)
+4. Add a note if anything was unusual, then click **Record Movement**
+
+**The Vault Ledger:**
+The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.
+
+**About the "Staged" label:**
+While the connection to the production facility's stock system is being finalised, movements show a "Staged" label. Nothing is lost — every entry is queued and will be written into the stock system automatically once the connection is switched on. Keep recording as normal.
+
+---
+
 ## Admin Users
 
 **Role in system:** `admin`  
@@ -2054,6 +2091,9 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | RP approve | Rookshanna Hussain (responsible_pharmacist) |
 | Assign packer to order | Warehouse Supervisor |
 | Tick items on handheld | Packer |
+| Generate a production batch number | Vault Custodian or anyone with `production.batch_generate` |
+| Record a vault stock movement | Vault Custodian or anyone with `production.vault` |
+| Sync staged vault records to the stock system | Super admin or admin with `production.manage` |
 | Generate commission statements | Admin with `commission.generate_statements` |
 | Mark commission statement paid | Admin with `commission.mark_paid` |
 | Approve customer onboarding application | Admin with `customers.approve_onboarding` |

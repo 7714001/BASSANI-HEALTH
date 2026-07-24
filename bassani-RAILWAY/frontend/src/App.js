@@ -57,6 +57,8 @@ import BankReconciliation   from "./views/BankReconciliation";
 import Backorders           from "./views/Backorders";
 import OrderPassport        from "./views/OrderPassport";
 import OrderMonitor         from "./views/OrderMonitor";
+import BatchRegistry        from "./views/BatchRegistry";
+import VaultLogbook         from "./views/VaultLogbook";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -145,7 +147,7 @@ function AppLayout({ children }) {
 }
 
 export default function App() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
 
   return (
     <>
@@ -170,7 +172,17 @@ export default function App() {
         <Route path="/profile" element={<AuthRequired><AppLayout><MyProfile /></AppLayout></AuthRequired>} />
 
         <Route path="/" element={
-          <ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>
+          <ProtectedRoute>
+            {user?.role === "vault_custodian" && can("production.vault")
+              ? <Navigate to="/production/vault" replace />
+              : <AppLayout><Dashboard /></AppLayout>}
+          </ProtectedRoute>
+        } />
+        <Route path="/production/batches" element={
+          <ProtectedRoute permission="production.batch_generate"><AppLayout><BatchRegistry /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/production/vault" element={
+          <ProtectedRoute permission="production.vault"><AppLayout><VaultLogbook /></AppLayout></ProtectedRoute>
         } />
         <Route path="/products" element={
           <ProtectedRoute>

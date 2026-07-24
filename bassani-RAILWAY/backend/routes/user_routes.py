@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from auth import (
     require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS,
-    ALL_ROLES, TICKET_ROLES, ROLE_DEFAULT_PERMISSIONS,
+    ALL_ROLES, TICKET_ROLES, PRODUCTION_ROLES, ROLE_DEFAULT_PERMISSIONS,
 )
 from database import col
 from middleware.audit import audit_log
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 SUPER_ADMIN_ONLY_ROLES = {"admin", "super_admin"}
 
 # Roles that appear in the main portal (warehouse/packer roles are separate HTML pages)
-PORTAL_ROLES = {"admin", "warehouse_supervisor", "packer"} | TICKET_ROLES
+PORTAL_ROLES = {"admin", "warehouse_supervisor", "packer"} | TICKET_ROLES | PRODUCTION_ROLES
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ def _permissions_for_new_role(role: str, supplied: Optional[dict]) -> Optional[d
     """Return the permissions dict to store, or None for roles that don't use it."""
     if role == "admin":
         return supplied if supplied else DEFAULT_ADMIN_PERMISSIONS
-    if role in TICKET_ROLES:
+    if role in TICKET_ROLES or role in PRODUCTION_ROLES:
         # Start from the role's default set; merge any caller-supplied overrides on top.
         base = dict(ROLE_DEFAULT_PERMISSIONS[role])
         if supplied:
@@ -174,7 +174,7 @@ async def create_user(
         doc["email"] = body.email.lower().strip()
     if body.display_name:
         doc["display_name"] = body.display_name
-    if body.role in ("warehouse_supervisor", "packer") and body.warehouse_id:
+    if body.role in ("warehouse_supervisor", "packer", "vault_custodian") and body.warehouse_id:
         doc["warehouse_id"] = body.warehouse_id
 
     perms = _permissions_for_new_role(body.role, body.permissions)

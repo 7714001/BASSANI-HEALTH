@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     r2_bucket:            str = "bassani-health-docs"
     r2_endpoint:          str = ""
     google_places_api_key: str = ""
+    # Phase 13 — GACP vault module. Writes stay staged (recorded with their
+    # intended Odoo payload, not sent) until GACP Odoo access is confirmed.
+    gacp_odoo_writes:  str = "off"   # "on" enables live Odoo writes + staged-queue sync
+    gacp_warehouse_id: int = 0       # Odoo stock.warehouse id of the GACP facility (0 = not configured)
 
     class Config:
         env_file = ".env"

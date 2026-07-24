@@ -22,9 +22,14 @@ ALL_ROLES = {
     # Phase 8 ticketing roles — each maps 1:1 to a named staff member and a
     # single fixed ticket permission (see TICKET_ROLE_PERMISSIONS below).
     "sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist",
+    # Phase 13 production roles — upstream GACP facility staff. Same narrow
+    # permission-gate model as ticket roles, but kept in their own set so
+    # commercial-pipeline logic keyed on TICKET_ROLES never picks them up.
+    "vault_custodian",
 }
 ADMIN_ROLES = {"super_admin", "admin"}  # roles that access the main React portal
 TICKET_ROLES = {"sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"}
+PRODUCTION_ROLES = {"vault_custodian"}
 
 # Default for newly created admin accounts — view-only on sensitive operations.
 DEFAULT_ADMIN_PERMISSIONS: dict = {
@@ -48,6 +53,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "signing_authority":  {"sign": False},
     "labels":             {"print": False},
     "finance":            {"bank_reconciliation": False},
+    "production":         {"batch_generate": False, "vault": False, "manage": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -72,6 +78,7 @@ FULL_PERMISSIONS: dict = {
     "signing_authority":  {"sign": True},
     "labels":             {"print": True},
     "finance":            {"bank_reconciliation": True},
+    "production":         {"batch_generate": True, "vault": True, "manage": True},
 }
 
 # Full default permission sets for each staff role.
@@ -101,6 +108,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -123,6 +131,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": True},
         "finance":           {"bank_reconciliation": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -145,6 +154,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": True},
+        "production":        {"batch_generate": False, "vault": False, "manage": False},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -167,6 +177,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -189,6 +200,33 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False},
+    },
+    # Phase 13 — vault custodian (Patricia). Production-side only: generates
+    # batch IDs and records vault movements. Sees nothing of the commercial
+    # pipeline (orders, customers, invoices, commissions).
+    "vault_custodian": {
+        "products":   {"manage": False},
+        "orders":     {"view": False, "confirm": False, "cancel": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
+        "resellers":  {"view": False, "manage": False},
+        "invoices":   {"view": False, "record_payment": False},
+        "reports":    {"view": False, "export": False},
+        "healthcare": {"view": False, "manage": False},
+        "users":      {"manage": False},
+        "warehouse":  {"view": False, "supervise": False},
+        "audit":      {"view": False},
+        "tickets":    {"sales": False, "orders": False, "finance_confirm": False, "qa_approve": False, "rp_approve": False, "manage": False},
+        "inbox":             {"view": False},
+        "orders_inbox":      {"view": False},
+        "onboarding":        {"inbox": False},
+        "suppliers":         {"view": False, "manage": False},
+        "settings":          {"manage": False},
+        "signing_authority": {"sign": False},
+        "labels":            {"print": False},
+        "finance":           {"bank_reconciliation": False},
+        "production":        {"batch_generate": True, "vault": True, "manage": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias
@@ -326,9 +364,10 @@ def require_permission(permission: str) -> Callable:
         if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
             return current_user
 
-        # Only admin-tier and ticketing-role users reach the permission check —
-        # ticketing roles never gain require_admin access, just this narrower gate.
-        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        # Only admin-tier, ticketing-role and production-role users reach the
+        # permission check — these narrow roles never gain require_admin access,
+        # just this granular gate.
+        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES | PRODUCTION_ROLES):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied",
@@ -364,7 +403,7 @@ def require_any_permission(*permissions: str) -> Callable:
         if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
             return current_user
 
-        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES | PRODUCTION_ROLES):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
         perms = current_user.get("permissions") or {}
