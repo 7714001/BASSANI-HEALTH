@@ -24,7 +24,7 @@
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
-| 13 | Production & Cultivation Module (GrowerIQ In-House) | 🔵 Concept — Scoping In Progress | Odoo architecture confirmed (separate legal entities, intercompany PO correct, BoMs not yet built, sub-locations not yet configured). Track A (batch ID generation, GACP logbook, intercompany visibility) can start immediately. Track B gated on Odoo BoM + location setup. SAHPRA reporting requirements not yet obtained. |
+| 13 | Production & Cultivation Module (GrowerIQ In-House) | 🟡 In Progress — 13.0 | 13.0 Vault Movement Module (Track A starter) scoped 2026-07-24 from live Patricia Vault Transaction Logbook: batch ID generator + registry, vault movement form, staged Odoo writes (pending GACP access confirmation), vault ledger, `vault_custodian` role. Track B still gated on Odoo BoM + location setup. SAHPRA reporting requirements not yet obtained. |
 | 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.4 complete — 2026-07-16 |
@@ -2938,8 +2938,8 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 **Goal:** Build Bassani Health's own seed-to-sale production tracking system into the portal, replacing the need for a third-party platform like GrowerIQ. Covers the full upstream lifecycle — cultivation through to finished goods entering the vault — with SAHPRA compliance reporting as the primary regulatory output and yield intelligence as the primary operational output.
 
 **Estimate:** To be scoped — significant. Likely 2–3 months of active development.  
-**Status:** 🔵 Concept — Needs Scoping  
-**Blocked on:** SAHPRA reporting requirements (exact fields, formats, submission method) must be obtained before any data model can be finalised. Do not design the schema without them.
+**Status:** 🟡 In Progress — 13.0 Vault Movement Module (Track A starter) in build; the rest of the phase remains concept pending SAHPRA requirements  
+**Blocked on:** SAHPRA reporting requirements (exact fields, formats, submission method) must be obtained before the *full* production data model can be finalised. 13.0 is deliberately scoped to not depend on them — it digitises an existing live logbook and uses only the confirmed V6 batch standard.
 
 > **Origin:** Bassani Health attended a meeting with GrowerIQ (June 2026) to evaluate their platform. Decision is to build the equivalent in-house, retaining full data ownership and tight integration with the existing commercial portal. The commercial portal already covers the downstream (vault → sales); this phase covers the upstream (cultivation → vault).
 
@@ -2989,6 +2989,60 @@ Work splits into two tracks based on Odoo prerequisites. Track A can start immed
 | Full traceability chain | All of the above + vault IN scan linking lot to production session |
 
 **Recommended sequencing:** Deliver Track A first — it provides immediate value (eliminates spreadsheet, stops format drift) and has no Odoo configuration dependency. While Track A is being built, agree the BoM structure and sub-location setup with Luca/Tristan so Track B can proceed without delay.
+
+---
+
+### 13.0 — Vault Movement Module (Track A Starter) — In Progress, scoped 2026-07-24
+
+> **Source document:** `Patricia Logbook for Nick (1).xlsx` — a live single-sheet **Vault Transaction Logbook** (77 rows, 1–5 June 2026) received 2026-07-24. Patricia (vault custodian) records every movement across the vault threshold: Date, Time, Strain, Batch #, Reason (Storage = IN / Packing = OUT / Manicuring = OUT), Weight Received, Weight Removed, Trim Weight Received. Process note from the workbook: all flower sent to Manicuring is Unmanicured Bulk (`-U`); it returns same day as Manicured (`-M`) plus trim weight (`-T`) — the batch suffix amendment happening at the vault door. Observed data problems that motivate this module: no running balance (current vault stock is unknowable from the sheet), malformed batch IDs (`BIBG--GGL204-040626`, trailing hyphens, same batch typo'd two ways in one day), mixed units (`0.290kg` / `5g` / `0.470KG`), 18 half-empty rows with no batch or weight, almost no times, no actor identity, and an undocumented `BIBG-` prefix family not in the V6 standard (externally sourced flower — awaiting Bassani clarification).
+
+**Purpose:** First concrete Track A delivery and the business demo for the full Phase 13 build. Digitises the vault logbook with portal-enforced batch IDs and real Odoo stock movements — behind a staged-writes switch until GACP Odoo access is confirmed. The headline demo value is **batch number consistency**: IDs are generated, never typed, and every batch has a live movement timeline.
+
+**Open questions (asked of Bassani 2026-07-24, none block the build):**
+1. What does the `BIBG-` prefix denote? (Looks like bought-in bulk from an external supplier — determines whether those receipts are `purchase.order` goods receipts or internal transfers, and whether the V6 standard needs a fourth prefix family.)
+2. Is GACP a company on the **same Odoo database** (service account just needs the company added to its allowed companies) or a **separate Odoo instance** (second XML-RPC connection — real architectural work)? The confirmed intercompany PO/SO automation suggests same-DB, but do not build on the assumption.
+3. If same DB: add the GACP company to the service account's allowed companies with inventory/manufacturing rights.
+
+**Staged Odoo writes (core design decision):** All Odoo stock calls for this module go through a single `VaultOdooWriter` adapter with a mode switch (`GACP_ODOO_WRITES=off|on` Railway env var). In `off` mode every movement is fully recorded in `vault_movements` (MongoDB) together with the exact Odoo payload it *would* send, stamped `odoo_sync: "staged"`. When GACP access is confirmed, an admin "Sync staged movements" action replays the queue in order against Odoo, stamping resulting picking/lot IDs and `odoo_sync: "done"`; new movements then write live. **The staged queue is a temporary outbox, not a ledger** — once writes are enabled it must be flushed and reconciled so Odoo remains the sole source of truth (no-parallel-ledger principle). Nothing is throwaway: adapter, movement documents, and probe are exactly what the live version uses; `off` mode just skips the final step.
+
+**Sub-phases:**
+
+**13.0.1 — GACP readiness probe + Odoo prerequisites**
+- [ ] Read-only probe (Settings panel, `production.manage`): reports companies the service account can see, warehouses per company, location tree per warehouse, and whether `mrp` is installed — answers "do we have GACP access yet?" empirically the moment Bassani changes anything
+- [ ] Once access confirmed: GACP sub-locations created under the GACP warehouse's stock root (`Vault`, `Manicuring Room`, `Packing Room`, `Drying Room`) — one-time `stock.location` setup (Odoo UI or portal script, decision with Luca/Tristan)
+
+**13.0.2 — Batch ID generator + registry**
+- [ ] Deterministic V6-format generator: strain shortcode (searchable dropdown seeded from the ~70-code master list), auto-incremented per-strain sequence, auto date (DDMMYY), prefix family (`BHAPI`/single-strain/`BHB`/`BHG`), stage suffix — live ID preview; staff never type any part of an ID
+- [ ] `batch_registry` MongoDB collection: generated IDs with strain, prefix family, sequence, dates, created_by; creates the Odoo `stock.lot` (GACP company) when writes are live, stages it otherwise
+- [ ] Suffix amendment derives a child ID from a parent batch (e.g. `-U` → `-M` + `-T`) — registry links child to parent; no free-text derivation
+- [ ] Strain shortcode master list imported from the logbook workbook's "Shortcode for products" sheet
+
+**13.0.3 — Vault Transaction form (the Patricia replacement)**
+- [ ] Four movement types mirroring her Reason column: Receive to Vault, Issue to Packing, Issue to Manicuring, Return from Manicuring
+- [ ] Receive/Issue → `stock.picking` internal transfer with lot on the move line (via `VaultOdooWriter`)
+- [ ] Return from Manicuring → transformation: consumes the `-U` lot, produces `-M` + `-T` lots, waste = difference — Odoo `mrp.production` **without a BoM** (manual raw/finished moves; supported in Odoo 17), so it is a real manufacturing record from day one, not gated on Track B BoM setup
+- [ ] Batch field is a registry/lot picker only — no free-text batch entry exists anywhere in the module
+- [ ] Quantities normalised to grams; actor + timestamp captured from the logged-in user automatically
+- [ ] Every movement audit-logged via `audit_log()`
+
+**13.0.4 — Vault Ledger + batch timeline**
+- [ ] Live vault holdings per batch (from `stock.quant` at the Vault location when live; computed from staged movements in `off` mode, clearly badged as "pending sync")
+- [ ] Per-batch timeline: every movement with type, weight, actor, timestamp, and suffix progression (`-U` → `-M`/`-T`) — the generate/track demo centrepiece
+- [ ] Movement history list with date/strain/batch filters (Patricia's sheet, but queryable)
+
+**13.0.5 — Role + permissions (`vault_custodian`)**
+- [ ] New `production` permission domain: `production.batch_generate` (generate IDs, view registry), `production.vault` (record movements, view ledger), `production.manage` (sync staged movements, readiness probe, location setup — super admin initially)
+- [ ] New `vault_custodian` role: added to `ALL_ROLES` + new `PRODUCTION_ROLES` set (kept out of `TICKET_ROLES`), included in both permission-gate unions in `auth.py`; fixed `ROLE_DEFAULT_PERMISSIONS` — production permissions only, everything downstream off
+- [ ] `resolve_warehouse_id()`: `vault_custodian` pinned to fixed `warehouse_id` on the user document (same branch as `warehouse_supervisor`/`packer`) — set to the GACP warehouse once confirmed
+- [ ] `Users.js` wiring (all the usual places): `ROLE_OPTIONS`, `EDITABLE_ROLES`, `ROLE_COLORS`, `ROLE_DEFAULT_PERMS`, new "Production" `PERMISSION_GROUPS` group, off-by-default in admin defaults
+- [ ] Role-branched `/` route in `App.js` → vault module; nav shows only the Production section for this role; onboarding via the existing Users page flow (no new user-management build)
+
+**Definition of Done (13.0 overall):**
+- [ ] Patricia can be onboarded from the Users page, sees only the Production section, and can record a full day's vault movements without typing a single batch ID
+- [ ] Every movement is recorded with actor + timestamp and, in live mode, produces a validated Odoo internal transfer (or no-BoM MO for the manicuring round-trip) in the GACP company
+- [ ] In staged mode, each movement stores its exact intended Odoo payload; the sync action replays the queue and reconciles cleanly
+- [ ] The vault ledger answers "how much of batch X is in the vault right now" — the question the Excel cannot answer
+- [ ] Zero free-text batch IDs anywhere in the module
 
 ---
 
