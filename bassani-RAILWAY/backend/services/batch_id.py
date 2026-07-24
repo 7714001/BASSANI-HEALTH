@@ -5,7 +5,7 @@ The single deterministic implementation of the V6 format. Batch IDs are
 GENERATED here, never typed by staff — free-text entry is what produced the
 format drift visible in the live Excel logbooks (Phase 13 scoping notes).
 
-Base ID families (prefix + strain shortcode + zero-padded sequence + DDMMYY):
+Base ID families (prefix + product shortcode + zero-padded sequence + DDMMYY):
 
     single  BH{CODE}-{seq}-{date}       BHDSD-011-100626      single-strain batch
     api     BHAPI{CODE}-{seq}-{date}    BHAPIBBY-001-010126   mixed-strain room batch
@@ -65,14 +65,14 @@ def format_date_code(d: Optional[_date] = None) -> str:
     return d.strftime("%d%m%y")
 
 
-def build_batch_id(family: str, strain_code: str, sequence: int, date_code: str) -> str:
+def build_batch_id(family: str, product_code: str, sequence: int, date_code: str) -> str:
     """Deterministic V6 base batch ID. Raises ValueError on bad input."""
     prefix = FAMILIES.get(family)
     if not prefix:
         raise ValueError(f"Unknown batch family '{family}'")
-    code = (strain_code or "").strip().upper()
+    code = (product_code or "").strip().upper()
     if not code.isalnum() or not (2 <= len(code) <= 4):
-        raise ValueError("Strain shortcode must be 2-4 alphanumeric characters")
+        raise ValueError("Product shortcode must be 2-4 alphanumeric characters")
     if not (1 <= sequence <= 999):
         raise ValueError("Sequence must be between 1 and 999")
     if len(date_code) != 6 or not date_code.isdigit():

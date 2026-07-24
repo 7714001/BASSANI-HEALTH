@@ -8,10 +8,10 @@ import { BtnSecondary, Modal } from "./UI";
    needs the paper standard to understand what the system is doing. */
 
 const FAMILY_ROWS = [
-  { label: "Single strain",   prefix: "BH + strain code", example: "BHDSD-011-100626",    note: "One strain harvested on its own. The strain's shortcode follows BH." },
-  { label: "Mixed room (API)", prefix: "BHAPI + strain code", example: "BHAPIBBY-001-010126", note: "A room holding more than one strain, identified by the main strain." },
-  { label: "Blend",           prefix: "BHB + strain code",  example: "BHBBBY-003-220426",   note: "Two or more batches mixed together. The blend links back to every batch that went into it." },
-  { label: "Gummy / product lot", prefix: "BHG + flavour code", example: "BHGPIN-001-181225", note: "Gummies and similar products received from a supplier and packed here." },
+  { label: "Single strain",   prefix: "BH + product code", example: "BHDSD-011-100626",    note: "One strain harvested on its own. The product's shortcode follows BH." },
+  { label: "Mixed room (API)", prefix: "BHAPI + product code", example: "BHAPIBBY-001-010126", note: "A room holding more than one strain, identified by the main one." },
+  { label: "Blend",           prefix: "BHB + product code",  example: "BHBBBY-003-220426",   note: "Two or more batches mixed together. The blend links back to every batch that went into it." },
+  { label: "Gummy / product lot", prefix: "BHG + product code", example: "BHGPIN-001-181225", note: "Gummies and similar products received from a supplier and packed here. The code is the flavour's shortcode." },
 ];
 
 const STAGE_ROWS = [
@@ -75,8 +75,8 @@ export default function ProductionGuideButton() {
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-3 gap-y-1 mt-2 text-xs">
                   <span><span className="font-semibold text-bassani-600 dark:text-bassani-400">BH</span> — Bassani Health</span>
-                  <span><span className="font-semibold text-purple-600 dark:text-purple-400">DSD</span> — strain shortcode (Dosi Si Dos)</span>
-                  <span><span className="font-semibold text-amber-600 dark:text-amber-400">011</span> — batch number for that strain</span>
+                  <span><span className="font-semibold text-purple-600 dark:text-purple-400">DSD</span> — product shortcode (Dosi Si Dos)</span>
+                  <span><span className="font-semibold text-amber-600 dark:text-amber-400">011</span> — batch number for that product</span>
                   <span><span className="font-semibold text-sky-600 dark:text-sky-400">100626</span> — date, day-month-year</span>
                   <span><span className="font-semibold text-rose-600 dark:text-rose-400">M</span> — current stage (Manicured)</span>
                 </div>

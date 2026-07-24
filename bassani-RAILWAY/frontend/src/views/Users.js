@@ -165,7 +165,7 @@ const PERMISSION_GROUPS = [
     actions: [
       { key: "batch_generate", label: "Generate batch IDs and view the batch registry" },
       { key: "vault",          label: "Record vault movements and view the vault ledger" },
-      { key: "manage",         label: "Sync staged stock records, readiness probe and strain list (admin)" },
+      { key: "manage",         label: "Sync staged stock records, readiness probe and product list (admin)" },
     ],
   },
 ];

@@ -12,11 +12,11 @@ Odoo operation list and stamped odoo_sync="staged" — a temporary outbox that
 the sync endpoint flushes once GACP access is confirmed.
 
 MongoDB collections (portal layer only — stock truth lives in Odoo once live):
-  strain_shortcodes  {name, code, created_at, created_by}
-  batch_registry     {batch_id, family, strain_code, strain_name, sequence,
+  product_shortcodes  {name, code, created_at, created_by}
+  batch_registry     {batch_id, family, product_code, product_name, sequence,
                       date_code, stage_suffix, base_batch_id, parent_batch_id,
                       origin, ops, odoo_sync, odoo_lot_id, odoo_error, ...}
-  vault_movements    {type, batch_id, strain_name, qty_g, source, outputs,
+  vault_movements    {type, batch_id, product_name, qty_g, source, outputs,
                       waste_g, notes, ops, odoo_sync, odoo_error, ...}
 """
 import json
@@ -50,14 +50,14 @@ RECEIVE_SOURCES = {"production", "external_supplier", "opening_balance"}
 
 # ── Pydantic bodies ───────────────────────────────────────────────────────────
 
-class StrainAdd(BaseModel):
+class ProductAdd(BaseModel):
     name: str
     code: str
 
 
 class BatchCreate(BaseModel):
     family: str                       # single | api | blend | gummy
-    strain_code: str
+    product_code: str
     date_code: Optional[str] = None   # DDMMYY; defaults to today
 
 
@@ -82,10 +82,10 @@ def _clean(doc: dict) -> dict:
     return doc
 
 
-async def _seed_strains_if_empty():
-    if await col("strain_shortcodes").count_documents({}) > 0:
+async def _seed_products_if_empty():
+    if await col("product_shortcodes").count_documents({}) > 0:
         return
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "strain_shortcodes.json")
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "product_shortcodes.json")
     try:
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
@@ -93,15 +93,15 @@ async def _seed_strains_if_empty():
         return
     now = _now()
     if items:
-        await col("strain_shortcodes").insert_many([
+        await col("product_shortcodes").insert_many([
             {"name": i["name"], "code": i["code"], "created_at": now, "created_by": "seed"}
             for i in items
         ])
 
 
-async def _next_sequence(family: str, strain_code: str) -> int:
+async def _next_sequence(family: str, product_code: str) -> int:
     latest = await col("batch_registry").find_one(
-        {"family": family, "strain_code": strain_code, "origin": "generated"},
+        {"family": family, "product_code": product_code, "origin": "generated"},
         sort=[("sequence", -1)],
     )
     return (latest["sequence"] + 1) if latest else 1
@@ -123,15 +123,15 @@ async def _register_derived(parent: dict, suffix: str, current_user: dict) -> di
     doc = {
         "batch_id":        child_id,
         "family":          parent["family"],
-        "strain_code":     parent["strain_code"],
-        "strain_name":     parent["strain_name"],
+        "product_code":     parent["product_code"],
+        "product_name":     parent["product_name"],
         "sequence":        parent["sequence"],
         "date_code":       parent["date_code"],
         "stage_suffix":    suffix,
         "base_batch_id":   parent["base_batch_id"],
         "parent_batch_id": parent["batch_id"],
         "origin":          "derived",
-        "ops":             [get_vault_writer().op_ensure_lot(child_id, parent["strain_name"])],
+        "ops":             [get_vault_writer().op_ensure_lot(child_id, parent["product_name"])],
         "odoo_sync":       "staged",
         "odoo_lot_id":     None,
         "odoo_error":      None,
@@ -143,28 +143,88 @@ async def _register_derived(parent: dict, suffix: str, current_user: dict) -> di
     return doc
 
 
-# ── Strain shortcodes ─────────────────────────────────────────────────────────
+# ── Product shortcodes ─────────────────────────────────────────────────────────
 
-@router.get("/strains")
-async def list_strains(_: dict = Depends(PROD_READ)):
-    await _seed_strains_if_empty()
-    docs = await col("strain_shortcodes").find({}).sort("name", 1).to_list(500)
-    return {"strains": [_clean(d) for d in docs]}
+@router.get("/products")
+async def list_products(
+    include_archived: bool = Query(False),
+    _: dict = Depends(PROD_READ),
+):
+    """Active products by default (what the batch generator picker shows).
+    include_archived=true adds archived ones — used by the manage-products UI.
+    Archived products stay resolvable for historical batches; they are only
+    hidden from new-batch selection."""
+    await _seed_products_if_empty()
+    filt = {} if include_archived else {"active": {"$ne": False}}
+    docs = await col("product_shortcodes").find(filt).sort("name", 1).to_list(500)
+    out = []
+    for d in docs:
+        d = _clean(d)
+        d["active"] = d.get("active", True) is not False
+        out.append(d)
+    return {"products": out}
 
 
-@router.post("/strains")
-async def add_strain(body: StrainAdd, current_user: dict = Depends(require_permission("production.manage"))):
+@router.post("/products")
+async def add_product(body: ProductAdd, current_user: dict = Depends(require_permission("production.manage"))):
     name, code = body.name.strip(), body.code.strip().upper()
     if not name or not code.isalnum() or not (2 <= len(code) <= 4):
         raise HTTPException(status_code=422, detail="Shortcode must be 2-4 letters/digits and the name must not be empty")
-    if await col("strain_shortcodes").find_one({"code": code}):
+    if await col("product_shortcodes").find_one({"code": code}):
         raise HTTPException(status_code=409, detail=f"Shortcode {code} is already in use")
-    await col("strain_shortcodes").insert_one({
-        "name": name, "code": code, "created_at": _now(),
+    await col("product_shortcodes").insert_one({
+        "name": name, "code": code, "active": True, "created_at": _now(),
         "created_by": current_user.get("username"),
     })
-    await audit_log("production.strain_added", "strain_shortcode", code,
+    await audit_log("production.product_added", "product_shortcode", code,
                     entity_label=f"{name} ({code})", user=current_user)
+    return {"success": True, "code": code}
+
+
+@router.post("/products/{code}/archive")
+async def archive_product(code: str, current_user: dict = Depends(require_permission("production.manage"))):
+    """Hide a product from the batch generator picker. Existing batches keep
+    resolving it; this only stops new batches being created for it."""
+    code = code.strip().upper()
+    doc = await col("product_shortcodes").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Shortcode {code} not found")
+    await col("product_shortcodes").update_one({"code": code}, {"$set": {"active": False}})
+    await audit_log("production.product_archived", "product_shortcode", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user)
+    return {"success": True, "code": code}
+
+
+@router.post("/products/{code}/restore")
+async def restore_product(code: str, current_user: dict = Depends(require_permission("production.manage"))):
+    code = code.strip().upper()
+    doc = await col("product_shortcodes").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Shortcode {code} not found")
+    await col("product_shortcodes").update_one({"code": code}, {"$set": {"active": True}})
+    await audit_log("production.product_restored", "product_shortcode", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user)
+    return {"success": True, "code": code}
+
+
+@router.delete("/products/{code}")
+async def delete_product(code: str, current_user: dict = Depends(require_permission("production.manage"))):
+    """Permanent removal — only allowed when no batch has ever used the code.
+    Once a batch ID embeds the shortcode, the traceability chain needs it to
+    stay resolvable, so used products can only be archived."""
+    code = code.strip().upper()
+    doc = await col("product_shortcodes").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Shortcode {code} not found")
+    used = await col("batch_registry").count_documents({"product_code": code})
+    if used > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{doc['name']} ({code}) is used by {used} batch{'es' if used != 1 else ''} and cannot be deleted. Archive it instead to hide it from the picker.",
+        )
+    await col("product_shortcodes").delete_one({"code": code})
+    await audit_log("production.product_deleted", "product_shortcode", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user)
     return {"success": True, "code": code}
 
 
@@ -183,14 +243,14 @@ async def production_meta(_: dict = Depends(PROD_READ)):
 @router.get("/batches/preview")
 async def preview_batch_id(
     family: str = Query(...),
-    strain_code: str = Query(...),
+    product_code: str = Query(...),
     _: dict = Depends(PROD_READ),
 ):
     if family not in FAMILIES:
         raise HTTPException(status_code=422, detail="Unknown batch family")
-    seq = await _next_sequence(family, strain_code.strip().upper())
+    seq = await _next_sequence(family, product_code.strip().upper())
     try:
-        batch_id = build_batch_id(family, strain_code, seq, format_date_code())
+        batch_id = build_batch_id(family, product_code, seq, format_date_code())
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"batch_id": batch_id, "sequence": seq, "date_code": format_date_code()}
@@ -203,10 +263,12 @@ async def create_batch(
 ):
     if body.family not in FAMILIES:
         raise HTTPException(status_code=422, detail="Unknown batch family")
-    code = body.strain_code.strip().upper()
-    strain = await col("strain_shortcodes").find_one({"code": code})
-    if not strain:
-        raise HTTPException(status_code=422, detail=f"Shortcode {code} is not in the strain master list")
+    code = body.product_code.strip().upper()
+    product = await col("product_shortcodes").find_one({"code": code})
+    if not product:
+        raise HTTPException(status_code=422, detail=f"Shortcode {code} is not in the product master list")
+    if product.get("active", True) is False:
+        raise HTTPException(status_code=422, detail=f"{product['name']} ({code}) is archived. Restore it in Manage Products to create new batches for it.")
     date_code = body.date_code or format_date_code()
     seq = await _next_sequence(body.family, code)
     try:
@@ -217,12 +279,12 @@ async def create_batch(
         raise HTTPException(status_code=409, detail=f"Batch {batch_id} already exists")
 
     writer = get_vault_writer()
-    ops = [writer.op_ensure_lot(batch_id, strain["name"])]
+    ops = [writer.op_ensure_lot(batch_id, product["name"])]
     doc = {
         "batch_id":        batch_id,
         "family":          body.family,
-        "strain_code":     code,
-        "strain_name":     strain["name"],
+        "product_code":     code,
+        "product_name":     product["name"],
         "sequence":        seq,
         "date_code":       date_code,
         "stage_suffix":    None,
@@ -248,7 +310,7 @@ async def create_batch(
     await col("batch_registry").insert_one(dict(doc))
     await audit_log("production.batch_generated", "batch", batch_id,
                     entity_label=batch_id, user=current_user,
-                    detail={"family": body.family, "strain": strain["name"], "sequence": seq})
+                    detail={"family": body.family, "product": product["name"], "sequence": seq})
     doc.pop("_id", None)
     return {"success": True, "batch": doc}
 
@@ -265,7 +327,7 @@ async def list_batches(
     if q:
         filt["$or"] = [
             {"batch_id":    {"$regex": q, "$options": "i"}},
-            {"strain_name": {"$regex": q, "$options": "i"}},
+            {"product_name": {"$regex": q, "$options": "i"}},
         ]
     if family in FAMILIES:
         filt["family"] = family
@@ -306,13 +368,13 @@ async def create_movement(
         raise HTTPException(status_code=422, detail="Unknown movement type")
     batch = await _get_batch_or_404(body.batch_id.strip())
     writer = get_vault_writer()
-    strain_name = batch["strain_name"]
+    product_name = batch["product_name"]
     now = _now()
 
     doc = {
         "type":         body.type,
         "batch_id":     batch["batch_id"],
-        "strain_name":  strain_name,
+        "product_name":  product_name,
         "qty_g":        None,
         "source":       None,
         "outputs":      [],
@@ -338,15 +400,15 @@ async def create_movement(
                 raise HTTPException(status_code=422, detail="Unknown receive source")
             doc["source"] = source
             doc["ops"] = [
-                writer.op_ensure_lot(batch["batch_id"], strain_name),
+                writer.op_ensure_lot(batch["batch_id"], product_name),
                 writer.op_internal_transfer(batch["batch_id"], doc["qty_g"],
-                                            LOC_PRODUCTION, LOC_VAULT, strain_name),
+                                            LOC_PRODUCTION, LOC_VAULT, product_name),
             ]
         else:
             dest = LOC_PACKING if body.type == "issue_packing" else LOC_MANICURING
             doc["ops"] = [
                 writer.op_internal_transfer(batch["batch_id"], doc["qty_g"],
-                                            LOC_VAULT, dest, strain_name),
+                                            LOC_VAULT, dest, product_name),
             ]
 
     else:  # return_manicuring
@@ -372,13 +434,13 @@ async def create_movement(
             doc["waste_g"] = max(round(issued[0]["total"] - m_qty - t_qty, 3), 0)
 
         op_outputs = [
-            {"lot_name": o["batch_id"], "qty_g": o["qty_g"], "product_hint": strain_name}
+            {"lot_name": o["batch_id"], "qty_g": o["qty_g"], "product_hint": product_name}
             for o in outputs
         ]
         split = writer.op_manufacture_split(batch["batch_id"],
                                             (doc["waste_g"] or 0) + m_qty + t_qty,
                                             op_outputs, doc["waste_g"] or 0)
-        split["input_hint"] = strain_name
+        split["input_hint"] = product_name
         doc["ops"] = [split]
 
     if writer.live:
@@ -410,7 +472,7 @@ async def list_movements(
     if q:
         filt["$or"] = [
             {"batch_id":    {"$regex": q, "$options": "i"}},
-            {"strain_name": {"$regex": q, "$options": "i"}},
+            {"product_name": {"$regex": q, "$options": "i"}},
         ]
     if type in MOVEMENT_TYPES:
         filt["type"] = type
@@ -449,10 +511,10 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
 
     ids = list(balances.keys())
     reg = await col("batch_registry").find({"batch_id": {"$in": ids}}).to_list(len(ids) or 1)
-    names = {r["batch_id"]: r.get("strain_name") for r in reg}
+    names = {r["batch_id"]: r.get("product_name") for r in reg}
     rows = sorted(balances.values(), key=lambda b: -abs(b["qty_g"]))
     for r in rows:
-        r["strain_name"] = names.get(r["batch_id"], "")
+        r["product_name"] = names.get(r["batch_id"], "")
     staged = await col("vault_movements").count_documents({"odoo_sync": "staged"})
     return {"rows": rows, "staged_movements": staged,
             "odoo_writes_live": get_vault_writer().live}

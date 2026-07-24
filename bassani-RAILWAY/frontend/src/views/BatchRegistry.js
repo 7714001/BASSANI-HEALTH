@@ -3,7 +3,7 @@ import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
 import ProductionGuideButton from "../components/ProductionGuide";
 
 /* Phase 13.0.2 — Batch ID generator + registry.
@@ -26,24 +26,28 @@ export const fmtWhen = (v) =>
 export default function BatchRegistry() {
   const { can } = useAuth();
   const [meta, setMeta]         = useState(null);
-  const [strains, setStrains]   = useState([]);
+  const [products, setProducts]   = useState([]);
   const [items, setItems]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [q, setQ]               = useState("");
 
   // Generator state
   const [family, setFamily]         = useState("single");
-  const [strainQuery, setStrainQuery] = useState("");
-  const [strain, setStrain]         = useState(null);   // {name, code}
-  const [strainOpen, setStrainOpen] = useState(false);
+  const [productQuery, setProductQuery] = useState("");
+  const [product, setProduct]         = useState(null);   // {name, code}
+  const [productOpen, setProductOpen] = useState(false);
   const [preview, setPreview]       = useState(null);   // {batch_id, sequence}
   const [generating, setGenerating] = useState(false);
-  const strainBoxRef = useRef(null);
+  const productBoxRef = useRef(null);
 
-  // Add-strain modal (production.manage)
-  const [addStrainOpen, setAddStrainOpen] = useState(false);
-  const [newStrain, setNewStrain]         = useState({ name: "", code: "" });
-  const [savingStrain, setSavingStrain]   = useState(false);
+  // Manage-products modal (production.manage)
+  const [manageOpen, setManageOpen]       = useState(false);
+  const [manageList, setManageList]       = useState([]);
+  const [manageSearch, setManageSearch]   = useState("");
+  const [newProduct, setNewProduct]         = useState({ name: "", code: "" });
+  const [savingProduct, setSavingProduct]   = useState(false);
+  const [productBusy, setProductBusy]       = useState(null);   // code currently being archived/restored/deleted
+  const [deleteProductConfirm, setDeleteProductConfirm] = useState(null);  // product row
 
   // Timeline modal
   const [timeline, setTimeline]           = useState(null);
@@ -52,13 +56,13 @@ export default function BatchRegistry() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [metaRes, strainRes, listRes] = await Promise.all([
+      const [metaRes, productRes, listRes] = await Promise.all([
         api.get("/api/production/meta"),
-        api.get("/api/production/strains"),
+        api.get("/api/production/products"),
         api.get("/api/production/batches", { params: q ? { q, limit: 200 } : { limit: 200 } }),
       ]);
       setMeta(metaRes.data);
-      setStrains(strainRes.data.strains);
+      setProducts(productRes.data.products);
       setItems(listRes.data.items);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load batch registry");
@@ -69,41 +73,41 @@ export default function BatchRegistry() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Live ID preview as the operator picks family + strain
+  // Live ID preview as the operator picks family + product
   useEffect(() => {
-    if (!strain) { setPreview(null); return; }
+    if (!product) { setPreview(null); return; }
     let stale = false;
-    api.get("/api/production/batches/preview", { params: { family, strain_code: strain.code } })
+    api.get("/api/production/batches/preview", { params: { family, product_code: product.code } })
       .then(r => { if (!stale) setPreview(r.data); })
       .catch(() => { if (!stale) setPreview(null); });
     return () => { stale = true; };
-  }, [family, strain]);
+  }, [family, product]);
 
-  // Close strain dropdown on outside click
+  // Close product dropdown on outside click
   useEffect(() => {
     const close = (e) => {
-      if (strainBoxRef.current && !strainBoxRef.current.contains(e.target)) setStrainOpen(false);
+      if (productBoxRef.current && !productBoxRef.current.contains(e.target)) setProductOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  const filteredStrains = strains.filter(s => {
-    const t = strainQuery.trim().toLowerCase();
+  const filteredProducts = products.filter(s => {
+    const t = productQuery.trim().toLowerCase();
     if (!t) return true;
     return s.name.toLowerCase().includes(t) || s.code.toLowerCase().includes(t);
   });
 
   async function generate() {
-    if (!strain || !preview) return;
+    if (!product || !preview) return;
     setGenerating(true);
     try {
-      const r = await api.post("/api/production/batches", { family, strain_code: strain.code });
+      const r = await api.post("/api/production/batches", { family, product_code: product.code });
       toast.success(`Batch ${r.data.batch.batch_id} created`);
       setItems(prev => [r.data.batch, ...prev]);
       setPreview(null);
       // refresh the preview for the next sequence number
-      const p = await api.get("/api/production/batches/preview", { params: { family, strain_code: strain.code } });
+      const p = await api.get("/api/production/batches/preview", { params: { family, product_code: product.code } });
       setPreview(p.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to create batch");
@@ -112,19 +116,60 @@ export default function BatchRegistry() {
     }
   }
 
-  async function saveStrain() {
-    setSavingStrain(true);
+  // Refresh both the manage list (incl. archived) and the generator picker (active only)
+  async function refreshProducts() {
+    const [all, active] = await Promise.all([
+      api.get("/api/production/products", { params: { include_archived: true } }),
+      api.get("/api/production/products"),
+    ]);
+    setManageList(all.data.products);
+    setProducts(active.data.products);
+  }
+
+  async function openManage() {
+    setManageOpen(true);
+    try { await refreshProducts(); } catch { toast.error("Failed to load product list"); }
+  }
+
+  async function saveProduct() {
+    setSavingProduct(true);
     try {
-      await api.post("/api/production/strains", { name: newStrain.name, code: newStrain.code });
-      toast.success(`Strain ${newStrain.name} added`);
-      setAddStrainOpen(false);
-      setNewStrain({ name: "", code: "" });
-      const r = await api.get("/api/production/strains");
-      setStrains(r.data.strains);
+      await api.post("/api/production/products", { name: newProduct.name, code: newProduct.code });
+      toast.success(`Product ${newProduct.name} added`);
+      setNewProduct({ name: "", code: "" });
+      await refreshProducts();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to add strain");
+      toast.error(e.response?.data?.detail || "Failed to add product");
     } finally {
-      setSavingStrain(false);
+      setSavingProduct(false);
+    }
+  }
+
+  async function toggleProduct(s) {
+    setProductBusy(s.code);
+    try {
+      await api.post(`/api/production/products/${s.code}/${s.active ? "archive" : "restore"}`);
+      toast.success(s.active ? `${s.name} archived and hidden from the picker` : `${s.name} restored`);
+      await refreshProducts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update product");
+    } finally {
+      setProductBusy(null);
+    }
+  }
+
+  async function doDeleteProduct() {
+    const s = deleteProductConfirm;
+    setDeleteProductConfirm(null);
+    setProductBusy(s.code);
+    try {
+      await api.delete(`/api/production/products/${s.code}`);
+      toast.success(`${s.name} removed from the master list`);
+      await refreshProducts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to delete product");
+    } finally {
+      setProductBusy(null);
     }
   }
 
@@ -184,13 +229,13 @@ export default function BatchRegistry() {
                 <Sparkles size={15} className="text-bassani-500" /> Generate Batch ID
               </h3>
               {can("production.manage") && (
-                <button onClick={() => setAddStrainOpen(true)} className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1">
-                  <Plus size={12} /> Add strain
+                <button onClick={openManage} className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1">
+                  <Plus size={12} /> Manage products
                 </button>
               )}
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Pick the batch type and strain. The ID is built automatically to the Bassani V6 standard, with the next sequence number and today's date.
+              Pick the batch type and product. The ID is built automatically to the Bassani V6 standard, with the next sequence number and today's date.
             </p>
 
             <div className="grid sm:grid-cols-2 gap-4">
@@ -214,26 +259,26 @@ export default function BatchRegistry() {
                 </div>
               </div>
 
-              {/* Strain picker */}
-              <div ref={strainBoxRef} className="relative">
+              {/* Product picker */}
+              <div ref={productBoxRef} className="relative">
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
-                  {family === "gummy" ? "Flavour" : "Strain"}
+                  Product
                 </label>
                 <input
-                  value={strain ? `${strain.name} (${strain.code})` : strainQuery}
-                  onChange={e => { setStrain(null); setStrainQuery(e.target.value); setStrainOpen(true); }}
-                  onFocus={() => setStrainOpen(true)}
+                  value={product ? `${product.name} (${product.code})` : productQuery}
+                  onChange={e => { setProduct(null); setProductQuery(e.target.value); setProductOpen(true); }}
+                  onFocus={() => setProductOpen(true)}
                   placeholder="Search by name or shortcode…"
                   className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
-                {strainOpen && (
+                {productOpen && (
                   <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
-                    {filteredStrains.length === 0 ? (
-                      <p className="text-xs text-gray-400 px-3 py-2">No matching strains</p>
-                    ) : filteredStrains.map(s => (
+                    {filteredProducts.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-3 py-2">No matching products</p>
+                    ) : filteredProducts.map(s => (
                       <button
                         key={s.code}
-                        onClick={() => { setStrain(s); setStrainQuery(""); setStrainOpen(false); }}
+                        onClick={() => { setProduct(s); setProductQuery(""); setProductOpen(false); }}
                         className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex justify-between items-center"
                       >
                         <span className="truncate">{s.name}</span>
@@ -256,7 +301,7 @@ export default function BatchRegistry() {
                     </button>
                   </div>
                 ) : (
-                  <span className="text-sm text-gray-400">Select a strain to preview the next batch ID</span>
+                  <span className="text-sm text-gray-400">Select a product to preview the next batch ID</span>
                 )}
               </div>
               <BtnPrimary onClick={generate} disabled={!preview || generating}>
@@ -275,7 +320,7 @@ export default function BatchRegistry() {
               <input
                 value={q}
                 onChange={e => setQ(e.target.value)}
-                placeholder="Search batch or strain…"
+                placeholder="Search batch or product…"
                 className="text-xs border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-56"
               />
             </div>
@@ -295,7 +340,7 @@ export default function BatchRegistry() {
                   <thead>
                     <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
                       <th className="px-5 py-2.5">Batch ID</th>
-                      <th className="px-5 py-2.5">Strain</th>
+                      <th className="px-5 py-2.5">Product</th>
                       <th className="px-5 py-2.5">Stage</th>
                       <th className="px-5 py-2.5">Created</th>
                       <th className="px-5 py-2.5">By</th>
@@ -310,7 +355,7 @@ export default function BatchRegistry() {
                         className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer"
                       >
                         <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">{b.batch_id}</td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{b.strain_name}</td>
+                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{b.product_name}</td>
                         <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400">
                           {b.stage_suffix
                             ? <span className="font-mono">-{b.stage_suffix}</span>
@@ -329,36 +374,93 @@ export default function BatchRegistry() {
         </div>
       </div>
 
-      {/* Add strain modal */}
-      {addStrainOpen && (
-        <Modal title="Add Strain Shortcode" onClose={() => setAddStrainOpen(false)}>
+      {/* Manage products modal */}
+      {manageOpen && (
+        <Modal title="Manage Products" onClose={() => setManageOpen(false)} width="max-w-2xl">
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-            Adds a strain to the master shortcode list used for batch ID generation.
+            The master shortcode list used for batch ID generation. Archiving hides a product from the picker without touching its existing batches. Deleting is only possible for products that have never been used on a batch.
           </p>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Strain name</label>
-              <input
-                value={newStrain.name}
-                onChange={e => setNewStrain(v => ({ ...v, name: e.target.value }))}
-                className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Shortcode (2-4 letters)</label>
-              <input
-                value={newStrain.code}
-                onChange={e => setNewStrain(v => ({ ...v, code: e.target.value.toUpperCase() }))}
-                maxLength={4}
-                className="w-full text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setAddStrainOpen(false)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={saveStrain} disabled={savingStrain || !newStrain.name.trim() || newStrain.code.trim().length < 2}>
-              {savingStrain ? "Saving…" : "Add Strain"}
+
+          {/* Add row */}
+          <div className="flex flex-col sm:flex-row gap-2 mb-4">
+            <input
+              value={newProduct.name}
+              onChange={e => setNewProduct(v => ({ ...v, name: e.target.value }))}
+              placeholder="Product or flavour name"
+              className="flex-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            />
+            <input
+              value={newProduct.code}
+              onChange={e => setNewProduct(v => ({ ...v, code: e.target.value.toUpperCase() }))}
+              maxLength={4}
+              placeholder="Code"
+              className="w-full sm:w-24 text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            />
+            <BtnPrimary onClick={saveProduct} disabled={savingProduct || !newProduct.name.trim() || newProduct.code.trim().length < 2}>
+              {savingProduct ? "Adding…" : "Add"}
             </BtnPrimary>
+          </div>
+
+          {/* Search */}
+          <input
+            value={manageSearch}
+            onChange={e => setManageSearch(e.target.value)}
+            placeholder="Search list…"
+            className="w-full text-xs border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
+          />
+
+          {/* List */}
+          <div className="max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+            {manageList
+              .filter(s => {
+                const t = manageSearch.trim().toLowerCase();
+                return !t || s.name.toLowerCase().includes(t) || s.code.toLowerCase().includes(t);
+              })
+              .map(s => (
+                <div key={s.code} className={`flex items-center gap-3 px-3 py-2 text-sm ${s.active ? "" : "opacity-60"}`}>
+                  <span className="font-mono text-xs font-semibold text-gray-500 dark:text-gray-400 w-12 shrink-0">{s.code}</span>
+                  <span className="flex-1 truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+                  {!s.active && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 shrink-0">Archived</span>
+                  )}
+                  <button
+                    onClick={() => toggleProduct(s)}
+                    disabled={productBusy === s.code}
+                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0"
+                  >
+                    {s.active ? "Archive" : "Restore"}
+                  </button>
+                  <button
+                    onClick={() => setDeleteProductConfirm(s)}
+                    disabled={productBusy === s.code}
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            {manageList.length === 0 && (
+              <p className="text-xs text-gray-400 px-3 py-4 text-center">Loading product list…</p>
+            )}
+          </div>
+
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setManageOpen(false)}>Close</BtnSecondary>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete product confirm */}
+      {deleteProductConfirm && (
+        <Modal title="Delete Product" onClose={() => setDeleteProductConfirm(null)}>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            Permanently remove <strong>{deleteProductConfirm.name}</strong>{" "}
+            (<span className="font-mono">{deleteProductConfirm.code}</span>) from the master list?
+            This only works if no batch has ever used this code. If it has been used, archive it instead.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setDeleteProductConfirm(null)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doDeleteProduct}>Delete</BtnDanger>
           </div>
         </Modal>
       )}
@@ -373,7 +475,7 @@ export default function BatchRegistry() {
           ) : timeline.batch ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2 flex-wrap text-sm">
-                <span className="text-gray-500 dark:text-gray-400">{timeline.batch.strain_name}</span>
+                <span className="text-gray-500 dark:text-gray-400">{timeline.batch.product_name}</span>
                 <SyncBadge status={timeline.batch.odoo_sync} />
                 {timeline.batch.odoo_error && (
                   <span className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} /> {timeline.batch.odoo_error}</span>

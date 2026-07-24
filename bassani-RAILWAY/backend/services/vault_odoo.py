@@ -19,7 +19,7 @@ it must be flushed so Odoo remains the sole source of stock truth.
 Operation shapes (stored verbatim on staged movements so the intended write is
 auditable before it happens):
 
-  {"op": "ensure_lot",        "lot_name": str, "strain_name": str,
+  {"op": "ensure_lot",        "lot_name": str, "product_name": str,
    "product_hint": str, "product_id": None}
   {"op": "internal_transfer", "lot_name": str, "qty_g": float,
    "from_location": str, "to_location": str, "product_hint": str}
@@ -27,9 +27,9 @@ auditable before it happens):
    "outputs": [{"lot_name": str, "qty_g": float, "product_hint": str}],
    "waste_g": float}
 
-Product resolution: bulk-flower batches map to a GACP Odoo product per strain.
+Product resolution: each registry product maps to a GACP Odoo product record.
 That mapping cannot exist until GACP access is confirmed, so staged ops carry a
-`product_hint` (the strain name); at execute time the product is resolved by
+`product_hint` (the product name); at execute time the Odoo product is resolved by
 name within the GACP company and the op fails with a clear message when no
 match is found — surfaced per movement by the sync endpoint.
 """
@@ -61,15 +61,15 @@ class VaultOdooWriter:
 
     # ── Op builders (pure — used in both modes) ───────────────────────────────
 
-    def op_ensure_lot(self, lot_name: str, strain_name: str) -> dict:
-        return {"op": "ensure_lot", "lot_name": lot_name, "strain_name": strain_name,
-                "product_hint": strain_name, "product_id": None}
+    def op_ensure_lot(self, lot_name: str, product_name: str) -> dict:
+        return {"op": "ensure_lot", "lot_name": lot_name, "product_name": product_name,
+                "product_hint": product_name, "product_id": None}
 
     def op_internal_transfer(self, lot_name: str, qty_g: float, from_location: str,
-                             to_location: str, strain_name: str) -> dict:
+                             to_location: str, product_name: str) -> dict:
         return {"op": "internal_transfer", "lot_name": lot_name, "qty_g": qty_g,
                 "from_location": from_location, "to_location": to_location,
-                "product_hint": strain_name}
+                "product_hint": product_name}
 
     def op_manufacture_split(self, input_lot: str, input_qty_g: float,
                              outputs: list, waste_g: float) -> dict:
@@ -108,7 +108,7 @@ class VaultOdooWriter:
         return cid
 
     def _resolve_product(self, product_hint: str, company_id: int) -> int:
-        """Bulk-flower product for a strain, by name, within the GACP company."""
+        """Odoo product record for a registry product, by name, within the GACP company."""
         odoo = get_odoo_client()
         rows = odoo.search_read(
             "product.product",
@@ -119,7 +119,7 @@ class VaultOdooWriter:
         if not rows:
             raise RuntimeError(
                 f"No Odoo product found for '{product_hint}' in the GACP company. "
-                "Create the bulk product (or map the strain) and re-run the sync."
+                "Create the matching bulk product in Odoo and re-run the sync."
             )
         return rows[0]["id"]
 

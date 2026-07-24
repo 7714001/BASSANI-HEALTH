@@ -218,7 +218,7 @@ export default function VaultLogbook() {
                   {isReturn ? "Batch that was issued to manicuring" : "Batch"}
                 </label>
                 <input
-                  value={batch ? `${batch.batch_id} — ${batch.strain_name}` : batchQuery}
+                  value={batch ? `${batch.batch_id} — ${batch.product_name}` : batchQuery}
                   onChange={e => { setBatch(null); setBatchQuery(e.target.value); setBatchOpen(true); }}
                   onFocus={() => setBatchOpen(true)}
                   placeholder="Search the batch registry…"
@@ -235,7 +235,7 @@ export default function VaultLogbook() {
                         className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 flex justify-between items-center gap-2"
                       >
                         <span className="font-mono text-gray-800 dark:text-gray-200 truncate">{b.batch_id}</span>
-                        <span className="text-xs text-gray-400 truncate">{b.strain_name}</span>
+                        <span className="text-xs text-gray-400 truncate">{b.product_name}</span>
                       </button>
                     ))}
                   </div>
@@ -340,7 +340,7 @@ export default function VaultLogbook() {
                   <thead>
                     <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
                       <th className="px-5 py-2.5">Batch ID</th>
-                      <th className="px-5 py-2.5">Strain</th>
+                      <th className="px-5 py-2.5">Product</th>
                       <th className="px-5 py-2.5 text-right">In Vault</th>
                       <th className="px-5 py-2.5 text-right">Movements</th>
                       <th className="px-5 py-2.5">Last Movement</th>
@@ -350,7 +350,7 @@ export default function VaultLogbook() {
                     {ledger.rows.map(r => (
                       <tr key={r.batch_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                         <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">{r.batch_id}</td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{r.strain_name}</td>
+                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{r.product_name}</td>
                         <td className={`px-5 py-3 text-right font-semibold whitespace-nowrap ${
                           r.qty_g < 0 ? "text-red-600 dark:text-red-400" : r.qty_g === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-800 dark:text-gray-100"
                         }`}>

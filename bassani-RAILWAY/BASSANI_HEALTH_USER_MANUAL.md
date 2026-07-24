@@ -1226,7 +1226,7 @@ Both production pages have a **Guide** button at the top right. It opens a plain
 
 **Generating a batch number (Batch Registry page):**
 1. Pick the batch type: Single Strain, Mixed Room (API), Blend, or Gummy / Product Lot
-2. Search for the strain (or flavour) by name or shortcode
+2. Search for the product by name or shortcode
 3. The next batch number appears automatically in the preview box, built to the Bassani standard with the correct sequence number and today's date
 4. Click **Create Batch**. The number is now in the registry and ready to use on movements
 
@@ -2093,6 +2093,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Tick items on handheld | Packer |
 | Generate a production batch number | Vault Custodian or anyone with `production.batch_generate` |
 | Record a vault stock movement | Vault Custodian or anyone with `production.vault` |
+| Add, archive or delete product shortcodes | Super admin or admin with `production.manage` |
 | Sync staged vault records to the stock system | Super admin or admin with `production.manage` |
 | Generate commission statements | Admin with `commission.generate_statements` |
 | Mark commission statement paid | Admin with `commission.mark_paid` |
