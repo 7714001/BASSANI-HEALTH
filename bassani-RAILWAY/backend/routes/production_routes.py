@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from auth import require_permission, require_any_permission
+from auth import require_permission, require_any_permission, require_super_admin
 from database import col
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
@@ -624,3 +624,35 @@ async def sync_staged(current_user: dict = Depends(require_permission("productio
                     entity_label="Staged vault sync", user=current_user,
                     detail={"synced": synced, "failed": failed})
     return {"synced": synced, "failed": failed, "errors": results}
+
+
+# ── Test-data purge (super admin) ─────────────────────────────────────────────
+
+@router.post("/purge-test-data")
+async def purge_test_data(current_user: dict = Depends(require_super_admin)):
+    """Wipe all batches and vault movements — for clearing demo/test data
+    before real operation starts. The product master list is kept.
+
+    Refuses to run if any record has already been written to Odoo: those are
+    real stock records that must be reversed in Odoo, not deleted here. Audit
+    trail entries are self-contained and are never touched by this purge.
+    Batch sequences derive from the registry, so they reset automatically."""
+    synced = (
+        await col("batch_registry").count_documents({"odoo_sync": "done"})
+        + await col("vault_movements").count_documents({"odoo_sync": "done"})
+    )
+    if synced:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{synced} record{'s have' if synced != 1 else ' has'} already been written to the stock system and cannot be purged. Those need to be reversed in the stock system first.",
+        )
+    batches = await col("batch_registry").delete_many({})
+    movements = await col("vault_movements").delete_many({})
+    await audit_log(
+        "production.test_data_purged", "vault_purge", "purge",
+        entity_label="Production test data purge", user=current_user,
+        detail={"batches_deleted": batches.deleted_count,
+                "movements_deleted": movements.deleted_count},
+    )
+    return {"batches_deleted": batches.deleted_count,
+            "movements_deleted": movements.deleted_count}

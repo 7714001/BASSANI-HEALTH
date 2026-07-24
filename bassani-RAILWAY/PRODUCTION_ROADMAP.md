@@ -3031,6 +3031,7 @@ Work splits into two tracks based on Odoo prerequisites. Track A can start immed
 - [x] Vault holdings per batch computed from the movement log, badged "pending sync" while `GACP_ODOO_WRITES=off` (once live and flushed, Odoo `stock.quant` is the authoritative figure)
 - [x] Per-batch timeline modal: stage chain (`-U` → `-M`/`-T`) plus every movement with type, weight, actor, timestamp — the generate/track demo centrepiece
 - [x] Movement history list, searchable, with per-row Odoo sync status and error surfacing
+- [x] Test-data purge (2026-07-24): `POST /api/production/purge-test-data`, super admin only — wipes `batch_registry` + `vault_movements` (product master list kept, sequences reset naturally); refuses with 409 if any record has `odoo_sync: "done"` (real stock records must be reversed in Odoo, not deleted); purge itself audit-logged with counts; audit entries are self-contained so no orphaned references. Button on Vault Logbook top bar, visible to super admin only.
 - [x] Built-in reference guide (`ProductionGuideButton` on both production pages): plain-language batch ID anatomy, the four prefix families, stage-letter meanings and the replace-not-stack rule, packaging codes, movement type explanations, Staged-label meaning — added 2026-07-24 so vault staff never need the paper V6 standard
 
 **13.0.5 — Role + permissions (`vault_custodian`) — Complete 2026-07-24**

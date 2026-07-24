@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2, RefreshCw, Vault, ArrowDownToLine, ArrowUpFromLine, Scissors,
-  PackageOpen, CloudOff, CloudUpload, NotebookPen,
+  PackageOpen, CloudOff, CloudUpload, NotebookPen, Trash2,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
 import { SyncBadge, fmtWhen, stageLabel, batchTitle } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
@@ -37,7 +37,7 @@ const fmtQty = (g) => {
 };
 
 export default function VaultLogbook() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, odoo_writes_live: false });
   const [movements, setMovements] = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -64,6 +64,10 @@ export default function VaultLogbook() {
   // Sync
   const [syncConfirm, setSyncConfirm] = useState(false);
   const [syncing, setSyncing]         = useState(false);
+
+  // Test-data purge (super admin only)
+  const [purgeConfirm, setPurgeConfirm] = useState(false);
+  const [purging, setPurging]           = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,6 +173,20 @@ export default function VaultLogbook() {
     }
   }
 
+  async function doPurge() {
+    setPurgeConfirm(false);
+    setPurging(true);
+    try {
+      const r = await api.post("/api/production/purge-test-data");
+      toast.success(`Purged ${r.data.batches_deleted} batches and ${r.data.movements_deleted} movements`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Purge failed");
+    } finally {
+      setPurging(false);
+    }
+  }
+
   async function doSync() {
     setSyncConfirm(false);
     setSyncing(true);
@@ -194,6 +212,12 @@ export default function VaultLogbook() {
         actions={
           <div className="flex items-center gap-2">
             <ProductionGuideButton />
+            {user?.is_super_admin && (movements.length > 0 || ledger.rows.length > 0) && (
+              <BtnSecondary onClick={() => setPurgeConfirm(true)} disabled={purging}>
+                {purging ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Purge test data
+              </BtnSecondary>
+            )}
             {can("production.manage") && ledger.staged_movements > 0 && (
               <BtnSecondary onClick={() => setSyncConfirm(true)} disabled={syncing}>
                 {syncing ? <Loader2 size={14} className="animate-spin" /> : <CloudUpload size={14} />}
@@ -493,6 +517,22 @@ export default function VaultLogbook() {
           </div>
         </div>
       </div>
+
+      {/* Purge confirm */}
+      {purgeConfirm && (
+        <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+            This permanently deletes <strong>every batch and every vault movement</strong> so real operation can start with a clean registry. The product master list is kept, and batch sequence numbers start again from 001.
+          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            The audit trail keeps its complete history of everything that was recorded, including this purge. Records already written to the stock system cannot be purged and will block this action.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setPurgeConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={doPurge}>Purge Everything</BtnDanger>
+          </div>
+        </Modal>
+      )}
 
       {/* Sync confirm */}
       {syncConfirm && (

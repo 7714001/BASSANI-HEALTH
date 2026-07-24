@@ -2096,6 +2096,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Record a vault stock movement | Vault Custodian or anyone with `production.vault` |
 | Add, archive or delete product shortcodes | Super admin or admin with `production.manage` |
 | Sync staged vault records to the stock system | Super admin or admin with `production.manage` |
+| Purge production test data (batches + movements) | Super Admin only — blocked once records exist in the stock system |
 | Generate commission statements | Admin with `commission.generate_statements` |
 | Mark commission statement paid | Admin with `commission.mark_paid` |
 | Approve customer onboarding application | Admin with `customers.approve_onboarding` |
