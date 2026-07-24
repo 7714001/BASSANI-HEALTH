@@ -1231,15 +1231,13 @@ Both production pages have a **Guide** button at the top right. It opens a plain
 4. Click **Create Batch**. The number is now in the registry and ready to use on movements
 
 **Recording a vault movement (Vault Logbook page):**
-1. Choose the movement type:
-   - **Receive to Vault** — stock arriving into the vault (from production, from an external supplier, or an opening balance when first setting up)
-   - **Issue to Packing** — stock going out to the packing room
-   - **Issue to Manicuring** — unmanicured bulk going out for manicuring
-   - **Return from Manicuring** — manicured flower and trim coming back in
-2. Search for the batch in the registry picker. Every entry shows the product name and stage next to the batch number, so you never need to memorise the numbering. When recording a Return from Manicuring, the picker only offers batches that are actually out at manicuring.
-3. Check the summary bar that appears under the picker: it shows the product, the stage in plain language, and how much of that batch is in the vault right now. If you try to issue more than the vault holds, a warning appears (you can still save it, but check the weight and batch first).
-4. Enter the weight in grams (for a return, enter the manicured weight and the trim weight separately — the system books them in under the correct `-M` and `-T` batch numbers and works out the processing waste)
+1. Search for the batch first. Every entry in the picker shows the product name and stage next to the batch number, so you never need to memorise the numbering.
+2. Check the summary bar that appears: the product, the stage in plain language, how much of that batch is in the vault right now, and how much is out at manicuring.
+3. The system marks the suggested movement with a **Next step** badge and selects it for you, based on where the batch actually is: a new batch suggests Receive to Vault; unmanicured stock in the vault suggests Issue to Manicuring; stock out at manicuring suggests Return from Manicuring; anything else in the vault suggests Issue to Packing. Movements that are physically impossible (issuing a batch with nothing in the vault, returning a batch that is not out) are greyed out with the reason shown. You can tap a different available movement if the suggestion is not what happened.
+4. Enter the weight in grams (for a return, enter the manicured weight and the trim weight separately — the system books them in under the correct `-M` and `-T` batch numbers and works out the processing waste). If you try to issue more than the vault holds, a warning appears (you can still save it, but check the weight and batch first).
 5. Add a note if anything was unusual, then click **Record Movement**
+
+The normal life of a flower batch through the vault: **Receive to Vault** (unmanicured `-U` bulk in from drying) → **Issue to Manicuring** → **Return from Manicuring** (comes back as `-M` manicured plus `-T` trim) → **Issue to Packing**. Bought-in stock and gummies skip the manicuring loop: received, then issued to packing.
 
 **The Vault Ledger:**
 The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.

@@ -491,6 +491,9 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
     balance Patricia's Excel never had."""
     movements = await col("vault_movements").find({}).sort("created_at", 1).to_list(5000)
     balances: dict[str, dict] = {}
+    # Weight currently out at the manicuring room per batch (issued minus what
+    # came back as outputs + waste) — drives the guided next-step logic in the UI.
+    manicuring_out: dict[str, float] = {}
 
     def bump(batch_id: str, delta: float, when):
         b = balances.setdefault(batch_id, {"batch_id": batch_id, "qty_g": 0.0,
@@ -505,9 +508,14 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
             bump(m["batch_id"], m.get("qty_g") or 0, when)
         elif m["type"] in ("issue_packing", "issue_manicuring"):
             bump(m["batch_id"], -(m.get("qty_g") or 0), when)
+            if m["type"] == "issue_manicuring":
+                manicuring_out[m["batch_id"]] = manicuring_out.get(m["batch_id"], 0) + (m.get("qty_g") or 0)
         elif m["type"] == "return_manicuring":
+            back = (m.get("waste_g") or 0)
             for out in m.get("outputs") or []:
                 bump(out["batch_id"], out.get("qty_g") or 0, when)
+                back += out.get("qty_g") or 0
+            manicuring_out[m["batch_id"]] = manicuring_out.get(m["batch_id"], 0) - back
 
     ids = list(balances.keys())
     reg = await col("batch_registry").find({"batch_id": {"$in": ids}}).to_list(len(ids) or 1)
@@ -517,6 +525,7 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
         r["product_name"] = names.get(r["batch_id"], "")
     staged = await col("vault_movements").count_documents({"odoo_sync": "staged"})
     return {"rows": rows, "staged_movements": staged,
+            "manicuring_out": {k: round(v, 3) for k, v in manicuring_out.items() if v > 0.001},
             "odoo_writes_live": get_vault_writer().live}
 
 

@@ -141,6 +141,9 @@ export default function ProductionGuideButton() {
             </Section>
 
             <Section title="The four vault movements">
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Flower normally moves: <span className="font-medium">Receive to Vault</span> (unmanicured bulk in) → <span className="font-medium">Issue to Manicuring</span> → <span className="font-medium">Return from Manicuring</span> (comes back as -M plus -T trim) → <span className="font-medium">Issue to Packing</span>. You do not need to remember this: pick the batch and the system marks the next step and greys out anything impossible.
+              </p>
               <div className="space-y-2">
                 {MOVEMENT_ROWS.map(r => {
                   const Icon = r.icon;

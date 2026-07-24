@@ -38,7 +38,7 @@ const fmtQty = (g) => {
 
 export default function VaultLogbook() {
   const { can, user } = useAuth();
-  const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, odoo_writes_live: false });
+  const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, manicuring_out: {}, odoo_writes_live: false });
   const [movements, setMovements] = useState([]);
   const [loading, setLoading]     = useState(true);
 
@@ -55,11 +55,6 @@ export default function VaultLogbook() {
   const [notes, setNotes]         = useState("");
   const [saving, setSaving]       = useState(false);
   const batchBoxRef = useRef(null);
-
-  // Batches currently out at manicuring (issued more than returned) — used to
-  // narrow the picker when recording a return, so the operator can only pick
-  // from batches that are actually out.
-  const [manicuringOut, setManicuringOut] = useState(null);   // Set | null (null = no filter)
 
   // Sync
   const [syncConfirm, setSyncConfirm] = useState(false);
@@ -106,44 +101,49 @@ export default function VaultLogbook() {
   }, []);
 
   const isReturn = type === "return_manicuring";
-  const canSubmit = batch && (isReturn
-    ? (parseFloat(mQty) > 0 || parseFloat(tQty) > 0)
-    : parseFloat(qty) > 0);
 
-  // Work out which batches are still out at manicuring whenever Return is selected
-  useEffect(() => {
-    if (!isReturn) { setManicuringOut(null); return; }
-    let stale = false;
-    (async () => {
-      try {
-        const [iss, ret] = await Promise.all([
-          api.get("/api/production/vault/movements", { params: { type: "issue_manicuring", limit: 500 } }),
-          api.get("/api/production/vault/movements", { params: { type: "return_manicuring", limit: 500 } }),
-        ]);
-        const out = {};
-        iss.data.items.forEach(m => { out[m.batch_id] = (out[m.batch_id] || 0) + (m.qty_g || 0); });
-        ret.data.items.forEach(m => {
-          const back = (m.outputs || []).reduce((s, o) => s + (o.qty_g || 0), 0) + (m.waste_g || 0);
-          if (out[m.batch_id] != null) out[m.batch_id] -= back;
-        });
-        if (!stale) setManicuringOut(new Set(Object.keys(out).filter(k => out[k] > 0.001)));
-      } catch {
-        if (!stale) setManicuringOut(null);   // on failure, fall back to unfiltered
-      }
-    })();
-    return () => { stale = true; };
-  }, [isReturn]);
-
-  const displayOptions = isReturn && manicuringOut
-    ? batchOptions.filter(b => manicuringOut.has(b.batch_id))
-    : batchOptions;
-
-  // Current recorded vault balance for the selected batch (null when none selected)
+  // ── Guided next-step logic ─────────────────────────────────────────────────
+  // The batch's current position determines which movements make sense:
+  //   never received      → Receive to Vault
+  //   out at manicuring   → Return from Manicuring
+  //   in vault, stage -U  → Issue to Manicuring
+  //   in vault, other     → Issue to Packing
+  // Receive stays enabled always (stock legitimately arrives in tranches);
+  // the other movements are disabled when they are physically impossible.
   const vaultBalance = batch
     ? (ledger.rows.find(r => r.batch_id === batch.batch_id)?.qty_g ?? 0)
     : null;
+  const outAtManicuring = batch ? (ledger.manicuring_out?.[batch.batch_id] || 0) : 0;
+  const inVault = vaultBalance > 0.001;
+
+  const allowedTypes = {
+    receive:           true,
+    issue_packing:     inVault,
+    issue_manicuring:  inVault,
+    return_manicuring: outAtManicuring > 0.001,
+  };
+  const disabledReason = {
+    issue_packing:     "Nothing in the vault for this batch yet",
+    issue_manicuring:  "Nothing in the vault for this batch yet",
+    return_manicuring: "This batch is not out at manicuring",
+  };
+  const suggestedType = !batch ? null
+    : outAtManicuring > 0.001 ? "return_manicuring"
+    : !inVault ? "receive"
+    : batch.stage_suffix === "U" ? "issue_manicuring"
+    : "issue_packing";
+
+  // Snap to the suggested movement whenever a batch is picked
+  useEffect(() => {
+    if (batch && suggestedType) setType(suggestedType);
+  }, [batch]);  // deliberately only on batch change — suggestedType would re-snap on every keystroke
+
   const overIssue = batch && !isReturn && type !== "receive"
     && parseFloat(qty) > 0 && parseFloat(qty) > vaultBalance;
+
+  const canSubmit = batch && allowedTypes[type] && (isReturn
+    ? (parseFloat(mQty) > 0 || parseFloat(tQty) > 0)
+    : parseFloat(qty) > 0);
 
   async function submit() {
     if (!canSubmit) return;
@@ -248,38 +248,14 @@ export default function VaultLogbook() {
               <NotebookPen size={15} className="text-bassani-500" /> Record Movement
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Your name and the time are captured automatically. Batch numbers are picked from the registry, never typed.
+              Pick the batch first. The system shows where it is and suggests the next step. Your name and the time are captured automatically.
             </p>
 
-            {/* Type selector */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
-              {MOVE_TYPES.map(m => {
-                const Icon = m.icon;
-                const active = type === m.key;
-                return (
-                  <button
-                    key={m.key}
-                    onClick={() => setType(m.key)}
-                    className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
-                      active
-                        ? "border-bassani-300 bg-bassani-50 dark:bg-bassani-900/30 dark:border-bassani-700"
-                        : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
-                    }`}
-                  >
-                    <span className={`flex items-center gap-1.5 text-xs font-semibold ${active ? "text-bassani-700 dark:text-bassani-300" : "text-gray-700 dark:text-gray-200"}`}>
-                      <Icon size={13} /> {m.label}
-                    </span>
-                    <span className="block text-[11px] text-gray-400 mt-0.5 leading-tight">{m.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
-
             <div className="grid sm:grid-cols-2 gap-4">
-              {/* Batch picker */}
+              {/* Step 1 — batch picker */}
               <div ref={batchBoxRef} className="relative sm:col-span-2">
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
-                  {isReturn ? "Batch that was issued to manicuring" : "Batch"}
+                  1. Which batch?
                 </label>
                 <input
                   value={batch ? `${batch.batch_id} — ${batch.product_name}` : batchQuery}
@@ -290,13 +266,11 @@ export default function VaultLogbook() {
                 />
                 {batchOpen && (
                   <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
-                    {displayOptions.length === 0 ? (
+                    {batchOptions.length === 0 ? (
                       <p className="text-xs text-gray-400 px-3 py-2">
-                        {isReturn
-                          ? "No batches are recorded as out at manicuring. Record the Issue to Manicuring first."
-                          : "No matching batches. Generate it on the Batch Registry page first."}
+                        No matching batches. Generate it on the Batch Registry page first.
                       </p>
-                    ) : displayOptions.map(b => (
+                    ) : batchOptions.map(b => (
                       <button
                         key={b.batch_id}
                         onClick={() => { setBatch(b); setBatchQuery(""); setBatchOpen(false); }}
@@ -325,8 +299,57 @@ export default function VaultLogbook() {
                   <span className="text-gray-500 dark:text-gray-400">
                     In vault now: <span className={`font-semibold ${vaultBalance > 0 ? "text-gray-800 dark:text-gray-100" : "text-amber-600 dark:text-amber-400"}`}>{fmtQty(vaultBalance)}</span>
                   </span>
+                  {outAtManicuring > 0.001 && (
+                    <span className="text-gray-500 dark:text-gray-400">
+                      Out at manicuring: <span className="font-semibold text-amber-600 dark:text-amber-400">{fmtQty(outAtManicuring)}</span>
+                    </span>
+                  )}
                 </div>
               )}
+
+              {/* Step 2 — movement, gated by where the batch actually is */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                  2. What is happening to it?
+                </label>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  {MOVE_TYPES.map(m => {
+                    const Icon = m.icon;
+                    const active = type === m.key;
+                    const enabled = batch ? allowedTypes[m.key] : false;
+                    const suggested = batch && suggestedType === m.key;
+                    return (
+                      <button
+                        key={m.key}
+                        onClick={() => enabled && setType(m.key)}
+                        disabled={!enabled}
+                        className={`relative text-left rounded-lg border px-3 py-2.5 transition-colors ${
+                          active && enabled
+                            ? "border-bassani-300 bg-bassani-50 dark:bg-bassani-900/30 dark:border-bassani-700"
+                            : enabled
+                              ? "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
+                              : "border-gray-100 dark:border-gray-800 opacity-45 cursor-not-allowed"
+                        }`}
+                      >
+                        {suggested && (
+                          <span className="absolute -top-2 right-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-600 text-white">
+                            Next step
+                          </span>
+                        )}
+                        <span className={`flex items-center gap-1.5 text-xs font-semibold ${active && enabled ? "text-bassani-700 dark:text-bassani-300" : "text-gray-700 dark:text-gray-200"}`}>
+                          <Icon size={13} /> {m.label}
+                        </span>
+                        <span className="block text-[11px] text-gray-400 mt-0.5 leading-tight">
+                          {!batch ? m.hint : enabled ? m.hint : disabledReason[m.key]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!batch && (
+                  <p className="text-[11px] text-gray-400 mt-1.5">Pick a batch above to see which movements are possible.</p>
+                )}
+              </div>
 
               {overIssue && (
                 <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">
