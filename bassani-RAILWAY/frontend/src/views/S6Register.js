@@ -4,7 +4,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
-import { fmtWhen, batchTitle } from "./BatchRegistry";
+import { fmtWhen, batchTitle, STAGE_LABELS } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
 /* Phase 13.0.6 — S6 Stock Receiving Register.
@@ -36,6 +36,10 @@ export default function S6Register() {
   const [productOpen, setProductOpen] = useState(false);
   const [typeDigit, setTypeDigit] = useState(3);
   const [subcat, setSubcat]       = useState("");
+  // Only asked when genuinely ambiguous (flower type, no size/grade given —
+  // a size implies it's already graded, so already manicured). Every other
+  // combination derives the material's stage automatically on the backend.
+  const [alreadyManicured, setAlreadyManicured] = useState(null);
   const [qtyQuoted, setQtyQuoted] = useState("");
   const [qtyReceived, setQtyReceived] = useState("");
   const [poList, setPoList]       = useState([]);
@@ -82,18 +86,30 @@ export default function S6Register() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Flower-type deliveries (Indoor/Greendoor/Greenhouse) with no size/grade
+  // given are the one case the material's stage can't be inferred — a size
+  // (Large/Smalls/Pops) already implies manicured, Trim is always raw trim,
+  // and other types (vape, edible, distillate…) have no flower stage at all.
+  const isFlowerType = [1, 2, 3].includes(Number(typeDigit));
+  const stageIsAmbiguous = isFlowerType && !subcat;
+
+  // Reset the answer whenever the fields that determine ambiguity change, so
+  // a stale answer can't carry over to a delivery it no longer applies to.
+  useEffect(() => { setAlreadyManicured(null); }, [typeDigit, subcat]);
+
   // Live BI batch ID preview
   useEffect(() => {
     if (!supplier || !product || !typeDigit) { setPreview(null); return; }
     let stale = false;
     api.get("/api/production/batches/preview", {
       params: { family: "import", product_code: product.code, supplier_code: supplier.code,
-                type_digit: typeDigit, subcat: subcat || undefined },
+                type_digit: typeDigit, subcat: subcat || undefined,
+                already_manicured: stageIsAmbiguous ? alreadyManicured ?? undefined : undefined },
     })
       .then(r => { if (!stale) setPreview(r.data); })
       .catch(() => { if (!stale) setPreview(null); });
     return () => { stale = true; };
-  }, [supplier, product, typeDigit, subcat]);
+  }, [supplier, product, typeDigit, subcat, stageIsAmbiguous, alreadyManicured]);
 
   useEffect(() => {
     const close = (e) => {
@@ -209,7 +225,8 @@ export default function S6Register() {
     ? Math.round((parseFloat(qtyQuoted) - parseFloat(qtyReceived)) * 1000) / 1000
     : null;
 
-  const canSubmit = supplier && product && typeDigit && parseFloat(qtyReceived) > 0 && poChoice !== "";
+  const canSubmit = supplier && product && typeDigit && parseFloat(qtyReceived) > 0 && poChoice !== ""
+    && (!stageIsAmbiguous || alreadyManicured !== null);
 
   async function submit() {
     if (!canSubmit) return;
@@ -221,6 +238,7 @@ export default function S6Register() {
         product_code: product.code,
         type_digit: typeDigit,
         subcat: subcat || undefined,
+        already_manicured: stageIsAmbiguous ? alreadyManicured : undefined,
         qty_quoted: qtyQuoted ? parseFloat(qtyQuoted) : undefined,
         qty_received: parseFloat(qtyReceived),
         po_id: linkedPo?.id,
@@ -236,7 +254,7 @@ export default function S6Register() {
       }
       setProduct(null); setProductQuery(""); setQtyQuoted(""); setQtyReceived(""); setPoChoice("");
       setDocs({ doc_invoice: false, doc_coa: false, doc_delivery_note: false, doc_s6_transfer: false });
-      setComment(""); setPreview(null);
+      setComment(""); setPreview(null); setAlreadyManicured(null);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to record the receipt");
@@ -342,6 +360,31 @@ export default function S6Register() {
                 </select>
               </div>
 
+              {stageIsAmbiguous && (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Has this delivery already been manicured?</label>
+                  <div className="flex gap-2">
+                    {[{ v: false, label: "No — unmanicured bulk" }, { v: true, label: "Yes — already manicured" }].map(o => (
+                      <button
+                        key={String(o.v)}
+                        type="button"
+                        onClick={() => setAlreadyManicured(o.v)}
+                        className={`flex-1 text-xs font-medium px-3 py-2 rounded-lg border transition-colors ${
+                          alreadyManicured === o.v
+                            ? "bg-bassani-100 dark:bg-bassani-900/40 text-bassani-700 dark:text-bassani-300 border-bassani-300 dark:border-bassani-700"
+                            : "bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:text-gray-700 dark:hover:text-gray-200"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    No size or grade was given, so the batch number can't tell this apart on its own. An unmanicured delivery still needs Issue to Manicuring in the vault; a manicured one goes straight to Issue to Packing once released.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Quantity quoted (grams or units)</label>
                 <input
@@ -436,7 +479,12 @@ export default function S6Register() {
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
               <div className="flex-1 bg-gray-50 dark:bg-gray-900 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg px-4 py-3">
                 {preview ? (
-                  <span className="font-mono text-lg font-semibold text-gray-800 dark:text-gray-100 tracking-wide">{preview.batch_id}</span>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="font-mono text-lg font-semibold text-gray-800 dark:text-gray-100 tracking-wide">{preview.batch_id}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Recorded as: <span className="font-semibold text-gray-700 dark:text-gray-200">{preview.stage ? (STAGE_LABELS[preview.stage] || preview.stage) : "Finished product"}</span>
+                    </span>
+                  </div>
                 ) : (
                   <span className="text-sm text-gray-400">Pick the supplier and product to preview the batch number</span>
                 )}

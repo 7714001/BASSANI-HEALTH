@@ -405,7 +405,7 @@ export default function BatchRegistry() {
               )}
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-              Pick the batch type and product. The ID is built automatically to the Bassani V6 standard, with the next sequence number and today's date.
+              Pick the batch type and product. The ID is built automatically to the Bassani V6 standard, with the next sequence number and today's date. Flower batches (Single Strain, Mixed Room, Blend) are created as <span className="font-medium text-gray-600 dark:text-gray-300">Unmanicured</span> — the suffix updates automatically as the batch moves through manicuring, so unmanicured and manicured stock are always easy to tell apart.
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">
               This creates batches for stock produced at Bassani only. Imported stock is registered on the{" "}

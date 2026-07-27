@@ -8,11 +8,11 @@ import { BtnSecondary, Modal } from "./UI";
    needs the paper standard to understand what the system is doing. */
 
 const FAMILY_ROWS = [
-  { label: "Single strain",   prefix: "BH + product code", example: "BHDSD-011-100626",    note: "One strain harvested on its own. The product's shortcode follows BH." },
-  { label: "Mixed room (API)", prefix: "BHAPI + product code", example: "BHAPIBBY-001-010126", note: "A room holding more than one strain, identified by the main one." },
-  { label: "Blend",           prefix: "BHB + product code",  example: "BHBBBY-003-220426",   note: "Two or more batches mixed together. The blend links back to every batch that went into it." },
-  { label: "Gummy / product lot", prefix: "BHG + product code", example: "BHGPIN-001-181225", note: "Gummies and similar products received from a supplier and packed here. The code is the flavour's shortcode." },
-  { label: "Imported stock", prefix: "BI + supplier code", example: "BISB-JSY340L-300426", note: "Stock bought in from an external supplier, recorded on the S6 Receiving page. See the import breakdown below." },
+  { label: "Single strain",   prefix: "BH + product code", example: "BHDSD-011-100626-U",    note: "One strain harvested on its own. Created as Unmanicured — see below." },
+  { label: "Mixed room (API)", prefix: "BHAPI + product code", example: "BHAPIBBY-001-010126-U", note: "A room holding more than one strain, identified by the main one. Created as Unmanicured." },
+  { label: "Blend",           prefix: "BHB + product code",  example: "BHBBBY-003-220426-U",   note: "Two or more batches mixed together, created as Unmanicured. The blend links back to every batch that went into it." },
+  { label: "Gummy / product lot", prefix: "BHG + product code", example: "BHGPIN-001-181225", note: "Gummies and similar products received from a supplier and packed here. No manicuring stage, so no suffix." },
+  { label: "Imported stock", prefix: "BI + supplier code", example: "BISB-JSY340L-300426-M", note: "Stock bought in from an external supplier, recorded on the S6 Receiving page. See the import breakdown below." },
 ];
 
 const STAGE_ROWS = [
@@ -87,7 +87,7 @@ export default function ProductionGuideButton() {
               </p>
             </Section>
 
-            <Section title="The four batch types">
+            <Section title="The batch types">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -136,7 +136,10 @@ export default function ProductionGuideButton() {
                 </div>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Stock types: 1 Indoor, 2 Greendoor, 3 Greenhouse, 4 Distillate, 5 Vape, 6 Hash, 7 Edible, 8 Tincture, 9 Trim. The import number belongs to the product forever; the stock type describes this particular delivery. Imported batches then move through the vault exactly like any other batch, including the stage letters below.
+                Stock types: 1 Indoor, 2 Greendoor, 3 Greenhouse, 4 Distillate, 5 Vape, 6 Hash, 7 Edible, 8 Tincture, 9 Trim. The import number belongs to the product forever; the stock type describes this particular delivery.
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                A stage letter (see below) is added the moment the delivery is received, based on what actually arrived: a size (Large / Smalls / Pops) means it is already manicured, Trim stock is always Trim, and vape / edible / distillate / hash / tincture deliveries are finished products with no stage letter at all. The one time you are asked directly is a flower delivery (Indoor, Greendoor or Greenhouse) with no size given — the form asks whether it has already been manicured, since the batch number alone can't tell. Imported batches then move through the vault exactly like any other batch, including further stage changes below.
               </p>
             </Section>
 

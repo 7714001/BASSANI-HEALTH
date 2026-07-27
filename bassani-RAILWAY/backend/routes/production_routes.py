@@ -50,6 +50,58 @@ PROD_READ = require_any_permission("production.batch_generate", "production.vaul
 MOVEMENT_TYPES = {"receive", "issue_packing", "issue_manicuring", "return_manicuring"}
 RECEIVE_SOURCES = {"production", "external_supplier", "opening_balance"}
 
+# Families whose batches are dried flower entering the vault as unmanicured
+# bulk (Track A starts at the vault door, not cultivation/drying — see the
+# roadmap). These get the -U suffix baked in at generation, not left bare,
+# so Bassani can see unmanicured vs manicured stock from the moment a batch
+# exists, matching the V6 standard's stage model. Gummy has no manicuring
+# stage and stays bare.
+FLOWER_FAMILIES = {"single", "api", "blend"}
+
+# Import stock type digits (see services/batch_id.py IMPORT_TYPES) grouped by
+# what they imply about the material's stage on arrival:
+IMPORT_FLOWER_TYPES   = {1, 2, 3}         # Indoor, Greendoor, Greenhouse — could arrive either state
+IMPORT_TRIM_TYPE       = 9                # Trim — always raw trim, never "manicured"
+IMPORT_FINISHED_TYPES = {4, 5, 6, 7, 8}   # Distillate, Vape, Hash, Edible, Tincture — no flower stage applies
+
+
+def _determine_import_stage(type_digit: Optional[int], subcat: Optional[str],
+                            already_manicured: Optional[bool], strict: bool) -> Optional[str]:
+    """What stage suffix an imported batch should carry from the moment it's
+    received, so it enters the guided vault flow at the right point (a
+    manicured import goes straight to Issue to Packing; an unmanicured one
+    still needs Issue to Manicuring — see VaultLogbook.js's suggested-move
+    logic, which reads this exact field).
+
+    Sub-category is the strongest signal when present — Large/Smalls are
+    manicured-flower gradings, Pops is the Pops byproduct grade — so it's
+    checked before the type digit. Trim always means raw trim. Finished
+    product types (vape, edible, etc.) have no flower stage at all.
+
+    Only the genuinely ambiguous case — a flower-type delivery with no
+    grading given — requires an explicit answer; `strict` controls whether
+    that missing answer raises (batch creation) or just returns None quietly
+    (live preview, before the operator has answered yet)."""
+    sub = (subcat or "").strip().upper()
+    if sub == "P":
+        return "P"
+    if sub in ("L", "S"):
+        return "M"
+    if type_digit == IMPORT_TRIM_TYPE:
+        return "T"
+    if type_digit in IMPORT_FINISHED_TYPES:
+        return None
+    if type_digit in IMPORT_FLOWER_TYPES:
+        if already_manicured is None:
+            if strict:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Specify whether this delivery has already been manicured before receiving it.",
+                )
+            return None
+        return "M" if already_manicured else "U"
+    return None
+
 
 # ── Pydantic bodies ───────────────────────────────────────────────────────────
 
@@ -71,6 +123,7 @@ class BatchCreate(BaseModel):
     supplier_code: Optional[str] = None
     type_digit: Optional[int] = None  # 1-9, see IMPORT_TYPES
     subcat: Optional[str] = None      # L | P | S
+    already_manicured: Optional[bool] = None  # required only when ambiguous — see _determine_import_stage
 
 
 class SupplierAdd(BaseModel):
@@ -91,6 +144,7 @@ class ImportReceipt(BaseModel):
     product_code: str
     type_digit: int
     subcat: Optional[str] = None
+    already_manicured: Optional[bool] = None  # required only when ambiguous — see _determine_import_stage
     date_code: Optional[str] = None       # date received, DDMMYY; defaults today
     qty_quoted: Optional[float] = None    # grams or units as quoted by the supplier
     qty_received: float                   # grams (or units) actually received
@@ -619,6 +673,7 @@ async def preview_batch_id(
     supplier_code: Optional[str] = Query(None),
     type_digit: Optional[int] = Query(None),
     subcat: Optional[str] = Query(None),
+    already_manicured: Optional[bool] = Query(None),
     _: dict = Depends(PROD_READ),
 ):
     if family == "import":
@@ -626,31 +681,46 @@ async def preview_batch_id(
             raise HTTPException(status_code=422, detail="Supplier and stock type are required for an import batch")
         _sup, _prod, ref = await _resolve_import_parts(supplier_code, product_code)
         try:
-            batch_id = build_import_batch_id(supplier_code, product_code, type_digit, ref, subcat, format_date_code())
+            bare_id = build_import_batch_id(supplier_code, product_code, type_digit, ref, subcat, format_date_code())
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        return {"batch_id": batch_id, "import_ref": ref, "date_code": format_date_code()}
+        # Non-strict: while the ambiguous case hasn't been answered yet, show
+        # the plain id rather than erroring on every keystroke — the answer
+        # is only required at actual creation time (receive_import).
+        stage = _determine_import_stage(type_digit, subcat, already_manicured, strict=False)
+        batch_id = derive_stage_id(bare_id, stage) if stage else bare_id
+        return {"batch_id": batch_id, "import_ref": ref, "date_code": format_date_code(), "stage": stage}
     if family not in FAMILIES:
         raise HTTPException(status_code=422, detail="Unknown batch family")
     seq = await _next_sequence(family, product_code.strip().upper())
     try:
-        batch_id = build_batch_id(family, product_code, seq, format_date_code())
+        bare_id = build_batch_id(family, product_code, seq, format_date_code())
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return {"batch_id": batch_id, "sequence": seq, "date_code": format_date_code()}
+    stage = "U" if family in FLOWER_FAMILIES else None
+    batch_id = derive_stage_id(bare_id, stage) if stage else bare_id
+    return {"batch_id": batch_id, "sequence": seq, "date_code": format_date_code(), "stage": stage}
 
 
 async def _create_import_batch(body: BatchCreate, current_user: dict) -> dict:
-    """Registry entry for a BI (imported) batch. Shared by the generator and
-    the one-shot S6 receive flow. Returns the stored doc (without _id)."""
+    """Registry entry for a BI (imported) batch. Only ever called from
+    receive_import — atomically alongside the s6_receipts quarantine record,
+    never exposed as a standalone creation path. Returns the stored doc
+    (without _id)."""
     if not body.supplier_code or not body.type_digit:
         raise HTTPException(status_code=422, detail="Supplier and stock type are required for an import batch")
     sup, prod, ref = await _resolve_import_parts(body.supplier_code, body.product_code)
     date_code = body.date_code or format_date_code()
     try:
-        batch_id = build_import_batch_id(sup["code"], prod["code"], body.type_digit, ref, body.subcat, date_code)
+        bare_id = build_import_batch_id(sup["code"], prod["code"], body.type_digit, ref, body.subcat, date_code)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # The material's stage on arrival — a manicured import goes straight to
+    # Issue to Packing once released; an unmanicured one still needs Issue to
+    # Manicuring first. strict=True: this is actual creation, not a preview,
+    # so the ambiguous case (flower type, no grading given) must be answered.
+    stage = _determine_import_stage(body.type_digit, body.subcat, body.already_manicured, strict=True)
+    batch_id = derive_stage_id(bare_id, stage) if stage else bare_id
     existing = await col("batch_registry").find_one({"batch_id": batch_id})
     if existing:
         raise HTTPException(status_code=409, detail=f"Batch {batch_id} already exists (same supplier, product, type and date)")
@@ -665,8 +735,8 @@ async def _create_import_batch(body: BatchCreate, current_user: dict) -> dict:
         "product_name":    prod["name"],
         "sequence":        None,
         "date_code":       date_code,
-        "stage_suffix":    None,
-        "base_batch_id":   batch_id,
+        "stage_suffix":    stage,
+        "base_batch_id":   bare_id,
         "parent_batch_id": None,
         "origin":          "generated",
         "supplier_code":   sup["code"],
@@ -729,9 +799,14 @@ async def create_batch(
     date_code = body.date_code or format_date_code()
     seq = await _next_sequence(body.family, code)
     try:
-        batch_id = build_batch_id(body.family, code, seq, date_code)
+        bare_id = build_batch_id(body.family, code, seq, date_code)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # Flower families enter the vault as dried unmanicured bulk — the -U
+    # suffix is applied automatically at creation (see FLOWER_FAMILIES).
+    # Gummy has no manicuring stage and stays bare.
+    stage = "U" if body.family in FLOWER_FAMILIES else None
+    batch_id = derive_stage_id(bare_id, stage) if stage else bare_id
     if await col("batch_registry").find_one({"batch_id": batch_id}):
         raise HTTPException(status_code=409, detail=f"Batch {batch_id} already exists")
 
@@ -745,8 +820,8 @@ async def create_batch(
         "product_name":     product["name"],
         "sequence":        seq,
         "date_code":       date_code,
-        "stage_suffix":    None,
-        "base_batch_id":   batch_id,
+        "stage_suffix":    stage,
+        "base_batch_id":   bare_id,
         "parent_batch_id": None,
         "origin":          "generated",
         "ops":             ops,
@@ -1053,6 +1128,7 @@ async def receive_import(
     batch = await _create_import_batch(BatchCreate(
         family="import", product_code=body.product_code, date_code=body.date_code,
         supplier_code=body.supplier_code, type_digit=body.type_digit, subcat=body.subcat,
+        already_manicured=body.already_manicured,
     ), current_user)
 
     qty = round(float(body.qty_received), 3)
