@@ -2111,7 +2111,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Tick items on handheld | Packer |
 | Generate a production batch number | Vault Custodian or anyone with `production.batch_generate` |
 | Record a vault stock movement | Vault Custodian or anyone with `production.vault` |
-| Add, archive or delete product shortcodes | Super admin or admin with `production.manage` |
+| Add, archive, delete or link product shortcodes to their stock system record | Super admin or admin with `production.manage` |
 | Receive imported stock (S6 register entry) | Vault Custodian or anyone with `production.vault` |
 | Release imported stock from quarantine | Rookshanna (responsible_pharmacist) or anyone with `production.rp_release` |
 | Resolve a no-purchase-order flag on a receipt | Super admin or admin with `production.manage` |

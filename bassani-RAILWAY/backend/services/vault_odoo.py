@@ -20,18 +20,25 @@ Operation shapes (stored verbatim on staged movements so the intended write is
 auditable before it happens):
 
   {"op": "ensure_lot",        "lot_name": str, "product_name": str,
-   "product_hint": str, "product_id": None}
+   "product_hint": str, "product_code": str, "product_id": int|None}
   {"op": "internal_transfer", "lot_name": str, "qty_g": float,
-   "from_location": str, "to_location": str, "product_hint": str}
+   "from_location": str, "to_location": str, "product_hint": str,
+   "product_code": str, "product_id": int|None}
   {"op": "manufacture_split", "input_lot": str, "input_qty_g": float,
-   "outputs": [{"lot_name": str, "qty_g": float, "product_hint": str}],
+   "outputs": [{"lot_name": str, "qty_g": float, "product_hint": str,
+                "product_code": str, "product_id": int|None}],
    "waste_g": float}
 
-Product resolution: each registry product maps to a GACP Odoo product record.
-That mapping cannot exist until GACP access is confirmed, so staged ops carry a
-`product_hint` (the product name); at execute time the Odoo product is resolved by
-name within the GACP company and the op fails with a clear message when no
-match is found — surfaced per movement by the sync endpoint.
+Product resolution (13.0.8): every portal product can be explicitly linked to
+its Odoo product.product record (Manage Products > Link product) — the
+portal never creates products, only links to ones that already exist in
+Odoo, same rule as suppliers and purchase orders. Every op carries the
+product's `product_code`; `product_id` is filled in from the CURRENT link at
+execute time (see production_routes.py::_refresh_product_pins — this is what
+lets an op staged before a product was linked still resolve correctly once it
+is). When no link exists, `_resolve_product()` falls back to a name match
+within the GACP company against `product_hint`, and fails with a clear
+message pointing at Manage Products when nothing matches.
 """
 import logging
 from typing import Optional
@@ -61,33 +68,42 @@ class VaultOdooWriter:
 
     # ── Op builders (pure — used in both modes) ───────────────────────────────
 
-    def op_ensure_lot(self, lot_name: str, product_name: str) -> dict:
+    def op_ensure_lot(self, lot_name: str, product_name: str, product_code: "str | None" = None,
+                      product_id: "int | None" = None) -> dict:
         return {"op": "ensure_lot", "lot_name": lot_name, "product_name": product_name,
-                "product_hint": product_name, "product_id": None}
+                "product_hint": product_name, "product_code": product_code, "product_id": product_id}
 
     def op_internal_transfer(self, lot_name: str, qty_g: float, from_location: str,
-                             to_location: str, product_name: str) -> dict:
+                             to_location: str, product_name: str, product_code: "str | None" = None,
+                             product_id: "int | None" = None) -> dict:
         return {"op": "internal_transfer", "lot_name": lot_name, "qty_g": qty_g,
                 "from_location": from_location, "to_location": to_location,
-                "product_hint": product_name}
+                "product_hint": product_name, "product_code": product_code, "product_id": product_id}
 
     def op_manufacture_split(self, input_lot: str, input_qty_g: float,
-                             outputs: list, waste_g: float) -> dict:
+                             outputs: list, waste_g: float,
+                             input_product_code: "str | None" = None,
+                             input_product_id: "int | None" = None) -> dict:
         return {"op": "manufacture_split", "input_lot": input_lot,
-                "input_qty_g": input_qty_g, "outputs": outputs, "waste_g": waste_g}
+                "input_qty_g": input_qty_g, "outputs": outputs, "waste_g": waste_g,
+                "input_product_code": input_product_code, "input_product_id": input_product_id}
 
     def op_po_receipt(self, supplier_name: str, lot_name: str, qty_g: float,
                       product_name: str, po_id: "int | None" = None,
                       po_name: "str | None" = None,
-                      supplier_partner_id: "int | None" = None) -> dict:
+                      supplier_partner_id: "int | None" = None,
+                      product_code: "str | None" = None,
+                      product_id: "int | None" = None) -> dict:
         """Imported stock receipt — Odoo side is a purchase order against the
         supplier with a validated goods receipt into the vault, not an internal
         transfer (Phase 7.9 supplier layer). When po_id is given the receipt is
         booked against that existing PO instead of creating a new one. When the
         supplier is linked, supplier_partner_id pins the exact Odoo vendor —
-        name matching is never used for writes when a link exists."""
+        name matching is never used for writes when a link exists. Same for
+        product_id: pinned when the product is linked (13.0.8)."""
         return {"op": "po_receipt", "supplier_name": supplier_name,
                 "lot_name": lot_name, "qty_g": qty_g, "product_hint": product_name,
+                "product_code": product_code, "product_id": product_id,
                 "po_id": po_id, "po_name": po_name,
                 "supplier_partner_id": supplier_partner_id}
 
@@ -125,7 +141,8 @@ class VaultOdooWriter:
         return cid
 
     def _resolve_product(self, product_hint: str, company_id: int) -> int:
-        """Odoo product record for a registry product, by name, within the GACP company."""
+        """Fallback only: name match within the GACP company. Used when the
+        product has no explicit Odoo link (13.0.8) — prefer _product_id_for()."""
         odoo = get_odoo_client()
         rows = odoo.search_read(
             "product.product",
@@ -136,9 +153,16 @@ class VaultOdooWriter:
         if not rows:
             raise RuntimeError(
                 f"No Odoo product found for '{product_hint}' in the GACP company. "
-                "Create the matching bulk product in Odoo and re-run the sync."
+                "Link the product to its stock system record (Manage Products) and re-run the sync."
             )
         return rows[0]["id"]
+
+    def _product_id_for(self, obj: dict, company_id: int) -> int:
+        """The Odoo product id for an op (or a manufacture_split output dict):
+        the pinned product_id when the product is linked (refreshed at execute
+        time — see production_routes.py::_refresh_product_pins), otherwise a
+        name-match fallback against product_hint."""
+        return obj.get("product_id") or self._resolve_product(obj["product_hint"], company_id)
 
     def _resolve_location(self, name: str, company_id: int) -> int:
         odoo = get_odoo_client()
@@ -165,7 +189,7 @@ class VaultOdooWriter:
         )
         if existing:
             return {"op": "ensure_lot", "lot_id": existing[0]["id"], "created": False}
-        product_id = op.get("product_id") or self._resolve_product(op["product_hint"], company_id)
+        product_id = self._product_id_for(op, company_id)
         lot_id = odoo.create("stock.lot", {
             "name": op["lot_name"], "product_id": product_id, "company_id": company_id,
         }, context=company_context(company_id))
@@ -174,8 +198,10 @@ class VaultOdooWriter:
     def _internal_transfer(self, op: dict) -> dict:
         odoo = get_odoo_client()
         company_id = self._company_id()
-        product_id = self._resolve_product(op["product_hint"], company_id)
-        lot = self._ensure_lot(self.op_ensure_lot(op["lot_name"], op["product_hint"]))
+        product_id = self._product_id_for(op, company_id)
+        lot = self._ensure_lot(self.op_ensure_lot(op["lot_name"], op["product_hint"],
+                                                  product_code=op.get("product_code"),
+                                                  product_id=op.get("product_id")))
         src = self._resolve_location(op["from_location"], company_id)
         dst = self._resolve_location(op["to_location"], company_id)
         ptypes = odoo.search_read(
@@ -235,7 +261,9 @@ class VaultOdooWriter:
         if not pickings:
             raise RuntimeError("Odoo did not generate a receipt for the purchase order")
         picking_id = pickings[0]["id"]
-        lot = self._ensure_lot(self.op_ensure_lot(op["lot_name"], op["product_hint"]))
+        lot = self._ensure_lot(self.op_ensure_lot(op["lot_name"], op["product_hint"],
+                                                  product_code=op.get("product_code"),
+                                                  product_id=op.get("product_id")))
         move_lines = odoo.search_read(
             "stock.move.line", domain=[("picking_id", "=", picking_id)], fields=["id"],
         )
@@ -261,11 +289,14 @@ class VaultOdooWriter:
         results = []
         # Output side first: each produced lot must exist before the MO finishes.
         for out in op["outputs"]:
-            product_id = self._resolve_product(out["product_hint"], company_id)
-            lot = self._ensure_lot(self.op_ensure_lot(out["lot_name"], out["product_hint"]))
+            product_id = self._product_id_for(out, company_id)
+            lot = self._ensure_lot(self.op_ensure_lot(out["lot_name"], out["product_hint"],
+                                                       product_code=out.get("product_code"),
+                                                       product_id=out.get("product_id")))
             loc_src = self._resolve_location(LOC_MANICURING, company_id)
             loc_dst = self._resolve_location(LOC_VAULT, company_id)
-            input_product_id = self._resolve_product(op.get("input_hint") or out["product_hint"], company_id)
+            input_product_id = op.get("input_product_id") or self._resolve_product(
+                op.get("input_hint") or out["product_hint"], company_id)
             input_lot = odoo.search_read(
                 "stock.lot",
                 domain=[("name", "=", op["input_lot"]), ("company_id", "=", company_id)],

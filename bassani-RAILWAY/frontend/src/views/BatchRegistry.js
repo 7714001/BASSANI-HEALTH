@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload, AlertCircle, CheckCircle } from "lucide-react";
+import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload, AlertCircle, CheckCircle, Link2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -74,6 +74,11 @@ export default function BatchRegistry() {
   const [savingProduct, setSavingProduct]   = useState(false);
   const [productBusy, setProductBusy]       = useState(null);   // code currently being archived/restored/deleted
   const [deleteProductConfirm, setDeleteProductConfirm] = useState(null);  // product row
+  // Link-to-Odoo-product picker (production.manage)
+  const [linkTarget, setLinkTarget]             = useState(null);   // product row
+  const [odooProductQuery, setOdooProductQuery] = useState("");
+  const [odooProductResults, setOdooProductResults] = useState([]);
+  const [odooProductSearching, setOdooProductSearching] = useState(false);
 
   // Timeline modal
   const [timeline, setTimeline]           = useState(null);
@@ -211,6 +216,49 @@ export default function BatchRegistry() {
       setProductBusy(null);
     }
   }
+
+  async function doLinkProduct(odooProduct) {
+    const s = linkTarget;
+    setLinkTarget(null);
+    setProductBusy(s.code);
+    try {
+      await api.post(`/api/production/products/${s.code}/link`, {
+        odoo_product_id: odooProduct.id, odoo_product_name: odooProduct.name,
+      });
+      toast.success(`${s.name} linked to ${odooProduct.name}`);
+      await refreshProducts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link product");
+    } finally {
+      setProductBusy(null);
+    }
+  }
+
+  async function doUnlinkProduct(s) {
+    setProductBusy(s.code);
+    try {
+      await api.post(`/api/production/products/${s.code}/unlink`);
+      toast.success(`${s.name} unlinked`);
+      await refreshProducts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to unlink product");
+    } finally {
+      setProductBusy(null);
+    }
+  }
+
+  // Odoo product search inside the link picker (debounced)
+  useEffect(() => {
+    if (!linkTarget || odooProductQuery.trim().length < 2) { setOdooProductResults([]); return; }
+    setOdooProductSearching(true);
+    const t = setTimeout(() => {
+      api.get("/api/production/odoo-products", { params: { q: odooProductQuery.trim() } })
+        .then(r => setOdooProductResults(r.data.products))
+        .catch(e => toast.error(e.response?.data?.detail || "Product search failed"))
+        .finally(() => setOdooProductSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [odooProductQuery, linkTarget]);
 
   async function openTimeline(batchId) {
     setTimelineLoading(true);
@@ -467,7 +515,7 @@ export default function BatchRegistry() {
       {manageOpen && (
         <Modal title="Manage Products" onClose={() => setManageOpen(false)} width="max-w-2xl">
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-            The master shortcode list used for batch ID generation. Archiving hides a product from the picker without touching its existing batches. Deleting is only possible for products that have never been used on a batch.
+            The master shortcode list used for batch ID generation. Linking a product to its record in the stock system makes every batch, movement and receipt for it target the exact record, instead of matching by name. Archiving hides a product from the picker without touching its existing batches. Deleting is only possible for products that have never been used on a batch.
           </p>
 
           {/* Add row */}
@@ -508,14 +556,34 @@ export default function BatchRegistry() {
               .map(s => (
                 <div key={s.code} className={`flex items-center gap-3 px-3 py-2 text-sm ${s.active ? "" : "opacity-60"}`}>
                   <span className="font-mono text-xs font-semibold text-gray-500 dark:text-gray-400 w-12 shrink-0">{s.code}</span>
-                  <span className="flex-1 truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="block truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+                    {s.odoo_product_name ? (
+                      <span className="block text-xs text-green-600 dark:text-green-400 truncate flex items-center gap-1">
+                        <Link2 size={10} /> Linked to {s.odoo_product_name}
+                      </span>
+                    ) : (
+                      <span className="block text-xs text-amber-600 dark:text-amber-400">Not linked to a stock system product</span>
+                    )}
+                  </div>
                   {!s.active && (
                     <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 shrink-0">Archived</span>
+                  )}
+                  {s.odoo_product_name ? (
+                    <button onClick={() => doUnlinkProduct(s)} disabled={productBusy === s.code}
+                      className="text-xs text-gray-400 hover:text-red-500 shrink-0 transition-colors">
+                      Unlink
+                    </button>
+                  ) : (
+                    <button onClick={() => { setLinkTarget(s); setOdooProductQuery(s.name); }} disabled={productBusy === s.code}
+                      className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0">
+                      Link product
+                    </button>
                   )}
                   <button
                     onClick={() => toggleProduct(s)}
                     disabled={productBusy === s.code}
-                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0"
+                    className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 shrink-0"
                   >
                     {s.active ? "Archive" : "Restore"}
                   </button>
@@ -550,6 +618,43 @@ export default function BatchRegistry() {
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setDeleteProductConfirm(null)}>Cancel</BtnSecondary>
             <BtnDanger onClick={doDeleteProduct}>Delete</BtnDanger>
+          </div>
+        </Modal>
+      )}
+
+      {/* Link-to-Odoo-product picker */}
+      {linkTarget && (
+        <Modal title={`Link ${linkTarget.name}`} onClose={() => setLinkTarget(null)}>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+            Search the stock system's products and pick the one that belongs to <strong>{linkTarget.name}</strong>. Every batch, movement and receipt for this product will then always target that exact record. Products are created in the stock system, not here — if it doesn't exist yet, create it there first.
+          </p>
+          <input
+            value={odooProductQuery}
+            onChange={e => setOdooProductQuery(e.target.value)}
+            placeholder="Search stock system products…"
+            autoFocus
+            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
+          />
+          <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+            {odooProductSearching ? (
+              <p className="text-xs text-gray-400 px-3 py-3 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Searching…</p>
+            ) : odooProductResults.length === 0 ? (
+              <p className="text-xs text-gray-400 px-3 py-3">
+                {odooProductQuery.trim().length < 2 ? "Type at least two characters to search." : "No products found. Check the name, or create the product in the stock system first."}
+              </p>
+            ) : odooProductResults.map(p => (
+              <button
+                key={p.id}
+                onClick={() => doLinkProduct(p)}
+                className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              >
+                <span className="block text-gray-800 dark:text-gray-100">{p.name}</span>
+                {p.default_code && <span className="block text-xs text-gray-400 font-mono">{p.default_code}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setLinkTarget(null)}>Cancel</BtnSecondary>
           </div>
         </Modal>
       )}

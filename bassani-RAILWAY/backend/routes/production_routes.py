@@ -58,6 +58,11 @@ class ProductAdd(BaseModel):
     code: str
 
 
+class ProductLink(BaseModel):
+    odoo_product_id: int
+    odoo_product_name: str
+
+
 class BatchCreate(BaseModel):
     family: str                       # single | api | blend | gummy | import
     product_code: str
@@ -210,6 +215,36 @@ async def _resolve_import_parts(supplier_code: str, product_code: str) -> tuple[
     return sup, prod, ref
 
 
+async def _refresh_product_pins(ops: list[dict]) -> list[dict]:
+    """Re-resolve product_id on every op (and manufacture_split outputs) from
+    the CURRENT product link (13.0.8), not whatever was baked in at creation
+    time. This is what lets an op staged before a product was linked still
+    execute against the right Odoo record once it is — called immediately
+    before every writer.execute_ops() call, live or via sync-staged."""
+    codes = set()
+    for op in ops:
+        if op.get("product_code"):
+            codes.add(op["product_code"])
+        for out in op.get("outputs") or []:
+            if out.get("product_code"):
+                codes.add(out["product_code"])
+        if op.get("input_product_code"):
+            codes.add(op["input_product_code"])
+    if not codes:
+        return ops
+    docs = await col("product_shortcodes").find({"code": {"$in": list(codes)}}).to_list(len(codes))
+    pins = {d["code"]: d.get("odoo_product_id") for d in docs}
+    for op in ops:
+        if op.get("product_code") and pins.get(op["product_code"]):
+            op["product_id"] = pins[op["product_code"]]
+        for out in op.get("outputs") or []:
+            if out.get("product_code") and pins.get(out["product_code"]):
+                out["product_id"] = pins[out["product_code"]]
+        if op.get("input_product_code") and pins.get(op["input_product_code"]):
+            op["input_product_id"] = pins[op["input_product_code"]]
+    return ops
+
+
 async def _next_sequence(family: str, product_code: str) -> int:
     latest = await col("batch_registry").find_one(
         {"family": family, "product_code": product_code, "origin": "generated"},
@@ -242,7 +277,8 @@ async def _register_derived(parent: dict, suffix: str, current_user: dict) -> di
         "base_batch_id":   parent["base_batch_id"],
         "parent_batch_id": parent["batch_id"],
         "origin":          "derived",
-        "ops":             [get_vault_writer().op_ensure_lot(child_id, parent["product_name"])],
+        "ops":             [get_vault_writer().op_ensure_lot(child_id, parent["product_name"],
+                                                            product_code=parent["product_code"])],
         "odoo_sync":       "staged",
         "odoo_lot_id":     None,
         "odoo_error":      None,
@@ -337,6 +373,74 @@ async def delete_product(code: str, current_user: dict = Depends(require_permiss
     await audit_log("production.product_deleted", "product_shortcode", code,
                     entity_label=f"{doc['name']} ({code})", user=current_user)
     return {"success": True, "code": code}
+
+
+@router.get("/odoo-products")
+async def search_odoo_products(
+    q: str = Query(..., min_length=2),
+    _: dict = Depends(require_permission("production.manage")),
+):
+    """Search Odoo product.product records for the product-link picker.
+    Read-only. The portal never creates products — it only ever links to
+    products that already exist in Odoo (created there, same rule as
+    suppliers/purchase orders)."""
+    try:
+        odoo = get_odoo_client()
+        rows = odoo.search_read(
+            "product.product",
+            domain=[("name", "ilike", q)],
+            fields=["id", "name", "default_code"], limit=15, order="name asc",
+        )
+        for r in rows:
+            for k, v in r.items():
+                if v is False:
+                    r[k] = None
+        return {"products": rows}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not search stock system products: {e}")
+
+
+@router.post("/products/{code}/link")
+async def link_product(
+    code: str,
+    body: ProductLink,
+    current_user: dict = Depends(require_permission("production.manage")),
+):
+    """Pin this portal product to its Odoo product.product record. Every
+    writer op for this product then carries the pinned id deterministically —
+    never a name match (which is only ever a read-time fallback used until a
+    link exists, or for ops staged before one did)."""
+    code = code.strip().upper()
+    doc = await col("product_shortcodes").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Shortcode {code} not found")
+    await col("product_shortcodes").update_one({"code": code}, {"$set": {
+        "odoo_product_id":   body.odoo_product_id,
+        "odoo_product_name": body.odoo_product_name,
+    }})
+    await audit_log("production.product_linked", "product_shortcode", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user,
+                    detail={"odoo_product_id": body.odoo_product_id,
+                            "odoo_product_name": body.odoo_product_name})
+    return {"success": True}
+
+
+@router.post("/products/{code}/unlink")
+async def unlink_product(
+    code: str,
+    current_user: dict = Depends(require_permission("production.manage")),
+):
+    code = code.strip().upper()
+    doc = await col("product_shortcodes").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Shortcode {code} not found")
+    await col("product_shortcodes").update_one({"code": code}, {"$unset": {
+        "odoo_product_id": "", "odoo_product_name": "",
+    }})
+    await audit_log("production.product_unlinked", "product_shortcode", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user,
+                    detail={"was_linked_to": doc.get("odoo_product_name")})
+    return {"success": True}
 
 
 # ── Batch registry + generator ────────────────────────────────────────────────
@@ -521,7 +625,8 @@ async def _create_import_batch(body: BatchCreate, current_user: dict) -> dict:
         raise HTTPException(status_code=409, detail=f"Batch {batch_id} already exists (same supplier, product, type and date)")
 
     writer = get_vault_writer()
-    ops = [writer.op_ensure_lot(batch_id, prod["name"])]
+    ops = [writer.op_ensure_lot(batch_id, prod["name"], product_code=prod["code"],
+                                product_id=prod.get("odoo_product_id"))]
     doc = {
         "batch_id":        batch_id,
         "family":          "import",
@@ -549,6 +654,7 @@ async def _create_import_batch(body: BatchCreate, current_user: dict) -> dict:
     }
     if writer.live:
         try:
+            await _refresh_product_pins(ops)
             results = writer.execute_ops(ops)
             doc["odoo_sync"] = "done"
             doc["odoo_lot_id"] = results[0].get("lot_id")
@@ -590,7 +696,8 @@ async def create_batch(
         raise HTTPException(status_code=409, detail=f"Batch {batch_id} already exists")
 
     writer = get_vault_writer()
-    ops = [writer.op_ensure_lot(batch_id, product["name"])]
+    ops = [writer.op_ensure_lot(batch_id, product["name"], product_code=code,
+                                product_id=product.get("odoo_product_id"))]
     doc = {
         "batch_id":        batch_id,
         "family":          body.family,
@@ -612,6 +719,7 @@ async def create_batch(
     }
     if writer.live:
         try:
+            await _refresh_product_pins(ops)
             results = writer.execute_ops(ops)
             doc["odoo_sync"] = "done"
             doc["odoo_lot_id"] = results[0].get("lot_id")
@@ -694,6 +802,11 @@ async def create_movement(
 
     writer = get_vault_writer()
     product_name = batch["product_name"]
+    product_code = batch["product_code"]
+    # Current link (13.0.8) — batch_registry only stores the name/code, not a
+    # live pin, so fetch the product doc fresh for the Odoo product id.
+    product_doc = await col("product_shortcodes").find_one({"code": product_code}) or {}
+    product_id = product_doc.get("odoo_product_id")
     now = _now()
 
     doc = {
@@ -725,15 +838,18 @@ async def create_movement(
                 raise HTTPException(status_code=422, detail="Unknown receive source")
             doc["source"] = source
             doc["ops"] = [
-                writer.op_ensure_lot(batch["batch_id"], product_name),
+                writer.op_ensure_lot(batch["batch_id"], product_name,
+                                     product_code=product_code, product_id=product_id),
                 writer.op_internal_transfer(batch["batch_id"], doc["qty_g"],
-                                            LOC_PRODUCTION, LOC_VAULT, product_name),
+                                            LOC_PRODUCTION, LOC_VAULT, product_name,
+                                            product_code=product_code, product_id=product_id),
             ]
         else:
             dest = LOC_PACKING if body.type == "issue_packing" else LOC_MANICURING
             doc["ops"] = [
                 writer.op_internal_transfer(batch["batch_id"], doc["qty_g"],
-                                            LOC_VAULT, dest, product_name),
+                                            LOC_VAULT, dest, product_name,
+                                            product_code=product_code, product_id=product_id),
             ]
 
     else:  # return_manicuring
@@ -759,17 +875,21 @@ async def create_movement(
             doc["waste_g"] = max(round(issued[0]["total"] - m_qty - t_qty, 3), 0)
 
         op_outputs = [
-            {"lot_name": o["batch_id"], "qty_g": o["qty_g"], "product_hint": product_name}
+            {"lot_name": o["batch_id"], "qty_g": o["qty_g"], "product_hint": product_name,
+             "product_code": product_code, "product_id": product_id}
             for o in outputs
         ]
         split = writer.op_manufacture_split(batch["batch_id"],
                                             (doc["waste_g"] or 0) + m_qty + t_qty,
-                                            op_outputs, doc["waste_g"] or 0)
+                                            op_outputs, doc["waste_g"] or 0,
+                                            input_product_code=product_code,
+                                            input_product_id=product_id)
         split["input_hint"] = product_name
         doc["ops"] = [split]
 
     if writer.live:
         try:
+            await _refresh_product_pins(doc["ops"])
             doc["odoo_result"] = writer.execute_ops(doc["ops"])
             doc["odoo_sync"] = "done"
         except Exception as e:
@@ -892,6 +1012,7 @@ async def receive_import(
     now = _now()
     writer = get_vault_writer()
     sup_doc = await col("import_suppliers").find_one({"code": batch["supplier_code"]}) or {}
+    prod_doc = await col("product_shortcodes").find_one({"code": batch["product_code"]}) or {}
 
     # Vault movement: Odoo side is a supplier PO receipt, not an internal transfer
     movement = {
@@ -905,7 +1026,9 @@ async def receive_import(
         "notes":        (body.comment or "").strip() or None,
         "ops":          [writer.op_po_receipt(batch["supplier_name"], batch["batch_id"], qty,
                                               batch["product_name"], po_id=body.po_id, po_name=body.po_name,
-                                              supplier_partner_id=sup_doc.get("odoo_partner_id"))],
+                                              supplier_partner_id=sup_doc.get("odoo_partner_id"),
+                                              product_code=batch["product_code"],
+                                              product_id=prod_doc.get("odoo_product_id"))],
         "odoo_sync":    "staged",
         "odoo_error":   None,
         "odoo_result":  None,
@@ -916,6 +1039,7 @@ async def receive_import(
     }
     if writer.live:
         try:
+            await _refresh_product_pins(movement["ops"])
             movement["odoo_result"] = writer.execute_ops(movement["ops"])
             movement["odoo_sync"] = "done"
         except Exception as e:
@@ -1249,7 +1373,8 @@ async def sync_staged(current_user: dict = Depends(require_permission("productio
     batches = await col("batch_registry").find({"odoo_sync": "staged"}).sort("created_at", 1).to_list(1000)
     for b in batches:
         try:
-            res = writer.execute_ops(b.get("ops") or [])
+            ops = await _refresh_product_pins(b.get("ops") or [])
+            res = writer.execute_ops(ops)
             lot_id = next((r.get("lot_id") for r in res if r.get("lot_id")), None)
             await col("batch_registry").update_one(
                 {"_id": b["_id"]},
@@ -1266,7 +1391,8 @@ async def sync_staged(current_user: dict = Depends(require_permission("productio
     movements = await col("vault_movements").find({"odoo_sync": {"$in": ["staged", "error"]}}).sort("created_at", 1).to_list(5000)
     for m in movements:
         try:
-            res = writer.execute_ops(m.get("ops") or [])
+            ops = await _refresh_product_pins(m.get("ops") or [])
+            res = writer.execute_ops(ops)
             await col("vault_movements").update_one(
                 {"_id": m["_id"]},
                 {"$set": {"odoo_sync": "done", "odoo_result": res, "odoo_error": None}},
