@@ -4,7 +4,9 @@ import api from "../api";
 import { fmtR, parseDisplayName } from "./UI";
 
 // ── Searchable dropdown select ────────────────────────────────────────────────
-function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled }) {
+// Exported for reuse anywhere a category/variant-style filtered dropdown is
+// needed with the same look — e.g. the production module's Link Product picker.
+export function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled }) {
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState("");
   const containerRef      = useRef(null);

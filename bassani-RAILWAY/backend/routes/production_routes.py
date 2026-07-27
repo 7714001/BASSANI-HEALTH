@@ -375,21 +375,52 @@ async def delete_product(code: str, current_user: dict = Depends(require_permiss
     return {"success": True, "code": code}
 
 
+@router.get("/odoo-categories")
+async def list_odoo_categories(_: dict = Depends(require_permission("production.manage"))):
+    """product.category records for the product-link picker's category filter.
+    Global in Odoo (not warehouse-scoped) — same list `GET /api/products/categories`
+    resolves to for the commercial quote builder, read directly here since that
+    route requires the admin role rather than the production.manage permission."""
+    try:
+        odoo = get_odoo_client()
+        categories = odoo.search_read(
+            "product.category", domain=[],
+            fields=["id", "name", "complete_name", "parent_id"],
+            limit=500, order="complete_name asc",
+        )
+        return {"categories": categories}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not load stock system categories: {e}")
+
+
 @router.get("/odoo-products")
 async def search_odoo_products(
-    q: str = Query(..., min_length=2),
+    q: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    limit: int = Query(150, le=300),
     _: dict = Depends(require_permission("production.manage")),
 ):
-    """Search Odoo product.product records for the product-link picker.
-    Read-only. The portal never creates products — it only ever links to
-    products that already exist in Odoo (created there, same rule as
-    suppliers/purchase orders)."""
+    """Search Odoo product.product records for the product-link picker — the
+    same category + search experience as the commercial quote builder's
+    Browse Products drawer, since products (and categories) are global in
+    Odoo; only stock quantity is warehouse-scoped, and quantity is irrelevant
+    to picking which record a portal product should be linked to (so this
+    intentionally carries no warehouse_id — unlike /api/products/, it never
+    needs one). Read-only. The portal never creates products — it only ever
+    links to ones that already exist in Odoo, same rule as suppliers/POs."""
+    if not q and not category_id:
+        return {"products": []}
+    domain = [("type", "=", "consu"), ("active", "=", True)]
+    if category_id:
+        domain.append(("categ_id", "=", category_id))
+    if q:
+        domain += ["|", ("name", "ilike", q), ("default_code", "ilike", q)]
     try:
         odoo = get_odoo_client()
         rows = odoo.search_read(
-            "product.product",
-            domain=[("name", "ilike", q)],
-            fields=["id", "name", "default_code"], limit=15, order="name asc",
+            "product.product", domain=domain,
+            fields=["id", "name", "display_name", "default_code", "categ_id"],
+            limit=limit, order="name asc",
         )
         for r in rows:
             for k, v in r.items():

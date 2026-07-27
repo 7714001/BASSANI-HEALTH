@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2, RefreshCw, Vault, ArrowDownToLine, ArrowUpFromLine, Scissors,
-  PackageOpen, CloudOff, CloudUpload, NotebookPen, Trash2,
+  PackageOpen, CloudOff, CloudUpload, NotebookPen, Trash2, Radar, Building2,
+  Warehouse, MapPin, XCircle,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -63,6 +64,13 @@ export default function VaultLogbook() {
   // Test-data purge (super admin only)
   const [purgeConfirm, setPurgeConfirm] = useState(false);
   const [purging, setPurging]           = useState(false);
+
+  // GACP readiness probe (13.0.1) — "does the service account see the GACP
+  // company/warehouse yet?" Read-only, safe to run any time.
+  const [probeOpen, setProbeOpen]       = useState(false);
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [probeData, setProbeData]       = useState(null);
+  const [probeError, setProbeError]     = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,6 +220,20 @@ export default function VaultLogbook() {
     }
   }
 
+  async function runProbe() {
+    setProbeOpen(true);
+    setProbeLoading(true);
+    setProbeError(null);
+    try {
+      const r = await api.get("/api/production/odoo-probe");
+      setProbeData(r.data);
+    } catch (e) {
+      setProbeError(e.response?.data?.detail || "Could not reach the stock system");
+    } finally {
+      setProbeLoading(false);
+    }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TopBar
@@ -219,6 +241,12 @@ export default function VaultLogbook() {
         actions={
           <div className="flex items-center gap-2">
             <ProductionGuideButton />
+            {can("production.manage") && (
+              <BtnSecondary onClick={runProbe} disabled={probeLoading}>
+                {probeLoading ? <Loader2 size={14} className="animate-spin" /> : <Radar size={14} />}
+                Check stock system access
+              </BtnSecondary>
+            )}
             {user?.is_super_admin && (movements.length > 0 || ledger.rows.length > 0) && (
               <BtnSecondary onClick={() => setPurgeConfirm(true)} disabled={purging}>
                 {purging ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
@@ -552,6 +580,101 @@ export default function VaultLogbook() {
           </div>
         </div>
       </div>
+
+      {/* GACP readiness probe results */}
+      {probeOpen && (
+        <Modal title="Stock System Access" onClose={() => setProbeOpen(false)} width="max-w-2xl">
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            What the portal's stock system connection can currently see. Use this to check whether the GACP production facility's company and warehouse are visible yet — Odoo hides companies and their warehouses from the connection entirely until access is granted, rather than showing an error.
+          </p>
+
+          {probeLoading ? (
+            <div className="flex items-center justify-center py-10 text-gray-400">
+              <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Checking…</span>
+            </div>
+          ) : probeError ? (
+            <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+              <XCircle size={16} className="shrink-0 mt-0.5" /> {probeError}
+            </div>
+          ) : probeData && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-4 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg px-4 py-2.5">
+                <span className="text-gray-500 dark:text-gray-400">
+                  Writes to the stock system:{" "}
+                  <span className={`font-semibold ${probeData.odoo_writes_live ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    {probeData.odoo_writes_live ? "Live" : "Not enabled yet"}
+                  </span>
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  GACP warehouse configured:{" "}
+                  <span className={`font-semibold ${probeData.gacp_warehouse_id ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    {probeData.gacp_warehouse_id || "No"}
+                  </span>
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  Manufacturing app:{" "}
+                  <span className={`font-semibold ${probeData.mrp_installed ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    {probeData.mrp_installed === null ? "Unknown" : probeData.mrp_installed ? "Installed" : "Not installed"}
+                  </span>
+                </span>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+                  <Building2 size={13} /> Companies visible to the stock system connection ({probeData.companies.length})
+                </p>
+                {probeData.companies.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">No companies are visible at all — the connection has not been granted access to anything yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {probeData.companies.map(c => (
+                      <div key={c.id} className="border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2.5">
+                        <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                          <Building2 size={13} className="text-gray-400" /> {c.name}
+                        </p>
+                        {c.warehouses.length === 0 ? (
+                          <p className="text-xs text-gray-400 mt-1 ml-5">No warehouses visible for this company.</p>
+                        ) : (
+                          <div className="mt-1.5 ml-5 space-y-1.5">
+                            {c.warehouses.map(w => (
+                              <div key={w.id} className="text-xs">
+                                <p className="text-gray-700 dark:text-gray-200 font-medium flex items-center gap-1.5">
+                                  <Warehouse size={12} className="text-gray-400" />
+                                  {w.name} {w.code && <span className="font-mono text-gray-400">({w.code})</span>}
+                                  {probeData.gacp_warehouse_id === w.id && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300">GACP</span>
+                                  )}
+                                </p>
+                                {w.locations.length > 0 && (
+                                  <p className="text-gray-400 mt-0.5 ml-4 flex items-start gap-1">
+                                    <MapPin size={11} className="shrink-0 mt-0.5" />
+                                    <span>{w.locations.slice(0, 6).map(l => l.name).join(", ")}{w.locations.length > 6 ? ` +${w.locations.length - 6} more` : ""}</span>
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <p className="text-xs text-gray-400">
+                Looking for the GACP company or warehouse and not seeing it? It needs to be added to the connection's allowed companies in the stock system first — this is a one-time setup step, not something the portal can grant itself.
+              </p>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={runProbe} disabled={probeLoading}>
+              <RefreshCw size={13} className={probeLoading ? "animate-spin" : ""} /> Re-check
+            </BtnSecondary>
+            <BtnPrimary onClick={() => setProbeOpen(false)}>Close</BtnPrimary>
+          </div>
+        </Modal>
+      )}
 
       {/* Purge confirm */}
       {purgeConfirm && (

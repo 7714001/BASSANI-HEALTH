@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload, AlertCircle, CheckCircle, Link2 } from "lucide-react";
+import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload, AlertCircle, CheckCircle, Link2, Search, Package } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal, parseDisplayName } from "../components/UI";
+import { SearchableSelect } from "../components/ProductPickerDrawer";
 import ProductionGuideButton from "../components/ProductionGuide";
 
 /* Phase 13.0.2 — Batch ID generator + registry.
@@ -74,8 +75,15 @@ export default function BatchRegistry() {
   const [savingProduct, setSavingProduct]   = useState(false);
   const [productBusy, setProductBusy]       = useState(null);   // code currently being archived/restored/deleted
   const [deleteProductConfirm, setDeleteProductConfirm] = useState(null);  // product row
-  // Link-to-Odoo-product picker (production.manage)
+  // Link-to-Odoo-product picker (production.manage) — same category/variant/
+  // search browsing as the commercial quote builder's Browse Products drawer,
+  // since products and categories are global in Odoo (only stock quantity is
+  // warehouse-scoped, and irrelevant to picking which record to link).
   const [linkTarget, setLinkTarget]             = useState(null);   // product row
+  const [linkCategories, setLinkCategories]     = useState([]);
+  const [linkCatLoaded, setLinkCatLoaded]       = useState(false);
+  const [linkSelectedCat, setLinkSelectedCat]   = useState(null);
+  const [linkSelectedVariant, setLinkSelectedVariant] = useState(null);
   const [odooProductQuery, setOdooProductQuery] = useState("");
   const [odooProductResults, setOdooProductResults] = useState([]);
   const [odooProductSearching, setOdooProductSearching] = useState(false);
@@ -223,9 +231,10 @@ export default function BatchRegistry() {
     setProductBusy(s.code);
     try {
       await api.post(`/api/production/products/${s.code}/link`, {
-        odoo_product_id: odooProduct.id, odoo_product_name: odooProduct.name,
+        odoo_product_id: odooProduct.id,
+        odoo_product_name: odooProduct.display_name || odooProduct.name,
       });
-      toast.success(`${s.name} linked to ${odooProduct.name}`);
+      toast.success(`${s.name} linked to ${odooProduct.display_name || odooProduct.name}`);
       await refreshProducts();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to link product");
@@ -247,18 +256,56 @@ export default function BatchRegistry() {
     }
   }
 
-  // Odoo product search inside the link picker (debounced)
+  function openLinkPicker(s) {
+    setLinkTarget(s);
+    setOdooProductQuery(s.name);
+    setLinkSelectedCat(null);
+    setLinkSelectedVariant(null);
+  }
+
+  // Load Odoo categories once, the first time the link picker is opened
   useEffect(() => {
-    if (!linkTarget || odooProductQuery.trim().length < 2) { setOdooProductResults([]); return; }
+    if (!linkTarget || linkCatLoaded) return;
+    api.get("/api/production/odoo-categories")
+      .then(r => setLinkCategories(r.data.categories || []))
+      .catch(() => {})
+      .finally(() => setLinkCatLoaded(true));
+  }, [linkTarget, linkCatLoaded]);
+
+  // Odoo product search inside the link picker: debounced on text, immediate
+  // on category change — same rhythm as the quote builder's Browse Products.
+  useEffect(() => {
+    if (!linkTarget) { setOdooProductResults([]); return; }
+    const q = odooProductQuery.trim();
+    if (!q && !linkSelectedCat) { setOdooProductResults([]); return; }
     setOdooProductSearching(true);
     const t = setTimeout(() => {
-      api.get("/api/production/odoo-products", { params: { q: odooProductQuery.trim() } })
-        .then(r => setOdooProductResults(r.data.products))
+      const params = { limit: 150 };
+      if (q) params.q = q;
+      if (linkSelectedCat) params.category_id = linkSelectedCat;
+      api.get("/api/production/odoo-products", { params })
+        .then(r => setOdooProductResults(r.data.products || []))
         .catch(e => toast.error(e.response?.data?.detail || "Product search failed"))
         .finally(() => setOdooProductSearching(false));
-    }, 300);
+    }, q ? 300 : 0);
     return () => clearTimeout(t);
-  }, [odooProductQuery, linkTarget]);
+  }, [odooProductQuery, linkSelectedCat, linkTarget]);
+
+  const linkCategoryOptions = linkCategories.map(c => ({ value: c.id, label: c.name }));
+
+  // Variant chips derived from the currently loaded result set, same
+  // "Name (Variant)" parsing the quote builder's picker uses.
+  const linkVariantOptions = (() => {
+    const seen = new Set();
+    odooProductResults.forEach(p => {
+      parseDisplayName(p.display_name || p.name || "").groups.forEach(g => seen.add(g));
+    });
+    return [...seen].sort().map(v => ({ value: v, label: v }));
+  })();
+
+  const linkDisplayedProducts = linkSelectedVariant
+    ? odooProductResults.filter(p => parseDisplayName(p.display_name || p.name || "").groups.includes(linkSelectedVariant))
+    : odooProductResults;
 
   async function openTimeline(batchId) {
     setTimelineLoading(true);
@@ -575,7 +622,7 @@ export default function BatchRegistry() {
                       Unlink
                     </button>
                   ) : (
-                    <button onClick={() => { setLinkTarget(s); setOdooProductQuery(s.name); }} disabled={productBusy === s.code}
+                    <button onClick={() => openLinkPicker(s)} disabled={productBusy === s.code}
                       className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0">
                       Link product
                     </button>
@@ -622,37 +669,91 @@ export default function BatchRegistry() {
         </Modal>
       )}
 
-      {/* Link-to-Odoo-product picker */}
+      {/* Link-to-Odoo-product picker — same category/variant/search browsing
+          as the quote builder's Browse Products drawer */}
       {linkTarget && (
-        <Modal title={`Link ${linkTarget.name}`} onClose={() => setLinkTarget(null)}>
+        <Modal title={`Link ${linkTarget.name}`} onClose={() => setLinkTarget(null)} width="max-w-2xl">
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-            Search the stock system's products and pick the one that belongs to <strong>{linkTarget.name}</strong>. Every batch, movement and receipt for this product will then always target that exact record. Products are created in the stock system, not here — if it doesn't exist yet, create it there first.
+            Search or filter by category and variant to find the stock system record that belongs to <strong>{linkTarget.name}</strong>. Every batch, movement and receipt for this product will then always target that exact record. Products are created in the stock system, not here — if it doesn't exist yet, create it there first.
           </p>
-          <input
-            value={odooProductQuery}
-            onChange={e => setOdooProductQuery(e.target.value)}
-            placeholder="Search stock system products…"
-            autoFocus
-            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
-          />
-          <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
-            {odooProductSearching ? (
-              <p className="text-xs text-gray-400 px-3 py-3 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Searching…</p>
-            ) : odooProductResults.length === 0 ? (
-              <p className="text-xs text-gray-400 px-3 py-3">
-                {odooProductQuery.trim().length < 2 ? "Type at least two characters to search." : "No products found. Check the name, or create the product in the stock system first."}
-              </p>
-            ) : odooProductResults.map(p => (
-              <button
-                key={p.id}
-                onClick={() => doLinkProduct(p)}
-                className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
-              >
-                <span className="block text-gray-800 dark:text-gray-100">{p.name}</span>
-                {p.default_code && <span className="block text-xs text-gray-400 font-mono">{p.default_code}</span>}
-              </button>
-            ))}
+
+          {/* Search bar */}
+          <div className="relative mb-2.5">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              value={odooProductQuery}
+              onChange={e => setOdooProductQuery(e.target.value)}
+              placeholder="Search by product name or SKU…"
+              autoFocus
+              className="w-full text-sm pl-9 pr-3 py-2.5 border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            />
           </div>
+
+          {/* Category + variant filter bar */}
+          <div className="flex items-center gap-2 mb-3">
+            <SearchableSelect
+              value={linkSelectedCat}
+              onChange={(v) => { setLinkSelectedCat(v); setLinkSelectedVariant(null); }}
+              options={linkCategoryOptions}
+              placeholder="All categories"
+              searchPlaceholder="Search categories…"
+            />
+            <SearchableSelect
+              value={linkSelectedVariant}
+              onChange={setLinkSelectedVariant}
+              options={linkVariantOptions}
+              placeholder="All variants"
+              searchPlaceholder="Search variants…"
+              disabled={linkVariantOptions.length === 0}
+            />
+          </div>
+
+          {/* Results */}
+          <div className="max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+            {odooProductSearching ? (
+              <p className="text-xs text-gray-400 px-3 py-6 flex items-center justify-center gap-2"><Loader2 size={13} className="animate-spin" /> Searching…</p>
+            ) : !odooProductQuery.trim() && !linkSelectedCat ? (
+              <div className="flex flex-col items-center justify-center text-center px-8 py-8">
+                <Package size={22} className="text-gray-300 dark:text-gray-600 mb-2" />
+                <p className="text-xs text-gray-400">Select a category or search to browse the stock system's products.</p>
+              </div>
+            ) : linkDisplayedProducts.length === 0 ? (
+              <p className="text-xs text-gray-400 px-3 py-6 text-center">
+                No products found. Check the name, or create the product in the stock system first.
+              </p>
+            ) : linkDisplayedProducts.map(p => {
+              const { base, groups } = parseDisplayName(p.display_name || p.name || "");
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => doLinkProduct(p)}
+                  className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <span className="block text-gray-800 dark:text-gray-100 font-medium truncate">{base}</span>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {groups.map((g, i) => (
+                        <span key={i} className="text-[10px] bg-bassani-50 dark:bg-bassani-900/30 text-bassani-700 dark:text-bassani-300 rounded px-1.5 py-0.5 font-medium leading-none">
+                          {g}
+                        </span>
+                      ))}
+                      {p.default_code && (
+                        <span className="text-[10px] font-mono text-gray-400">{p.default_code}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold text-bassani-600 dark:text-bassani-400 shrink-0">Link</span>
+                </button>
+              );
+            })}
+          </div>
+          {!odooProductSearching && linkDisplayedProducts.length > 0 && (
+            <p className="text-[11px] text-gray-400 text-center mt-2">
+              {linkDisplayedProducts.length} product{linkDisplayedProducts.length !== 1 ? "s" : ""}
+              {linkSelectedVariant ? ` · ${linkSelectedVariant}` : ""}
+            </p>
+          )}
+
           <div className="flex justify-end mt-4">
             <BtnSecondary onClick={() => setLinkTarget(null)}>Cancel</BtnSecondary>
           </div>
