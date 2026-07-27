@@ -12,6 +12,7 @@ const FAMILY_ROWS = [
   { label: "Mixed room (API)", prefix: "BHAPI + product code", example: "BHAPIBBY-001-010126", note: "A room holding more than one strain, identified by the main one." },
   { label: "Blend",           prefix: "BHB + product code",  example: "BHBBBY-003-220426",   note: "Two or more batches mixed together. The blend links back to every batch that went into it." },
   { label: "Gummy / product lot", prefix: "BHG + product code", example: "BHGPIN-001-181225", note: "Gummies and similar products received from a supplier and packed here. The code is the flavour's shortcode." },
+  { label: "Imported stock", prefix: "BI + supplier code", example: "BISB-JSY340L-300426", note: "Stock bought in from an external supplier, recorded on the S6 Receiving page. See the import breakdown below." },
 ];
 
 const STAGE_ROWS = [
@@ -110,6 +111,33 @@ export default function ProductionGuideButton() {
                   </tbody>
                 </table>
               </div>
+            </Section>
+
+            <Section title="Reading an imported batch number (BI)">
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg px-4 py-3 mb-2">
+                <p className="font-mono text-lg font-semibold tracking-wide">
+                  <span className="text-bassani-600 dark:text-bassani-400">BI</span>
+                  <span className="text-teal-600 dark:text-teal-400">SB</span>
+                  <span className="text-gray-400">-</span>
+                  <span className="text-purple-600 dark:text-purple-400">JSY</span>
+                  <span className="text-orange-600 dark:text-orange-400">3</span>
+                  <span className="text-amber-600 dark:text-amber-400">40</span>
+                  <span className="text-rose-600 dark:text-rose-400">L</span>
+                  <span className="text-gray-400">-</span>
+                  <span className="text-sky-600 dark:text-sky-400">300426</span>
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1 mt-2 text-xs">
+                  <span><span className="font-semibold text-bassani-600 dark:text-bassani-400">BI</span> — Bassani Import</span>
+                  <span><span className="font-semibold text-teal-600 dark:text-teal-400">SB</span> — supplier (Seven Blade)</span>
+                  <span><span className="font-semibold text-purple-600 dark:text-purple-400">JSY</span> — product shortcode (Jealousy)</span>
+                  <span><span className="font-semibold text-orange-600 dark:text-orange-400">3</span> — stock type (Greenhouse)</span>
+                  <span><span className="font-semibold text-amber-600 dark:text-amber-400">40</span> — the product's import number</span>
+                  <span><span className="font-semibold text-rose-600 dark:text-rose-400">L</span> — size, flower only (Large / Pops / Smalls)</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Stock types: 1 Indoor, 2 Greendoor, 3 Greenhouse, 4 Distillate, 5 Vape, 6 Hash, 7 Edible, 8 Tincture, 9 Trim. The import number belongs to the product forever; the stock type describes this particular delivery. Imported batches then move through the vault exactly like any other batch, including the stage letters below.
+              </p>
             </Section>
 
             <Section title="Stage letters (the part after the last dash)">

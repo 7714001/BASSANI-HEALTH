@@ -80,6 +80,52 @@ def build_batch_id(family: str, product_code: str, sequence: int, date_code: str
     return f"{prefix}{code}-{sequence:03d}-{date_code}"
 
 
+# ── Imported stock (BI prefix) — confirmed from the S6 Stock Receiving Logbook ─
+# Format: BI{supplier}-{product}{type_digit}{import_ref:02d}{subcat?}-{DDMMYY}
+# e.g. BISB-JSY340L-300426 = Seven Blade / Jealousy / Greenhouse / ref 40 / Large.
+# The import ref is a stable per-product 2-digit registry number; the type digit
+# describes this shipment and can differ between shipments of the same product.
+
+IMPORT_TYPES = {
+    1: "Indoor",
+    2: "Greendoor",
+    3: "Greenhouse",
+    4: "Distillate",
+    5: "Vape",
+    6: "Hash",
+    7: "Edible",
+    8: "Tincture",
+    9: "Trim",
+}
+
+IMPORT_SUBCATS = {
+    "L": "Large",
+    "P": "Pops",
+    "S": "Smalls",
+}
+
+
+def build_import_batch_id(supplier_code: str, product_code: str, type_digit: int,
+                          import_ref: int, subcat: Optional[str], date_code: str) -> str:
+    """Deterministic BI (Bassani Import) batch ID. Raises ValueError on bad input."""
+    sup = (supplier_code or "").strip().upper()
+    if not sup.isalpha() or len(sup) != 2:
+        raise ValueError("Supplier shortcode must be exactly 2 letters")
+    prod = (product_code or "").strip().upper()
+    if not prod.isalnum() or not (2 <= len(prod) <= 4):
+        raise ValueError("Product shortcode must be 2-4 alphanumeric characters")
+    if type_digit not in IMPORT_TYPES:
+        raise ValueError("Unknown stock type")
+    if not (1 <= import_ref <= 99):
+        raise ValueError("Import reference must be between 1 and 99")
+    sub = (subcat or "").strip().upper()
+    if sub and sub not in IMPORT_SUBCATS:
+        raise ValueError("Unknown sub-category character")
+    if len(date_code) != 6 or not date_code.isdigit():
+        raise ValueError("Date code must be DDMMYY")
+    return f"BI{sup}-{prod}{type_digit}{import_ref:02d}{sub}-{date_code}"
+
+
 def split_stage(batch_id: str) -> tuple[str, Optional[str]]:
     """Return (base_id, stage_suffix|None) for any registry batch ID."""
     head, _, tail = batch_id.rpartition("-")

@@ -59,6 +59,8 @@ import OrderPassport        from "./views/OrderPassport";
 import OrderMonitor         from "./views/OrderMonitor";
 import BatchRegistry        from "./views/BatchRegistry";
 import VaultLogbook         from "./views/VaultLogbook";
+import S6Register           from "./views/S6Register";
+import S6Releases           from "./views/S6Releases";
 
 const PACKING_FLOOR_ROLES = new Set(["warehouse_supervisor", "packer"]);
 
@@ -183,6 +185,12 @@ export default function App() {
         } />
         <Route path="/production/vault" element={
           <ProtectedRoute permission="production.vault"><AppLayout><VaultLogbook /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/production/receiving" element={
+          <ProtectedRoute permission="production.vault"><AppLayout><S6Register /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/production/releases" element={
+          <ProtectedRoute permission="production.rp_release"><AppLayout><S6Releases /></AppLayout></ProtectedRoute>
         } />
         <Route path="/products" element={
           <ProtectedRoute>

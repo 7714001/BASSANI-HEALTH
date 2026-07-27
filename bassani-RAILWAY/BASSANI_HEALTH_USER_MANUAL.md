@@ -1152,16 +1152,26 @@ Your approval is recorded with your name and timestamp. The order will not compl
 
 ## Responsible Pharmacist — Rookshanna Hussain
 
-**Role in system:** `responsible_pharmacist` (permission: `tickets.rp_approve`)  
-**Access:** Orders Tickets (RP approval only)
+**Role in system:** `responsible_pharmacist` (permissions: `tickets.rp_approve`, `production.rp_release`)  
+**Access:** Orders Tickets (RP approval) and S6 Releases (imported stock sign-off)
 
-Identical flow to QA Manager, but from the pharmacist perspective:
+**Order approval** — identical flow to QA Manager, but from the pharmacist perspective:
 
 1. Open an order at `Ready` status
 2. Review the order
 3. Click **RP Approve**
 
 Both approvals are required before Tshidi can mark the order Complete.
+
+**S6 Releases (imported stock sign-off):**
+Every imported Schedule 6 delivery recorded on the receiving register is held in quarantine until you release it. The **S6 Releases** page is your queue:
+
+1. Each card shows the full receipt: supplier, product, batch number, the purchase order it was matched to, the quantity quoted versus received (any shortfall highlighted), which delivery documents arrived, and which are missing
+2. If everything checks out, click **Release**. The batch becomes available for issue from the vault, and your release is recorded permanently with your name and the time
+3. If something needs checking first, click **Query** and record what must be resolved. The batch stays locked and your note goes on record
+4. A receipt flagged as having no purchase order cannot be released until the flag has been investigated and resolved by an admin
+
+You record the sign-off; you do not enter the weights. The person who physically received the stock recorded those, and your role is to verify them against the documents. This keeps the receiving record and its verification in separate hands.
 
 ---
 
@@ -1238,6 +1248,15 @@ Both production pages have a **Guide** button at the top right. It opens a plain
 5. Add a note if anything was unusual, then click **Record Movement**
 
 The normal life of a flower batch through the vault: **Receive to Vault** (unmanicured `-U` bulk in from drying) → **Issue to Manicuring** → **Return from Manicuring** (comes back as `-M` manicured plus `-T` trim) → **Issue to Packing**. Bought-in stock and gummies skip the manicuring loop: received, then issued to packing.
+
+**Receiving imported stock (S6 Receiving page):**
+Stock bought in from an external supplier is recorded here, not on the Vault Logbook. One entry does everything: pick the supplier and product, choose the stock type (Indoor, Greenhouse, Vape, Edible and so on) and size for flower, enter the quantity quoted and the quantity actually received, tick which documents arrived with the delivery (Invoice, COA, Delivery Note, S6 Transfer Doc), and add a comment if needed. The imported batch number (starting `BI`) is generated automatically and previewed as you fill in the form.
+
+Every receipt must be matched to a **purchase order**: when you pick the supplier, their open purchase orders load automatically so you can select the right one. If you cannot find a purchase order for the delivery, choose **"No purchase order found — flag for investigation"**. The stock is still booked in, but the receipt is held, the compliance contact is notified, and the batch cannot be released until the flag is investigated and resolved.
+
+Received imported stock always starts in **quarantine**: it is in the vault and on the register, but it cannot be issued out until the Responsible Pharmacist has released it on the S6 Releases page. The register table below the form shows each receipt's status (Awaiting release, Queried, or Released) alongside the full receiving history.
+
+If the received weight differs from what was quoted, the difference is recorded on the register entry and shown as a warning before you save.
 
 **The Vault Ledger:**
 The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.
@@ -2093,6 +2112,10 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Generate a production batch number | Vault Custodian or anyone with `production.batch_generate` |
 | Record a vault stock movement | Vault Custodian or anyone with `production.vault` |
 | Add, archive or delete product shortcodes | Super admin or admin with `production.manage` |
+| Receive imported stock (S6 register entry) | Vault Custodian or anyone with `production.vault` |
+| Release imported stock from quarantine | Rookshanna (responsible_pharmacist) or anyone with `production.rp_release` |
+| Resolve a no-purchase-order flag on a receipt | Super admin or admin with `production.manage` |
+| Add or archive import suppliers | Super admin or admin with `production.manage` |
 | Sync staged vault records to the stock system | Super admin or admin with `production.manage` |
 | Purge production test data (batches + movements) | Super Admin only — blocked once records exist in the stock system |
 | Generate commission statements | Admin with `commission.generate_statements` |

@@ -93,6 +93,7 @@ export default function EmailSettings({ embedded = false }) {
     order_ready_extra_to:     [],
     order_cc:                 [],
     finance_notification_to:  [],
+    s6_flag_to:               [],
   });
 
   useEffect(() => {
@@ -156,6 +157,22 @@ export default function EmailSettings({ embedded = false }) {
                 emails={config.application_submitted_to}
                 onChange={upd("application_submitted_to")}
                 placeholder="support@bassanihealth.com"
+              />
+            </div>
+          </RoutingSection>
+
+          <RoutingSection
+            icon={Mail}
+            title="Production: Stock Received Without Purchase Order"
+            description="Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved."
+            note="If this list is empty, no notification is sent. Typically the compliance officer."
+          >
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
+              <EmailTagInput
+                emails={config.s6_flag_to}
+                onChange={upd("s6_flag_to")}
+                placeholder="compliance@bassanihealth.com"
               />
             </div>
           </RoutingSection>

@@ -22,6 +22,7 @@ class EmailRoutingConfig(BaseModel):
     order_ready_extra_to:      List[str] = []
     order_cc:                  List[str] = []
     finance_notification_to:   List[str] = []
+    s6_flag_to:                List[str] = []   # S6 receipt flagged: no purchase order found
 
 
 async def get_email_routing() -> dict:
@@ -34,6 +35,7 @@ async def get_email_routing() -> dict:
             "order_ready_extra_to":     [],
             "order_cc":                 [],
             "finance_notification_to":  [],
+            "s6_flag_to":               [],
         }
     return {
         "application_submitted_to": doc.get("application_submitted_to") or [settings.support_email],
@@ -41,6 +43,7 @@ async def get_email_routing() -> dict:
         "order_ready_extra_to":     doc.get("order_ready_extra_to", []),
         "order_cc":                 doc.get("order_cc", []),
         "finance_notification_to":  doc.get("finance_notification_to", []),
+        "s6_flag_to":               doc.get("s6_flag_to", []),
     }
 
 

@@ -1,0 +1,287 @@
+[
+  {
+    "code": "MMR",
+    "name": "Magic Marker",
+    "import_ref": 1
+  },
+  {
+    "code": "FKG",
+    "name": "Fruit King",
+    "import_ref": 2
+  },
+  {
+    "code": "JLO",
+    "name": "Jell-O",
+    "import_ref": 3
+  },
+  {
+    "code": "GGL",
+    "name": "Gorilla Glue",
+    "import_ref": 4
+  },
+  {
+    "code": "QFU",
+    "name": "Quantum Fusion",
+    "import_ref": 5
+  },
+  {
+    "code": "BCP",
+    "name": "Black Cherry Punch",
+    "import_ref": 6
+  },
+  {
+    "code": "SOC",
+    "name": "Sour OG Cheese",
+    "import_ref": 7
+  },
+  {
+    "code": "OBZ",
+    "name": "Original Blitz",
+    "import_ref": 8
+  },
+  {
+    "code": "DPN",
+    "name": "Durban Poison",
+    "import_ref": 10
+  },
+  {
+    "code": "PPN",
+    "name": "Purple Porn",
+    "import_ref": 11
+  },
+  {
+    "code": "GTO",
+    "name": "Gelato",
+    "import_ref": 12
+  },
+  {
+    "code": "RBZ",
+    "name": "Rainbow Zoap",
+    "import_ref": 13
+  },
+  {
+    "code": "ECO",
+    "name": "Ethos Cookies",
+    "import_ref": 14
+  },
+  {
+    "code": "SSC",
+    "name": "Strawberry Sugar Cookies",
+    "import_ref": 15
+  },
+  {
+    "code": "TNW",
+    "name": "The New",
+    "import_ref": 16
+  },
+  {
+    "code": "BEC",
+    "name": "Black Exodus Cheese",
+    "import_ref": 17
+  },
+  {
+    "code": "SOP",
+    "name": "Sour Punch",
+    "import_ref": 18
+  },
+  {
+    "code": "XMO",
+    "name": "XXX Maluti OG",
+    "import_ref": 19
+  },
+  {
+    "code": "90D",
+    "name": "88-90% Distillate",
+    "import_ref": 20
+  },
+  {
+    "code": "48W",
+    "name": "48% THC 3g Wafer",
+    "import_ref": 21
+  },
+  {
+    "code": "CHL",
+    "name": "Chill 1 ML Vape Cartridge - 800 mg THC",
+    "import_ref": 22
+  },
+  {
+    "code": "SLP",
+    "name": "Sleep 1 ML Vape Cartridge - 800 mg THC",
+    "import_ref": 23
+  },
+  {
+    "code": "RXR",
+    "name": "50/50 Rosin/Resin 1 ML Vape Cartridge - 800 mg THC",
+    "import_ref": 24
+  },
+  {
+    "code": "CGR",
+    "name": "Cannacraze - Grape",
+    "import_ref": 25
+  },
+  {
+    "code": "CPI",
+    "name": "Cannacraze - Pineapple",
+    "import_ref": 26
+  },
+  {
+    "code": "CLI",
+    "name": "Cannacraze - Lime",
+    "import_ref": 27
+  },
+  {
+    "code": "CBR",
+    "name": "Cannacraze - Berry Blast",
+    "import_ref": 28
+  },
+  {
+    "code": "CWM",
+    "name": "Cannacraze - Watermelon",
+    "import_ref": 29
+  },
+  {
+    "code": "GLF",
+    "name": "Gold Leaf",
+    "import_ref": 30
+  },
+  {
+    "code": "JHR",
+    "name": "Jack Herer 1 ML Vape Cartridge - 800 mg THC",
+    "import_ref": 31
+  },
+  {
+    "code": "MBD",
+    "name": "Moby Dick 1 ML Vape Cartridge - 800 mg THC",
+    "import_ref": 32
+  },
+  {
+    "code": "CBO",
+    "name": "3000 MG CBD OIL \"Ultra Pure\" (30ML)",
+    "import_ref": 33
+  },
+  {
+    "code": "TCO",
+    "name": "750 MG THC+CBD OIL \"Rapid Relief\" (30ML)",
+    "import_ref": 34
+  },
+  {
+    "code": "42W",
+    "name": "42% THC 3g Wafer",
+    "import_ref": 35
+  },
+  {
+    "code": "THV",
+    "name": "1500MG THC Oil \"Thrive\" (30 ML)",
+    "import_ref": 36
+  },
+  {
+    "code": "CBF",
+    "name": "CBD Flower",
+    "import_ref": 37
+  },
+  {
+    "code": "BTI",
+    "name": "Biscotti",
+    "import_ref": 38
+  },
+  {
+    "code": "TAR",
+    "name": "1500 MG THC+CBD OIL \"Advanced Rapid Relief\" (30ML)",
+    "import_ref": 39
+  },
+  {
+    "code": "JSY",
+    "name": "Jealousy",
+    "import_ref": 40
+  },
+  {
+    "code": "LSB",
+    "name": "Lemon Starburst",
+    "import_ref": 41
+  },
+  {
+    "code": "CH1",
+    "name": "Cascade Honey #1",
+    "import_ref": 42
+  },
+  {
+    "code": "CH2",
+    "name": "Cascade Honey #2",
+    "import_ref": 43
+  },
+  {
+    "code": "LT6",
+    "name": "Lit 6",
+    "import_ref": 44
+  },
+  {
+    "code": "BDA",
+    "name": "Baked Alaska",
+    "import_ref": 45
+  },
+  {
+    "code": "LT5",
+    "name": "Lit 5",
+    "import_ref": 46
+  },
+  {
+    "code": "LRA",
+    "name": "La Rosa",
+    "import_ref": 48
+  },
+  {
+    "code": "DDU",
+    "name": "Dulce De Uva",
+    "import_ref": 49
+  },
+  {
+    "code": "ANF",
+    "name": "Anhesfa Fem",
+    "import_ref": 50
+  },
+  {
+    "code": "VA4",
+    "name": "Vauilou 4",
+    "import_ref": 51
+  },
+  {
+    "code": "CFA",
+    "name": "Critical Fem Australia",
+    "import_ref": 52
+  },
+  {
+    "code": "PLO",
+    "name": "Pink Lemon OG",
+    "import_ref": 53
+  },
+  {
+    "code": "AMV",
+    "name": "Americanas V",
+    "import_ref": 54
+  },
+  {
+    "code": "MGC",
+    "name": "Mango Crush",
+    "import_ref": 55
+  },
+  {
+    "code": "DMC",
+    "name": "Dreamcatcher",
+    "import_ref": 56
+  },
+  {
+    "code": "CRS",
+    "name": "Cuban Runtz x SCP",
+    "import_ref": 57
+  },
+  {
+    "code": "UTN",
+    "name": "Unknown Trim",
+    "import_ref": 58
+  },
+  {
+    "code": "MDC",
+    "name": "Mandarin Cookies",
+    "import_ref": 59
+  }
+]

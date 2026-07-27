@@ -53,7 +53,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "signing_authority":  {"sign": False},
     "labels":             {"print": False},
     "finance":            {"bank_reconciliation": False},
-    "production":         {"batch_generate": False, "vault": False, "manage": False},
+    "production":         {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -78,7 +78,7 @@ FULL_PERMISSIONS: dict = {
     "signing_authority":  {"sign": True},
     "labels":             {"print": True},
     "finance":            {"bank_reconciliation": True},
-    "production":         {"batch_generate": True, "vault": True, "manage": True},
+    "production":         {"batch_generate": True, "vault": True, "manage": True, "rp_release": True},
 }
 
 # Full default permission sets for each staff role.
@@ -108,7 +108,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
-        "production":        {"batch_generate": False, "vault": False, "manage": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -131,7 +131,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": True},
         "finance":           {"bank_reconciliation": False},
-        "production":        {"batch_generate": False, "vault": False, "manage": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -154,7 +154,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": True},
-        "production":        {"batch_generate": False, "vault": False, "manage": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -177,7 +177,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
-        "production":        {"batch_generate": False, "vault": False, "manage": False},
+        "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -200,7 +200,9 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": True},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
-        "production":        {"batch_generate": False, "vault": False, "manage": False},
+        # S6 imported-stock release: the RP verifies each receipt (docs, quoted
+        # vs received, PO link) and releases the batch from quarantine.
+        "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": True},
     },
     # Phase 13 — vault custodian (Patricia). Production-side only: generates
     # batch IDs and records vault movements. Sees nothing of the commercial
@@ -226,7 +228,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "signing_authority": {"sign": False},
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
-        "production":        {"batch_generate": True, "vault": True, "manage": False},
+        "production":        {"batch_generate": True, "vault": True, "manage": False, "rp_release": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias

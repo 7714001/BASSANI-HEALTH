@@ -38,7 +38,7 @@ const fmtQty = (g) => {
 
 export default function VaultLogbook() {
   const { can, user } = useAuth();
-  const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, manicuring_out: {}, odoo_writes_live: false });
+  const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, manicuring_out: {}, unreleased_imports: [], odoo_writes_live: false });
   const [movements, setMovements] = useState([]);
   const [loading, setLoading]     = useState(true);
 
@@ -115,21 +115,28 @@ export default function VaultLogbook() {
     : null;
   const outAtManicuring = batch ? (ledger.manicuring_out?.[batch.batch_id] || 0) : 0;
   const inVault = vaultBalance > 0.001;
+  // Schedule 6 quarantine: imported batches cannot be issued until the
+  // Responsible Pharmacist releases the receipt (server enforces this too).
+  const awaitingRelease = Boolean(
+    batch && batch.family === "import"
+    && (ledger.unreleased_imports || []).includes(batch.base_batch_id || batch.batch_id)
+  );
 
   const allowedTypes = {
     receive:           true,
-    issue_packing:     inVault,
-    issue_manicuring:  inVault,
+    issue_packing:     inVault && !awaitingRelease,
+    issue_manicuring:  inVault && !awaitingRelease,
     return_manicuring: outAtManicuring > 0.001,
   };
   const disabledReason = {
-    issue_packing:     "Nothing in the vault for this batch yet",
-    issue_manicuring:  "Nothing in the vault for this batch yet",
+    issue_packing:     awaitingRelease ? "Awaiting Responsible Pharmacist release" : "Nothing in the vault for this batch yet",
+    issue_manicuring:  awaitingRelease ? "Awaiting Responsible Pharmacist release" : "Nothing in the vault for this batch yet",
     return_manicuring: "This batch is not out at manicuring",
   };
   const suggestedType = !batch ? null
     : outAtManicuring > 0.001 ? "return_manicuring"
     : !inVault ? "receive"
+    : awaitingRelease ? "receive"
     : batch.stage_suffix === "U" ? "issue_manicuring"
     : "issue_packing";
 
@@ -302,6 +309,11 @@ export default function VaultLogbook() {
                   {outAtManicuring > 0.001 && (
                     <span className="text-gray-500 dark:text-gray-400">
                       Out at manicuring: <span className="font-semibold text-amber-600 dark:text-amber-400">{fmtQty(outAtManicuring)}</span>
+                    </span>
+                  )}
+                  {awaitingRelease && (
+                    <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                      Awaiting Responsible Pharmacist release
                     </span>
                   )}
                 </div>

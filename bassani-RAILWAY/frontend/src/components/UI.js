@@ -12,7 +12,7 @@ import {
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
-  Layers, Archive,
+  Layers, Archive, PackageCheck,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -64,8 +64,10 @@ const NAV = [
   { label: "Orders Inbox",       path: "/orders-inbox",     icon: Mail,   section: "Orders",  permission: "orders_inbox.view",       showOrdersInboxBadge: true },
   { label: "Orders Tickets",     path: "/tickets/orders",   icon: Ticket, section: "Orders",  permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Backorders",         path: "/orders/backorders", icon: Clock,  section: "Orders",  permission: "orders.view" },
-  { label: "Batch Registry",     path: "/production/batches", icon: Layers,   section: "Production", permission: "production.batch_generate" },
-  { label: "Vault Logbook",      path: "/production/vault",   icon: Archive,  section: "Production", permission: "production.vault" },
+  { label: "Batch Registry",     path: "/production/batches",   icon: Layers,       section: "Production", permission: "production.batch_generate" },
+  { label: "Vault Logbook",      path: "/production/vault",     icon: Archive,      section: "Production", permission: "production.vault" },
+  { label: "S6 Receiving",       path: "/production/receiving", icon: PackageCheck, section: "Production", permission: "production.vault" },
+  { label: "S6 Releases",        path: "/production/releases",  icon: ShieldCheck,  section: "Production", permission: "production.rp_release" },
   { label: "Users",         path: "/users",                  icon: UserCog,  section: "Admin", permission: "users.manage"        },
   { label: "Audit Trail",  path: "/audit",                  icon: History,  section: "Admin", permission: "audit.view"          },
   { label: "Settings",    path: "/settings",               icon: Settings, section: "Admin", permission: "settings.manage"     },

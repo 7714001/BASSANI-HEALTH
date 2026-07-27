@@ -76,6 +76,17 @@ class VaultOdooWriter:
         return {"op": "manufacture_split", "input_lot": input_lot,
                 "input_qty_g": input_qty_g, "outputs": outputs, "waste_g": waste_g}
 
+    def op_po_receipt(self, supplier_name: str, lot_name: str, qty_g: float,
+                      product_name: str, po_id: "int | None" = None,
+                      po_name: "str | None" = None) -> dict:
+        """Imported stock receipt — Odoo side is a purchase order against the
+        supplier with a validated goods receipt into the vault, not an internal
+        transfer (Phase 7.9 supplier layer). When po_id is given the receipt is
+        booked against that existing PO instead of creating a new one."""
+        return {"op": "po_receipt", "supplier_name": supplier_name,
+                "lot_name": lot_name, "qty_g": qty_g, "product_hint": product_name,
+                "po_id": po_id, "po_name": po_name}
+
     # ── Execution (live mode only) ────────────────────────────────────────────
 
     def execute_ops(self, ops: list[dict]) -> list[dict]:
@@ -95,6 +106,8 @@ class VaultOdooWriter:
                 results.append(self._internal_transfer(op))
             elif kind == "manufacture_split":
                 results.append(self._manufacture_split(op))
+            elif kind == "po_receipt":
+                results.append(self._po_receipt(op))
             else:
                 raise RuntimeError(f"Unknown vault op '{kind}'")
         return results
@@ -190,6 +203,59 @@ class VaultOdooWriter:
                        {"lot_id": lot["lot_id"], "qty_done": op["qty_g"]})
         odoo.execute("stock.picking", "button_validate", [picking_id])
         return {"op": "internal_transfer", "picking_id": picking_id, "lot_id": lot["lot_id"]}
+
+    def _po_receipt(self, op: dict) -> dict:
+        """Live path for an imported-stock receipt: purchase order on the
+        supplier partner, confirmed, receipt picking validated with the lot
+        into the vault. Fails with a clear message when the supplier partner
+        or product cannot be resolved — surfaced per record by the sync."""
+        odoo = get_odoo_client()
+        company_id = self._company_id()
+        if op.get("po_id"):
+            # Receive against the PO Bassani already raised — never duplicate it.
+            po_id = op["po_id"]
+            existing = odoo.read("purchase.order", [po_id], fields=["state"])
+            if not existing:
+                raise RuntimeError(f"Linked purchase order {op.get('po_name') or po_id} no longer exists in Odoo")
+            if existing[0]["state"] in ("draft", "sent"):
+                odoo.execute("purchase.order", "button_confirm", [po_id])
+        else:
+            partners = odoo.search_read(
+                "res.partner",
+                domain=[("name", "ilike", op["supplier_name"])],
+                fields=["id", "name"], limit=1,
+            )
+            if not partners:
+                raise RuntimeError(
+                    f"No Odoo supplier partner found matching '{op['supplier_name']}'. "
+                    "Create the supplier contact in Odoo and re-run the sync."
+                )
+            product_id = self._resolve_product(op["product_hint"], company_id)
+            ctx = company_context(company_id)
+            po_id = odoo.create("purchase.order", {
+                "partner_id": partners[0]["id"],
+                "company_id": company_id,
+                "order_line": [(0, 0, {
+                    "product_id": product_id,
+                    "product_qty": op["qty_g"],
+                })],
+            }, context=ctx)
+            odoo.execute("purchase.order", "button_confirm", [po_id])
+        pickings = odoo.search_read(
+            "stock.picking", domain=[("purchase_id", "=", po_id)], fields=["id"], limit=1,
+        )
+        if not pickings:
+            raise RuntimeError("Odoo did not generate a receipt for the purchase order")
+        picking_id = pickings[0]["id"]
+        lot = self._ensure_lot(self.op_ensure_lot(op["lot_name"], op["product_hint"]))
+        move_lines = odoo.search_read(
+            "stock.move.line", domain=[("picking_id", "=", picking_id)], fields=["id"],
+        )
+        for ml in move_lines:
+            odoo.write("stock.move.line", [ml["id"]],
+                       {"lot_id": lot["lot_id"], "qty_done": op["qty_g"]})
+        odoo.execute("stock.picking", "button_validate", [picking_id])
+        return {"op": "po_receipt", "po_id": po_id, "picking_id": picking_id, "lot_id": lot["lot_id"]}
 
     def _manufacture_split(self, op: dict) -> dict:
         """The manicuring round-trip: consume the input lot, produce the -M and

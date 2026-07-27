@@ -353,6 +353,8 @@ The first piece of Phase 13 is already built and ready to demonstrate: a digital
 - **A live vault ledger** answers the question the spreadsheet never could: how much of each batch is in the vault right now. Every figure traces to a named person and a recorded movement.
 - **Stock system integration is built in and ready.** Every movement is queued as a real stock transaction. The moment access to the production facility's stock system is confirmed, the queue is synchronised and all future movements write through automatically — nothing recorded in the interim is lost.
 - **A dedicated vault custodian login** sees only the vault screens — none of the commercial system.
+- **Imported stock is covered too.** The Schedule 6 receiving register (previously a separate Excel logbook) is built in: one entry generates the import batch number, books the stock into the vault, records quoted-versus-received quantities with any shortfall flagged, and ticks off the delivery documents — the full receiving history is searchable for inspection.
+- **Receiving is controlled, not just recorded.** Every delivery must be matched to a purchase order — if none exists, the receipt is automatically flagged, the compliance contact is notified, and the stock is held until the discrepancy is investigated. Every imported batch then sits in quarantine until the Responsible Pharmacist reviews the receipt and formally releases it, with the sign-off permanently on record. This is the incoming-goods control that GMP practice and SAHPRA inspection expect.
 
 ---
 

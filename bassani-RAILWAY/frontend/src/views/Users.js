@@ -164,8 +164,9 @@ const PERMISSION_GROUPS = [
     label: "Production (GACP Facility)",
     actions: [
       { key: "batch_generate", label: "Generate batch IDs and view the batch registry" },
-      { key: "vault",          label: "Record vault movements and view the vault ledger" },
-      { key: "manage",         label: "Sync staged stock records, readiness probe and product list (admin)" },
+      { key: "vault",          label: "Record vault movements, imported stock receipts and view the vault ledger" },
+      { key: "rp_release",     label: "Release imported Schedule 6 stock from quarantine (Responsible Pharmacist)" },
+      { key: "manage",         label: "Sync staged stock records, resolve receiving flags, readiness probe and product list (admin)" },
     ],
   },
 ];
@@ -235,7 +236,7 @@ const DEFAULT_ADMIN_PERMS = {
   settings:          { manage: false },
   signing_authority: { sign: false },
   finance:           { bank_reconciliation: false },
-  production:        { batch_generate: false, vault: false, manage: false },
+  production:        { batch_generate: false, vault: false, manage: false, rp_release: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
@@ -338,6 +339,7 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: true },
     finance:           { bank_reconciliation: false },
+    production:        { batch_generate: false, vault: false, manage: false, rp_release: true },
   },
   vault_custodian: {
     products:   { manage: false },
@@ -357,7 +359,7 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
-    production:        { batch_generate: true, vault: true, manage: false },
+    production:        { batch_generate: true, vault: true, manage: false, rp_release: false },
   },
 };
 

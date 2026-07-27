@@ -397,6 +397,35 @@ def send_countersign_complete_notification(
     _send(to_emails, f"Documents Countersigned: {company_name}", _wrap(body))
 
 
+def send_s6_flag_notification(
+    to_emails: "list[str]",
+    supplier_name: str,
+    product_name: str,
+    batch_id: str,
+    qty_received: str,
+    actor_name: str,
+) -> None:
+    """Sent when an imported stock receipt is recorded with no matching purchase
+    order. The receipt is held and cannot be released until the flag is resolved."""
+    if not to_emails:
+        return
+    body = (
+        _h1("Imported stock received without a purchase order")
+        + _p("A stock delivery was recorded on the receiving register, but no matching purchase order could be found. The batch is on hold and cannot be released until this is investigated and resolved.")
+        + _info_box([
+            ("Supplier", f"<strong>{supplier_name}</strong>"),
+            ("Product", product_name),
+            ("Batch", _mono(batch_id)),
+            ("Quantity received", qty_received),
+            ("Recorded by", actor_name),
+        ], tint="#fffbeb", border="#fcd34d")
+        + _button("Open the receiving register", f"{settings.portal_url}/production/receiving")
+        + _divider()
+        + _p("Log in to the portal to review this receipt and resolve the flag.", muted=True)
+    )
+    _send(to_emails, f"Action Needed: Stock Received Without Purchase Order ({supplier_name})", _wrap(body))
+
+
 def send_customer_welcome_pack(
     to_email: str,
     customer_name: str,
