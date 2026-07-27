@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { useNavigate } from "react-router-dom";
 import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, AlertCircle, Link2, Search, Package, ChevronRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -55,18 +56,18 @@ export const batchTitle = (batchId, productName) =>
 
 export default function BatchRegistry() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const [meta, setMeta]         = useState(null);
   const [products, setProducts]   = useState([]);
   const [items, setItems]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [q, setQ]               = useState("");
 
-  // Generator state
-  const [origin, setOrigin]         = useState("bh");      // "bh" | "import"
-  const [suppliers, setSuppliers]   = useState([]);
-  const [supplier, setSupplier]     = useState(null);      // {name, code}
-  const [typeDigit, setTypeDigit]   = useState(3);         // Greenhouse default
-  const [subcat, setSubcat]         = useState("");        // "" | L | P | S
+  // Generator state — Bassani-produced batches only. Imported (BI) batches
+  // are never generated here: they are created atomically by the S6
+  // Receiving flow (vault receive + s6_receipts entry + quarantine), which
+  // this screen has no way to replicate safely, so the endpoint refuses the
+  // "import" family outright rather than relying on this UI not offering it.
   const [family, setFamily]         = useState("single");
   const [productQuery, setProductQuery] = useState("");
   const [product, setProduct]         = useState(null);   // {name, code}
@@ -106,15 +107,13 @@ export default function BatchRegistry() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [metaRes, productRes, supplierRes, listRes] = await Promise.all([
+      const [metaRes, productRes, listRes] = await Promise.all([
         api.get("/api/production/meta"),
         api.get("/api/production/products"),
-        api.get("/api/production/suppliers"),
         api.get("/api/production/batches", { params: q ? { q, limit: 200 } : { limit: 200 } }),
       ]);
       setMeta(metaRes.data);
       setProducts(productRes.data.products);
-      setSuppliers(supplierRes.data.suppliers);
       setItems(listRes.data.items);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load batch registry");
@@ -125,20 +124,15 @@ export default function BatchRegistry() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Live ID preview as the operator picks the parts
+  // Live ID preview as the operator picks the family + product
   useEffect(() => {
-    const ready = product && (origin === "bh" || (supplier && typeDigit));
-    if (!ready) { setPreview(null); return; }
+    if (!product) { setPreview(null); return; }
     let stale = false;
-    const params = origin === "import"
-      ? { family: "import", product_code: product.code, supplier_code: supplier.code,
-          type_digit: typeDigit, subcat: subcat || undefined }
-      : { family, product_code: product.code };
-    api.get("/api/production/batches/preview", { params })
+    api.get("/api/production/batches/preview", { params: { family, product_code: product.code } })
       .then(r => { if (!stale) setPreview(r.data); })
       .catch(() => { if (!stale) setPreview(null); });
     return () => { stale = true; };
-  }, [family, product, origin, supplier, typeDigit, subcat]);
+  }, [family, product]);
 
   // Close product dropdown on outside click
   useEffect(() => {
@@ -159,19 +153,13 @@ export default function BatchRegistry() {
     if (!product || !preview) return;
     setGenerating(true);
     try {
-      const body = origin === "import"
-        ? { family: "import", product_code: product.code, supplier_code: supplier.code,
-            type_digit: typeDigit, subcat: subcat || undefined }
-        : { family, product_code: product.code };
-      const r = await api.post("/api/production/batches", body);
+      const r = await api.post("/api/production/batches", { family, product_code: product.code });
       toast.success(`Batch ${r.data.batch.batch_id} created`);
       setItems(prev => [r.data.batch, ...prev]);
       setPreview(null);
-      if (origin === "bh") {
-        // refresh the preview for the next sequence number
-        const p = await api.get("/api/production/batches/preview", { params: { family, product_code: product.code } });
-        setPreview(p.data);
-      }
+      // refresh the preview for the next sequence number
+      const p = await api.get("/api/production/batches/preview", { params: { family, product_code: product.code } });
+      setPreview(p.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to create batch");
     } finally {
@@ -416,80 +404,34 @@ export default function BatchRegistry() {
                 </button>
               )}
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
               Pick the batch type and product. The ID is built automatically to the Bassani V6 standard, with the next sequence number and today's date.
             </p>
-
-            {/* Origin: produced here vs imported */}
-            <div className="flex gap-1.5 mb-4">
-              {[
-                { key: "bh",     label: "Bassani Produced (BH)" },
-                { key: "import", label: "Imported Stock (BI)" },
-              ].map(o => (
-                <button
-                  key={o.key}
-                  onClick={() => setOrigin(o.key)}
-                  className={`text-xs px-3.5 py-2 rounded-lg font-semibold transition-colors ${
-                    origin === o.key
-                      ? "bg-bassani-600 text-white"
-                      : "bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700"
-                  }`}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">
+              This creates batches for stock produced at Bassani only. Imported stock is registered on the{" "}
+              <button onClick={() => navigate("/production/receiving")} className="text-bassani-600 dark:text-bassani-400 hover:underline font-medium">S6 Receiving</button>{" "}
+              page, where receiving the delivery creates the batch automatically.
+            </p>
 
             <div className="grid sm:grid-cols-2 gap-4">
-              {origin === "bh" ? (
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Batch type</label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(meta?.families || []).map(f => (
-                      <button
-                        key={f.key}
-                        onClick={() => setFamily(f.key)}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                          family === f.key
-                            ? "bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300 ring-1 ring-bassani-300 dark:ring-bassani-700"
-                            : "bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700"
-                        }`}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Supplier</label>
-                  <select
-                    value={supplier?.code || ""}
-                    onChange={e => setSupplier(suppliers.find(s => s.code === e.target.value) || null)}
-                    className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
-                  >
-                    <option value="">Select supplier…</option>
-                    {suppliers.map(s => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
-                  </select>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <select
-                      value={typeDigit}
-                      onChange={e => setTypeDigit(Number(e.target.value))}
-                      className="text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Batch type</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(meta?.families || []).map(f => (
+                    <button
+                      key={f.key}
+                      onClick={() => setFamily(f.key)}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                        family === f.key
+                          ? "bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300 ring-1 ring-bassani-300 dark:ring-bassani-700"
+                          : "bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700"
+                      }`}
                     >
-                      {(meta?.import_types || []).map(t => <option key={t.digit} value={t.digit}>{t.label}</option>)}
-                    </select>
-                    <select
-                      value={subcat}
-                      onChange={e => setSubcat(e.target.value)}
-                      className="text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
-                    >
-                      <option value="">No size</option>
-                      {(meta?.import_subcats || []).map(s => <option key={s.char} value={s.char}>{s.label}</option>)}
-                    </select>
-                  </div>
+                      {f.label}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
               {/* Product picker */}
               <div ref={productBoxRef} className="relative">

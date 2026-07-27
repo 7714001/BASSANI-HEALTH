@@ -1235,10 +1235,13 @@ Log in at the normal portal address. You land directly on the Vault Logbook.
 Both production pages have a **Guide** button at the top right. It opens a plain-language reference explaining how batch numbers are put together (the four batch types, the stage letters and what each one means, and the finished goods packaging codes), what each of the four vault movements is for, and what the "Staged" label means. Use it any time you are unsure — you never need the paper standard.
 
 **Generating a batch number (Batch Registry page):**
+This page is for stock produced at Bassani only.
 1. Pick the batch type: Single Strain, Mixed Room (API), Blend, or Gummy / Product Lot
 2. Search for the product by name or shortcode
 3. The next batch number appears automatically in the preview box, built to the Bassani standard with the correct sequence number and today's date
 4. Click **Create Batch**. The number is now in the registry and ready to use on movements
+
+Imported stock is never generated here — it is created automatically when you receive the delivery on the **S6 Receiving** page (see below). This keeps every imported batch tied to its Schedule 6 paperwork and quarantine sign-off from the moment it exists. The Batch Registry's registry table still lists imported batches alongside Bassani-produced ones, so you can see the full history of any batch in one place.
 
 **Recording a vault movement (Vault Logbook page):**
 1. Search for the batch first. Every entry in the picker shows the product name and stage next to the batch number, so you never need to memorise the numbering.

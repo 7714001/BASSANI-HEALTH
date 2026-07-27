@@ -83,7 +83,7 @@ export default function ProductionGuideButton() {
                 </div>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                You never build these yourself. The system puts the number together when you create a batch, and updates the stage as material moves. If a batch is not in the picker, it has not been created yet: generate it on the Batch Registry page first.
+                You never build these yourself. The system puts the number together when you create a batch, and updates the stage as material moves. If a batch is not in the picker, it has not been created yet: batches for stock produced at Bassani are generated on the Batch Registry page; batches for imported stock are created automatically when the delivery is received on the S6 Receiving page.
               </p>
             </Section>
 

@@ -706,9 +706,18 @@ async def create_batch(
     body: BatchCreate,
     current_user: dict = Depends(require_permission("production.batch_generate")),
 ):
+    # Imported (BI) batches are never created directly — only through the S6
+    # Receiving flow (_create_import_batch, called from receive_import), which
+    # atomically creates the vault receive movement and the s6_receipts entry
+    # that puts the batch into quarantine. A batch created here with no
+    # matching receipt would bypass RP release entirely (see the quarantine
+    # gate in create_movement), so this endpoint refuses the family outright
+    # rather than relying on the frontend not offering it.
     if body.family == "import":
-        doc = await _create_import_batch(body, current_user)
-        return {"success": True, "batch": doc}
+        raise HTTPException(
+            status_code=422,
+            detail="Imported stock batches are created by receiving the stock on the S6 Receiving page, not generated here.",
+        )
     if body.family not in FAMILIES:
         raise HTTPException(status_code=422, detail="Unknown batch family")
     code = body.product_code.strip().upper()
@@ -819,13 +828,22 @@ async def create_movement(
     batch = await _get_batch_or_404(body.batch_id.strip())
 
     # Schedule 6 quarantine gate: imported stock cannot leave the vault until
-    # the Responsible Pharmacist has released its receipt.
+    # the Responsible Pharmacist has released its receipt. Deny by default —
+    # a missing receipt blocks the movement rather than silently allowing it.
+    # Every legitimately-created import batch has one (batch creation for the
+    # "import" family only ever happens inside receive_import, atomically
+    # alongside the receipt); a batch with none is not a normal state.
     if body.type != "receive" and batch.get("family") == "import":
         receipt = await col("s6_receipts").find_one(
             {"batch_id": batch.get("base_batch_id") or batch["batch_id"]},
             sort=[("created_at", -1)],
         )
-        if receipt and receipt.get("status") != "released":
+        if not receipt:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Batch {batch['batch_id']} has no S6 receiving record on file and cannot be issued. Contact an administrator.",
+            )
+        if receipt.get("status") != "released":
             raise HTTPException(
                 status_code=409,
                 detail=f"Batch {batch['batch_id']} is awaiting Responsible Pharmacist release and cannot be issued yet.",
