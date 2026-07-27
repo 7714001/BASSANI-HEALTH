@@ -873,10 +873,20 @@ async def list_batches(
 @router.get("/batches/{batch_id}/timeline")
 async def batch_timeline(batch_id: str, _: dict = Depends(PROD_READ)):
     """Everything known about one batch: registry entry, derived stages, and
-    every vault movement that touched it — the traceability drill-down."""
-    doc = await _get_batch_or_404(batch_id)
-    base_id = doc.get("base_batch_id") or split_stage(batch_id)[0]
+    every vault movement that touched it — the traceability drill-down.
+
+    Accepts either a real batch_id or a lineage's base_batch_id directly.
+    The two are no longer always the same string: a flower batch's very
+    first stored entry already carries -U (see FLOWER_FAMILIES), so its
+    base_batch_id is the pre-suffix root, which nothing was ever created
+    with as its own batch_id — the registry table passes exactly that root
+    when expanding a group, so this must resolve it without requiring a
+    matching document to exist under that literal id."""
+    doc = await col("batch_registry").find_one({"batch_id": batch_id})
+    base_id = (doc.get("base_batch_id") if doc else None) or split_stage(batch_id)[0]
     related = await col("batch_registry").find({"base_batch_id": base_id}).sort("created_at", 1).to_list(50)
+    if not related:
+        raise HTTPException(status_code=404, detail=f"Batch {batch_id} is not in the registry")
     related_ids = [r["batch_id"] for r in related]
     movements = await col("vault_movements").find({
         "$or": [
@@ -885,7 +895,7 @@ async def batch_timeline(batch_id: str, _: dict = Depends(PROD_READ)):
         ]
     }).sort("created_at", 1).to_list(500)
     return {
-        "batch":     _clean(dict(doc)),
+        "batch":     _clean(dict(doc)) if doc else _clean(dict(related[0])),
         "stages":    [_clean(dict(r)) for r in related],
         "movements": [_clean(m) for m in movements],
     }
@@ -909,8 +919,13 @@ async def create_movement(
     # "import" family only ever happens inside receive_import, atomically
     # alongside the receipt); a batch with none is not a normal state.
     if body.type != "receive" and batch.get("family") == "import":
+        lineage_id = batch.get("base_batch_id") or batch["batch_id"]
         receipt = await col("s6_receipts").find_one(
-            {"batch_id": batch.get("base_batch_id") or batch["batch_id"]},
+            # base_batch_id is the correct match for any stage of the batch
+            # (see the comment on receipt creation in receive_import); the
+            # batch_id fallback covers receipts written before that field
+            # existed, where it happened to equal the lineage root directly.
+            {"$or": [{"base_batch_id": lineage_id}, {"batch_id": lineage_id}]},
             sort=[("created_at", -1)],
         )
         if not receipt:
@@ -1093,14 +1108,18 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
     for r in rows:
         r["product_name"] = names.get(r["batch_id"], "")
     staged = await col("vault_movements").count_documents({"odoo_sync": "staged"})
-    # Imported base batch IDs still awaiting RP release — the UI greys out
-    # issue movements for these (server-side gate in create_movement).
+    # Imported batch lineage roots still awaiting RP release — the UI greys
+    # out issue movements for these (server-side gate in create_movement).
+    # Returned as base_batch_id (falling back to batch_id for older receipts
+    # written before that field existed) so it matches what the frontend
+    # compares against for ANY stage of the batch, not just the one the
+    # receipt was originally created against.
     unreleased = await col("s6_receipts").find(
-        {"status": {"$ne": "released"}}, {"_id": 0, "batch_id": 1}
+        {"status": {"$ne": "released"}}, {"_id": 0, "batch_id": 1, "base_batch_id": 1}
     ).to_list(500)
     return {"rows": rows, "staged_movements": staged,
             "manicuring_out": {k: round(v, 3) for k, v in manicuring_out.items() if v > 0.001},
-            "unreleased_imports": [u["batch_id"] for u in unreleased],
+            "unreleased_imports": [(u.get("base_batch_id") or u["batch_id"]) for u in unreleased],
             "odoo_writes_live": get_vault_writer().live}
 
 
@@ -1174,6 +1193,12 @@ async def receive_import(
 
     receipt = {
         "batch_id":        batch["batch_id"],
+        # The batch's stage suffix (see _determine_import_stage) means later
+        # derived stages (post-manicuring -M/-T) carry this same lineage root
+        # but not this exact batch_id — the quarantine gate matches on this
+        # field, not batch_id, so release status resolves correctly no
+        # matter which stage of the batch is currently being handled.
+        "base_batch_id":   batch["base_batch_id"],
         "date_code":       batch["date_code"],
         "supplier_code":   batch["supplier_code"],
         "supplier_name":   batch["supplier_name"],
