@@ -3,7 +3,7 @@ import { Loader2, RefreshCw, PackageCheck, ClipboardList, CheckCircle, AlertTria
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, Modal, Pager } from "../components/UI";
 import { fmtWhen, batchTitle, STAGE_LABELS } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
@@ -28,6 +28,7 @@ export default function S6Register() {
   const [total, setTotal]         = useState(0);
   const [loading, setLoading]     = useState(true);
   const [q, setQ]                 = useState("");
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   // Receive form
   const [supplier, setSupplier]   = useState(null);
@@ -70,7 +71,9 @@ export default function S6Register() {
         api.get("/api/production/meta"),
         api.get("/api/production/suppliers"),
         api.get("/api/production/products"),
-        api.get("/api/production/s6-register", { params: q ? { q, limit: 200 } : { limit: 200 } }),
+        api.get("/api/production/s6-register", {
+          params: { q: q || undefined, skip: pagination.pageIndex * pagination.pageSize, limit: pagination.pageSize },
+        }),
       ]);
       setMeta(metaRes.data);
       setSuppliers(supRes.data.suppliers);
@@ -82,7 +85,7 @@ export default function S6Register() {
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, pagination]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -255,7 +258,10 @@ export default function S6Register() {
       setProduct(null); setProductQuery(""); setQtyQuoted(""); setQtyReceived(""); setPoChoice("");
       setDocs({ doc_invoice: false, doc_coa: false, doc_delivery_note: false, doc_s6_transfer: false });
       setComment(""); setPreview(null); setAlreadyManicured(null);
-      load();
+      // Resets to page 1 (new object reference re-triggers the load effect
+      // even if already on page 0) rather than calling load() directly,
+      // which would still see this render's stale pagination state.
+      setPagination(p => ({ ...p, pageIndex: 0 }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to record the receipt");
     } finally {
@@ -505,7 +511,7 @@ export default function S6Register() {
               </h3>
               <input
                 value={q}
-                onChange={e => setQ(e.target.value)}
+                onChange={e => { setQ(e.target.value); setPagination(p => ({ ...p, pageIndex: 0 })); }}
                 placeholder="Search supplier, product or batch…"
                 className="text-xs border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-64"
               />
@@ -583,6 +589,13 @@ export default function S6Register() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && total > 0 && (
+              <Pager
+                pageIndex={pagination.pageIndex} pageSize={pagination.pageSize} total={total}
+                onPageChange={idx => setPagination(p => ({ ...p, pageIndex: idx }))}
+                onPageSizeChange={size => setPagination({ pageIndex: 0, pageSize: size })}
+              />
             )}
           </div>
         </div>

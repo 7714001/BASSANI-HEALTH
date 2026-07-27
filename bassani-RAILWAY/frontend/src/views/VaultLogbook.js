@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import {
   Loader2, RefreshCw, Vault, ArrowDownToLine, ArrowUpFromLine, Scissors,
   PackageOpen, CloudOff, CloudUpload, NotebookPen, Trash2, Radar, Building2,
@@ -7,7 +7,7 @@ import {
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal, Pager } from "../components/UI";
 import { SyncBadge, fmtWhen, stageLabel, batchTitle } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
@@ -39,34 +39,23 @@ const fmtQty = (g) => {
 
 export default function VaultLogbook() {
   const { can, user } = useAuth();
-  const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, manicuring_out: {}, unreleased_imports: [], odoo_writes_live: false });
+  const [ledger, setLedger]       = useState({ rows: [], groups: [], total_groups: 0, staged_movements: 0, manicuring_out: {}, unreleased_imports: [], odoo_writes_live: false });
   const [movements, setMovements] = useState([]);
+  const [movementsTotal, setMovementsTotal] = useState(0);
   const [loading, setLoading]     = useState(true);
 
-  // Ledger grouped by physical batch lineage, same as the Batch Registry
-  // table — one row per real-world batch, expandable into the per-stage
-  // breakdown, instead of every stage the batch has ever carried appearing
-  // as its own row. No separate fetch needed on expand: unlike the registry
-  // page's timeline, every stage's balance is already in ledger.rows.
+  // Ledger table pagination — grouped by physical batch lineage server-side
+  // (13.0.9), same grouping the Batch Registry table uses: one row per
+  // real-world batch, expandable into the per-stage breakdown. No separate
+  // fetch needed on expand: unlike the registry page's timeline, every
+  // stage's balance for the CURRENT page is already in ledger.groups. The
+  // Record Movement form's guided next-step logic (vaultBalance,
+  // outAtManicuring below) reads ledger.rows instead — that stays a full,
+  // unpaginated list since it needs to look up any batch, not just the ones
+  // visible on the current ledger table page.
   const [expandedLedgerGroups, setExpandedLedgerGroups] = useState({});
-  const ledgerGroups = useMemo(() => {
-    const byBase = new Map();
-    for (const r of ledger.rows) {
-      const baseId = r.base_batch_id || r.batch_id;
-      if (!byBase.has(baseId)) byBase.set(baseId, []);
-      byBase.get(baseId).push(r);
-    }
-    return [...byBase.entries()].map(([baseId, rows]) => {
-      const activeRows = rows.filter(r => Math.abs(r.qty_g) > 0.001);
-      const total = rows.reduce((s, r) => s + (r.qty_g || 0), 0);
-      const totalMovements = rows.reduce((s, r) => s + (r.movements || 0), 0);
-      const lastActivity = rows.reduce(
-        (max, r) => (!max || (r.last_movement_at && new Date(r.last_movement_at) > new Date(max))) ? r.last_movement_at : max,
-        null
-      );
-      return { baseId, product_name: rows[0].product_name, rows, activeRows, total, totalMovements, lastActivity };
-    }).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-  }, [ledger.rows]);
+  const [ledgerPagination, setLedgerPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  const [movementsPagination, setMovementsPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   // Movement form
   const [type, setType]           = useState("receive");
@@ -107,17 +96,22 @@ export default function VaultLogbook() {
     setLoading(true);
     try {
       const [ledgerRes, movesRes] = await Promise.all([
-        api.get("/api/production/vault/ledger"),
-        api.get("/api/production/vault/movements", { params: { limit: 100 } }),
+        api.get("/api/production/vault/ledger", {
+          params: { group_skip: ledgerPagination.pageIndex * ledgerPagination.pageSize, group_limit: ledgerPagination.pageSize },
+        }),
+        api.get("/api/production/vault/movements", {
+          params: { skip: movementsPagination.pageIndex * movementsPagination.pageSize, limit: movementsPagination.pageSize },
+        }),
       ]);
       setLedger(ledgerRes.data);
       setMovements(movesRes.data.items);
+      setMovementsTotal(movesRes.data.total);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load vault logbook");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [ledgerPagination, movementsPagination]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -211,7 +205,11 @@ export default function VaultLogbook() {
           : `${MOVE_LABEL[type]} recorded for ${batch.batch_id}`
       );
       setQty(""); setMQty(""); setTQty(""); setNotes(""); setBatch(null); setBatchQuery("");
-      load();
+      // Reset to page 1 on both tables (new object reference re-triggers the
+      // load effect even if already on page 0) rather than calling load()
+      // directly, which would still see this render's stale pagination state.
+      setLedgerPagination(p => ({ ...p, pageIndex: 0 }));
+      setMovementsPagination(p => ({ ...p, pageIndex: 0 }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to record movement");
     } finally {
@@ -225,7 +223,8 @@ export default function VaultLogbook() {
     try {
       const r = await api.post("/api/production/purge-test-data");
       toast.success(`Purged ${r.data.batches_deleted} batches and ${r.data.movements_deleted} movements`);
-      load();
+      setLedgerPagination(p => ({ ...p, pageIndex: 0 }));
+      setMovementsPagination(p => ({ ...p, pageIndex: 0 }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Purge failed");
     } finally {
@@ -243,7 +242,8 @@ export default function VaultLogbook() {
       } else {
         toast.success(`${r.data.synced} staged records synced to the stock system`);
       }
-      load();
+      setLedgerPagination(p => ({ ...p, pageIndex: 0 }));
+      setMovementsPagination(p => ({ ...p, pageIndex: 0 }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Sync failed");
     } finally {
@@ -257,7 +257,7 @@ export default function VaultLogbook() {
     try {
       const r = await api.post("/api/production/vault/rebuild-ledger");
       toast.success(`Ledger rebuilt from ${r.data.batches_rebuilt} batches' full movement history`);
-      load();
+      setLedgerPagination(p => ({ ...p, pageIndex: 0 }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Rebuild failed");
     } finally {
@@ -538,7 +538,7 @@ export default function VaultLogbook() {
               <div className="flex items-center justify-center py-10 text-gray-400">
                 <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
               </div>
-            ) : ledger.rows.length === 0 ? (
+            ) : ledger.total_groups === 0 ? (
               <div className="text-center py-10 text-gray-400 dark:text-gray-500">
                 <Vault size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No vault stock recorded yet. Record the first movement above.</p>
@@ -557,7 +557,7 @@ export default function VaultLogbook() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {ledgerGroups.map(g => {
+                    {ledger.groups.map(g => {
                       const isOpen = !!expandedLedgerGroups[g.baseId];
                       const hasMultipleStages = g.rows.length > 1;
                       return (
@@ -626,6 +626,13 @@ export default function VaultLogbook() {
                 </table>
               </div>
             )}
+            {!loading && ledger.total_groups > 0 && (
+              <Pager
+                pageIndex={ledgerPagination.pageIndex} pageSize={ledgerPagination.pageSize} total={ledger.total_groups}
+                onPageChange={idx => setLedgerPagination(p => ({ ...p, pageIndex: idx }))}
+                onPageSizeChange={size => setLedgerPagination({ pageIndex: 0, pageSize: size })}
+              />
+            )}
           </div>
 
           {/* Movement history */}
@@ -678,6 +685,13 @@ export default function VaultLogbook() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {movementsTotal > 0 && (
+              <Pager
+                pageIndex={movementsPagination.pageIndex} pageSize={movementsPagination.pageSize} total={movementsTotal}
+                onPageChange={idx => setMovementsPagination(p => ({ ...p, pageIndex: idx }))}
+                onPageSizeChange={size => setMovementsPagination({ pageIndex: 0, pageSize: size })}
+              />
             )}
           </div>
         </div>

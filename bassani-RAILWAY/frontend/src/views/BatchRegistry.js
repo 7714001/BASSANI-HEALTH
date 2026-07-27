@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, AlertCircle, Link2, Search, Package, ChevronRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
-import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal, parseDisplayName } from "../components/UI";
+import { TopBar, BtnPrimary, BtnSecondary, BtnDanger, Modal, parseDisplayName, Pager } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 import ProductionGuideButton from "../components/ProductionGuide";
 
@@ -59,9 +59,11 @@ export default function BatchRegistry() {
   const navigate = useNavigate();
   const [meta, setMeta]         = useState(null);
   const [products, setProducts]   = useState([]);
-  const [items, setItems]       = useState([]);
+  const [groups, setGroups]     = useState([]);
+  const [total, setTotal]       = useState(0);
   const [loading, setLoading]   = useState(true);
   const [q, setQ]               = useState("");
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   // Generator state — Bassani-produced batches only. Imported (BI) batches
   // are never generated here: they are created atomically by the S6
@@ -107,20 +109,23 @@ export default function BatchRegistry() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [metaRes, productRes, listRes] = await Promise.all([
+      const [metaRes, productRes, groupedRes] = await Promise.all([
         api.get("/api/production/meta"),
         api.get("/api/production/products"),
-        api.get("/api/production/batches", { params: q ? { q, limit: 200 } : { limit: 200 } }),
+        api.get("/api/production/batches/grouped", {
+          params: { q: q || undefined, skip: pagination.pageIndex * pagination.pageSize, limit: pagination.pageSize },
+        }),
       ]);
       setMeta(metaRes.data);
       setProducts(productRes.data.products);
-      setItems(listRes.data.items);
+      setGroups(groupedRes.data.groups);
+      setTotal(groupedRes.data.total);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load batch registry");
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, pagination]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -155,8 +160,11 @@ export default function BatchRegistry() {
     try {
       const r = await api.post("/api/production/batches", { family, product_code: product.code });
       toast.success(`Batch ${r.data.batch.batch_id} created`);
-      setItems(prev => [r.data.batch, ...prev]);
       setPreview(null);
+      // New batches sort first (most recently started) — jump back to page 1
+      // so it's visible, and this also triggers a reload via the pagination
+      // state change picked up by load()'s dependency array.
+      setPagination(p => ({ ...p, pageIndex: 0 }));
       // refresh the preview for the next sequence number
       const p = await api.get("/api/production/batches/preview", { params: { family, product_code: product.code } });
       setPreview(p.data);
@@ -305,44 +313,6 @@ export default function BatchRegistry() {
   const linkDisplayedProducts = linkSelectedVariant
     ? odooProductResults.filter(p => parseDisplayName(p.display_name || p.name || "").groups.includes(linkSelectedVariant))
     : odooProductResults;
-
-  // Group every registry row (base + derived stages) by physical batch
-  // lineage (base_batch_id), so the table shows one row per real-world
-  // batch. "Leaves" are stages nothing else in the group was derived from —
-  // the batch's current physical form(s): usually one, but two after a
-  // manicuring split (Manicured + Trim are separate physical items from the
-  // same origin, not one replacing the other). Note: if a narrow search
-  // matches only one stage of a batch, the collapsed preview is computed
-  // from just that partial set — expanding always re-fetches the complete,
-  // accurate history regardless, since that call is keyed by base_batch_id.
-  const groups = useMemo(() => {
-    const byBase = new Map();
-    for (const b of items) {
-      const baseId = b.base_batch_id || b.batch_id;
-      if (!byBase.has(baseId)) byBase.set(baseId, []);
-      byBase.get(baseId).push(b);
-    }
-    const syncPriority = { error: 0, staged: 1, done: 2 };
-    return [...byBase.entries()].map(([baseId, entries]) => {
-      entries.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      const base = entries.find(e => e.batch_id === baseId) || entries[0];
-      const leaves = entries.filter(e => !entries.some(o => o.parent_batch_id === e.batch_id));
-      const worstSync = entries.reduce(
-        (w, e) => (syncPriority[e.odoo_sync] ?? 1) < (syncPriority[w] ?? 1) ? e.odoo_sync : w,
-        entries[0].odoo_sync
-      );
-      return {
-        baseId,
-        product_name: base.product_name,
-        leaves,
-        stageCount: entries.length,
-        started_at: base.created_at,
-        started_by: base.created_by_name,
-        syncStatus: worstSync,
-        mixedSync: new Set(entries.map(e => e.odoo_sync)).size > 1,
-      };
-    }).sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
-  }, [items]);
 
   async function toggleGroup(baseId) {
     const willExpand = !expandedGroups[baseId];
@@ -493,7 +463,7 @@ export default function BatchRegistry() {
               </h3>
               <input
                 value={q}
-                onChange={e => setQ(e.target.value)}
+                onChange={e => { setQ(e.target.value); setPagination(p => ({ ...p, pageIndex: 0 })); }}
                 placeholder="Search batch or product…"
                 className="text-xs border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-56"
               />
@@ -503,7 +473,7 @@ export default function BatchRegistry() {
               <div className="flex items-center justify-center py-12 text-gray-400">
                 <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
               </div>
-            ) : items.length === 0 ? (
+            ) : total === 0 ? (
               <div className="text-center py-12 text-gray-400 dark:text-gray-500">
                 <Layers size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No batches yet. Generate the first one above.</p>
@@ -632,6 +602,13 @@ export default function BatchRegistry() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && total > 0 && (
+              <Pager
+                pageIndex={pagination.pageIndex} pageSize={pagination.pageSize} total={total}
+                onPageChange={idx => setPagination(p => ({ ...p, pageIndex: idx }))}
+                onPageSizeChange={size => setPagination({ pageIndex: 0, pageSize: size })}
+              />
             )}
           </div>
         </div>

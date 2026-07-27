@@ -958,6 +958,79 @@ async def list_batches(
     return {"items": [_clean(d) for d in docs], "total": total}
 
 
+@router.get("/batches/grouped")
+async def list_batches_grouped(
+    q: Optional[str] = Query(None),
+    family: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(25, le=100),
+    _: dict = Depends(PROD_READ),
+):
+    """Batch Registry table data, grouped by physical batch lineage
+    (base_batch_id) and paginated over the GROUP count, not raw rows — a flat
+    skip/limit on individual stage entries would split one physical batch's
+    stages across pages, which is meaningless for a compliance-relevant view.
+    Mirrors the grouping BatchRegistry.js used to compute client-side from an
+    unpaginated fetch (13.0.9): "leaves" are stages nothing else in the group
+    was derived from (the batch's current physical form(s)); syncStatus is the
+    worst status across the lineage. Note filters apply BEFORE grouping, same
+    as before — a narrow search matching only one stage of a batch shows just
+    that partial group (expanding always re-fetches the full, accurate history
+    via /batches/{id}/timeline regardless)."""
+    match: dict = {}
+    if q:
+        match["$or"] = [
+            {"batch_id":    {"$regex": q, "$options": "i"}},
+            {"product_name": {"$regex": q, "$options": "i"}},
+        ]
+    if family in FAMILIES:
+        match["family"] = family
+
+    pipeline = [
+        {"$match": match},
+        {"$sort": {"created_at": 1}},
+        {"$group": {
+            "_id": {"$ifNull": ["$base_batch_id", "$batch_id"]},
+            "product_name": {"$first": "$product_name"},
+            "started_at":   {"$first": "$created_at"},
+            "started_by":   {"$first": "$created_by_name"},
+            "entries": {"$push": {
+                "batch_id": "$batch_id", "parent_batch_id": "$parent_batch_id",
+                "stage_suffix": "$stage_suffix", "odoo_sync": "$odoo_sync",
+            }},
+        }},
+        {"$sort": {"started_at": -1}},
+        {"$facet": {
+            "page":  [{"$skip": skip}, {"$limit": limit}],
+            "total": [{"$count": "n"}],
+        }},
+    ]
+    result = await col("batch_registry").aggregate(pipeline).to_list(1)
+    page = result[0]["page"] if result else []
+    total = result[0]["total"][0]["n"] if result and result[0]["total"] else 0
+
+    sync_priority = {"error": 0, "staged": 1, "done": 2}
+    groups = []
+    for g in page:
+        entries = g["entries"]
+        leaves = [e for e in entries if not any(o.get("parent_batch_id") == e["batch_id"] for o in entries)]
+        worst = entries[0]["odoo_sync"]
+        for e in entries:
+            if sync_priority.get(e["odoo_sync"], 1) < sync_priority.get(worst, 1):
+                worst = e["odoo_sync"]
+        groups.append({
+            "baseId":      g["_id"],
+            "product_name": g.get("product_name"),
+            "leaves":      leaves,
+            "stageCount":  len(entries),
+            "started_at":  g.get("started_at"),
+            "started_by":  g.get("started_by"),
+            "syncStatus":  worst,
+            "mixedSync":   len({e["odoo_sync"] for e in entries}) > 1,
+        })
+    return {"groups": groups, "total": total}
+
+
 @router.get("/batches/{batch_id}/timeline")
 async def batch_timeline(batch_id: str, _: dict = Depends(PROD_READ)):
     """Everything known about one batch: registry entry, derived stages, and
@@ -1169,7 +1242,11 @@ async def list_movements(
 
 
 @router.get("/vault/ledger")
-async def vault_ledger(_: dict = Depends(PROD_READ)):
+async def vault_ledger(
+    group_skip: int = Query(0, ge=0),
+    group_limit: int = Query(25, le=100),
+    _: dict = Depends(PROD_READ),
+):
     """Current vault holdings per batch, read from the materialized
     batch_balances collection (13.0.9) — one document per batch_id, kept
     current incrementally by _ledger_bump()/_ledger_manicuring_out_delta()
@@ -1182,6 +1259,15 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
     _recompute_all_balances() holds the original full-replay algorithm as an
     on-demand reconciliation tool (POST /vault/rebuild-ledger) if this ever
     needs rebuilding from scratch.
+
+    `rows` stays a full, unpaginated flat list — the Record Movement form's
+    guided next-step logic looks up an arbitrary batch's balance by batch_id
+    regardless of what page the ledger table is on, so it can't be sliced.
+    `groups`/`total_groups` group those same rows by physical batch lineage
+    (base_batch_id) for the ledger table, paginated over the GROUP count —
+    computed here in Python from the same already-fetched batch_balances
+    docs (no extra query), which is cheap since that collection is bounded
+    by distinct batch count, the same reasoning as the correctness fix above.
 
     While GACP_ODOO_WRITES=off this is the staged view (badged "pending sync"
     in the UI). Once live and flushed, Odoo stock.quant at the Vault location
@@ -1219,7 +1305,33 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
     unreleased = await col("s6_receipts").find(
         {"status": {"$ne": "released"}}, {"_id": 0, "batch_id": 1, "base_batch_id": 1}
     ).to_list(500)
-    return {"rows": rows, "staged_movements": staged,
+
+    # Ledger table view: group the same rows by physical batch lineage,
+    # paginated over the GROUP count — mirrors what VaultLogbook.js used to
+    # compute client-side from the unpaginated rows list.
+    by_base: dict[str, list] = {}
+    for r in rows:
+        by_base.setdefault(r["base_batch_id"], []).append(r)
+    all_groups = []
+    for base_id, entries in by_base.items():
+        active = [e for e in entries if abs(e["qty_g"]) > 0.001]
+        last_activity = max(
+            (e["last_movement_at"] for e in entries if e.get("last_movement_at")), default=None)
+        all_groups.append({
+            "baseId":        base_id,
+            "product_name":  entries[0].get("product_name"),
+            "rows":          entries,
+            "activeRows":    active,
+            "total":         round(sum(e["qty_g"] for e in entries), 3),
+            "totalMovements": sum(e["movements"] for e in entries),
+            "lastActivity":  last_activity,
+        })
+    all_groups.sort(key=lambda g: -abs(g["total"]))
+    total_groups = len(all_groups)
+    groups = all_groups[group_skip:group_skip + group_limit]
+
+    return {"rows": rows, "groups": groups, "total_groups": total_groups,
+            "staged_movements": staged,
             "manicuring_out": {k: round(v, 3) for k, v in manicuring_out.items() if v > 0.001},
             "unreleased_imports": [(u.get("base_batch_id") or u["batch_id"]) for u in unreleased],
             "odoo_writes_live": get_vault_writer().live}

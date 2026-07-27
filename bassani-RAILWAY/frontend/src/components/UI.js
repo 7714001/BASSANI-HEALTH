@@ -681,6 +681,38 @@ export function DataTable({
   );
 }
 
+// ── Pager ─────────────────────────────────────────────────────────────────────
+// Dark-mode-aware pagination footer for bespoke (non-DataTable) tables — the
+// production module's grouped/expandable tables can't use DataTable (it has
+// no expand-row support and is light-mode only, see Invoices.js), but still
+// need the same skip/limit pagination contract against the backend.
+export function Pager({ pageIndex, pageSize, total, onPageChange, onPageSizeChange, pageSizeOptions = [10, 25, 50, 100] }) {
+  const pageCount = Math.max(1, Math.ceil((total || 0) / pageSize));
+  const from = total ? pageIndex * pageSize + 1 : 0;
+  const to = Math.min(from + pageSize - 1, total || 0);
+  const canPrev = pageIndex > 0;
+  const canNext = pageIndex < pageCount - 1;
+  const btnCls = "px-2 py-1 rounded border border-gray-200 dark:border-gray-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors";
+  return (
+    <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/40 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+      <span className="shrink-0 tabular-nums">{!total ? "No results" : `Showing ${from}–${to} of ${total}`}</span>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onPageChange(0)} disabled={!canPrev} className={btnCls}>«</button>
+        <button onClick={() => onPageChange(pageIndex - 1)} disabled={!canPrev} className={btnCls}>‹</button>
+        <span className="px-2 tabular-nums">{pageIndex + 1} / {pageCount}</span>
+        <button onClick={() => onPageChange(pageIndex + 1)} disabled={!canNext} className={btnCls}>›</button>
+        <button onClick={() => onPageChange(pageCount - 1)} disabled={!canNext} className={btnCls}>»</button>
+      </div>
+      {onPageSizeChange && (
+        <select value={pageSize} onChange={e => onPageSizeChange(Number(e.target.value))}
+          className="border border-gray-200 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-bassani-600">
+          {pageSizeOptions.map(s => <option key={s} value={s}>{s} per page</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 // ── Modal ─────────────────────────────────────────────────────────────────────
 export function Modal({ title, onClose, children, width = "max-w-lg" }) {
   return (
