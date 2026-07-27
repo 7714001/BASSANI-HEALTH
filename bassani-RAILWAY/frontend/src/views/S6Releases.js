@@ -25,7 +25,20 @@ export default function S6Releases() {
   const [queryNote, setQueryNote]           = useState("");
   const [resolveTarget, setResolveTarget]   = useState(null);  // receipt
   const [resolveNote, setResolveNote]       = useState("");
+  const [resolvePos, setResolvePos]         = useState([]);    // open POs for the receipt's supplier
+  const [resolvePoChoice, setResolvePoChoice] = useState("");
   const [busy, setBusy]                     = useState(false);
+
+  // Load the supplier's open POs when the resolve modal opens, so the PO
+  // raised during the investigation can be linked to the receipt.
+  useEffect(() => {
+    if (!resolveTarget) { setResolvePos([]); setResolvePoChoice(""); return; }
+    let stale = false;
+    api.get(`/api/production/suppliers/${resolveTarget.supplier_code}/open-pos`)
+      .then(r => { if (!stale) setResolvePos(r.data.purchase_orders || []); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [resolveTarget]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,12 +87,19 @@ export default function S6Releases() {
 
   async function doResolve() {
     const r = resolveTarget;
+    const po = resolvePos.find(p => String(p.id) === resolvePoChoice);
     setResolveTarget(null);
     setBusy(true);
     try {
-      await api.post(`/api/production/s6/${r.id}/resolve-flag`, { note: resolveNote });
-      toast.success("Flag resolved. The receipt can now be released.");
-      setResolveNote("");
+      await api.post(`/api/production/s6/${r.id}/resolve-flag`, {
+        note: resolveNote,
+        po_id: po?.id,
+        po_name: po?.name,
+      });
+      toast.success(po
+        ? `Flag resolved and linked to ${po.name}. The receipt can now be released.`
+        : "Flag resolved. The receipt can now be released.");
+      setResolveNote(""); setResolvePoChoice("");
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to resolve the flag");
@@ -237,13 +257,26 @@ export default function S6Releases() {
       {resolveTarget && (
         <Modal title="Resolve Investigation Flag" onClose={() => setResolveTarget(null)}>
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-            This receipt was flagged because no purchase order was found. Record the outcome of the investigation for <span className="font-mono">{resolveTarget.batch_id}</span>. Once resolved, the Responsible Pharmacist can release the batch.
+            This receipt was flagged because no purchase order was found. Record the outcome of the investigation for <span className="font-mono">{resolveTarget.batch_id}</span>. The portal never creates purchase orders: if the investigation concluded with one raised in the stock system, link it here. Once resolved, the Responsible Pharmacist can release the batch.
           </p>
+          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Purchase order raised during the investigation (recommended)</label>
+          <select
+            value={resolvePoChoice}
+            onChange={e => setResolvePoChoice(e.target.value)}
+            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-3"
+          >
+            <option value="">No purchase order to link</option>
+            {resolvePos.map(p => (
+              <option key={p.id} value={String(p.id)}>
+                {p.name}{p.date_order ? ` — ${String(p.date_order).slice(0, 10)}` : ""}
+              </option>
+            ))}
+          </select>
           <textarea
             value={resolveNote}
             onChange={e => setResolveNote(e.target.value)}
             rows={3}
-            placeholder="e.g. PO raised retrospectively as P00123 after confirming the order with the supplier…"
+            placeholder="e.g. Order confirmed with the supplier and purchase order raised retrospectively…"
             className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
           />
           <div className="flex justify-end gap-2 mt-4">

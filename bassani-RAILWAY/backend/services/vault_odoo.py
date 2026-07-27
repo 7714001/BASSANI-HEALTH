@@ -209,51 +209,25 @@ class VaultOdooWriter:
         return {"op": "internal_transfer", "picking_id": picking_id, "lot_id": lot["lot_id"]}
 
     def _po_receipt(self, op: dict) -> dict:
-        """Live path for an imported-stock receipt: purchase order on the
-        supplier partner, confirmed, receipt picking validated with the lot
-        into the vault. Fails with a clear message when the supplier partner
-        or product cannot be resolved — surfaced per record by the sync."""
+        """Live path for an imported-stock receipt: the linked purchase order is
+        confirmed if still draft and its receipt picking validated with the lot
+        into the vault. Fails with a clear message when anything is unresolved —
+        surfaced per record by the sync."""
         odoo = get_odoo_client()
-        company_id = self._company_id()
-        if op.get("po_id"):
-            # Receive against the PO Bassani already raised — never duplicate it.
-            po_id = op["po_id"]
-            existing = odoo.read("purchase.order", [po_id], fields=["state"])
-            if not existing:
-                raise RuntimeError(f"Linked purchase order {op.get('po_name') or po_id} no longer exists in Odoo")
-            if existing[0]["state"] in ("draft", "sent"):
-                odoo.execute("purchase.order", "button_confirm", [po_id])
-        else:
-            if op.get("supplier_partner_id"):
-                # Admin-linked vendor account: deterministic, no name matching.
-                partner_rows = odoo.read("res.partner", [op["supplier_partner_id"]], fields=["id", "name"])
-                if not partner_rows:
-                    raise RuntimeError(
-                        f"The linked supplier account (id {op['supplier_partner_id']}) no longer exists in Odoo. "
-                        "Re-link the supplier and re-run the sync."
-                    )
-                partners = partner_rows
-            else:
-                partners = odoo.search_read(
-                    "res.partner",
-                    domain=[("name", "ilike", op["supplier_name"])],
-                    fields=["id", "name"], limit=1,
-                )
-                if not partners:
-                    raise RuntimeError(
-                        f"No Odoo supplier partner found matching '{op['supplier_name']}'. "
-                        "Link the supplier to its Odoo account (Manage Suppliers) and re-run the sync."
-                    )
-            product_id = self._resolve_product(op["product_hint"], company_id)
-            ctx = company_context(company_id)
-            po_id = odoo.create("purchase.order", {
-                "partner_id": partners[0]["id"],
-                "company_id": company_id,
-                "order_line": [(0, 0, {
-                    "product_id": product_id,
-                    "product_qty": op["qty_g"],
-                })],
-            }, context=ctx)
+        # The portal NEVER creates purchase orders. POs are raised in Odoo by
+        # Bassani and linked to the receipt in the portal; a receipt with no
+        # linked PO (a flag that was resolved without one) cannot be synced.
+        if not op.get("po_id"):
+            raise RuntimeError(
+                f"No purchase order is linked to the receipt for {op['lot_name']}. "
+                "Raise the purchase order in the stock system, link it when resolving "
+                "the receipt's flag, and re-run the sync."
+            )
+        po_id = op["po_id"]
+        existing = odoo.read("purchase.order", [po_id], fields=["state"])
+        if not existing:
+            raise RuntimeError(f"Linked purchase order {op.get('po_name') or po_id} no longer exists in Odoo")
+        if existing[0]["state"] in ("draft", "sent"):
             odoo.execute("purchase.order", "button_confirm", [po_id])
         pickings = odoo.search_read(
             "stock.picking", domain=[("purchase_id", "=", po_id)], fields=["id"], limit=1,

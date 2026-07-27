@@ -101,6 +101,9 @@ class ImportReceipt(BaseModel):
 
 class ReleaseNote(BaseModel):
     note: Optional[str] = None
+    # resolve-flag only: the PO raised in Odoo during the investigation
+    po_id: Optional[int] = None
+    po_name: Optional[str] = None
 
 
 class MovementCreate(BaseModel):
@@ -1111,7 +1114,10 @@ async def resolve_receipt_flag(
     current_user: dict = Depends(require_permission("production.manage")),
 ):
     """Compliance resolution of a no-purchase-order flag, with a mandatory note.
-    Only after this can the RP release the batch."""
+    The investigation normally concludes with a PO raised in Odoo — pass its
+    id/name to link it to the receipt (the portal never creates POs itself);
+    the pending stock-system operation is updated to receive against it.
+    Only after resolution can the RP release the batch."""
     doc = await _get_receipt_or_404(receipt_id)
     flag = doc.get("po_flag")
     if not flag or not flag.get("flagged"):
@@ -1121,15 +1127,26 @@ async def resolve_receipt_flag(
     note = (body.note or "").strip()
     if not note:
         raise HTTPException(status_code=422, detail="A note explaining the resolution is required")
-    await col("s6_receipts").update_one({"_id": doc["_id"]}, {"$set": {
+    updates = {
         "po_flag.resolved": True,
         "po_flag.note": note,
         "po_flag.resolved_by": current_user.get("name") or current_user.get("username"),
         "po_flag.resolved_at": _now(),
-    }})
+    }
+    if body.po_id:
+        updates["po_id"] = body.po_id
+        updates["po_name"] = body.po_name
+        # Point the still-staged receive movement at the linked PO so the sync
+        # books the goods receipt against it (the sync refuses PO-less receipts).
+        await col("vault_movements").update_one(
+            {"batch_id": doc["batch_id"], "type": "receive", "odoo_sync": {"$ne": "done"}},
+            {"$set": {"ops.$[op].po_id": body.po_id, "ops.$[op].po_name": body.po_name}},
+            array_filters=[{"op.op": "po_receipt"}],
+        )
+    await col("s6_receipts").update_one({"_id": doc["_id"]}, {"$set": updates})
     await audit_log("production.s6_flag_resolved", "s6_receipt", str(doc["_id"]),
                     entity_label=doc["batch_id"], user=current_user,
-                    detail={"note": note})
+                    detail={"note": note, "po_linked": body.po_name})
     return {"success": True}
 
 
