@@ -2115,7 +2115,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Receive imported stock (S6 register entry) | Vault Custodian or anyone with `production.vault` |
 | Release imported stock from quarantine | Rookshanna (responsible_pharmacist) or anyone with `production.rp_release` |
 | Resolve a no-purchase-order flag on a receipt | Super admin or admin with `production.manage` |
-| Add or archive import suppliers | Super admin or admin with `production.manage` |
+| Add, archive or link import suppliers to their stock system account | Super admin or admin with `production.manage` |
 | Sync staged vault records to the stock system | Super admin or admin with `production.manage` |
 | Purge production test data (batches + movements) | Super Admin only — blocked once records exist in the stock system |
 | Generate commission statements | Admin with `commission.generate_statements` |

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Loader2, RefreshCw, PackageCheck, ClipboardList, CheckCircle, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, PackageCheck, ClipboardList, CheckCircle, AlertTriangle, Plus, Link2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, BtnPrimary, BtnSecondary } from "../components/UI";
+import { useAuth } from "../AuthContext";
+import { TopBar, BtnPrimary, BtnSecondary, Modal } from "../components/UI";
 import { fmtWhen, batchTitle } from "./BatchRegistry";
 import ProductionGuideButton from "../components/ProductionGuide";
 
@@ -19,6 +20,7 @@ const DOCS = [
 ];
 
 export default function S6Register() {
+  const { can } = useAuth();
   const [meta, setMeta]           = useState(null);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts]   = useState([]);
@@ -44,6 +46,18 @@ export default function S6Register() {
   const [preview, setPreview]     = useState(null);
   const [saving, setSaving]       = useState(false);
   const productBoxRef = useRef(null);
+
+  // Manage-suppliers modal (production.manage)
+  const [manageOpen, setManageOpen]       = useState(false);
+  const [manageList, setManageList]       = useState([]);
+  const [newSupplier, setNewSupplier]     = useState({ name: "", code: "" });
+  const [savingSupplier, setSavingSupplier] = useState(false);
+  const [supplierBusy, setSupplierBusy]   = useState(null);
+  // Link-to-Odoo-account picker
+  const [linkTarget, setLinkTarget]       = useState(null);   // supplier row
+  const [vendorQuery, setVendorQuery]     = useState("");
+  const [vendorResults, setVendorResults] = useState([]);
+  const [vendorSearching, setVendorSearching] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,6 +120,91 @@ export default function S6Register() {
     return p.name.toLowerCase().includes(t) || p.code.toLowerCase().includes(t);
   });
 
+  // Manage suppliers: list incl. archived, add / archive / restore / link
+  async function refreshSuppliers() {
+    const [all, active] = await Promise.all([
+      api.get("/api/production/suppliers", { params: { include_archived: true } }),
+      api.get("/api/production/suppliers"),
+    ]);
+    setManageList(all.data.suppliers);
+    setSuppliers(active.data.suppliers);
+  }
+
+  async function openManage() {
+    setManageOpen(true);
+    try { await refreshSuppliers(); } catch { toast.error("Failed to load supplier list"); }
+  }
+
+  async function saveSupplier() {
+    setSavingSupplier(true);
+    try {
+      await api.post("/api/production/suppliers", { name: newSupplier.name, code: newSupplier.code });
+      toast.success(`Supplier ${newSupplier.name} added`);
+      setNewSupplier({ name: "", code: "" });
+      await refreshSuppliers();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add supplier");
+    } finally {
+      setSavingSupplier(false);
+    }
+  }
+
+  async function toggleSupplier(s) {
+    setSupplierBusy(s.code);
+    try {
+      await api.post(`/api/production/suppliers/${s.code}/${s.active ? "archive" : "restore"}`);
+      toast.success(s.active ? `${s.name} archived` : `${s.name} restored`);
+      await refreshSuppliers();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update supplier");
+    } finally {
+      setSupplierBusy(null);
+    }
+  }
+
+  async function doLink(vendor) {
+    const s = linkTarget;
+    setLinkTarget(null);
+    setSupplierBusy(s.code);
+    try {
+      await api.post(`/api/production/suppliers/${s.code}/link`, {
+        odoo_partner_id: vendor.id, odoo_partner_name: vendor.name,
+      });
+      toast.success(`${s.name} linked to ${vendor.name}`);
+      await refreshSuppliers();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to link supplier");
+    } finally {
+      setSupplierBusy(null);
+    }
+  }
+
+  async function doUnlink(s) {
+    setSupplierBusy(s.code);
+    try {
+      await api.post(`/api/production/suppliers/${s.code}/unlink`);
+      toast.success(`${s.name} unlinked`);
+      await refreshSuppliers();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to unlink supplier");
+    } finally {
+      setSupplierBusy(null);
+    }
+  }
+
+  // Vendor search inside the link picker (debounced)
+  useEffect(() => {
+    if (!linkTarget || vendorQuery.trim().length < 2) { setVendorResults([]); return; }
+    setVendorSearching(true);
+    const t = setTimeout(() => {
+      api.get("/api/production/odoo-vendors", { params: { q: vendorQuery.trim() } })
+        .then(r => setVendorResults(r.data.vendors))
+        .catch(e => toast.error(e.response?.data?.detail || "Vendor search failed"))
+        .finally(() => setVendorSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [vendorQuery, linkTarget]);
+
   const discrepancy = qtyQuoted && qtyReceived
     ? Math.round((parseFloat(qtyQuoted) - parseFloat(qtyReceived)) * 1000) / 1000
     : null;
@@ -166,9 +265,16 @@ export default function S6Register() {
 
           {/* Receive form */}
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-1">
-              <PackageCheck size={15} className="text-bassani-500" /> Receive Imported Stock
-            </h3>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                <PackageCheck size={15} className="text-bassani-500" /> Receive Imported Stock
+              </h3>
+              {can("production.manage") && (
+                <button onClick={openManage} className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1">
+                  <Plus size={12} /> Manage suppliers
+                </button>
+              )}
+            </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
               One entry does everything: the batch number is generated, the stock is booked into the vault, and the Schedule 6 register entry is written. Your name and the time are captured automatically.
             </p>
@@ -278,7 +384,12 @@ export default function S6Register() {
                   </p>
                 )}
                 {supplier && poInfo?.odoo_partner_found === false && (
-                  <p className="text-xs text-gray-400 mt-1">This supplier has no matching contact in the stock system yet, so no purchase orders could be listed.</p>
+                  <p className="text-xs text-gray-400 mt-1">This supplier is not linked to a supplier account yet, so no purchase orders could be listed. An admin can link it under Manage suppliers.</p>
+                )}
+                {supplier && poInfo?.odoo_partner_found && poInfo?.linked === false && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Matched by name to "{poInfo.partner_name}". Ask an admin to link this supplier to its account under Manage suppliers to make the match permanent.
+                  </p>
                 )}
                 {supplier && poInfo?.odoo_unavailable && (
                   <p className="text-xs text-gray-400 mt-1">Purchase orders could not be loaded right now. You can still flag the receipt for investigation.</p>
@@ -428,6 +539,116 @@ export default function S6Register() {
           </div>
         </div>
       </div>
+
+      {/* Manage suppliers modal */}
+      {manageOpen && (
+        <Modal title="Manage Suppliers" onClose={() => setManageOpen(false)} width="max-w-2xl">
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            The supplier list used for imported stock. Linking a supplier to its account in the stock system makes purchase order lookups and receipts exact, instead of matching by name. Archiving hides a supplier from the receiving form without touching its history.
+          </p>
+
+          {/* Add row */}
+          <div className="flex flex-col sm:flex-row gap-2 mb-4">
+            <input
+              value={newSupplier.name}
+              onChange={e => setNewSupplier(v => ({ ...v, name: e.target.value }))}
+              placeholder="Supplier name"
+              className="flex-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            />
+            <input
+              value={newSupplier.code}
+              onChange={e => setNewSupplier(v => ({ ...v, code: e.target.value.toUpperCase() }))}
+              maxLength={2}
+              placeholder="Code"
+              className="w-full sm:w-20 text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            />
+            <BtnPrimary onClick={saveSupplier} disabled={savingSupplier || !newSupplier.name.trim() || newSupplier.code.trim().length !== 2}>
+              {savingSupplier ? "Adding…" : "Add"}
+            </BtnPrimary>
+          </div>
+
+          {/* List */}
+          <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+            {manageList.map(s => (
+              <div key={s.code} className={`flex items-center gap-3 px-3 py-2.5 text-sm ${s.active ? "" : "opacity-60"}`}>
+                <span className="font-mono text-xs font-semibold text-gray-500 dark:text-gray-400 w-8 shrink-0">{s.code}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="block truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+                  {s.odoo_partner_name ? (
+                    <span className="block text-xs text-green-600 dark:text-green-400 truncate flex items-center gap-1">
+                      <Link2 size={10} /> Linked to {s.odoo_partner_name}
+                    </span>
+                  ) : (
+                    <span className="block text-xs text-amber-600 dark:text-amber-400">Not linked to a supplier account</span>
+                  )}
+                </div>
+                {!s.active && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 shrink-0">Archived</span>
+                )}
+                {s.odoo_partner_name ? (
+                  <button onClick={() => doUnlink(s)} disabled={supplierBusy === s.code}
+                    className="text-xs text-gray-400 hover:text-red-500 shrink-0 transition-colors">
+                    Unlink
+                  </button>
+                ) : (
+                  <button onClick={() => { setLinkTarget(s); setVendorQuery(s.name); }} disabled={supplierBusy === s.code}
+                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0">
+                    Link account
+                  </button>
+                )}
+                <button onClick={() => toggleSupplier(s)} disabled={supplierBusy === s.code}
+                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 shrink-0">
+                  {s.active ? "Archive" : "Restore"}
+                </button>
+              </div>
+            ))}
+            {manageList.length === 0 && (
+              <p className="text-xs text-gray-400 px-3 py-4 text-center">Loading supplier list…</p>
+            )}
+          </div>
+
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setManageOpen(false)}>Close</BtnSecondary>
+          </div>
+        </Modal>
+      )}
+
+      {/* Link-to-account picker */}
+      {linkTarget && (
+        <Modal title={`Link ${linkTarget.name}`} onClose={() => setLinkTarget(null)}>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+            Search the supplier accounts in the stock system and pick the one that belongs to <strong>{linkTarget.name}</strong>. Purchase order lookups and goods receipts for this supplier will then always use that account.
+          </p>
+          <input
+            value={vendorQuery}
+            onChange={e => setVendorQuery(e.target.value)}
+            placeholder="Search supplier accounts…"
+            autoFocus
+            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
+          />
+          <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+            {vendorSearching ? (
+              <p className="text-xs text-gray-400 px-3 py-3 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Searching…</p>
+            ) : vendorResults.length === 0 ? (
+              <p className="text-xs text-gray-400 px-3 py-3">
+                {vendorQuery.trim().length < 2 ? "Type at least two characters to search." : "No supplier accounts found. Check the name, or create the supplier contact in the stock system first."}
+              </p>
+            ) : vendorResults.map(v => (
+              <button
+                key={v.id}
+                onClick={() => doLink(v)}
+                className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              >
+                <span className="block text-gray-800 dark:text-gray-100">{v.name}</span>
+                <span className="block text-xs text-gray-400">{[v.city, v.email].filter(Boolean).join(" · ") || "No contact details"}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setLinkTarget(null)}>Cancel</BtnSecondary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

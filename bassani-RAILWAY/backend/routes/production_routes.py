@@ -73,6 +73,11 @@ class SupplierAdd(BaseModel):
     code: str
 
 
+class SupplierLink(BaseModel):
+    odoo_partner_id: int
+    odoo_partner_name: str
+
+
 class ImportReceipt(BaseModel):
     """One S6 register row = one action: BI batch + vault receive + register entry.
     Every receipt must either link an existing Odoo purchase order or explicitly
@@ -401,6 +406,71 @@ async def restore_import_supplier(code: str, current_user: dict = Depends(requir
     await col("import_suppliers").update_one({"code": code}, {"$set": {"active": True}})
     await audit_log("production.supplier_restored", "import_supplier", code,
                     entity_label=f"{doc['name']} ({code})", user=current_user)
+    return {"success": True}
+
+
+@router.get("/odoo-vendors")
+async def search_odoo_vendors(
+    q: str = Query(..., min_length=2),
+    _: dict = Depends(require_permission("production.manage")),
+):
+    """Search Odoo vendor accounts (supplier_rank > 0) for the supplier-link
+    picker. Read-only."""
+    try:
+        odoo = get_odoo_client()
+        rows = odoo.search_read(
+            "res.partner",
+            domain=[("supplier_rank", ">", 0), ("name", "ilike", q)],
+            fields=["id", "name", "city", "email"], limit=15, order="name asc",
+        )
+        for r in rows:
+            for k, v in r.items():
+                if v is False:
+                    r[k] = None
+        return {"vendors": rows}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not search supplier accounts: {e}")
+
+
+@router.post("/suppliers/{code}/link")
+async def link_import_supplier(
+    code: str,
+    body: SupplierLink,
+    current_user: dict = Depends(require_permission("production.manage")),
+):
+    """Pin this portal supplier to its Odoo vendor account. All PO lookups and
+    goods receipts for the supplier then use this ID deterministically —
+    never a name match (which is only ever a read-time fallback)."""
+    code = code.strip().upper()
+    doc = await col("import_suppliers").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Supplier {code} not found")
+    await col("import_suppliers").update_one({"code": code}, {"$set": {
+        "odoo_partner_id":   body.odoo_partner_id,
+        "odoo_partner_name": body.odoo_partner_name,
+    }})
+    await audit_log("production.supplier_linked", "import_supplier", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user,
+                    detail={"odoo_partner_id": body.odoo_partner_id,
+                            "odoo_partner_name": body.odoo_partner_name})
+    return {"success": True}
+
+
+@router.post("/suppliers/{code}/unlink")
+async def unlink_import_supplier(
+    code: str,
+    current_user: dict = Depends(require_permission("production.manage")),
+):
+    code = code.strip().upper()
+    doc = await col("import_suppliers").find_one({"code": code})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Supplier {code} not found")
+    await col("import_suppliers").update_one({"code": code}, {"$unset": {
+        "odoo_partner_id": "", "odoo_partner_name": "",
+    }})
+    await audit_log("production.supplier_unlinked", "import_supplier", code,
+                    entity_label=f"{doc['name']} ({code})", user=current_user,
+                    detail={"was_linked_to": doc.get("odoo_partner_name")})
     return {"success": True}
 
 
@@ -818,6 +888,7 @@ async def receive_import(
     discrepancy = round(qty_quoted - qty, 3) if qty_quoted is not None else None
     now = _now()
     writer = get_vault_writer()
+    sup_doc = await col("import_suppliers").find_one({"code": batch["supplier_code"]}) or {}
 
     # Vault movement: Odoo side is a supplier PO receipt, not an internal transfer
     movement = {
@@ -830,7 +901,8 @@ async def receive_import(
         "waste_g":      None,
         "notes":        (body.comment or "").strip() or None,
         "ops":          [writer.op_po_receipt(batch["supplier_name"], batch["batch_id"], qty,
-                                              batch["product_name"], po_id=body.po_id, po_name=body.po_name)],
+                                              batch["product_name"], po_id=body.po_id, po_name=body.po_name,
+                                              supplier_partner_id=sup_doc.get("odoo_partner_id"))],
         "odoo_sync":    "staged",
         "odoo_error":   None,
         "odoo_result":  None,
@@ -922,15 +994,24 @@ async def supplier_open_pos(code: str, _: dict = Depends(PROD_READ)):
         raise HTTPException(status_code=404, detail=f"Supplier {code} not found")
     try:
         odoo = get_odoo_client()
-        partners = odoo.search_read(
-            "res.partner", domain=[("name", "ilike", sup["name"])],
-            fields=["id", "name"], limit=1,
-        )
-        if not partners:
-            return {"purchase_orders": [], "odoo_partner_found": False}
+        linked = bool(sup.get("odoo_partner_id"))
+        if linked:
+            # Deterministic: the admin-pinned Odoo vendor account.
+            partner_id = sup["odoo_partner_id"]
+            partner_name = sup.get("odoo_partner_name")
+        else:
+            # Read-time fallback only — writes never rely on a name match.
+            partners = odoo.search_read(
+                "res.partner", domain=[("name", "ilike", sup["name"])],
+                fields=["id", "name"], limit=1,
+            )
+            if not partners:
+                return {"purchase_orders": [], "odoo_partner_found": False, "linked": False}
+            partner_id = partners[0]["id"]
+            partner_name = partners[0]["name"]
         pos = odoo.search_read(
             "purchase.order",
-            domain=[("partner_id", "=", partners[0]["id"]),
+            domain=[("partner_id", "=", partner_id),
                     ("state", "in", ["draft", "sent", "purchase"])],
             fields=["id", "name", "date_order", "amount_total", "state"],
             limit=30, order="date_order desc",
@@ -939,7 +1020,8 @@ async def supplier_open_pos(code: str, _: dict = Depends(PROD_READ)):
             for k, v in po.items():
                 if v is False:
                     po[k] = None
-        return {"purchase_orders": pos, "odoo_partner_found": True}
+        return {"purchase_orders": pos, "odoo_partner_found": True,
+                "linked": linked, "partner_name": partner_name}
     except Exception:
         return {"purchase_orders": [], "odoo_partner_found": None, "odoo_unavailable": True}
 

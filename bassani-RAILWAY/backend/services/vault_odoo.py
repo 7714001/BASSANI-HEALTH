@@ -78,14 +78,18 @@ class VaultOdooWriter:
 
     def op_po_receipt(self, supplier_name: str, lot_name: str, qty_g: float,
                       product_name: str, po_id: "int | None" = None,
-                      po_name: "str | None" = None) -> dict:
+                      po_name: "str | None" = None,
+                      supplier_partner_id: "int | None" = None) -> dict:
         """Imported stock receipt — Odoo side is a purchase order against the
         supplier with a validated goods receipt into the vault, not an internal
         transfer (Phase 7.9 supplier layer). When po_id is given the receipt is
-        booked against that existing PO instead of creating a new one."""
+        booked against that existing PO instead of creating a new one. When the
+        supplier is linked, supplier_partner_id pins the exact Odoo vendor —
+        name matching is never used for writes when a link exists."""
         return {"op": "po_receipt", "supplier_name": supplier_name,
                 "lot_name": lot_name, "qty_g": qty_g, "product_hint": product_name,
-                "po_id": po_id, "po_name": po_name}
+                "po_id": po_id, "po_name": po_name,
+                "supplier_partner_id": supplier_partner_id}
 
     # ── Execution (live mode only) ────────────────────────────────────────────
 
@@ -220,16 +224,26 @@ class VaultOdooWriter:
             if existing[0]["state"] in ("draft", "sent"):
                 odoo.execute("purchase.order", "button_confirm", [po_id])
         else:
-            partners = odoo.search_read(
-                "res.partner",
-                domain=[("name", "ilike", op["supplier_name"])],
-                fields=["id", "name"], limit=1,
-            )
-            if not partners:
-                raise RuntimeError(
-                    f"No Odoo supplier partner found matching '{op['supplier_name']}'. "
-                    "Create the supplier contact in Odoo and re-run the sync."
+            if op.get("supplier_partner_id"):
+                # Admin-linked vendor account: deterministic, no name matching.
+                partner_rows = odoo.read("res.partner", [op["supplier_partner_id"]], fields=["id", "name"])
+                if not partner_rows:
+                    raise RuntimeError(
+                        f"The linked supplier account (id {op['supplier_partner_id']}) no longer exists in Odoo. "
+                        "Re-link the supplier and re-run the sync."
+                    )
+                partners = partner_rows
+            else:
+                partners = odoo.search_read(
+                    "res.partner",
+                    domain=[("name", "ilike", op["supplier_name"])],
+                    fields=["id", "name"], limit=1,
                 )
+                if not partners:
+                    raise RuntimeError(
+                        f"No Odoo supplier partner found matching '{op['supplier_name']}'. "
+                        "Link the supplier to its Odoo account (Manage Suppliers) and re-run the sync."
+                    )
             product_id = self._resolve_product(op["product_hint"], company_id)
             ctx = company_context(company_id)
             po_id = odoo.create("purchase.order", {
