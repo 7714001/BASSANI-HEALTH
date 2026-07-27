@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, CloudUpload, AlertCircle, CheckCircle, Link2, Search, Package } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { Loader2, RefreshCw, Copy, Sparkles, Plus, Layers, CloudOff, AlertCircle, Link2, Search, Package, ChevronRight } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -19,6 +19,14 @@ export const SYNC_BADGE = {
 export function SyncBadge({ status }) {
   const b = SYNC_BADGE[status] || SYNC_BADGE.staged;
   return <span className={`inline-flex text-xs font-medium px-2 py-0.5 rounded-full ${b.cls}`}>{b.label}</span>;
+}
+
+// Compact per-stage indicator used inside an expanded registry group, where a
+// full pill per stage chip would be too busy.
+const SYNC_DOT_COLOR = { staged: "bg-amber-400", done: "bg-green-500", error: "bg-red-500" };
+function SyncDot({ status }) {
+  const b = SYNC_BADGE[status] || SYNC_BADGE.staged;
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${SYNC_DOT_COLOR[status] || SYNC_DOT_COLOR.staged}`} title={b.label} />;
 }
 
 export const fmtWhen = (v) =>
@@ -88,9 +96,12 @@ export default function BatchRegistry() {
   const [odooProductResults, setOdooProductResults] = useState([]);
   const [odooProductSearching, setOdooProductSearching] = useState(false);
 
-  // Timeline modal
-  const [timeline, setTimeline]           = useState(null);
-  const [timelineLoading, setTimelineLoading] = useState(false);
+  // Registry grouping — one expandable row per physical batch lineage rather
+  // than one row per stage, so the table stays readable once a batch has
+  // moved through several stages. expandedGroups tracks which base batches
+  // are open; groupDetail caches each group's fetched stage/movement history.
+  const [expandedGroups, setExpandedGroups] = useState({});
+  const [groupDetail, setGroupDetail]       = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -307,17 +318,54 @@ export default function BatchRegistry() {
     ? odooProductResults.filter(p => parseDisplayName(p.display_name || p.name || "").groups.includes(linkSelectedVariant))
     : odooProductResults;
 
-  async function openTimeline(batchId) {
-    setTimelineLoading(true);
-    setTimeline({ batch_id: batchId });
+  // Group every registry row (base + derived stages) by physical batch
+  // lineage (base_batch_id), so the table shows one row per real-world
+  // batch. "Leaves" are stages nothing else in the group was derived from —
+  // the batch's current physical form(s): usually one, but two after a
+  // manicuring split (Manicured + Trim are separate physical items from the
+  // same origin, not one replacing the other). Note: if a narrow search
+  // matches only one stage of a batch, the collapsed preview is computed
+  // from just that partial set — expanding always re-fetches the complete,
+  // accurate history regardless, since that call is keyed by base_batch_id.
+  const groups = useMemo(() => {
+    const byBase = new Map();
+    for (const b of items) {
+      const baseId = b.base_batch_id || b.batch_id;
+      if (!byBase.has(baseId)) byBase.set(baseId, []);
+      byBase.get(baseId).push(b);
+    }
+    const syncPriority = { error: 0, staged: 1, done: 2 };
+    return [...byBase.entries()].map(([baseId, entries]) => {
+      entries.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const base = entries.find(e => e.batch_id === baseId) || entries[0];
+      const leaves = entries.filter(e => !entries.some(o => o.parent_batch_id === e.batch_id));
+      const worstSync = entries.reduce(
+        (w, e) => (syncPriority[e.odoo_sync] ?? 1) < (syncPriority[w] ?? 1) ? e.odoo_sync : w,
+        entries[0].odoo_sync
+      );
+      return {
+        baseId,
+        product_name: base.product_name,
+        leaves,
+        stageCount: entries.length,
+        started_at: base.created_at,
+        started_by: base.created_by_name,
+        syncStatus: worstSync,
+        mixedSync: new Set(entries.map(e => e.odoo_sync)).size > 1,
+      };
+    }).sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+  }, [items]);
+
+  async function toggleGroup(baseId) {
+    const willExpand = !expandedGroups[baseId];
+    setExpandedGroups(prev => ({ ...prev, [baseId]: willExpand }));
+    if (!willExpand) return;
+    setGroupDetail(prev => ({ ...prev, [baseId]: { loading: true } }));
     try {
-      const r = await api.get(`/api/production/batches/${encodeURIComponent(batchId)}/timeline`);
-      setTimeline(r.data);
+      const r = await api.get(`/api/production/batches/${encodeURIComponent(baseId)}/timeline`);
+      setGroupDetail(prev => ({ ...prev, [baseId]: { loading: false, stages: r.data.stages, movements: r.data.movements } }));
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to load batch timeline");
-      setTimeline(null);
-    } finally {
-      setTimelineLoading(false);
+      setGroupDetail(prev => ({ ...prev, [baseId]: { loading: false, error: e.response?.data?.detail || "Failed to load batch history" } }));
     }
   }
 
@@ -523,33 +571,122 @@ export default function BatchRegistry() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
-                      <th className="px-5 py-2.5">Batch ID</th>
+                      <th className="px-5 py-2.5">Batch</th>
                       <th className="px-5 py-2.5">Product</th>
-                      <th className="px-5 py-2.5">Stage</th>
-                      <th className="px-5 py-2.5">Created</th>
-                      <th className="px-5 py-2.5">By</th>
+                      <th className="px-5 py-2.5">Current stage</th>
+                      <th className="px-5 py-2.5">Started</th>
                       <th className="px-5 py-2.5">Stock system</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {items.map(b => (
-                      <tr
-                        key={b.batch_id}
-                        onClick={() => openTimeline(b.batch_id)}
-                        className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer"
-                      >
-                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap" title={batchTitle(b.batch_id, b.product_name)}>{b.batch_id}</td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{b.product_name}</td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                          {b.stage_suffix
-                            ? <><span className="font-mono">-{b.stage_suffix}</span><span className="text-gray-400"> · {STAGE_LABELS[b.stage_suffix] || ""}</span></>
-                            : <span className="text-gray-300 dark:text-gray-600">Base</span>}
-                        </td>
-                        <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(b.created_at)}</td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{b.created_by_name}</td>
-                        <td className="px-5 py-3"><SyncBadge status={b.odoo_sync} /></td>
-                      </tr>
-                    ))}
+                    {groups.map(g => {
+                      const isOpen = !!expandedGroups[g.baseId];
+                      const detail = groupDetail[g.baseId];
+                      return (
+                        <Fragment key={g.baseId}>
+                          <tr
+                            onClick={() => toggleGroup(g.baseId)}
+                            className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer"
+                          >
+                            <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1.5">
+                                <ChevronRight size={13} className={`text-gray-400 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                <span title={batchTitle(g.baseId, g.product_name)}>{g.baseId}</span>
+                              </span>
+                            </td>
+                            <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{g.product_name}</td>
+                            <td className="px-5 py-3 text-xs whitespace-nowrap">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {g.leaves.map(l => (
+                                  <span key={l.batch_id} className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                                    {l.stage_suffix ? (STAGE_LABELS[l.stage_suffix] || l.stage_suffix) : "Base"}
+                                  </span>
+                                ))}
+                                {g.stageCount > g.leaves.length && (
+                                  <span className="text-[10px] text-gray-400 dark:text-gray-500">({g.stageCount} stages)</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">
+                              {fmtWhen(g.started_at)}
+                              <span className="block text-gray-400 dark:text-gray-500">{g.started_by}</span>
+                            </td>
+                            <td className="px-5 py-3">
+                              <SyncBadge status={g.syncStatus} />
+                              {g.mixedSync && <span className="block text-[10px] text-gray-400 mt-0.5">Mixed</span>}
+                            </td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={5} className="px-5 py-4 bg-gray-50/70 dark:bg-gray-900/40">
+                                {!detail || detail.loading ? (
+                                  <div className="flex items-center gap-2 text-gray-400 text-sm py-2">
+                                    <Loader2 size={14} className="animate-spin" /> Loading history…
+                                  </div>
+                                ) : detail.error ? (
+                                  <p className="text-sm text-red-500">{detail.error}</p>
+                                ) : (
+                                  <div className="space-y-4">
+                                    {/* Stage chain */}
+                                    <div>
+                                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Stages of this batch</p>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {detail.stages.map(s => (
+                                          <span key={s.batch_id} title={batchTitle(s.batch_id, s.product_name)} className="inline-flex items-center gap-1.5 font-mono text-xs px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                                            {s.batch_id}
+                                            {stageLabel(s.batch_id) && <span className="font-sans text-gray-400"> · {stageLabel(s.batch_id)}</span>}
+                                            <SyncDot status={s.odoo_sync} />
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {detail.stages.filter(s => s.odoo_error).map(s => (
+                                        <p key={s.batch_id} className="text-xs text-red-500 flex items-center gap-1 mt-1.5">
+                                          <AlertCircle size={11} /> {s.batch_id}: {s.odoo_error}
+                                        </p>
+                                      ))}
+                                    </div>
+
+                                    {/* Movement history */}
+                                    <div>
+                                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Vault movements</p>
+                                      {detail.movements.length === 0 ? (
+                                        <p className="text-sm text-gray-400">No vault movements recorded for this batch yet.</p>
+                                      ) : (
+                                        <div className="space-y-1.5">
+                                          {detail.movements.map(m => (
+                                            <div key={m.id} className="flex items-start justify-between gap-3 text-sm bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2">
+                                              <div className="min-w-0">
+                                                <p className="text-gray-700 dark:text-gray-200 text-xs font-medium">{MOVE_LABEL[m.type] || m.type}</p>
+                                                <p className="text-xs text-gray-400">
+                                                  {fmtWhen(m.created_at)} · {m.actor_name}
+                                                </p>
+                                                {(m.outputs || []).length > 0 && (
+                                                  <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
+                                                    {m.outputs.map(o => `${o.batch_id} +${o.qty_g}g`).join("  ")}
+                                                  </p>
+                                                )}
+                                              </div>
+                                              <div className="text-right shrink-0">
+                                                {m.qty_g != null && (
+                                                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                                                    {m.type === "receive" ? "+" : "-"}{m.qty_g} g
+                                                  </p>
+                                                )}
+                                                <SyncBadge status={m.odoo_sync} />
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -760,88 +897,6 @@ export default function BatchRegistry() {
         </Modal>
       )}
 
-      {/* Timeline modal */}
-      {timeline && (
-        <Modal title={`Batch ${timeline.batch?.batch_id || timeline.batch_id}`} onClose={() => setTimeline(null)}>
-          {timelineLoading ? (
-            <div className="flex items-center justify-center py-8 text-gray-400">
-              <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
-            </div>
-          ) : timeline.batch ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 flex-wrap text-sm">
-                <span className="text-gray-500 dark:text-gray-400">{timeline.batch.product_name}</span>
-                <SyncBadge status={timeline.batch.odoo_sync} />
-                {timeline.batch.odoo_error && (
-                  <span className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} /> {timeline.batch.odoo_error}</span>
-                )}
-              </div>
-
-              {/* Stage chain */}
-              <div>
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Stages of this batch</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {timeline.stages.map(s => (
-                    <span key={s.batch_id} title={batchTitle(s.batch_id, s.product_name)} className={`font-mono text-xs px-2 py-1 rounded-lg border ${
-                      s.batch_id === timeline.batch.batch_id
-                        ? "border-bassani-300 bg-bassani-50 text-bassani-700 dark:bg-bassani-900/30 dark:border-bassani-700 dark:text-bassani-300"
-                        : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
-                    }`}>
-                      {s.batch_id}
-                      {stageLabel(s.batch_id) && <span className="font-sans text-gray-400"> · {stageLabel(s.batch_id)}</span>}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Movement history */}
-              <div>
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Vault movements</p>
-                {timeline.movements.length === 0 ? (
-                  <p className="text-sm text-gray-400">No vault movements recorded for this batch yet.</p>
-                ) : (
-                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                    {timeline.movements.map(m => (
-                      <div key={m.id} className="flex items-start justify-between gap-3 text-sm bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-gray-700 dark:text-gray-200 text-xs font-medium">{MOVE_LABEL[m.type] || m.type}</p>
-                          <p className="text-xs text-gray-400">
-                            {fmtWhen(m.created_at)} · {m.actor_name}
-                          </p>
-                          {(m.outputs || []).length > 0 && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
-                              {m.outputs.map(o => `${o.batch_id} +${o.qty_g}g`).join("  ")}
-                            </p>
-                          )}
-                        </div>
-                        <div className="text-right shrink-0">
-                          {m.qty_g != null && (
-                            <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                              {m.type === "receive" ? "+" : "-"}{m.qty_g} g
-                            </p>
-                          )}
-                          <SyncBadge status={m.odoo_sync} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {timeline.batch.odoo_sync === "done" && (
-                <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                  <CheckCircle size={12} /> This batch exists in the stock system.
-                </p>
-              )}
-              {timeline.batch.odoo_sync === "staged" && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                  <CloudUpload size={12} /> Queued for the stock system. It will be created automatically once the production facility connection is live.
-                </p>
-              )}
-            </div>
-          ) : null}
-        </Modal>
-      )}
     </div>
   );
 }
