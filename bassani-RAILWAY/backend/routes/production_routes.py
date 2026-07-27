@@ -1103,10 +1103,15 @@ async def vault_ledger(_: dict = Depends(PROD_READ)):
 
     ids = list(balances.keys())
     reg = await col("batch_registry").find({"batch_id": {"$in": ids}}).to_list(len(ids) or 1)
-    names = {r["batch_id"]: r.get("product_name") for r in reg}
+    reg_map = {r["batch_id"]: r for r in reg}
     rows = sorted(balances.values(), key=lambda b: -abs(b["qty_g"]))
     for r in rows:
-        r["product_name"] = names.get(r["batch_id"], "")
+        entry = reg_map.get(r["batch_id"])
+        r["product_name"] = entry.get("product_name") if entry else ""
+        # Groups ledger rows by physical batch lineage in the UI, same as the
+        # registry table — falls back to stripping the stage suffix off the
+        # row's own batch_id for any row with no matching registry doc.
+        r["base_batch_id"] = (entry.get("base_batch_id") if entry else None) or split_stage(r["batch_id"])[0]
     staged = await col("vault_movements").count_documents({"odoo_sync": "staged"})
     # Imported batch lineage roots still awaiting RP release — the UI greys
     # out issue movements for these (server-side gate in create_movement).

@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import {
   Loader2, RefreshCw, Vault, ArrowDownToLine, ArrowUpFromLine, Scissors,
   PackageOpen, CloudOff, CloudUpload, NotebookPen, Trash2, Radar, Building2,
-  Warehouse, MapPin, XCircle,
+  Warehouse, MapPin, XCircle, ChevronRight,
 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -42,6 +42,31 @@ export default function VaultLogbook() {
   const [ledger, setLedger]       = useState({ rows: [], staged_movements: 0, manicuring_out: {}, unreleased_imports: [], odoo_writes_live: false });
   const [movements, setMovements] = useState([]);
   const [loading, setLoading]     = useState(true);
+
+  // Ledger grouped by physical batch lineage, same as the Batch Registry
+  // table — one row per real-world batch, expandable into the per-stage
+  // breakdown, instead of every stage the batch has ever carried appearing
+  // as its own row. No separate fetch needed on expand: unlike the registry
+  // page's timeline, every stage's balance is already in ledger.rows.
+  const [expandedLedgerGroups, setExpandedLedgerGroups] = useState({});
+  const ledgerGroups = useMemo(() => {
+    const byBase = new Map();
+    for (const r of ledger.rows) {
+      const baseId = r.base_batch_id || r.batch_id;
+      if (!byBase.has(baseId)) byBase.set(baseId, []);
+      byBase.get(baseId).push(r);
+    }
+    return [...byBase.entries()].map(([baseId, rows]) => {
+      const activeRows = rows.filter(r => Math.abs(r.qty_g) > 0.001);
+      const total = rows.reduce((s, r) => s + (r.qty_g || 0), 0);
+      const totalMovements = rows.reduce((s, r) => s + (r.movements || 0), 0);
+      const lastActivity = rows.reduce(
+        (max, r) => (!max || (r.last_movement_at && new Date(r.last_movement_at) > new Date(max))) ? r.last_movement_at : max,
+        null
+      );
+      return { baseId, product_name: rows[0].product_name, rows, activeRows, total, totalMovements, lastActivity };
+    }).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  }, [ledger.rows]);
 
   // Movement form
   const [type, setType]           = useState("receive");
@@ -494,32 +519,80 @@ export default function VaultLogbook() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
-                      <th className="px-5 py-2.5">Batch ID</th>
+                      <th className="px-5 py-2.5">Batch</th>
                       <th className="px-5 py-2.5">Product</th>
+                      <th className="px-5 py-2.5">Current form(s)</th>
                       <th className="px-5 py-2.5 text-right">In Vault</th>
                       <th className="px-5 py-2.5 text-right">Movements</th>
                       <th className="px-5 py-2.5">Last Movement</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {ledger.rows.map(r => (
-                      <tr key={r.batch_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                        <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap" title={batchTitle(r.batch_id, r.product_name)}>
-                          {r.batch_id}
-                          {stageLabel(r.batch_id) && (
-                            <span className="block font-sans text-xs text-gray-400 mt-0.5">{stageLabel(r.batch_id)}</span>
+                    {ledgerGroups.map(g => {
+                      const isOpen = !!expandedLedgerGroups[g.baseId];
+                      const hasMultipleStages = g.rows.length > 1;
+                      return (
+                        <Fragment key={g.baseId}>
+                          <tr
+                            onClick={() => hasMultipleStages && setExpandedLedgerGroups(prev => ({ ...prev, [g.baseId]: !prev[g.baseId] }))}
+                            className={`transition-colors ${hasMultipleStages ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50" : ""}`}
+                          >
+                            <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1.5">
+                                {hasMultipleStages ? (
+                                  <ChevronRight size={13} className={`text-gray-400 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                ) : (
+                                  <span className="w-[13px] shrink-0" />
+                                )}
+                                <span title={batchTitle(g.baseId, g.product_name)}>{g.baseId}</span>
+                              </span>
+                            </td>
+                            <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[160px] truncate">{g.product_name}</td>
+                            <td className="px-5 py-3 text-xs whitespace-nowrap">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {g.activeRows.length === 0 ? (
+                                  <span className="text-gray-300 dark:text-gray-600">None in vault</span>
+                                ) : g.activeRows.map(r => (
+                                  <span key={r.batch_id} className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                                    {stageLabel(r.batch_id) || "Base"}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className={`px-5 py-3 text-right font-semibold whitespace-nowrap ${
+                              g.total < 0 ? "text-red-600 dark:text-red-400" : g.total === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-800 dark:text-gray-100"
+                            }`}>
+                              {fmtQty(g.total)}
+                            </td>
+                            <td className="px-5 py-3 text-right text-xs text-gray-400">{g.totalMovements}</td>
+                            <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(g.lastActivity)}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={6} className="px-5 py-3 bg-gray-50/70 dark:bg-gray-900/40">
+                                <div className="space-y-1">
+                                  {g.rows.map(r => (
+                                    <div key={r.batch_id} className="flex items-center justify-between gap-3 text-xs bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2">
+                                      <span className="font-mono text-gray-700 dark:text-gray-200" title={batchTitle(r.batch_id, r.product_name)}>
+                                        {r.batch_id}
+                                        <span className="font-sans text-gray-400 ml-1.5">{stageLabel(r.batch_id) || "Base"}</span>
+                                      </span>
+                                      <span className="flex items-center gap-4 text-gray-500 dark:text-gray-400">
+                                        <span className={`font-semibold ${r.qty_g < 0 ? "text-red-600 dark:text-red-400" : r.qty_g === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-700 dark:text-gray-200"}`}>
+                                          {fmtQty(r.qty_g)}
+                                        </span>
+                                        <span>{r.movements} movement{r.movements !== 1 ? "s" : ""}</span>
+                                        <span>{fmtWhen(r.last_movement_at)}</span>
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                        </td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">{r.product_name}</td>
-                        <td className={`px-5 py-3 text-right font-semibold whitespace-nowrap ${
-                          r.qty_g < 0 ? "text-red-600 dark:text-red-400" : r.qty_g === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-800 dark:text-gray-100"
-                        }`}>
-                          {fmtQty(r.qty_g)}
-                        </td>
-                        <td className="px-5 py-3 text-right text-xs text-gray-400">{r.movements}</td>
-                        <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(r.last_movement_at)}</td>
-                      </tr>
-                    ))}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

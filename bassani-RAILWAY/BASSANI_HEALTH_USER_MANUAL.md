@@ -1264,7 +1264,7 @@ Received imported stock always starts in **quarantine**: it is in the vault and 
 If the received weight differs from what was quoted, the difference is recorded on the register entry and shown as a warning before you save.
 
 **The Vault Ledger:**
-The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.
+The ledger shows what is in the vault right now, per batch — the running balance the old spreadsheet could not give you. Each batch appears as one line with the total currently in the vault and a small tag for each form it currently exists as (for example "Manicured" and "Trim" side by side, if it has been split). If a batch has more than one stage on record, a small arrow lets you expand the row to see the exact breakdown per stage. Click any batch on the Batch Registry page to see its full history: every stage of the batch and every movement, with who recorded it and when.
 
 **About the "Staged" label:**
 While the connection to the production facility's stock system is being finalised, movements show a "Staged" label. Nothing is lost — every entry is queued and will be written into the stock system automatically once the connection is switched on. Keep recording as normal.
