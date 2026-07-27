@@ -86,6 +86,12 @@ export default function VaultLogbook() {
   const [syncConfirm, setSyncConfirm] = useState(false);
   const [syncing, setSyncing]         = useState(false);
 
+  // Ledger rebuild (13.0.9 reconciliation tool) — recomputes batch_balances
+  // from the complete movement history. Not needed in normal operation
+  // (balances update live at write time); available for repair/audit.
+  const [rebuildConfirm, setRebuildConfirm] = useState(false);
+  const [rebuilding, setRebuilding]         = useState(false);
+
   // Test-data purge (super admin only)
   const [purgeConfirm, setPurgeConfirm] = useState(false);
   const [purging, setPurging]           = useState(false);
@@ -242,6 +248,20 @@ export default function VaultLogbook() {
       toast.error(e.response?.data?.detail || "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function doRebuild() {
+    setRebuildConfirm(false);
+    setRebuilding(true);
+    try {
+      const r = await api.post("/api/production/vault/rebuild-ledger");
+      toast.success(`Ledger rebuilt from ${r.data.batches_rebuilt} batches' full movement history`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Rebuild failed");
+    } finally {
+      setRebuilding(false);
     }
   }
 
@@ -503,7 +523,16 @@ export default function VaultLogbook() {
               <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                 <Vault size={15} className="text-gray-400" /> Vault Ledger
               </h3>
-              <span className="text-xs text-gray-400">What is in the vault right now, per batch</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">What is in the vault right now, per batch</span>
+                {can("production.manage") && (
+                  <button onClick={() => setRebuildConfirm(true)} disabled={rebuilding}
+                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1 shrink-0">
+                    {rebuilding ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                    Rebuild
+                  </button>
+                )}
+              </div>
             </div>
             {loading ? (
               <div className="flex items-center justify-center py-10 text-gray-400">
@@ -745,6 +774,22 @@ export default function VaultLogbook() {
               <RefreshCw size={13} className={probeLoading ? "animate-spin" : ""} /> Re-check
             </BtnSecondary>
             <BtnPrimary onClick={() => setProbeOpen(false)}>Close</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {/* Rebuild ledger confirm */}
+      {rebuildConfirm && (
+        <Modal title="Rebuild Vault Ledger" onClose={() => setRebuildConfirm(false)}>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+            This recomputes every batch's balance from the complete vault movement history and replaces the current ledger with the result.
+          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            Balances already update automatically as movements are recorded, so this is not needed for normal use — it's a reconciliation tool, useful if the numbers ever look wrong and you want to confirm they match the full history.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setRebuildConfirm(false)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={doRebuild}>Rebuild Ledger</BtnPrimary>
           </div>
         </Modal>
       )}

@@ -200,6 +200,19 @@ async def initialise_users():
         name="unique_reseller_year_month",
     )
 
+    # Phase 13.0.9 — production vault module scalability. batch_balances is
+    # the materialized ledger (one doc per batch_id, updated incrementally at
+    # write time) that replaced recomputing every read from full movement
+    # history; vault_movements/batch_registry indexes support that rebuild
+    # path plus the registry's base_batch_id lineage lookups at scale.
+    await col("vault_movements").create_index([("batch_id", 1)])
+    await col("vault_movements").create_index([("created_at", 1)])
+    await col("batch_registry").create_index([("batch_id", 1)], unique=True)
+    await col("batch_registry").create_index([("base_batch_id", 1)])
+    await col("batch_balances").create_index([("batch_id", 1)], unique=True)
+    await col("s6_receipts").create_index([("base_batch_id", 1)])
+    await col("s6_receipts").create_index([("status", 1)])
+
     # Phase 1.5 — OTP sessions (auto-expire via MongoDB TTL)
     await col("otp_sessions").create_index(
         [("expires_at", 1)], expireAfterSeconds=0, name="otp_sessions_ttl"

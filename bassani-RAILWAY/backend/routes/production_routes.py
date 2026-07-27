@@ -299,6 +299,94 @@ async def _refresh_product_pins(ops: list[dict]) -> list[dict]:
     return ops
 
 
+# ── Materialized ledger balances (13.0.9) ─────────────────────────────────────
+#
+# GET /vault/ledger used to recompute every batch's running balance from the
+# ENTIRE vault_movements history on every read, capped at 5000 documents —
+# past that cap it silently computed from only the oldest 5000 and dropped
+# the rest, producing wrong numbers with no error. batch_balances is the
+# fix: one document per batch_id, updated incrementally by these two helpers
+# at write time (called from create_movement / receive_import, once per
+# movement), so a read is O(distinct batches) instead of O(movements ever
+# recorded). The delta arithmetic here is identical to the old full-replay
+# algorithm — see _recompute_all_balances(), which still contains that exact
+# algorithm for the on-demand reconciliation endpoint — just relocated to
+# fire once per movement instead of being replayed on every read.
+
+async def _ledger_bump(batch_id: str, qty_delta: float, when) -> None:
+    """A real movement affecting this batch's vault balance: qty_g, movements
+    count, and last_movement_at. Mirrors the old bump() exactly."""
+    await col("batch_balances").update_one(
+        {"batch_id": batch_id},
+        {
+            "$inc": {"qty_g": round(qty_delta, 3), "movements": 1},
+            "$set": {"last_movement_at": when},
+            "$setOnInsert": {"manicuring_out": 0.0},
+        },
+        upsert=True,
+    )
+
+
+async def _ledger_manicuring_out_delta(batch_id: str, delta: float) -> None:
+    """Adjusts the separate 'currently out at manicuring' tracker for the
+    ISSUING batch. Independent of qty_g/movements — mirrors the standalone
+    manicuring_out side-dict in the old algorithm, which return_manicuring
+    updates on the issuing batch without touching that batch's own qty_g."""
+    await col("batch_balances").update_one(
+        {"batch_id": batch_id},
+        {
+            "$inc": {"manicuring_out": round(delta, 3)},
+            "$setOnInsert": {"qty_g": 0.0, "movements": 0, "last_movement_at": None},
+        },
+        upsert=True,
+    )
+
+
+async def _recompute_all_balances() -> int:
+    """Full reconciliation: rebuilds batch_balances from scratch by replaying
+    the complete vault_movements history with the exact algorithm GET
+    /vault/ledger used before 13.0.9. Used by the one-time initial rollout,
+    the admin-triggered rebuild endpoint, and as a repair tool if incremental
+    updates and the true history were ever to drift apart. Returns the
+    number of distinct batches written."""
+    movements = await col("vault_movements").find({}).sort("created_at", 1).to_list(None)
+    balances: dict[str, dict] = {}
+
+    def bump(batch_id: str, delta: float, when):
+        b = balances.setdefault(batch_id, {"batch_id": batch_id, "qty_g": 0.0,
+                                           "movements": 0, "last_movement_at": None,
+                                           "manicuring_out": 0.0})
+        b["qty_g"] = round(b["qty_g"] + delta, 3)
+        b["movements"] += 1
+        b["last_movement_at"] = when
+
+    for m in movements:
+        when = m.get("created_at")
+        if m["type"] == "receive":
+            bump(m["batch_id"], m.get("qty_g") or 0, when)
+        elif m["type"] in ("issue_packing", "issue_manicuring"):
+            bump(m["batch_id"], -(m.get("qty_g") or 0), when)
+            if m["type"] == "issue_manicuring":
+                b = balances.setdefault(m["batch_id"], {"batch_id": m["batch_id"], "qty_g": 0.0,
+                                                         "movements": 0, "last_movement_at": None,
+                                                         "manicuring_out": 0.0})
+                b["manicuring_out"] = round(b["manicuring_out"] + (m.get("qty_g") or 0), 3)
+        elif m["type"] == "return_manicuring":
+            back = (m.get("waste_g") or 0)
+            for out in m.get("outputs") or []:
+                bump(out["batch_id"], out.get("qty_g") or 0, when)
+                back += out.get("qty_g") or 0
+            b = balances.setdefault(m["batch_id"], {"batch_id": m["batch_id"], "qty_g": 0.0,
+                                                     "movements": 0, "last_movement_at": None,
+                                                     "manicuring_out": 0.0})
+            b["manicuring_out"] = round(b["manicuring_out"] - back, 3)
+
+    await col("batch_balances").delete_many({})
+    if balances:
+        await col("batch_balances").insert_many(list(balances.values()))
+    return len(balances)
+
+
 async def _next_sequence(family: str, product_code: str) -> int:
     latest = await col("batch_registry").find_one(
         {"family": family, "product_code": product_code, "origin": "generated"},
@@ -1036,6 +1124,21 @@ async def create_movement(
             doc["odoo_error"] = str(e)
 
     await col("vault_movements").insert_one(dict(doc))
+
+    # Materialized ledger (13.0.9): apply this movement's delta directly
+    # instead of leaving it to be replayed from full history on next read.
+    if doc["type"] == "receive":
+        await _ledger_bump(batch["batch_id"], doc["qty_g"], now)
+    elif doc["type"] in ("issue_packing", "issue_manicuring"):
+        await _ledger_bump(batch["batch_id"], -doc["qty_g"], now)
+        if doc["type"] == "issue_manicuring":
+            await _ledger_manicuring_out_delta(batch["batch_id"], doc["qty_g"])
+    else:  # return_manicuring
+        for out in doc["outputs"]:
+            await _ledger_bump(out["batch_id"], out["qty_g"], now)
+        back = (doc["waste_g"] or 0) + sum(o["qty_g"] for o in doc["outputs"])
+        await _ledger_manicuring_out_delta(batch["batch_id"], -back)
+
     await audit_log("production.vault_movement", "vault_movement", batch["batch_id"],
                     entity_label=f"{body.type} {batch['batch_id']}", user=current_user,
                     detail={"type": body.type, "qty_g": doc["qty_g"],
@@ -1067,44 +1170,38 @@ async def list_movements(
 
 @router.get("/vault/ledger")
 async def vault_ledger(_: dict = Depends(PROD_READ)):
-    """Current vault holdings per batch, computed from the movement log.
+    """Current vault holdings per batch, read from the materialized
+    batch_balances collection (13.0.9) — one document per batch_id, kept
+    current incrementally by _ledger_bump()/_ledger_manicuring_out_delta()
+    at write time. This used to recompute from the ENTIRE vault_movements
+    history on every call, capped at to_list(5000): past that cap it
+    silently computed from only the oldest 5000 movements and dropped the
+    rest, producing wrong numbers with no error. Reading batch_balances
+    instead costs O(distinct batches), not O(movements ever recorded), so
+    it stays flat as movement history grows — batch count grows far slower.
+    _recompute_all_balances() holds the original full-replay algorithm as an
+    on-demand reconciliation tool (POST /vault/rebuild-ledger) if this ever
+    needs rebuilding from scratch.
 
     While GACP_ODOO_WRITES=off this is the staged view (badged "pending sync"
     in the UI). Once live and flushed, Odoo stock.quant at the Vault location
     is the authoritative figure — this computed view remains as the running
     balance Patricia's Excel never had."""
-    movements = await col("vault_movements").find({}).sort("created_at", 1).to_list(5000)
-    balances: dict[str, dict] = {}
-    # Weight currently out at the manicuring room per batch (issued minus what
-    # came back as outputs + waste) — drives the guided next-step logic in the UI.
-    manicuring_out: dict[str, float] = {}
+    balance_docs = await col("batch_balances").find({}).to_list(None)
+    manicuring_out = {
+        d["batch_id"]: round(d.get("manicuring_out", 0), 3)
+        for d in balance_docs if abs(d.get("manicuring_out", 0)) > 0.001
+    }
 
-    def bump(batch_id: str, delta: float, when):
-        b = balances.setdefault(batch_id, {"batch_id": batch_id, "qty_g": 0.0,
-                                           "movements": 0, "last_movement_at": None})
-        b["qty_g"] = round(b["qty_g"] + delta, 3)
-        b["movements"] += 1
-        b["last_movement_at"] = when
-
-    for m in movements:
-        when = m.get("created_at")
-        if m["type"] == "receive":
-            bump(m["batch_id"], m.get("qty_g") or 0, when)
-        elif m["type"] in ("issue_packing", "issue_manicuring"):
-            bump(m["batch_id"], -(m.get("qty_g") or 0), when)
-            if m["type"] == "issue_manicuring":
-                manicuring_out[m["batch_id"]] = manicuring_out.get(m["batch_id"], 0) + (m.get("qty_g") or 0)
-        elif m["type"] == "return_manicuring":
-            back = (m.get("waste_g") or 0)
-            for out in m.get("outputs") or []:
-                bump(out["batch_id"], out.get("qty_g") or 0, when)
-                back += out.get("qty_g") or 0
-            manicuring_out[m["batch_id"]] = manicuring_out.get(m["batch_id"], 0) - back
-
-    ids = list(balances.keys())
+    ids = [d["batch_id"] for d in balance_docs]
     reg = await col("batch_registry").find({"batch_id": {"$in": ids}}).to_list(len(ids) or 1)
     reg_map = {r["batch_id"]: r for r in reg}
-    rows = sorted(balances.values(), key=lambda b: -abs(b["qty_g"]))
+    rows = sorted(
+        [{"batch_id": d["batch_id"], "qty_g": round(d.get("qty_g", 0), 3),
+          "movements": d.get("movements", 0), "last_movement_at": d.get("last_movement_at")}
+         for d in balance_docs],
+        key=lambda b: -abs(b["qty_g"]),
+    )
     for r in rows:
         entry = reg_map.get(r["batch_id"])
         r["product_name"] = entry.get("product_name") if entry else ""
@@ -1195,6 +1292,7 @@ async def receive_import(
             movement["odoo_sync"] = "error"
             movement["odoo_error"] = str(e)
     await col("vault_movements").insert_one(dict(movement))
+    await _ledger_bump(batch["batch_id"], qty, now)
 
     receipt = {
         "batch_id":        batch["batch_id"],
@@ -1566,6 +1664,19 @@ async def sync_staged(current_user: dict = Depends(require_permission("productio
     return {"synced": synced, "failed": failed, "errors": results}
 
 
+@router.post("/vault/rebuild-ledger")
+async def rebuild_ledger(current_user: dict = Depends(require_permission("production.manage"))):
+    """Recompute batch_balances from scratch by replaying the complete
+    vault_movements history — the reconciliation tool a ledger system should
+    always have on hand, not just a one-time migration step. Safe to run any
+    time; it fully replaces the collection's contents with a fresh replay."""
+    count = await _recompute_all_balances()
+    await audit_log("production.ledger_rebuilt", "vault_ledger", "rebuild",
+                    entity_label="Vault ledger rebuild", user=current_user,
+                    detail={"batches_rebuilt": count})
+    return {"batches_rebuilt": count}
+
+
 # ── Test-data purge (super admin) ─────────────────────────────────────────────
 
 @router.post("/purge-test-data")
@@ -1589,13 +1700,18 @@ async def purge_test_data(current_user: dict = Depends(require_super_admin)):
     batches = await col("batch_registry").delete_many({})
     movements = await col("vault_movements").delete_many({})
     receipts = await col("s6_receipts").delete_many({})
+    # batch_balances is derived/materialized (13.0.9) — must be cleared too,
+    # otherwise a purge leaves phantom balances behind with nothing to reconcile them.
+    balances = await col("batch_balances").delete_many({})
     await audit_log(
         "production.test_data_purged", "vault_purge", "purge",
         entity_label="Production test data purge", user=current_user,
         detail={"batches_deleted": batches.deleted_count,
                 "movements_deleted": movements.deleted_count,
-                "receipts_deleted": receipts.deleted_count},
+                "receipts_deleted": receipts.deleted_count,
+                "balances_deleted": balances.deleted_count},
     )
     return {"batches_deleted": batches.deleted_count,
             "movements_deleted": movements.deleted_count,
-            "receipts_deleted": receipts.deleted_count}
+            "receipts_deleted": receipts.deleted_count,
+            "balances_deleted": balances.deleted_count}
