@@ -3,7 +3,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Pencil, Info, Search, X, Loader2 } from "lucide-react";
 import {
-  TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow,
+  TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow, FilterPill, SearchBar,
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
 } from "../components/UI";
 import { MultiSearchableSelect } from "../components/ProductPickerDrawer";
@@ -107,25 +107,27 @@ function ProductMultiPicker({ selectedIds, labels, onAdd, onRemove }) {
 }
 
 export default function ParentCategories() {
+  const [activeTab, setActiveTab] = useState("categories"); // "categories" | "mapping"
   const [categories, setCategories] = useState([]);
+  const [odooCategoriesRaw, setOdooCategoriesRaw] = useState([]); // [{id, name, complete_name}]
   const [loading, setLoading]       = useState(true);
-  const [odooCategories, setOdooCategories] = useState([]); // [{value, label}]
+
+  const odooCategoryOptions = odooCategoriesRaw.map(c => ({ value: c.id, label: c.complete_name || c.name }));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/api/parent-categories/");
-      setCategories(r.data.categories || []);
-    } catch { toast.error("Failed to load parent categories"); }
+      const [pcR, catR] = await Promise.all([
+        api.get("/api/parent-categories/"),
+        api.get("/api/products/categories"),
+      ]);
+      setCategories(pcR.data.categories || []);
+      setOdooCategoriesRaw(catR.data.categories || []);
+    } catch { toast.error("Failed to load categories"); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => {
-    load();
-    api.get("/api/products/categories")
-      .then(r => setOdooCategories((r.data.categories || []).map(c => ({ value: c.id, label: c.complete_name || c.name }))))
-      .catch(() => {});
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   // ── Modal state (shared for create + edit) ───────────────────────────────
   const [modal, setModal]     = useState(null); // null | "create" | "edit"
@@ -246,59 +248,206 @@ export default function ParentCategories() {
     setForm(f => ({ ...f, product_ids: f.product_ids.filter(x => x !== id) }));
   };
 
+  // ── Category Mapping tab — bulk setup: one row per real Odoo category ────
+  const [mappingSavingId, setMappingSavingId] = useState(null);
+  const [mappingSearch,   setMappingSearch  ] = useState("");
+  const [unmappedOnly,    setUnmappedOnly   ] = useState(false);
+
+  const docsById     = Object.fromEntries(categories.map(d => [d.id, d]));
+  const topLevelDocs = categories.filter(d => !d.parent_id);
+  const childrenOf   = (parentId) => categories.filter(d => d.parent_id === parentId);
+
+  // Which doc (if any) currently contains each Odoo category — a category
+  // has exactly one home via this tab (a "move," not an "add"); the edit
+  // modal's hand-pick flow is the only place many-to-many is actually used
+  // (e.g. Specials), so that edge case just shows whichever doc is found first.
+  const categoryToDocId = {};
+  for (const d of categories) {
+    for (const cid of d.odoo_category_ids || []) {
+      if (!(cid in categoryToDocId)) categoryToDocId[cid] = d.id;
+    }
+  }
+
+  const mappingRows = odooCategoriesRaw
+    .map(cat => {
+      const containingDoc = categoryToDocId[cat.id] ? docsById[categoryToDocId[cat.id]] : null;
+      let parentId = "", subId = "";
+      if (containingDoc) {
+        if (containingDoc.parent_id) { parentId = containingDoc.parent_id; subId = containingDoc.id; }
+        else { parentId = containingDoc.id; }
+      }
+      return { cat, parentId, subId };
+    })
+    .sort((a, b) => (a.cat.complete_name || a.cat.name || "").localeCompare(b.cat.complete_name || b.cat.name || ""));
+
+  const filteredMappingRows = mappingRows.filter(r => {
+    const label = (r.cat.complete_name || r.cat.name || "").toLowerCase();
+    const matchSearch   = !mappingSearch || label.includes(mappingSearch.toLowerCase());
+    const matchUnmapped = !unmappedOnly || !r.parentId;
+    return matchSearch && matchUnmapped;
+  });
+
+  const mappedCount = mappingRows.filter(r => r.parentId).length;
+
+  const assignMapping = async (odooCatId, targetId) => {
+    setMappingSavingId(odooCatId);
+    try {
+      await api.put(`/api/parent-categories/category-mapping/${odooCatId}`, { target_id: targetId || null });
+      await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to update mapping"); }
+    finally { setMappingSavingId(null); }
+  };
+
+  // Picking a parent directly (no sub) assigns straight onto the parent doc.
+  const handleMappingParentChange = (catId, newParentId) => assignMapping(catId, newParentId || null);
+  // An empty sub means "directly under the parent," not "unassigned" — falls
+  // back to the row's current parent rather than clearing the mapping.
+  const handleMappingSubChange = (catId, newSubId, parentId) => assignMapping(catId, newSubId || parentId || null);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Parent Categories"
-        subtitle="Portal-only grouping for reseller browsing"
+        subtitle={activeTab === "categories" ? "Portal-only grouping for reseller browsing" : `${mappedCount} of ${mappingRows.length} Odoo categories mapped`}
         onRefresh={load}
-        actions={<BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>}
+        actions={activeTab === "categories" ? (
+          <BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>
+        ) : null}
       />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
-          <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-blue-700">
-            <strong>Portal-only.</strong> Parent categories exist only in this system to organize how
-            resellers browse products, they never read from or write to Odoo. Odoo's own category
-            structure is managed separately under <strong>Odoo Categories</strong>.
-          </p>
-        </div>
+        <ChipRow>
+          <FilterPill label="Parent Categories" active={activeTab === "categories"} onClick={() => setActiveTab("categories")} />
+          <FilterPill label="Category Mapping"  active={activeTab === "mapping"}    onClick={() => setActiveTab("mapping")} />
+        </ChipRow>
 
-        {loading ? <LoadingState /> : categories.length === 0 ? (
-          <EmptyState message="No parent categories yet. Create one to start grouping products for resellers." />
+        {activeTab === "categories" ? (
+          <>
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl p-3 my-4">
+              <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                <strong>Portal-only.</strong> Parent categories exist only in this system to organize how
+                resellers browse products, they never read from or write to Odoo. Odoo's own category
+                structure is managed separately under <strong>Odoo Categories</strong>.
+              </p>
+            </div>
+
+            {loading ? <LoadingState /> : categories.length === 0 ? (
+              <EmptyState message="No parent categories yet. Create one to start grouping products for resellers." />
+            ) : (
+              <DataTable
+                data={categories}
+                onRowClick={openEdit}
+                columns={[
+                  { accessorKey: "name", header: "Name", cell: ({ row: { original: c } }) => (
+                    <span className="font-medium text-gray-900">{c.name}</span>
+                  )},
+                  { id: "parent", header: "Parent", cell: ({ row: { original: c } }) => (
+                    c.parent_id
+                      ? <span className="text-sm text-gray-500">{categories.find(x => x.id === c.parent_id)?.name || "—"}</span>
+                      : <span className="text-sm text-gray-300">—</span>
+                  )},
+                  { accessorKey: "sort_order", header: "Sort Order", cell: ({ row: { original: c } }) => (
+                    <span className="text-sm text-gray-500">{c.sort_order}</span>
+                  )},
+                  { id: "odoo_cats", header: "Odoo Categories", cell: ({ row: { original: c } }) => (
+                    <span className="text-sm text-gray-500">{(c.odoo_category_ids || []).length}</span>
+                  )},
+                  { id: "products", header: "Hand-picked Products", cell: ({ row: { original: c } }) => (
+                    <span className="text-sm text-gray-500">{(c.product_ids || []).length}</span>
+                  )},
+                  { id: "active", header: "Status", cell: ({ row: { original: c } }) => (
+                    <Badge color={c.active !== false ? "green" : "gray"} label={c.active !== false ? "Active" : "Inactive"} />
+                  )},
+                  { id: "edit", header: "", cell: ({ row: { original: c } }) => (
+                    <button onClick={e => { e.stopPropagation(); openEdit(c); }}
+                      className="text-gray-400 hover:text-bassani-600 transition-colors p-1">
+                      <Pencil size={13} />
+                    </button>
+                  )},
+                ]}
+              />
+            )}
+          </>
         ) : (
-          <DataTable
-            data={categories}
-            onRowClick={openEdit}
-            columns={[
-              { accessorKey: "name", header: "Name", cell: ({ row: { original: c } }) => (
-                <span className="font-medium text-gray-900">{c.name}</span>
-              )},
-              { id: "parent", header: "Parent", cell: ({ row: { original: c } }) => (
-                c.parent_id
-                  ? <span className="text-sm text-gray-500">{categories.find(x => x.id === c.parent_id)?.name || "—"}</span>
-                  : <span className="text-sm text-gray-300">—</span>
-              )},
-              { accessorKey: "sort_order", header: "Sort Order", cell: ({ row: { original: c } }) => (
-                <span className="text-sm text-gray-500">{c.sort_order}</span>
-              )},
-              { id: "odoo_cats", header: "Odoo Categories", cell: ({ row: { original: c } }) => (
-                <span className="text-sm text-gray-500">{(c.odoo_category_ids || []).length}</span>
-              )},
-              { id: "products", header: "Hand-picked Products", cell: ({ row: { original: c } }) => (
-                <span className="text-sm text-gray-500">{(c.product_ids || []).length}</span>
-              )},
-              { id: "active", header: "Status", cell: ({ row: { original: c } }) => (
-                <Badge color={c.active !== false ? "green" : "gray"} label={c.active !== false ? "Active" : "Inactive"} />
-              )},
-              { id: "edit", header: "", cell: ({ row: { original: c } }) => (
-                <button onClick={e => { e.stopPropagation(); openEdit(c); }}
-                  className="text-gray-400 hover:text-bassani-600 transition-colors p-1">
-                  <Pencil size={13} />
-                </button>
-              )},
-            ]}
-          />
+          <>
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl p-3 my-4">
+              <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                <strong>Bulk setup.</strong> Assign every Odoo category to a Parent Category (and, optionally, a
+                sub-category within it) in one sitting. Create Parent Categories and their sub-categories first
+                on the <strong>Parent Categories</strong> tab — this table only assigns Odoo categories to
+                categories that already exist.
+              </p>
+            </div>
+
+            {topLevelDocs.length === 0 && !loading ? (
+              <EmptyState
+                message="No Parent Categories exist yet. Create at least one (e.g. 'Flower') before mapping Odoo categories to it."
+                action={<BtnSecondary onClick={() => setActiveTab("categories")}>Create a Parent Category</BtnSecondary>}
+              />
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <SearchBar value={mappingSearch} onChange={setMappingSearch} placeholder="Search Odoo categories…" />
+                  <FilterPill label="Unmapped only" active={unmappedOnly} onClick={() => setUnmappedOnly(v => !v)} />
+                </div>
+
+                {loading ? <LoadingState /> : filteredMappingRows.length === 0 ? (
+                  <EmptyState message="No categories match this filter." />
+                ) : (
+                  <DataTable
+                    data={filteredMappingRows}
+                    columns={[
+                      {
+                        id: "category",
+                        header: "Odoo Category",
+                        accessorFn: r => r.cat.complete_name || r.cat.name || "",
+                        cell: ({ row: { original: r } }) => (
+                          <span className="text-sm text-gray-900">{r.cat.complete_name || r.cat.name}</span>
+                        ),
+                      },
+                      {
+                        id: "parent",
+                        header: "Parent Category",
+                        enableSorting: false,
+                        cell: ({ row: { original: r } }) => (
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={r.parentId}
+                              disabled={mappingSavingId === r.cat.id}
+                              onChange={e => handleMappingParentChange(r.cat.id, e.target.value)}
+                            >
+                              <option value="">— Unassigned —</option>
+                              {topLevelDocs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            </Select>
+                            {mappingSavingId === r.cat.id && <Loader2 size={12} className="animate-spin text-gray-400 shrink-0" />}
+                          </div>
+                        ),
+                      },
+                      {
+                        id: "sub",
+                        header: "Sub Category",
+                        enableSorting: false,
+                        cell: ({ row: { original: r } }) => {
+                          const children = r.parentId ? childrenOf(r.parentId) : [];
+                          return (
+                            <Select
+                              value={r.subId}
+                              disabled={!r.parentId || children.length === 0 || mappingSavingId === r.cat.id}
+                              onChange={e => handleMappingSubChange(r.cat.id, e.target.value, r.parentId)}
+                            >
+                              <option value="">{children.length ? "— None (directly under parent) —" : "—"}</option>
+                              {children.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            </Select>
+                          );
+                        },
+                      },
+                    ]}
+                  />
+                )}
+              </>
+            )}
+          </>
         )}
       </main>
 
@@ -351,7 +500,7 @@ export default function ParentCategories() {
             <MultiSearchableSelect
               values={form.odoo_category_ids}
               onChange={v => setForm({ ...form, odoo_category_ids: v })}
-              options={odooCategories}
+              options={odooCategoryOptions}
               placeholder="Select categories…"
               searchPlaceholder="Search Odoo categories…"
             />
@@ -361,13 +510,16 @@ export default function ParentCategories() {
                   {form.odoo_category_ids.map(id => (
                     <RemovableChip
                       key={id}
-                      label={odooCategories.find(c => c.value === id)?.label || `#${id}`}
+                      label={odooCategoryOptions.find(c => c.value === id)?.label || `#${id}`}
                       onRemove={() => setForm(f => ({ ...f, odoo_category_ids: f.odoo_category_ids.filter(x => x !== id) }))}
                     />
                   ))}
                 </ChipRow>
               </div>
             )}
+            <p className="text-[11px] text-gray-400 mt-2">
+              Quicker to assign many categories at once from the <strong>Category Mapping</strong> tab instead.
+            </p>
           </FormGroup>
           <FormGroup label="Individually hand-picked products/variants">
             <ProductMultiPicker
