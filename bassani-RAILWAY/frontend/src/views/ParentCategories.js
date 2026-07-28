@@ -170,6 +170,20 @@ export default function ParentCategories() {
   const topLevelOptions = categories.filter(c => !c.parent_id && c.id !== editing?.id);
   const hasChildren = editing ? categories.some(c => c.parent_id === editing.id) : false;
 
+  // A flat list with a "Parent" text column reads as unrelated rows that
+  // happen to reference each other, not as a hierarchy — group each child
+  // directly under its parent instead, so the table itself shows the tree.
+  const categoryTreeRows = (() => {
+    const bySortThenName = (a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name);
+    const top = categories.filter(c => !c.parent_id).sort(bySortThenName);
+    const rows = [];
+    for (const t of top) {
+      rows.push(t);
+      rows.push(...categories.filter(c => c.parent_id === t.id).sort(bySortThenName));
+    }
+    return rows;
+  })();
+
   const openCreate = () => {
     setForm({ name: "", sort_order: 0, odoo_category_ids: [], product_ids: [], active: true, parent_id: "" });
     setProductLabels({});
@@ -390,30 +404,31 @@ export default function ParentCategories() {
               <EmptyState message="No parent categories yet. Create one to start grouping products for resellers." />
             ) : (
               <DataTable
-                data={categories}
+                data={categoryTreeRows}
                 onRowClick={openEdit}
                 columns={[
-                  { accessorKey: "name", header: "Name", cell: ({ row: { original: c } }) => (
-                    <span className="font-medium text-gray-900">{c.name}</span>
+                  { accessorKey: "name", header: "Name", enableSorting: false, cell: ({ row: { original: c } }) => (
+                    c.parent_id ? (
+                      <span className="flex items-center gap-1.5 pl-5 text-gray-600">
+                        <span className="text-gray-300">↳</span> {c.name}
+                      </span>
+                    ) : (
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                    )
                   )},
-                  { id: "parent", header: "Parent", cell: ({ row: { original: c } }) => (
-                    c.parent_id
-                      ? <span className="text-sm text-gray-500">{categories.find(x => x.id === c.parent_id)?.name || "—"}</span>
-                      : <span className="text-sm text-gray-300">—</span>
-                  )},
-                  { accessorKey: "sort_order", header: "Sort Order", cell: ({ row: { original: c } }) => (
+                  { accessorKey: "sort_order", header: "Sort Order", enableSorting: false, cell: ({ row: { original: c } }) => (
                     <span className="text-sm text-gray-500">{c.sort_order}</span>
                   )},
-                  { id: "odoo_cats", header: "Odoo Categories", cell: ({ row: { original: c } }) => (
+                  { id: "odoo_cats", header: "Odoo Categories", enableSorting: false, cell: ({ row: { original: c } }) => (
                     <span className="text-sm text-gray-500">{(c.odoo_category_ids || []).length}</span>
                   )},
-                  { id: "products", header: "Hand-picked Products", cell: ({ row: { original: c } }) => (
+                  { id: "products", header: "Hand-picked Products", enableSorting: false, cell: ({ row: { original: c } }) => (
                     <span className="text-sm text-gray-500">{(c.product_ids || []).length}</span>
                   )},
-                  { id: "active", header: "Status", cell: ({ row: { original: c } }) => (
+                  { id: "active", header: "Status", enableSorting: false, cell: ({ row: { original: c } }) => (
                     <Badge color={c.active !== false ? "green" : "gray"} label={c.active !== false ? "Active" : "Inactive"} />
                   )},
-                  { id: "edit", header: "", cell: ({ row: { original: c } }) => (
+                  { id: "edit", header: "", enableSorting: false, cell: ({ row: { original: c } }) => (
                     <button onClick={e => { e.stopPropagation(); openEdit(c); }}
                       className="text-gray-400 hover:text-bassani-600 transition-colors p-1">
                       <Pencil size={13} />
