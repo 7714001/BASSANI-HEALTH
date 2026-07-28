@@ -3,7 +3,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { Plus, Pencil, Info, Search, X, Loader2 } from "lucide-react";
 import {
-  TopBar, DataTable, Modal, FormGroup, Input, ChipRow,
+  TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow,
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
 } from "../components/UI";
 import { MultiSearchableSelect } from "../components/ProductPickerDrawer";
@@ -130,7 +130,7 @@ export default function ParentCategories() {
   // ── Modal state (shared for create + edit) ───────────────────────────────
   const [modal, setModal]     = useState(null); // null | "create" | "edit"
   const [editing, setEditing] = useState(null);
-  const [form, setForm]       = useState({ name: "", sort_order: 0, odoo_category_ids: [], product_ids: [], active: true });
+  const [form, setForm]       = useState({ name: "", sort_order: 0, odoo_category_ids: [], product_ids: [], active: true, parent_id: "" });
   const [productLabels, setProductLabels] = useState({}); // {id: "Name (Variant)"}
   const [saving, setSaving]   = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -161,8 +161,15 @@ export default function ParentCategories() {
     return () => clearTimeout(t);
   }, [modal, catKey, prodKey]);
 
+  // A category already nested can't be offered as a parent (two levels max),
+  // and a category with its own children can't be nested under another —
+  // mirrors the backend's _validate_parent_id checks so the picker never
+  // offers a choice the server would reject.
+  const topLevelOptions = categories.filter(c => !c.parent_id && c.id !== editing?.id);
+  const hasChildren = editing ? categories.some(c => c.parent_id === editing.id) : false;
+
   const openCreate = () => {
-    setForm({ name: "", sort_order: 0, odoo_category_ids: [], product_ids: [], active: true });
+    setForm({ name: "", sort_order: 0, odoo_category_ids: [], product_ids: [], active: true, parent_id: "" });
     setProductLabels({});
     setEditing(null);
     setModal("create");
@@ -175,6 +182,7 @@ export default function ParentCategories() {
       odoo_category_ids: cat.odoo_category_ids || [],
       product_ids: cat.product_ids || [],
       active: cat.active !== false,
+      parent_id: cat.parent_id || "",
     });
     setEditing(cat);
     setModal("edit");
@@ -194,11 +202,20 @@ export default function ParentCategories() {
     if (!form.name.trim()) return toast.error("Name is required");
     setSaving(true);
     try {
-      const payload = { ...form, name: form.name.trim(), sort_order: Number(form.sort_order) || 0 };
+      const payload = {
+        ...form,
+        name: form.name.trim(),
+        sort_order: Number(form.sort_order) || 0,
+        parent_id: form.parent_id || null,
+      };
       if (modal === "create") {
         await api.post("/api/parent-categories/", payload);
         toast.success("Parent category created");
       } else {
+        // Optional[str]=None on the backend can't tell "leave unchanged" from
+        // "unparent" — clear_parent says so explicitly when the admin picked
+        // "— None (top-level) —" on a category that previously had a parent.
+        if (!form.parent_id && editing?.parent_id) payload.clear_parent = true;
         await api.put(`/api/parent-categories/${editing.id}`, payload);
         toast.success("Parent category updated");
       }
@@ -257,6 +274,11 @@ export default function ParentCategories() {
               { accessorKey: "name", header: "Name", cell: ({ row: { original: c } }) => (
                 <span className="font-medium text-gray-900">{c.name}</span>
               )},
+              { id: "parent", header: "Parent", cell: ({ row: { original: c } }) => (
+                c.parent_id
+                  ? <span className="text-sm text-gray-500">{categories.find(x => x.id === c.parent_id)?.name || "—"}</span>
+                  : <span className="text-sm text-gray-300">—</span>
+              )},
               { accessorKey: "sort_order", header: "Sort Order", cell: ({ row: { original: c } }) => (
                 <span className="text-sm text-gray-500">{c.sort_order}</span>
               )},
@@ -301,6 +323,30 @@ export default function ParentCategories() {
               onChange={e => setForm({ ...form, sort_order: e.target.value })}
             />
           </FormGroup>
+          <FormGroup label="Parent category (optional)">
+            {hasChildren ? (
+              <p className="text-xs text-gray-400 py-2">
+                This category has sub-categories of its own, so it can't be nested under another one.
+              </p>
+            ) : (
+              <>
+                <Select
+                  value={form.parent_id}
+                  onChange={e => setForm({ ...form, parent_id: e.target.value })}
+                >
+                  <option value="">— None (top-level) —</option>
+                  {topLevelOptions.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </Select>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  Leave as top-level for a category resellers see directly (e.g. "Flower"). Pick a parent
+                  to make this a sub-group under it (e.g. "Indoor" under "Flower") — create the top-level
+                  category first if it doesn't exist yet.
+                </p>
+              </>
+            )}
+          </FormGroup>
           <FormGroup label="Odoo categories in this group">
             <MultiSearchableSelect
               values={form.odoo_category_ids}
@@ -336,6 +382,13 @@ export default function ParentCategories() {
           </FormGroup>
 
           <FormGroup label="Preview">
+            {hasChildren && (
+              <p className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-2">
+                This preview only shows products added directly to this category — it doesn't include its
+                sub-categories, which resellers will still see when they select this category. Edit each
+                sub-category to preview its own matches.
+              </p>
+            )}
             {previewLoading ? (
               <div className="flex items-center gap-2 text-xs text-gray-400 py-3">
                 <Loader2 size={12} className="animate-spin" /> Resolving matches…

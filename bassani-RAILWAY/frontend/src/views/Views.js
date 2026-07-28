@@ -10,6 +10,7 @@ import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, Hist
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import GTINPickerModal from "../components/GTINPickerModal";
+import { SearchableSelect } from "../components/ProductPickerDrawer";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
@@ -764,7 +765,8 @@ export function Orders() {
   const [cartMoq,          setCartMoq         ] = useState({});
   const [cartProdsLoading, setCartProdsLoading] = useState(false);
   const [cartProdSearch,   setCartProdSearch  ] = useState("");
-  const [cartProdCat,      setCartProdCat     ] = useState("all"); // selected parent-category id, or "all"
+  const [cartProdCat,      setCartProdCat     ] = useState("all"); // selected top-level parent-category id, or "all"
+  const [cartProdSubCat,   setCartProdSubCat  ] = useState("all"); // selected child (brand/grade) id, or "all"
   const [cartParentCategories, setCartParentCategories] = useState([]);
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
@@ -782,7 +784,8 @@ export function Orders() {
     setCartProdsLoading(true);
     try {
       const params = { limit: 200 };
-      if (cartProdCat !== "all") params.parent_category_id = cartProdCat;
+      const effectiveCat = cartProdSubCat !== "all" ? cartProdSubCat : cartProdCat;
+      if (effectiveCat !== "all") params.parent_category_id = effectiveCat;
       const [prodR, catR] = await Promise.all([
         api.get("/api/products/", { params }),
         api.get("/api/reseller-catalog/"),
@@ -791,7 +794,7 @@ export function Orders() {
       setCartMoq(catR.data.moq || {});
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
-  }, [cartProdCat]);
+  }, [cartProdCat, cartProdSubCat]);
 
   // Parent-category chips for the cart's product browser (portal-only grouping,
   // see ParentCategories.js) — fetched once, independent of the selected filter.
@@ -937,6 +940,8 @@ export function Orders() {
   // Category scoping now happens server-side (parent_category_id passed to
   // GET /api/products/ in loadCartProducts) — cartProducts is already scoped
   // to the selected parent category, so only variant/search/stock filter here.
+  const cartTopLevelCategories = cartParentCategories.filter(c => !c.parent_id);
+  const cartChildCategories    = cartProdCat === "all" ? [] : cartParentCategories.filter(c => c.parent_id === cartProdCat);
   const cartVariantOptions    = cartProdCat === "all" ? [] :
     Array.from(new Set(cartProducts.map(p => getVariantLabel(p)).filter(Boolean))).sort();
   const cartFilteredProducts  = cartProducts
@@ -1083,35 +1088,46 @@ export function Orders() {
                 placeholder="Search by product name or SKU…"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
               />
-              <ChipRow>
-                {cartProdCat === "all" ? (
-                  ["all", ...cartParentCategories.map(c => c.id)].map(c => (
-                    <FilterPill key={c} label={c === "all" ? "All Categories" : (cartParentCategories.find(x => x.id === c)?.name || c)} active={cartProdCat === c}
-                      onClick={() => { setCartProdCat(c); setCartProdVariant("all"); }} />
-                  ))
-                ) : (
-                  <>
-                    <button
-                      onClick={() => { setCartProdCat("all"); setCartProdVariant("all"); }}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
-                    >
-                      {cartParentCategories.find(x => x.id === cartProdCat)?.name || cartProdCat} <X size={11} className="opacity-80" />
-                    </button>
-                    {cartVariantOptions.length > 0 && (
-                      <>
-                        <span className="text-gray-200 select-none self-center">|</span>
-                        <FilterPill key="__all__" label="All" active={cartProdVariant === "all"} onClick={() => setCartProdVariant("all")} />
-                        {cartVariantOptions.map(v => (
-                          <FilterPill key={v} label={v} active={cartProdVariant === v} onClick={() => setCartProdVariant(v)} />
-                        ))}
-                      </>
-                    )}
-                  </>
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
+                  <SearchableSelect
+                    value={cartProdCat === "all" ? null : cartProdCat}
+                    onChange={v => { setCartProdCat(v ?? "all"); setCartProdSubCat("all"); setCartProdVariant("all"); }}
+                    options={cartTopLevelCategories.map(c => ({ value: c.id, label: c.name }))}
+                    placeholder="All categories"
+                    searchPlaceholder="Search categories…"
+                  />
+                </div>
+                {cartChildCategories.length > 0 && (
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Brand / Grade</label>
+                    <SearchableSelect
+                      value={cartProdSubCat === "all" ? null : cartProdSubCat}
+                      onChange={v => { setCartProdSubCat(v ?? "all"); setCartProdVariant("all"); }}
+                      options={cartChildCategories.map(c => ({ value: c.id, label: c.name }))}
+                      placeholder={`All ${cartParentCategories.find(x => x.id === cartProdCat)?.name || ""}`}
+                      searchPlaceholder="Search…"
+                    />
+                  </div>
                 )}
-                <div className="w-px bg-gray-200 self-stretch shrink-0 mx-1" />
-                <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
-                <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
-              </ChipRow>
+                {cartProdCat !== "all" && cartVariantOptions.length > 0 && (
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Variant</label>
+                    <SearchableSelect
+                      value={cartProdVariant === "all" ? null : cartProdVariant}
+                      onChange={v => setCartProdVariant(v ?? "all")}
+                      options={cartVariantOptions.map(v => ({ value: v, label: v }))}
+                      placeholder="All variants"
+                      searchPlaceholder="Search…"
+                    />
+                  </div>
+                )}
+                <div className="flex gap-2 pb-0.5">
+                  <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
+                  <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
+                </div>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
               {cartProdsLoading && <LoadingState />}

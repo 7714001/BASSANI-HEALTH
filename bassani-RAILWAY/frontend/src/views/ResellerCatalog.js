@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { X, Loader2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, FilterPill, ChipRow, fmtR, parseDisplayName } from "../components/UI";
+import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName } from "../components/UI";
+import { SearchableSelect } from "../components/ProductPickerDrawer";
 
 const stockColor = (qty) =>
   qty <= 0   ? "text-red-600 font-semibold"
@@ -19,7 +19,8 @@ export default function ResellerCatalog() {
   const [total,      setTotal     ] = useState(0);
   const [loading,    setLoading   ] = useState(true);
   const [search,     setSearch    ] = useState("");
-  const [cat,        setCat       ] = useState("all");
+  const [cat,        setCat       ] = useState("all"); // selected top-level parent-category id
+  const [subCat,     setSubCat    ] = useState("all"); // selected child (brand/grade) id
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
   const [moq,        setMoq       ] = useState({});
@@ -42,7 +43,8 @@ export default function ResellerCatalog() {
       const params = { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
       if (sort)   { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search   = search;
-      if (cat !== "all") params.parent_category_id = cat;
+      const effectiveCat = subCat !== "all" ? subCat : cat;
+      if (effectiveCat !== "all") params.parent_category_id = effectiveCat;
       const { data } = await api.get("/api/products/", { params });
       setProducts(data.products || []);
       setTotal(data.total || 0);
@@ -51,9 +53,15 @@ export default function ResellerCatalog() {
     } finally {
       setLoading(false);
     }
-  }, [search, cat, pagination, sorting]);
+  }, [search, cat, subCat, pagination, sorting]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Brand/Grade dropdown — only populated (and only shown) when the selected
+  // top-level category actually has sub-categories, e.g. Flower -> Indoor /
+  // Exotic / Greendoor / Greenhouse, or Vapes -> CannaCrafter's / Green Clouds.
+  const topLevelCategories = categories.filter(c => !c.parent_id);
+  const childCategories    = cat === "all" ? [] : categories.filter(c => c.parent_id === cat);
 
   const visibleProducts = variant === "all"
     ? products
@@ -77,34 +85,42 @@ export default function ResellerCatalog() {
             onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }}
             placeholder="Search products, SKU…"
           />
-          <ChipRow>
-            {cat === "all" ? (
-              ["all", ...categories.map(c => c.id)].map(c => (
-                <FilterPill key={c} label={c === "all" ? "All" : (categories.find(x => x.id === c)?.name || c)} active={cat === c}
-                  onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }} />
-              ))
-            ) : (
-              <>
-                <button
-                  onClick={() => { setCat("all"); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
-                >
-                  {categories.find(x => x.id === cat)?.name || cat} <X size={11} className="opacity-80" />
-                </button>
-                {loading ? (
-                  <Loader2 size={14} className="animate-spin text-gray-400 self-center ml-1" />
-                ) : variantOpts.length > 0 ? (
-                  <>
-                    <span className="text-gray-200 select-none self-center">|</span>
-                    <FilterPill key="__all__" label="All variants" active={variant === "all"} onClick={() => setVariant("all")} />
-                    {variantOpts.map(v => (
-                      <FilterPill key={v} label={v} active={variant === v} onClick={() => setVariant(v)} />
-                    ))}
-                  </>
-                ) : null}
-              </>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
+              <SearchableSelect
+                value={cat === "all" ? null : cat}
+                onChange={v => { setCat(v ?? "all"); setSubCat("all"); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+                options={topLevelCategories.map(c => ({ value: c.id, label: c.name }))}
+                placeholder="All categories"
+                searchPlaceholder="Search categories…"
+              />
+            </div>
+            {childCategories.length > 0 && (
+              <div>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Brand / Grade</label>
+                <SearchableSelect
+                  value={subCat === "all" ? null : subCat}
+                  onChange={v => { setSubCat(v ?? "all"); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+                  options={childCategories.map(c => ({ value: c.id, label: c.name }))}
+                  placeholder={`All ${categories.find(x => x.id === cat)?.name || ""}`}
+                  searchPlaceholder="Search…"
+                />
+              </div>
             )}
-          </ChipRow>
+            {cat !== "all" && variantOpts.length > 0 && (
+              <div>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Variant</label>
+                <SearchableSelect
+                  value={variant === "all" ? null : variant}
+                  onChange={v => setVariant(v ?? "all")}
+                  options={variantOpts.map(v => ({ value: v, label: v }))}
+                  placeholder="All variants"
+                  searchPlaceholder="Search…"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <DataTable

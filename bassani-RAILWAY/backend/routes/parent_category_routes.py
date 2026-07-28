@@ -14,6 +14,13 @@ if its categ_id is in odoo_category_ids OR its own id is in product_ids.
 Visibility to resellers is still governed exclusively by the reseller_catalog
 collection (Phase 7.7) — parent categories are a grouping layer on top of it,
 never a bypass (see parent_categories.sync_reseller_catalog_additions).
+
+Categories can nest one level deep via parent_id — e.g. "Flower" (top-level,
+usually with no direct Odoo categories of its own) containing "Indoor" /
+"Exotic" / "Greendoor" / "Greenhouse" (each a child wrapping its own real
+Odoo categories). Enforced two levels deep here (_validate_parent_id): a
+category already nested can't be chosen as a parent, and a category that
+already has children can't itself be nested under another.
 """
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -43,6 +50,7 @@ class ParentCategoryCreate(BaseModel):
     odoo_category_ids: List[int] = []
     product_ids: List[int] = []
     active: bool = True
+    parent_id: Optional[str] = None
 
 
 class ParentCategoryUpdate(BaseModel):
@@ -51,6 +59,8 @@ class ParentCategoryUpdate(BaseModel):
     odoo_category_ids: Optional[List[int]] = None
     product_ids: Optional[List[int]] = None
     active: Optional[bool] = None
+    parent_id: Optional[str] = None
+    clear_parent: bool = False  # explicit flag — Optional[str]=None can't tell "unchanged" from "unparent"
 
 
 class ParentCategoryPreviewRequest(BaseModel):
@@ -66,11 +76,36 @@ def _serialize(doc: dict) -> dict:
         "odoo_category_ids": doc.get("odoo_category_ids", []),
         "product_ids": doc.get("product_ids", []),
         "active": doc.get("active", True),
+        "parent_id": doc.get("parent_id"),
         "created_by": doc.get("created_by"),
         "updated_by": doc.get("updated_by"),
         "created_at": doc.get("created_at"),
         "updated_at": doc.get("updated_at"),
     }
+
+
+async def _validate_parent_id(parent_id: Optional[str], self_id: Optional[str] = None):
+    """Enforce exactly two levels of nesting: the chosen parent must itself be
+    top-level, and a category that already has children can't be nested under
+    another (would make an existing 2nd-level chip ambiguous — is it a parent
+    or a child?)."""
+    if parent_id is None:
+        return
+    try:
+        poid = ObjectId(parent_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid parent category")
+    if self_id and parent_id == self_id:
+        raise HTTPException(status_code=400, detail="A category cannot be its own parent")
+    parent_doc = await col("parent_categories").find_one({"_id": poid})
+    if not parent_doc:
+        raise HTTPException(status_code=400, detail="Parent category not found")
+    if parent_doc.get("parent_id"):
+        raise HTTPException(status_code=400, detail="That category is already nested under another — only two levels are supported")
+    if self_id:
+        has_children = await col("parent_categories").find_one({"parent_id": self_id})
+        if has_children:
+            raise HTTPException(status_code=400, detail="This category already has sub-categories of its own and can't be nested under another category")
 
 
 @router.get("/")
@@ -84,12 +119,12 @@ async def list_parent_categories(current_user: dict = Depends(get_current_user))
     if current_user.get("role") == "reseller":
         active = [d for d in docs if d.get("active", True)]
         result = [
-            {"id": str(d["_id"]), "name": d.get("name", ""), "sort_order": d.get("sort_order", 0)}
+            {"id": str(d["_id"]), "name": d.get("name", ""), "sort_order": d.get("sort_order", 0), "parent_id": d.get("parent_id")}
             for d in active
         ]
         odoo = get_odoo_client()
         if await has_uncategorised_products(odoo):
-            result.append({"id": UNCATEGORISED, "name": "Uncategorised", "sort_order": max([r["sort_order"] for r in result], default=0) + 1})
+            result.append({"id": UNCATEGORISED, "name": "Uncategorised", "sort_order": max([r["sort_order"] for r in result], default=0) + 1, "parent_id": None})
         return {"categories": result}
 
     return {"categories": [_serialize(d) for d in docs]}
@@ -147,6 +182,8 @@ async def create_parent_category(
     body: ParentCategoryCreate,
     current_user: dict = Depends(require_permission("products.manage")),
 ):
+    await _validate_parent_id(body.parent_id)
+
     now = datetime.now(timezone.utc)
     vals = {
         "name": body.name,
@@ -154,6 +191,7 @@ async def create_parent_category(
         "odoo_category_ids": body.odoo_category_ids,
         "product_ids": body.product_ids,
         "active": body.active,
+        "parent_id": body.parent_id,
         "created_by": current_user["username"],
         "updated_by": current_user["username"],
         "created_at": now,
@@ -205,6 +243,11 @@ async def update_parent_category(
         vals["product_ids"] = body.product_ids
     if body.active is not None:
         vals["active"] = body.active
+    if body.clear_parent:
+        vals["parent_id"] = None
+    elif body.parent_id is not None:
+        await _validate_parent_id(body.parent_id, self_id=category_id)
+        vals["parent_id"] = body.parent_id
 
     if not vals:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -247,6 +290,10 @@ async def delete_parent_category(
     doc = await col("parent_categories").find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Parent category not found")
+
+    has_children = await col("parent_categories").find_one({"parent_id": category_id})
+    if has_children:
+        raise HTTPException(status_code=400, detail="This category still has sub-categories under it — delete or reassign those first")
 
     await col("parent_categories").delete_one({"_id": oid})
     await audit_log(

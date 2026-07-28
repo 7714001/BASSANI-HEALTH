@@ -292,7 +292,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Sales Agent portal — product catalogue, order placement, commission (eligibility-gated per agent) | Live |
 | Reseller quote flow — resellers build draft quotes via cart, manage them in My Quotes, edit/send/confirm; draft quotes visible to Bassani staff immediately so they can assign, track, and confirm on the reseller's behalf if needed | Live |
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
-| Parent Categories — admin defines clean, Bassani-controlled category groupings for the reseller catalogue and order cart (e.g. "Flower", a hand-picked rotating "Specials" selection), independent of the inventory system's own category names, which stay unchanged for internal staff | Live |
+| Parent Categories — admin defines clean, Bassani-controlled category groupings for the reseller catalogue and order cart (e.g. "Flower" drilling down into Indoor/Exotic/Greendoor/Greenhouse, "Vapes" into its two brands, or a hand-picked rotating "Specials" selection), independent of the inventory system's own category names, which stay unchanged for internal staff | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
 | Sales ticket pipeline — inquiry → quote → confirm → packing → QA/RP → invoice → collect | Live |
