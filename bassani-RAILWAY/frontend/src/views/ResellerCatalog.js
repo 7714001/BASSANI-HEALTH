@@ -27,7 +27,7 @@ export default function ResellerCatalog() {
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
   useEffect(() => {
-    api.get("/api/products/categories")
+    api.get("/api/parent-categories/")
       .then(r => setCategories(r.data.categories || []))
       .catch(() => {});
     api.get("/api/reseller-catalog/")
@@ -42,7 +42,7 @@ export default function ResellerCatalog() {
       const params = { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
       if (sort)   { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search   = search;
-      if (cat !== "all") params.category = cat;
+      if (cat !== "all") params.parent_category_id = cat;
       const { data } = await api.get("/api/products/", { params });
       setProducts(data.products || []);
       setTotal(data.total || 0);
@@ -79,8 +79,8 @@ export default function ResellerCatalog() {
           />
           <ChipRow>
             {cat === "all" ? (
-              ["all", ...categories.map(c => c.name)].map(c => (
-                <FilterPill key={c} label={c === "all" ? "All" : c} active={cat === c}
+              ["all", ...categories.map(c => c.id)].map(c => (
+                <FilterPill key={c} label={c === "all" ? "All" : (categories.find(x => x.id === c)?.name || c)} active={cat === c}
                   onClick={() => { setCat(c); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }} />
               ))
             ) : (
@@ -89,7 +89,7 @@ export default function ResellerCatalog() {
                   onClick={() => { setCat("all"); setVariant("all"); setPagination(p => ({ ...p, pageIndex: 0 })); }}
                   className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
                 >
-                  {cat} <X size={11} className="opacity-80" />
+                  {categories.find(x => x.id === cat)?.name || cat} <X size={11} className="opacity-80" />
                 </button>
                 {loading ? (
                   <Loader2 size={14} className="animate-spin text-gray-400 self-center ml-1" />

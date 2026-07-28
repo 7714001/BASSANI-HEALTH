@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, AlertTriangle } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
   BtnPrimary, BtnSecondary, LoadingState, EmptyState, fmtDate,
@@ -69,12 +69,20 @@ export default function ProductCategories() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
-        title="Product Categories"
+        title="Odoo Categories"
         subtitle="Manage Odoo product category hierarchy"
         onRefresh={load}
         actions={<BtnPrimary onClick={openCreate}><Plus size={14} />New Category</BtnPrimary>}
       />
       <main className="flex-1 overflow-y-auto p-6">
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 mb-4">
+          <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-red-700">
+            <strong>Live Odoo categories.</strong> Creating, renaming, or reparenting a category here
+            writes directly to Odoo and affects every product, order, and report immediately. For
+            portal-only reseller groupings that never touch Odoo, use <strong>Parent Categories</strong> instead.
+          </p>
+        </div>
         {loading ? <LoadingState /> : categories.length === 0 ? (
           <EmptyState message="No categories found in Odoo." />
         ) : (

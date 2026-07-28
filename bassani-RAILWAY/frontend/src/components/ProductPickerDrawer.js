@@ -141,6 +141,112 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
   );
 }
 
+// ── Multi-select searchable dropdown ────────────────────────────────────────
+// Sibling of SearchableSelect for the same look-and-feel, but for picking
+// several values at once (e.g. several Odoo categories into one Parent
+// Category — see ParentCategories.js). Panel stays open on pick so multiple
+// selections can be made in one sitting; selection is best reviewed via the
+// caller's own ChipRow of removable chips below the trigger.
+export function MultiSearchableSelect({ values = [], onChange, options, placeholder, searchPlaceholder, disabled }) {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef      = useRef(null);
+  const inputRef          = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 30);
+    else setQuery("");
+  }, [open]);
+
+  const filtered = options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()));
+  const toggle = (v) => {
+    onChange(values.includes(v) ? values.filter(x => x !== v) : [...values, v]);
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => { if (!disabled) setOpen(v => !v); }}
+        className={[
+          "flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors whitespace-nowrap",
+          disabled
+            ? "text-gray-300 border-gray-100 bg-gray-50 cursor-not-allowed"
+            : values.length > 0
+              ? "text-bassani-700 border-bassani-300 bg-bassani-50"
+              : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
+        ].join(" ")}
+      >
+        <span className="max-w-[180px] truncate">
+          {values.length > 0 ? `${values.length} selected` : placeholder}
+        </span>
+        <ChevronDown
+          size={11}
+          className={`shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-10 overflow-hidden">
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={searchPlaceholder}
+                className="w-full text-xs pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-bassani-300 focus:border-bassani-400 placeholder-gray-400 bg-gray-50/50"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto py-1">
+            {filtered.length === 0 && (
+              <p className="text-xs text-gray-400 text-center py-3 px-3">No matches</p>
+            )}
+            {filtered.map(o => {
+              const checked = values.includes(o.value);
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => toggle(o.value)}
+                  className={[
+                    "w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between",
+                    checked ? "bg-bassani-50 text-bassani-700 font-semibold" : "text-gray-700 hover:bg-gray-50",
+                  ].join(" ")}
+                >
+                  <span className="truncate pr-2">{o.label}</span>
+                  {checked && <CheckCircle2 size={11} className="text-bassani-500 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main drawer ───────────────────────────────────────────────────────────────
 export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd }) {
   const [categories,      setCategories     ] = useState([]);

@@ -12,7 +12,7 @@ import {
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
-  Layers, Archive, PackageCheck,
+  Layers, Archive, PackageCheck, FolderTree,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -43,7 +43,8 @@ const NAV = [
   { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },
   { label: "Products", icon: Package, section: "Main", children: [
     { label: "Catalogue",   path: "/products",             icon: Package },
-    { label: "Categories",  path: "/catalogue/categories", icon: Tag,   permission: "products.manage" },
+    { label: "Odoo Categories",   path: "/catalogue/categories",         icon: Tag,        permission: "products.manage" },
+    { label: "Parent Categories", path: "/catalogue/parent-categories",  icon: FolderTree, permission: "products.manage" },
   ]},
   { label: "Customers",        path: "/customers",        icon: Users,         section: "Customers", permission: "customers.view"      },
   { label: "Partner Directory", path: "/partners",        icon: Users,         section: "Customers", permission: "customers.manage"    },

@@ -764,7 +764,8 @@ export function Orders() {
   const [cartMoq,          setCartMoq         ] = useState({});
   const [cartProdsLoading, setCartProdsLoading] = useState(false);
   const [cartProdSearch,   setCartProdSearch  ] = useState("");
-  const [cartProdCat,      setCartProdCat     ] = useState("all");
+  const [cartProdCat,      setCartProdCat     ] = useState("all"); // selected parent-category id, or "all"
+  const [cartParentCategories, setCartParentCategories] = useState([]);
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,             setCart            ] = useState([]);
@@ -777,23 +778,37 @@ export function Orders() {
   const [cartSubmitting,   setCartSubmitting  ] = useState(false);
   const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
 
-  const loadCartProducts = async () => {
+  const loadCartProducts = useCallback(async () => {
     setCartProdsLoading(true);
     try {
+      const params = { limit: 200 };
+      if (cartProdCat !== "all") params.parent_category_id = cartProdCat;
       const [prodR, catR] = await Promise.all([
-        api.get("/api/products/", { params: { limit: 200 } }),
+        api.get("/api/products/", { params }),
         api.get("/api/reseller-catalog/"),
       ]);
       setCartProducts(prodR.data.products || []);
       setCartMoq(catR.data.moq || {});
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
-  };
+  }, [cartProdCat]);
 
-  // If navigated here from My Quotes to start a new quote, load the product catalogue
+  // Parent-category chips for the cart's product browser (portal-only grouping,
+  // see ParentCategories.js) — fetched once, independent of the selected filter.
   useEffect(() => {
-    if (location.state?.newQuote) loadCartProducts();
-  }, []); // eslint-disable-line
+    if (!isReseller) return;
+    api.get("/api/parent-categories/")
+      .then(r => setCartParentCategories(r.data.categories || []))
+      .catch(() => {});
+  }, [isReseller]);
+
+  // Re-fetch products whenever the cart is open and the selected parent
+  // category changes — parent-category membership isn't a field on the
+  // product object (it's resolved server-side), so this can't stay a pure
+  // client-side filter the way it used to when filtering by raw category name.
+  useEffect(() => {
+    if (view === "new") loadCartProducts();
+  }, [view, loadCartProducts]);
 
   // If navigated here from My Quotes with an existing draft to edit, enter edit mode
   useEffect(() => {
@@ -811,7 +826,6 @@ export function Orders() {
     })));
     setCartSelectedCust({ id: eq.customerId, name: eq.customerName });
     setCartCustSearch(eq.customerName || "");
-    loadCartProducts();
     setView("new");
   }, []); // eslint-disable-line
 
@@ -836,7 +850,6 @@ export function Orders() {
     setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartProdVariant("all"); setCartStockFilter("all"); setCartNote("");
     setCartCustSearch(""); setCartCustResults([]); setCartSelectedCust(null);
     setCartCustDropOpen(false); setCartSubmitting(false);
-    loadCartProducts();
     setView("new");
   };
 
@@ -921,20 +934,19 @@ export function Orders() {
     }
   };
 
-  const cartProductCategories = ["all", ...Array.from(new Set(cartProducts.map(p => p.categ_id?.[1]).filter(Boolean))).sort()];
+  // Category scoping now happens server-side (parent_category_id passed to
+  // GET /api/products/ in loadCartProducts) — cartProducts is already scoped
+  // to the selected parent category, so only variant/search/stock filter here.
   const cartVariantOptions    = cartProdCat === "all" ? [] :
-    Array.from(new Set(
-      cartProducts.filter(p => (p.categ_id?.[1] || "") === cartProdCat).map(p => getVariantLabel(p)).filter(Boolean)
-    )).sort();
+    Array.from(new Set(cartProducts.map(p => getVariantLabel(p)).filter(Boolean))).sort();
   const cartFilteredProducts  = cartProducts
     .filter(p => {
       const q          = cartProdSearch.toLowerCase();
       const inStock     = (p.virtual_available ?? 0) > 0;
       const matchQ      = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-      const matchCat    = cartProdCat === "all" || (p.categ_id?.[1] || "") === cartProdCat;
       const matchVariant = cartProdVariant === "all" || getVariantLabel(p) === cartProdVariant;
       const matchStock  = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
-      return matchQ && matchCat && matchVariant && matchStock;
+      return matchQ && matchVariant && matchStock;
     })
     .sort((a, b) => {
       const aIn = (a.virtual_available ?? 0) > 0;
@@ -1073,8 +1085,8 @@ export function Orders() {
               />
               <ChipRow>
                 {cartProdCat === "all" ? (
-                  cartProductCategories.map(c => (
-                    <FilterPill key={c} label={c === "all" ? "All Categories" : c} active={cartProdCat === c}
+                  ["all", ...cartParentCategories.map(c => c.id)].map(c => (
+                    <FilterPill key={c} label={c === "all" ? "All Categories" : (cartParentCategories.find(x => x.id === c)?.name || c)} active={cartProdCat === c}
                       onClick={() => { setCartProdCat(c); setCartProdVariant("all"); }} />
                   ))
                 ) : (
@@ -1083,7 +1095,7 @@ export function Orders() {
                       onClick={() => { setCartProdCat("all"); setCartProdVariant("all"); }}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
                     >
-                      {cartProdCat} <X size={11} className="opacity-80" />
+                      {cartParentCategories.find(x => x.id === cartProdCat)?.name || cartProdCat} <X size={11} className="opacity-80" />
                     </button>
                     {cartVariantOptions.length > 0 && (
                       <>

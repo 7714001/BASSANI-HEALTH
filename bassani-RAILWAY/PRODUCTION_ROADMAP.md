@@ -753,7 +753,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Full end-to-end commercial coverage. Resellers have complete visibility of the customer lifecycle.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟢 Complete  
-**Completed:** 2026-06-23 · 7.4 — 2026-07-01 · 7.8 — 2026-07-02  
+**Completed:** 2026-06-23 · 7.4 — 2026-07-01 · 7.8 — 2026-07-02 · 7.12 — 2026-07-28  
 
 ### Tasks
 
@@ -928,6 +928,33 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Reseller catalog (read-only view) — "Min. X units" amber badge next to SKU on any product with `moq > 0`
 - [x] Reseller order builder (cart) — MOQ data loaded alongside products; "Min. X units" badge on product cards; `addToCart` starts at MOQ qty (not 1) when MOQ > 1; `updateCartQty` blocks quantities below MOQ with a toast error; qty input `min` attribute set to `Math.max(1, moq)` for native browser validation
 
+#### 7.12 — Reseller Parent Categories — Added 2026-07-28
+
+> Odoo `product.category` is a single flat taxonomy shared by the whole business and Bassani didn't want to fix its messy naming there — it would affect every other workflow that depends on it. They also wanted a weekly-rotating "Specials" bucket assembled by hand, independent of Odoo category. This phase adds a portal-only grouping layer that resellers browse by, sitting entirely in front of the existing 7.7 reseller-catalog visibility gate rather than replacing it.
+
+**Goal:** Admins define named "parent categories" that group Odoo categories and/or individually hand-picked product variants for reseller browsing, without touching Odoo. Resellers browse by parent category instead of raw Odoo category on both the catalog page and the order cart. Any catalog-visible product not covered by any parent category falls into a synthetic "Uncategorised" bucket so nothing already visible to resellers silently disappears.
+
+**Architecture:** Pure portal-layer concern, same philosophy as 7.7's `reseller_catalog` — a new `parent_categories` MongoDB collection, no Odoo schema change. Each doc: `{_id, name, sort_order, odoo_category_ids: [int], product_ids: [int], active, created_by, updated_by, created_at, updated_at}`. Membership rule is a union, not exclusive: a product belongs to a parent category if its `categ_id` is in `odoo_category_ids` **or** its own id is in `product_ids` — supporting both bulk category rollups and individually reshuffled "Specials"-style buckets under the same grouping doc. Many-to-many is intentional: the same Odoo category or product can appear under multiple parent categories. Parent categories are a display/grouping layer only — visibility is still governed exclusively by `reseller_catalog` (7.7); adding a product to a parent category's hand-pick list idempotently ensures it's also present in `reseller_catalog.product_ids` so a product can't be "in a bucket" but invisible.
+
+- [x] `parent_categories` MongoDB collection — CRUD via `backend/routes/parent_category_routes.py`; shared membership resolver in `backend/parent_categories.py` (used by both `parent_category_routes.py` and `product_routes.py` to avoid a route-importing-route circular import)
+- [x] `GET /api/parent-categories/` — admin/staff see all docs (incl. inactive); resellers see only active docs plus a synthetic `"uncategorised"` entry when at least one catalog-visible product isn't covered by any active parent category
+- [x] `POST` / `PUT` / `DELETE /api/parent-categories/{id}` — gated on `products.manage` (reused, no new permission); every write audit-logged (`parent_category.create/update/delete`)
+- [x] Adding a product to a parent category's `product_ids` idempotently `$addToSet`s it into `reseller_catalog.product_ids`, audit-logged separately as `reseller_catalog.auto_added` so the Audit Trail distinguishes it from an explicit manual toggle; removing a product from a parent category never revokes its independently-managed catalog visibility
+- [x] `GET /api/products/` extended with `parent_category_id` (resolves category-union ∪ hand-pick membership, including the `uncategorised` sentinel) and `ids` (comma-separated, resolves labels for already-hand-picked variants in the edit UI)
+- [x] Admin nav: "Categories" renamed to **Odoo Categories** (same route/component) with an added on-page warning banner that edits write directly to Odoo; new **Parent Categories** nav item and full page (`/catalogue/parent-categories`) with its own banner clarifying it's portal-only
+- [x] Parent Categories admin page (`frontend/src/views/ParentCategories.js`) — list, create/edit modal with two membership pickers (`MultiSearchableSelect` for bulk Odoo categories, a search-driven hand-pick list for individual variants), delete with confirmation modal
+- [x] `POST /api/parent-categories/preview` — resolves an in-progress (unsaved) category/hand-pick selection into the real product list, live in the edit modal (debounced 400ms) before the admin saves; flags each match `catalog_visible` and its `source` (`category` vs `handpick`) so the admin can see not just *what* will be grouped but whether it's actually visible to resellers yet — a category-matched product not already in `reseller_catalog` shows as "Hidden — not in catalog" (the auto-add nicety only fires for hand-picks, never for bulk category rollups)
+- [x] `ResellerCatalog.js` and the reseller order cart in `Views.js` — category chips now sourced from `GET /api/parent-categories/` and filtered via `parent_category_id`, replacing raw Odoo category name/id filtering; variant-chip derivation (`getVariantLabel`/`parseDisplayName`) unchanged
+- [x] Staff-facing views (`Products.js`, `ProductPickerDrawer.js`) intentionally left on raw Odoo categories — out of scope for this phase
+
+**Design decisions:**
+- **Portal-only, no Odoo write** — mirrors 7.7's philosophy exactly; Odoo's `product.category` remains the single business-wide taxonomy, untouched by this layer.
+- **Union membership rule, not exclusive** — deliberately supports both "whole category rollups" and "hand-picked individual variants" in the same bucket, because the business's real use case (a weekly "Specials" bucket assembled by hand, independent of category) can't be expressed as pure category rollup alone.
+- **Grouping layer sits on top of, never bypasses, visibility** — a product added to a parent category's hand-pick list is idempotently added to the existing `reseller_catalog` allow-list so display and visibility never fall out of sync; parent categories cannot make a product visible to resellers that wasn't already meant to be.
+- **Uncategorised is a computed bucket, not stored** — resolved on every request as `reseller_catalog.product_ids − (union of all active parent categories' resolved membership)`, so it's always correct even as parent categories are edited, never a stale cached list.
+- **Reused `products.manage` permission** — no new permission domain; the same admins who manage the reseller catalog (7.7) manage parent categories.
+- **Variant level, consistent with 7.7** — hand-picked `product_ids` are `product.product` (variant) ids, not template ids.
+
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
 - [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
@@ -939,6 +966,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Finance role defaults to `suppliers.view: true`; all ticket roles default to `false`
 - [x] "Suppliers" nav item in sidebar, gated by `suppliers.view`, with Truck icon
 - [x] Finance can register the remaining balance payment against the full sale invoice from the portal — no Odoo access required for any standard payment in the order lifecycle
+- [x] A reseller's category chips (catalog page and order cart) reflect admin-defined Parent Categories, not raw Odoo categories, with an Uncategorised bucket for anything unmapped; Odoo's own category structure remains untouched by this layer
 
 ---
 

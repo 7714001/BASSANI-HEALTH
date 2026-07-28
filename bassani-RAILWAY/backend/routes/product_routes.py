@@ -6,6 +6,7 @@ from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
 from middleware.audit import audit_log
 from database import col
+from parent_categories import resolve_parent_category_product_ids
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -123,6 +124,8 @@ async def list_products(
     search:       Optional[str] = None,
     category:     Optional[str] = None,
     category_id:  Optional[int] = Query(None),   # exact categ_id from the picker drawer
+    parent_category_id: Optional[str] = Query(None),  # portal-only Parent Category id, or "uncategorised"
+    ids:          Optional[str] = Query(None),   # comma-separated product.product ids
     limit:        int           = Query(50, le=200),
     offset:       int           = 0,
     sort_by:      str           = Query("name"),
@@ -158,6 +161,23 @@ async def list_products(
         domain.append(("categ_id", "=", category_id))
     elif category and category != "all":
         domain.append(("categ_id.name", "ilike", category))
+
+    if ids:
+        try:
+            id_list = [int(x) for x in ids.split(",") if x.strip()]
+        except ValueError:
+            id_list = []
+        if not id_list:
+            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+        domain.append(("id", "in", id_list))
+
+    # Parent Category filter (portal-only grouping layer, see parent_categories.py) —
+    # resolves to the union of member Odoo categories + hand-picked variants.
+    if parent_category_id:
+        resolved_ids = await resolve_parent_category_product_ids(odoo, parent_category_id)
+        if not resolved_ids:
+            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+        domain.append(("id", "in", resolved_ids))
 
     # Resellers only see products explicitly added to the reseller catalog.
     # Admins and other roles see everything (no domain restriction added).

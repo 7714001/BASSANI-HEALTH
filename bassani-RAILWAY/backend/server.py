@@ -560,6 +560,7 @@ from routes.inbox_routes              import router as inbox_router
 from routes.onboarding_inbox_routes   import router as onboarding_inbox_router
 from routes.orders_inbox_routes       import router as orders_inbox_router
 from routes.reseller_catalog_routes   import router as reseller_catalog_router
+from routes.parent_category_routes    import router as parent_category_router
 from routes.supplier_routes           import router as supplier_router
 from routes.settings_routes           import router as settings_router
 from routes.stock_report_routes       import router as stock_report_router
@@ -585,7 +586,7 @@ for router in [
     return_router, statement_router, forecast_router, twofa_router,
     script_router, onboarding_router, packing_board_router, target_router,
     warehouse_router, ticket_router, inbox_router, onboarding_inbox_router, orders_inbox_router,
-    reseller_catalog_router, supplier_router, settings_router,
+    reseller_catalog_router, parent_category_router, supplier_router, settings_router,
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,
     label_router, bank_recon_router, gtin_pool_router, search_router, monitor_router,

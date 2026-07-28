@@ -385,9 +385,6 @@ export default function S6Register() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    No size or grade was given, so the batch number can't tell this apart on its own. An unmanicured delivery still needs Issue to Manicuring in the vault; a manicured one goes straight to Issue to Packing once released.
-                  </p>
                 </div>
               )}
 

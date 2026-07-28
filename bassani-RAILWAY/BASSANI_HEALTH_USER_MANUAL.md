@@ -1320,6 +1320,12 @@ If no match is found, a red toast appears. Press Escape to clear the search bar 
 
 **Low stock:** The dashboard highlights any product with forecasted stock below 10 units. This is the same figure that drives the orange badge in the order catalogue.
 
+**Odoo Categories vs. Parent Categories:** The Products sidebar group has two category pages, and they do very different things:
+- **Odoo Categories** — manages Odoo's real `product.category` records. Creating, renaming, or reparenting a category here writes directly to Odoo and affects every system connected to it, not just the portal. A red banner on the page is a reminder of this.
+- **Parent Categories** — a portal-only grouping layer that never touches Odoo. Use this to define the clean category buckets resellers actually see (e.g. "Flower"), grouping one or more messy Odoo categories underneath. You can also hand-pick individual product variants into a Parent Category regardless of their Odoo category — this is how a rotating "Specials" bucket works: add or remove specific variants weekly without needing a real Odoo category for it. A product added this way is automatically made visible in the reseller catalog if it wasn't already, so you don't need a separate step. Deleting or editing a Parent Category never affects a product's underlying reseller-catalog visibility (set via the toggle above) — it only changes how the product is grouped for browsing. Any catalog-visible product not covered by any Parent Category shows up under an automatic "Uncategorised" chip on the reseller side, so nothing quietly disappears just because nobody's grouped it yet.
+
+As you build a Parent Category, a **Preview** panel updates automatically below the two pickers, showing exactly which products currently match your selection before you save anything. Each product is tagged: green **Visible** means it's already in the reseller catalog, blue **Will be added** means it's a hand-pick that will be made visible automatically when you save, and amber **Hidden — not in catalog** is a warning — that product matches one of your selected Odoo categories but isn't in the reseller catalog, so it still won't show up to resellers until you separately toggle it on under Products.
+
 ### Customers
 
 Go to **Customers** to see all active Odoo accounts — companies and individuals, including those that have not yet placed an order. Toggle the **Has Orders** filter pill to narrow the list to accounts with at least one confirmed sale order. The **Partner Directory** (also under Customers in the sidebar) shows every Odoo contact record including individual contacts not linked to a company.
@@ -1845,7 +1851,7 @@ Each product shows:
 - **Available Stock** — the forecasted quantity available for new orders. This is the same figure the order cart uses when you place an order. If this is 0 or negative, those units are committed to existing orders
 - **Min. X units** (amber badge, where applicable) — the minimum order quantity set by Bassani admin. You must order at least this many units of this product per order line
 
-**Filtering by category:** The category chips at the top of the page show only the categories that have products in the current catalog — no empty categories appear. Click a category chip to filter. If a category has product variants (e.g. different strengths or sizes), a second row of chips appears below letting you narrow further.
+**Filtering by category:** The category chips at the top of the page are Bassani-defined groupings (e.g. "Flower", "Specials") set up by admin to make browsing easier — not Bassani's internal product categories, which is what the Category column on each product row still shows for reference. Only groupings that currently have products appear as chips; if a product hasn't been grouped yet it appears under an "Uncategorised" chip instead of disappearing. Click a category chip to filter. If a category has product variants (e.g. different strengths or sizes), a second row of chips appears below letting you narrow further.
 
 > You do not see internal stock figures, cost prices, or any stock movement history. Available Stock is the only quantity shown and it is the one that matters for ordering.
 

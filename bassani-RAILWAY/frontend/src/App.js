@@ -42,6 +42,7 @@ import SalesInbox            from "./views/SalesInbox";
 import OnboardingInbox       from "./views/OnboardingInbox";
 import OrdersInbox           from "./views/OrdersInbox";
 import ProductCategories     from "./views/ProductCategories";
+import ParentCategories      from "./views/ParentCategories";
 import ProductUOM            from "./views/ProductUOM";
 import ChangePassword        from "./views/ChangePassword";
 import ForgotPassword        from "./views/ForgotPassword";
@@ -289,6 +290,9 @@ export default function App() {
         } />
         <Route path="/catalogue/categories" element={
           <ProtectedRoute permission="products.manage"><AppLayout><ProductCategories /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/catalogue/parent-categories" element={
+          <ProtectedRoute permission="products.manage"><AppLayout><ParentCategories /></AppLayout></ProtectedRoute>
         } />
         <Route path="/catalogue/uom" element={
           <ProtectedRoute adminOnly><AppLayout><ProductUOM /></AppLayout></ProtectedRoute>
