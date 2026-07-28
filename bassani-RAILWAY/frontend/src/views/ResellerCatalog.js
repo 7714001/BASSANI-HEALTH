@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName } from "../components/UI";
+import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName, applyVariantAlias } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 
 const stockColor = (qty) =>
@@ -9,9 +9,9 @@ const stockColor = (qty) =>
   : qty < 10 ? "text-amber-600 font-semibold"
              : "text-bassani-700 font-semibold";
 
-const getVariantLabel = (p) => {
+const getVariantLabel = (p, aliasMap = {}) => {
   const { groups } = parseDisplayName((p.display_name || p.name) || "");
-  return groups.length > 0 ? groups.join(" / ") : null;
+  return groups.length > 0 ? groups.map(g => applyVariantAlias(g, aliasMap)).join(" / ") : null;
 };
 
 export default function ResellerCatalog() {
@@ -24,6 +24,7 @@ export default function ResellerCatalog() {
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
   const [moq,        setMoq       ] = useState({});
+  const [variantAliases, setVariantAliases] = useState({}); // {CODE: "Friendly Name"}, see Settings > Variant Aliases
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -33,6 +34,9 @@ export default function ResellerCatalog() {
       .catch(() => {});
     api.get("/api/reseller-catalog/")
       .then(r => setMoq(r.data.moq || {}))
+      .catch(() => {});
+    api.get("/api/variant-aliases/")
+      .then(r => setVariantAliases(r.data.aliases || {}))
       .catch(() => {});
   }, []);
 
@@ -65,11 +69,11 @@ export default function ResellerCatalog() {
 
   const visibleProducts = variant === "all"
     ? products
-    : products.filter(p => getVariantLabel(p) === variant);
+    : products.filter(p => getVariantLabel(p, variantAliases) === variant);
 
   const variantOpts = cat === "all"
     ? []
-    : Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
+    : Array.from(new Set(products.map(p => getVariantLabel(p, variantAliases)).filter(Boolean))).sort();
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -137,7 +141,7 @@ export default function ResellerCatalog() {
                     {groups.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-0.5">
                         {groups.map((g, i) => (
-                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{applyVariantAlias(g, variantAliases)}</span>
                         ))}
                       </div>
                     )}

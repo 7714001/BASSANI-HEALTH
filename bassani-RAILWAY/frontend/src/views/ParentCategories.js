@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Pencil, Info, Search, X, Loader2 } from "lucide-react";
+import { Plus, Pencil, Info, Search, X, Loader2, Trash2, Tag } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow, FilterPill, SearchBar,
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
@@ -107,7 +107,7 @@ function ProductMultiPicker({ selectedIds, labels, onAdd, onRemove }) {
 }
 
 export default function ParentCategories() {
-  const [activeTab, setActiveTab] = useState("categories"); // "categories" | "mapping"
+  const [activeTab, setActiveTab] = useState("categories"); // "categories" | "mapping" | "aliases"
   const [categories, setCategories] = useState([]);
   const [odooCategoriesRaw, setOdooCategoriesRaw] = useState([]); // [{id, name, complete_name}]
   const [loading, setLoading]       = useState(true);
@@ -304,12 +304,66 @@ export default function ParentCategories() {
   // back to the row's current parent rather than clearing the mapping.
   const handleMappingSubChange = (catId, newSubId, parentId) => assignMapping(catId, newSubId || parentId || null);
 
+  // ── Variant Aliases tab — friendly names for cryptic Odoo attribute codes ─
+  // (e.g. "GD" -> "Greendoor") shown on reseller-facing variant chips/dropdowns.
+  // Lives here rather than under Settings — it's part of the same "make the
+  // reseller catalog readable" job as the other two tabs, not a system setting.
+  const [variantAliasMap, setVariantAliasMap] = useState({}); // {CODE: "Friendly Name"}
+  const [aliasesLoading,  setAliasesLoading ] = useState(true);
+  const [aliasesSaving,   setAliasesSaving  ] = useState(false);
+  const [aliasesDirty,    setAliasesDirty   ] = useState(false);
+  const [newAliasCode,    setNewAliasCode   ] = useState("");
+  const [newAliasLabel,   setNewAliasLabel  ] = useState("");
+
+  const loadAliases = useCallback(async () => {
+    setAliasesLoading(true);
+    try {
+      const { data } = await api.get("/api/variant-aliases/");
+      setVariantAliasMap(data.aliases || {});
+      setAliasesDirty(false);
+    } catch { toast.error("Failed to load variant aliases"); }
+    finally { setAliasesLoading(false); }
+  }, []);
+
+  useEffect(() => { loadAliases(); }, [loadAliases]);
+
+  const addAlias = () => {
+    const code = newAliasCode.trim().toUpperCase();
+    const label = newAliasLabel.trim();
+    if (!code || !label) return toast.error("Enter both a code and a friendly name");
+    setVariantAliasMap(a => ({ ...a, [code]: label }));
+    setNewAliasCode(""); setNewAliasLabel("");
+    setAliasesDirty(true);
+  };
+
+  const removeAlias = (code) => {
+    setVariantAliasMap(a => { const n = { ...a }; delete n[code]; return n; });
+    setAliasesDirty(true);
+  };
+
+  const saveAliases = async () => {
+    setAliasesSaving(true);
+    try {
+      const { data } = await api.put("/api/variant-aliases/", { aliases: variantAliasMap });
+      setVariantAliasMap(data.aliases || {});
+      setAliasesDirty(false);
+      toast.success("Variant aliases saved");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to save"); }
+    finally { setAliasesSaving(false); }
+  };
+
+  const aliasEntries = Object.entries(variantAliasMap).sort((a, b) => a[0].localeCompare(b[0]));
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
         title="Parent Categories"
-        subtitle={activeTab === "categories" ? "Portal-only grouping for reseller browsing" : `${mappedCount} of ${mappingRows.length} Odoo categories mapped`}
-        onRefresh={load}
+        subtitle={
+          activeTab === "categories" ? "Portal-only grouping for reseller browsing" :
+          activeTab === "mapping"    ? `${mappedCount} of ${mappingRows.length} Odoo categories mapped` :
+          "Friendly names for cryptic Odoo variant codes"
+        }
+        onRefresh={activeTab === "aliases" ? loadAliases : load}
         actions={activeTab === "categories" ? (
           <BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>
         ) : null}
@@ -318,6 +372,7 @@ export default function ParentCategories() {
         <ChipRow>
           <FilterPill label="Parent Categories" active={activeTab === "categories"} onClick={() => setActiveTab("categories")} />
           <FilterPill label="Category Mapping"  active={activeTab === "mapping"}    onClick={() => setActiveTab("mapping")} />
+          <FilterPill label="Variant Aliases"   active={activeTab === "aliases"}    onClick={() => setActiveTab("aliases")} />
         </ChipRow>
 
         {activeTab === "categories" ? (
@@ -368,7 +423,7 @@ export default function ParentCategories() {
               />
             )}
           </>
-        ) : (
+        ) : activeTab === "mapping" ? (
           <>
             <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl p-3 my-4">
               <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
@@ -447,6 +502,70 @@ export default function ParentCategories() {
                 )}
               </>
             )}
+          </>
+        ) : (
+          <>
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl p-3 my-4">
+              <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                Resellers see variant labels straight from Odoo's product attributes — codes like "GD" or
+                "IND" mean nothing outside the warehouse. Map each code to a friendly name here once, and
+                every reseller-facing screen (Product Catalog, order cart) shows the friendly version
+                instead. Matched case-insensitively; staff-facing screens keep showing the raw Odoo codes.
+              </p>
+            </div>
+
+            <div className="bg-white border border-gray-100 rounded-xl p-4 mb-4">
+              <h3 className="text-sm font-semibold text-gray-800 mb-3">Add an alias</h3>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-32">
+                  <label className="text-xs text-gray-500 block mb-1">Odoo code</label>
+                  <Input value={newAliasCode} onChange={e => setNewAliasCode(e.target.value)} placeholder="e.g. GD" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">Friendly name</label>
+                  <Input value={newAliasLabel} onChange={e => setNewAliasLabel(e.target.value)} placeholder="e.g. Greendoor" />
+                </div>
+                <BtnSecondary onClick={addAlias}><Plus size={14} />Add</BtnSecondary>
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-800">Configured Aliases</h3>
+                <BtnPrimary onClick={saveAliases} disabled={!aliasesDirty} loading={aliasesSaving}>Save Changes</BtnPrimary>
+              </div>
+
+              {aliasesLoading ? <LoadingState /> : aliasEntries.length === 0 ? (
+                <EmptyState message="No aliases configured yet. Add one above." icon={Tag} />
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-medium text-gray-500 bg-gray-50">
+                      <th className="px-4 py-2.5">Odoo Code</th>
+                      <th className="px-4 py-2.5">Friendly Name</th>
+                      <th className="px-4 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {aliasEntries.map(([code, label]) => (
+                      <tr key={code} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-mono text-gray-800">{code}</td>
+                        <td className="px-4 py-3 text-gray-600">{label}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => removeAlias(code)}
+                            className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 ml-auto transition-colors"
+                          >
+                            <Trash2 size={12} /> Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </>
         )}
       </main>
