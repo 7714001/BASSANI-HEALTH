@@ -34,6 +34,8 @@ from services.email_service import (
     send_partial_delivery_ready,
     send_backorder_created_internal,
     send_backorder_stock_ready,
+    send_qa_approval_needed,
+    send_rp_approval_needed,
 )
 
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
@@ -1224,6 +1226,7 @@ async def mark_packing(
 @router.put("/mark-ready")
 async def mark_ready(
     body: OrderIdBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk: advance a packing order to ready for inspection."""
@@ -1235,6 +1238,16 @@ async def mark_ready(
     updated = await _do_update_status(body.order_id, "ready", current_user)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
+
+    _routing = await get_email_routing()
+    background_tasks.add_task(
+        send_qa_approval_needed,
+        _routing["qa_approval_to"], body.order_id, entry.get("customer_name", ""), body.order_id,
+    )
+    background_tasks.add_task(
+        send_rp_approval_needed,
+        _routing["rp_approval_to"], body.order_id, entry.get("customer_name", ""), body.order_id,
+    )
     return {"success": True}
 
 

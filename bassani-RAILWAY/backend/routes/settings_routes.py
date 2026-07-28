@@ -18,9 +18,15 @@ settings = get_settings()
 
 class EmailRoutingConfig(BaseModel):
     application_submitted_to:  List[str] = []
+    application_escalation_to: List[str] = []   # application stalled 4+ hours with no signing docs generated
+    countersign_needed_to:     List[str] = []   # customer submitted both signed onboarding docs
     countersign_complete_to:   List[str] = []
     order_ready_extra_to:      List[str] = []
     order_cc:                  List[str] = []
+    qa_approval_to:            List[str] = []   # order ready for QA inspection
+    rp_approval_to:            List[str] = []   # order ready for RP inspection
+    qa_rp_daily_digest_to:     List[str] = []   # 17:00 daily — orders still awaiting QA/RP sign-off
+    backorder_daily_digest_to: List[str] = []   # 17:00 daily — orders waiting on stock
     finance_notification_to:   List[str] = []
     s6_flag_to:                List[str] = []   # S6 receipt flagged: no purchase order found
 
@@ -29,19 +35,18 @@ async def get_email_routing() -> dict:
     """Return the active email routing config, falling back to env-var defaults."""
     doc = await col("portal_settings").find_one({"_id": "email_routing"})
     if not doc:
-        return {
-            "application_submitted_to": [settings.support_email],
-            "countersign_complete_to":  [],
-            "order_ready_extra_to":     [],
-            "order_cc":                 [],
-            "finance_notification_to":  [],
-            "s6_flag_to":               [],
-        }
+        doc = {}
     return {
         "application_submitted_to": doc.get("application_submitted_to") or [settings.support_email],
+        "application_escalation_to": doc.get("application_escalation_to", []),
+        "countersign_needed_to":    doc.get("countersign_needed_to", []),
         "countersign_complete_to":  doc.get("countersign_complete_to", []),
         "order_ready_extra_to":     doc.get("order_ready_extra_to", []),
         "order_cc":                 doc.get("order_cc", []),
+        "qa_approval_to":           doc.get("qa_approval_to", []),
+        "rp_approval_to":           doc.get("rp_approval_to", []),
+        "qa_rp_daily_digest_to":    doc.get("qa_rp_daily_digest_to", []),
+        "backorder_daily_digest_to": doc.get("backorder_daily_digest_to", []),
         "finance_notification_to":  doc.get("finance_notification_to", []),
         "s6_flag_to":               doc.get("s6_flag_to", []),
     }

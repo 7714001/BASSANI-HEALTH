@@ -76,6 +76,7 @@ When an order is confirmed, it appears automatically on the packing board — a 
 - Once packing is complete, the order goes through **QA approval** (Cullen Grant) and **RP approval** (Rookshanna Hussain) — both are independent sign-offs recorded in the system with the approver's identity and timestamp
 - Only after both approvals does the order reach **Ready for Collection / Dispatch**
 - Warehouse supervisors receive an automatic notification when an order is cleared for dispatch
+- QA and RP are each notified by email the moment an order reaches them for inspection, and anything either of them hasn't gotten to by close of business is summarised in an automatic 17:00 digest — nothing waits unnoticed overnight
 
 **Sample orders.** Bassani distributes product samples to customers as part of its commercial activities. These are real stock movements — stock is deducted from the vault — but they are not invoiced or charged. The portal now supports this natively. One or more customers can be designated as a "Samples Account" by an admin. When a sales ticket is created against a Samples Account, the system classifies it as a Sample order: all product prices are locked to zero and no payment step appears. A R0.00 invoice is created automatically in the financial system when the order is marked complete — providing a full audit record of every sample movement — but since nothing is owed, no collection action is required from Finance. The actual recipient of the sample is recorded on the ticket (selected from the existing customer directory, not free text), so there is a traceable link between every sample movement and the customer it was intended for. All standard warehouse fulfilment steps still apply.
 
@@ -311,7 +312,8 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Countersign notification and welcome pack — when both NDA and Store Agreement are countersigned, a notification is sent automatically to configured recipients (Kashi and Dean). Dean then sends the customer a welcome pack email directly from the portal. The email attaches all four onboarding documents (CIF, CIPC certificate, countersigned NDA, countersigned Store Agreement) plus all four Welcome Pack files (Help Me Budget, Welcome Letter, Price List, Product Brochure) — everything the customer needs in a single email. Approval is the final step after the welcome pack has been sent. | Live |
 | Audit trail — named actor, before/after, every action | Live |
 | Commission engine — turnover tracking, statements, dispute workflow | Live |
-| Email notifications — all business events, configurable routing | Live |
+| Email notifications — all business events, configurable routing, organised by category in Settings for easy management as the list grows | Live |
+| Proactive workflow escalation — applications, QA/RP order approvals, and backorders no longer just sit and wait for someone to notice. A stalled application (no documents generated 4+ hours after submission), an order ready for QA or RP inspection, and a customer's documents ready for countersignature all trigger an immediate email to the right people. Anything still outstanding at close of business is summarised in an automatic 17:00 digest — one for inspections, one for backorders — so the next morning starts with a clear list, not a guess. | Live |
 | Supplier visibility — vendor bills, purchase history, goods receipts | Live |
 | Product barcode — field exposed, scanning foundation in place | Live |
 | Custom domain (portal.bassanihealth.com), SSL, 2FA | Live |

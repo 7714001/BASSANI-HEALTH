@@ -1345,3 +1345,168 @@ def send_payment_auto_confirmed(to: list, confirmed_items: list) -> None:
     )
     subject = f"Payments Confirmed: {count} invoice{'s' if count != 1 else ''} matched bank records"
     _send(to, subject, _wrap(body))
+
+
+# ── Application escalation & countersigning (notification schedulers) ───────
+
+def send_application_escalation(to: "list[str]", app_id: str, company_name: str, hours_pending: float) -> None:
+    """Sent when a submitted application has gone 4+ hours with no signing
+    documents generated yet — nobody has picked it up."""
+    if not to:
+        return
+    body = (
+        _h1("Application needs attention")
+        + _p(
+            f"<strong>{company_name}</strong>'s onboarding application has been waiting "
+            f"{hours_pending:.0f} hours with no signing documents generated. It may have been missed."
+        )
+        + _info_box([
+            ("Customer", f"<strong>{company_name}</strong>"),
+            ("Reference", _mono(app_id)),
+            ("Waiting", f"{hours_pending:.0f} hours"),
+        ], tint="#fffbeb", border="#fcd34d")
+        + _button("Open application", f"{settings.portal_url}/applications/{app_id}")
+        + _divider()
+        + _p("Log in to the portal to review and generate the signing documents.", muted=True)
+    )
+    _send(to, f"Action Needed: Application Stalled ({company_name})", _wrap(body))
+
+
+def send_countersign_needed(to: "list[str]", app_id: str, company_name: str) -> None:
+    """Sent when a customer has submitted signed copies of both onboarding
+    documents and they are ready for a Bassani signing authority to countersign."""
+    if not to:
+        return
+    body = (
+        _h1("Countersigning needed")
+        + _p(
+            f"<strong>{company_name}</strong> has submitted signed copies of their onboarding "
+            "documents. They are ready for countersignature."
+        )
+        + _info_box([
+            ("Customer", f"<strong>{company_name}</strong>"),
+            ("Reference", _mono(app_id)),
+        ], tint="#eff6ff", border="#93c5fd")
+        + _button("Open application", f"{settings.portal_url}/applications/{app_id}")
+        + _divider()
+        + _p("Log in to the portal to review and countersign the documents.", muted=True)
+    )
+    _send(to, f"Countersigning Needed: {company_name}", _wrap(body))
+
+
+# ── QA / RP inspection notifications ─────────────────────────────────────────
+
+def send_qa_approval_needed(to: "list[str]", order_ref: str, customer_name: str, order_id: str) -> None:
+    """Sent when an order is packed and ready for QA inspection."""
+    if not to:
+        return
+    body = (
+        _h1("Order ready for QA inspection")
+        + _p(f"Order <strong>{order_ref}</strong> for <strong>{customer_name}</strong> has been packed and is ready for QA sign-off.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+        ], tint="#f0fdf9", border="#bbf7d0")
+        + _button("Open order", f"{settings.portal_url}/orders/{order_id}/passport")
+        + _divider()
+        + _p("Log in to the portal to review and approve.", muted=True)
+    )
+    _send(to, f"QA Approval Needed: {order_ref}", _wrap(body))
+
+
+def send_rp_approval_needed(to: "list[str]", order_ref: str, customer_name: str, order_id: str) -> None:
+    """Sent when an order is packed and ready for Responsible Pharmacist inspection."""
+    if not to:
+        return
+    body = (
+        _h1("Order ready for RP inspection")
+        + _p(f"Order <strong>{order_ref}</strong> for <strong>{customer_name}</strong> has been packed and is ready for Responsible Pharmacist sign-off.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+        ], tint="#f0fdf9", border="#bbf7d0")
+        + _button("Open order", f"{settings.portal_url}/orders/{order_id}/passport")
+        + _divider()
+        + _p("Log in to the portal to review and approve.", muted=True)
+    )
+    _send(to, f"RP Approval Needed: {order_ref}", _wrap(body))
+
+
+# ── Daily digests (17:00 SAST scheduler) ─────────────────────────────────────
+
+def send_qa_rp_daily_digest(to: "list[str]", items: list) -> None:
+    """End-of-day digest of orders still awaiting QA and/or RP sign-off.
+    items: [{order_ref, customer_name, missing: ["QA", "RP"]}]."""
+    if not to or not items:
+        return
+    count = len(items)
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("order_ref", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("customer_name", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#b45309;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'{" & ".join(item.get("missing", []))} outstanding</td>'
+        f'</tr>'
+        for item in items
+    )
+    body = (
+        _h1(f"{count} order{'s' if count != 1 else ''} awaiting inspection")
+        + _p(
+            f"{count} order{'s' if count != 1 else ''} packed and ready for dispatch "
+            "still need QA and/or RP sign-off. Nobody got to them today — worth a first look tomorrow morning."
+        )
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + f'<thead><tr>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">Order</th>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Customer</th>'
+        + f'<th style="text-align:right;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Outstanding</th>'
+        + f'</tr></thead>'
+        + f'<tbody>{rows}</tbody>'
+        + f'</table>'
+        + _button("Open orders", f"{settings.portal_url}/orders-tickets")
+        + _divider()
+        + _p("Log in to the portal to review and approve.", muted=True)
+    )
+    _send(to, f"Outstanding Inspections: {count} order{'s' if count != 1 else ''}", _wrap(body))
+
+
+def send_backorder_daily_digest(to: "list[str]", items: list) -> None:
+    """End-of-day digest of every order currently waiting on stock.
+    items: [{order_ref, customer_name, picking_name}]."""
+    if not to or not items:
+        return
+    count = len(items)
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("order_ref", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("customer_name", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'{item.get("picking_name", "")}</td>'
+        f'</tr>'
+        for item in items
+    )
+    body = (
+        _h1(f"{count} order{'s' if count != 1 else ''} waiting on stock")
+        + _p(
+            f"{count} order{'s' if count != 1 else ''} still have backordered items awaiting stock. "
+            "Worth reviewing first thing tomorrow morning."
+        )
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + f'<thead><tr>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">Order</th>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Customer</th>'
+        + f'<th style="text-align:right;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Picking</th>'
+        + f'</tr></thead>'
+        + f'<tbody>{rows}</tbody>'
+        + f'</table>'
+        + _button("Open backorders", f"{settings.portal_url}/orders/backorders")
+        + _divider()
+        + _p("Log in to the portal for full details on each order.", muted=True)
+    )
+    _send(to, f"Backorders: {count} order{'s' if count != 1 else ''} require attention", _wrap(body))

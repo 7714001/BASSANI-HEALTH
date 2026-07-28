@@ -15,6 +15,8 @@ import uuid
 
 from database import col, NO_ID
 from services.r2_client import r2_put, r2_delete
+from routes.settings_routes import get_email_routing
+from services.email_service import send_countersign_needed
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -433,7 +435,7 @@ async def get_signing_session(token: str):
 
 
 @router.post("/signing/{token}/sign/{doc_type}")
-async def submit_signed_doc(token: str, doc_type: str, file: UploadFile = File(...)):
+async def submit_signed_doc(token: str, doc_type: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """
     Accept a signed PDF for a specific doc type and store it in R2.
     Updates the signing session and stamps the document onto the application.
@@ -512,5 +514,15 @@ async def submit_signed_doc(token: str, doc_type: str, file: UploadFile = File(.
             {"id": app_id},
             {"$push": {"documents": doc_record}},
         )
+
+        if new_status == "fully_signed":
+            application = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+            routing = await get_email_routing()
+            background_tasks.add_task(
+                send_countersign_needed,
+                routing["countersign_needed_to"],
+                app_id,
+                (application or {}).get("company_name", "Applicant"),
+            )
 
     return {"success": True, "doc_type": doc_type, "all_signed": all_signed}

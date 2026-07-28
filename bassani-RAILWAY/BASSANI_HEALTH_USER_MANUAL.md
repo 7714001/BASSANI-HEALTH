@@ -243,25 +243,31 @@ Until the domain is verified, emails will send from Resend's sandbox domain. Rea
 
 ## Step 8a — Configure Email Routing (Super Admin)
 
-The portal sends automated notifications to different recipients depending on the event. By default, new application notifications go to the `SUPPORT_EMAIL` environment variable and order-ready notifications go to all users with the `warehouse_supervisor` role. You can override and extend these without touching Railway environment variables.
+The portal sends automated notifications to different recipients depending on the event. You can override and extend these without touching Railway environment variables.
 
-Go to **Admin > Email Routing** in the left sidebar (visible to Super Admin only).
+Go to **Settings > Email Notifications** (visible to Super Admin only). Notifications are organised into a sidebar of four groups — click a group to see just its notifications:
 
-### Application Submitted Notifications
+**Onboarding & Applications**
+- **New Customer Application** — a reseller submits an onboarding application. Falls back to the `SUPPORT_EMAIL` env var if this list is empty.
+- **Application Stalled (4+ Hours)** — a submitted application has gone 4+ hours with no signing documents generated. Checked every 30 minutes; each stalled application is only escalated once. Empty list = no check runs.
+- **Countersigning Needed** — a customer has submitted signed copies of both onboarding documents (NDA and Store Onboarding Agreement) and they're ready for a signing authority to countersign.
+- **Onboarding: Documents Countersigned** — both documents have been countersigned by a Bassani signing authority. Typically Kashi and Dean, so the welcome pack can be sent.
 
-When a reseller submits a new customer onboarding application, the portal notifies the addresses in this list. If the list is empty, the `SUPPORT_EMAIL` env var is used as the fallback.
+**Orders & Fulfilment**
+- **QA Approval Needed** — an order has been packed and is ready for QA inspection. Typically the QA manager.
+- **RP Approval Needed** — an order has been packed and is ready for Responsible Pharmacist inspection. Typically the RP.
+- **Daily Digest: Outstanding Inspections** — sent automatically at 17:00 every day, listing every order still awaiting QA or RP sign-off that wasn't looked at. Only sends if there's at least one outstanding order.
+- **Order Ready for Collection** — an order passes QA and RP review and is cleared for dispatch. All portal users with the `warehouse_supervisor` role are notified automatically; add extra addresses here for distribution lists or staff without portal accounts (e.g. `warehouse@bassanihealth.com`).
+- **Order CC** — CC'd on every "Order Received" and "Order Confirmed" email sent to resellers. Useful for an operations inbox or account management team.
+- **Daily Digest: Backorders** — sent automatically at 17:00 every day, listing every order currently waiting on stock. Only sends if there's at least one order on backorder.
 
-Add every address that should receive application review notifications — for example, the operations manager and any admin staff who review applications.
+**Finance**
+- **Finance: Payment Auto-Confirmed** — the portal detects a paid invoice from bank records and auto-confirms the ticket automatically.
 
-### Order Ready for Collection
+**Production & Vault**
+- **Production: Stock Received Without Purchase Order** — an S6 import receipt is recorded with no matching purchase order. Typically the compliance officer.
 
-When an order passes QA and RP review and is cleared for dispatch, all portal users with the `warehouse_supervisor` role are notified automatically. Add extra addresses here for distribution lists or staff who should be notified but do not have portal accounts (e.g. `warehouse@bassanihealth.com`).
-
-### Order CC
-
-These addresses are CC'd on every "Order Received" and "Order Confirmed" email sent to resellers. Useful for an operations inbox or account management team that wants visibility on all reseller orders without receiving individual assignment notifications.
-
-> **How to add an address:** Type the email and press Enter or comma. Click the tag to remove it. Press **Save Changes** when done. Changes take effect immediately for all future notifications.
+> **How to add an address:** Type the email and press Enter or comma. Click the tag to remove it. Press **Save Changes** when done — this saves every group's settings at once, not just the group you're currently viewing. Changes take effect immediately for all future notifications.
 
 ---
 
@@ -1142,7 +1148,7 @@ When backorder entries are on the board:
 **Role in system:** `qa_manager` (permission: `tickets.qa_approve`)  
 **Access:** Orders Tickets (QA approval only)
 
-When you log in, you see Orders Tickets. Your action is visible only when an order is at `Ready` status.
+When you log in, you see Orders Tickets. Your action is visible only when an order is at `Ready` status. You also receive an email as soon as an order reaches `Ready` status (if configured under **Settings > Email Notifications > Orders & Fulfilment > QA Approval Needed**), with a direct link to the order. If an order is still awaiting your sign-off at close of business, it appears in the 17:00 daily "Outstanding Inspections" digest email so nothing is missed overnight.
 
 1. Open an order at `Ready` status
 2. Review the order details and packing information
@@ -1157,7 +1163,7 @@ Your approval is recorded with your name and timestamp. The order will not compl
 **Role in system:** `responsible_pharmacist` (permissions: `tickets.rp_approve`, `production.rp_release`)  
 **Access:** Orders Tickets (RP approval) and S6 Releases (imported stock sign-off)
 
-**Order approval** — identical flow to QA Manager, but from the pharmacist perspective:
+**Order approval** — identical flow to QA Manager, but from the pharmacist perspective. You also receive an email as soon as an order reaches `Ready` status (if configured under **Settings > Email Notifications > Orders & Fulfilment > RP Approval Needed**), and any order still awaiting your sign-off at close of business appears in the 17:00 daily "Outstanding Inspections" digest:
 
 1. Open an order at `Ready` status
 2. Review the order
@@ -1480,6 +1486,8 @@ Go to **Backorders** (under the Orders section in the sidebar) to see a consolid
 
 A backorder exists when an order was partially delivered — some products shipped, but others could not because stock was unavailable. Odoo creates a separate delivery picking for the shortfall, which sits in this view until the stock is received and the delivery is completed.
 
+Every backorder still waiting on stock at 17:00 is included automatically in a daily digest email (configured under **Settings > Email Notifications > Orders & Fulfilment > Daily Digest: Backorders**), so nothing sits forgotten overnight.
+
 **Stats row:** Total backorder pickings, distinct products affected, and a breakdown by state (Confirmed vs Ready).
 
 **State meanings:**
@@ -1556,6 +1564,8 @@ The application detail page is a two-column view:
 
 **Documents:** The Documents section on the application shows the documents received. Initially this will be the Customer Information Form and CIPC certificate. The NDA and Store Onboarding Agreement are collected via a separate signing session described below. Click **Download** next to any document to access the secure download link.
 
+> If an application sits for 4+ hours after submission with documents not yet generated, an escalation email is sent automatically to the addresses configured under **Settings > Email Notifications > Onboarding & Applications > Application Stalled (4+ Hours)**, with a direct link to the application — a safety net so a submission never just gets forgotten. Each application is only escalated once.
+
 **Step 1 — Generate documents for review** *(requires `customers.approve_onboarding`)*:
 
 After reviewing the initial submission (Customer Information Form + CIPC) and confirming the customer's details are correct:
@@ -1586,7 +1596,7 @@ Once the customer has signed both documents, they appear in the Documents sectio
 3. Repeat for the Store Onboarding Agreement
 4. Both countersigned documents now show a "Countersigned by [your name]" badge
 
-When both are countersigned, a notification email is sent automatically to the recipients configured under **Settings > Email Routing > Onboarding: Documents Countersigned** (typically Kashi and Dean).
+When both are countersigned, a notification email is sent automatically to the recipients configured under **Settings > Email Notifications > Onboarding & Applications > Onboarding: Documents Countersigned** (typically Kashi and Dean). Before that, once the customer has submitted both signed documents, a separate **Countersigning Needed** notification already alerted signing authorities that this step was waiting on them.
 
 **Step 4 — Send Welcome Pack** *(requires `customers.approve_onboarding`)*:
 

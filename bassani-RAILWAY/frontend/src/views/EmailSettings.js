@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Loader2, Mail, Save } from "lucide-react";
+import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, LoadingState } from "../components/UI";
@@ -82,23 +82,120 @@ function RoutingSection({ icon: Icon, title, description, note, children }) {
   );
 }
 
+// ── Routing key metadata ─────────────────────────────────────────────────────
+// One entry per notification. Adding a new notification type is one entry
+// here (plus a field on the backend's EmailRoutingConfig) — never a new
+// hand-written <RoutingSection> block.
+
+const GROUPS = [
+  { id: "onboarding", label: "Onboarding & Applications", icon: FileText },
+  { id: "orders",     label: "Orders & Fulfilment",       icon: Truck },
+  { id: "finance",    label: "Finance",                   icon: DollarSign },
+  { id: "production", label: "Production & Vault",        icon: Package },
+];
+
+const ROUTING_KEYS = [
+  {
+    key: "application_submitted_to", group: "onboarding", icon: Mail,
+    title: "New Customer Application",
+    description: "Triggered when a reseller submits an onboarding application.",
+    note: "If this list is empty, the notification falls back to the support email set in Railway environment variables.",
+    placeholder: "support@bassanihealth.com",
+  },
+  {
+    key: "application_escalation_to", group: "onboarding", icon: Mail,
+    title: "Application Stalled (4+ Hours)",
+    description: "Triggered when a submitted application has gone 4+ hours without its signing documents being generated — a safety net so nothing gets forgotten.",
+    note: "Checked every 30 minutes. Each stalled application is escalated once. If this list is empty, no notification is sent.",
+    placeholder: "ops@bassanihealth.com",
+  },
+  {
+    key: "countersign_needed_to", group: "onboarding", icon: Mail,
+    title: "Countersigning Needed",
+    description: "Triggered once a customer has submitted signed copies of both onboarding documents and they are ready for a Bassani signing authority to countersign.",
+    note: "If this list is empty, no notification is sent.",
+    placeholder: "kashi@bassanihealth.com",
+  },
+  {
+    key: "countersign_complete_to", group: "onboarding", icon: Mail,
+    title: "Onboarding: Documents Countersigned",
+    description: "Triggered when all customer onboarding documents have been countersigned. Use this to notify Dean and Kashi so the welcome pack can be sent.",
+    note: "If this list is empty, no notification is sent.",
+    placeholder: "dean@bassanihealth.com",
+  },
+  {
+    key: "qa_approval_to", group: "orders", icon: Mail,
+    title: "QA Approval Needed",
+    description: "Triggered when an order is packed and ready for QA inspection.",
+    note: "If this list is empty, no notification is sent. Typically the QA manager.",
+    placeholder: "qa@bassanihealth.com",
+  },
+  {
+    key: "rp_approval_to", group: "orders", icon: Mail,
+    title: "RP Approval Needed",
+    description: "Triggered when an order is packed and ready for Responsible Pharmacist inspection.",
+    note: "If this list is empty, no notification is sent. Typically the Responsible Pharmacist.",
+    placeholder: "rp@bassanihealth.com",
+  },
+  {
+    key: "qa_rp_daily_digest_to", group: "orders", icon: Mail,
+    title: "Daily Digest: Outstanding Inspections",
+    description: "Sent automatically at 17:00 each day, listing every order still awaiting QA or RP sign-off that didn't get looked at.",
+    note: "If this list is empty, no digest is sent. A digest only sends when there is at least one outstanding order.",
+    placeholder: "qa@bassanihealth.com",
+  },
+  {
+    key: "order_ready_extra_to", group: "orders", icon: Mail,
+    title: "Order Ready for Collection",
+    description: "Triggered when an order passes QA and RP review and is cleared for dispatch.",
+    note: "Warehouse supervisors with a registered portal account are always notified automatically. Add addresses here for distribution lists or staff without portal accounts.",
+    placeholder: "warehouse@bassanihealth.com",
+    label: "Additional recipients (added to supervisor list):",
+  },
+  {
+    key: "order_cc", group: "orders", icon: Mail,
+    title: "Order CC",
+    description: "CC'd on order placed and order confirmed emails sent to resellers.",
+    note: "Useful for an operations inbox or account management team that needs visibility on all reseller orders without managing individual notifications.",
+    placeholder: "ops@bassanihealth.com",
+    label: "CC these addresses on reseller order emails:",
+  },
+  {
+    key: "backorder_daily_digest_to", group: "orders", icon: Mail,
+    title: "Daily Digest: Backorders",
+    description: "Sent automatically at 17:00 each day, listing every order currently waiting on stock.",
+    note: "If this list is empty, no digest is sent. A digest only sends when there is at least one order on backorder.",
+    placeholder: "ops@bassanihealth.com",
+  },
+  {
+    key: "finance_notification_to", group: "finance", icon: Mail,
+    title: "Finance: Payment Auto-Confirmed",
+    description: "Sent when the portal detects a paid invoice from bank records and auto-confirms the ticket — no manual click needed.",
+    note: "Add the Finance team addresses here. A single digest email is sent per check cycle listing all auto-confirmed invoices. If this list is empty, no email is sent but the ticket still advances automatically.",
+    placeholder: "finance@bassanihealth.com",
+  },
+  {
+    key: "s6_flag_to", group: "production", icon: Mail,
+    title: "Production: Stock Received Without Purchase Order",
+    description: "Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved.",
+    note: "If this list is empty, no notification is sent. Typically the compliance officer.",
+    placeholder: "compliance@bassanihealth.com",
+  },
+];
+
+const BLANK_CONFIG = ROUTING_KEYS.reduce((acc, rk) => ({ ...acc, [rk.key]: [] }), {});
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function EmailSettings({ embedded = false }) {
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving ] = useState(false);
-  const [config,  setConfig ] = useState({
-    application_submitted_to: [],
-    countersign_complete_to:  [],
-    order_ready_extra_to:     [],
-    order_cc:                 [],
-    finance_notification_to:  [],
-    s6_flag_to:               [],
-  });
+  const [loading,     setLoading    ] = useState(true);
+  const [saving,      setSaving     ] = useState(false);
+  const [config,      setConfig     ] = useState(BLANK_CONFIG);
+  const [activeGroup, setActiveGroup] = useState(GROUPS[0].id);
 
   useEffect(() => {
     api.get("/api/settings/email-routing")
-      .then(r => setConfig(r.data))
+      .then(r => setConfig({ ...BLANK_CONFIG, ...r.data }))
       .catch(() => toast.error("Failed to load email routing config"))
       .finally(() => setLoading(false));
   }, []);
@@ -119,6 +216,8 @@ export default function EmailSettings({ embedded = false }) {
 
   if (loading) return <LoadingState />;
 
+  const visibleKeys = ROUTING_KEYS.filter(rk => rk.group === activeGroup);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {!embedded && (
@@ -135,7 +234,7 @@ export default function EmailSettings({ embedded = false }) {
       )}
 
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-        <div className="max-w-4xl mx-auto w-full space-y-5">
+        <div className="max-w-5xl mx-auto w-full space-y-5">
 
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
             <p className="text-xs font-semibold text-amber-700 mb-1">Super Admin only</p>
@@ -145,101 +244,45 @@ export default function EmailSettings({ embedded = false }) {
             </p>
           </div>
 
-          <RoutingSection
-            icon={Mail}
-            title="New Customer Application"
-            description="Triggered when a reseller submits an onboarding application."
-            note="If this list is empty, the notification falls back to the support email set in Railway environment variables."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
-              <EmailTagInput
-                emails={config.application_submitted_to}
-                onChange={upd("application_submitted_to")}
-                placeholder="support@bassanihealth.com"
-              />
-            </div>
-          </RoutingSection>
+          <div className="flex gap-5 items-start">
+            <nav className="w-56 shrink-0 bg-white rounded-2xl border border-gray-100 p-2 space-y-1">
+              {GROUPS.map(g => {
+                const Icon = g.icon;
+                const active = g.id === activeGroup;
+                const count = ROUTING_KEYS.filter(rk => rk.group === g.id).length;
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => setActiveGroup(g.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-sm font-semibold transition-colors ${
+                      active ? "bg-bassani-50 text-bassani-700" : "text-gray-500 hover:bg-gray-50"
+                    }`}
+                  >
+                    <Icon size={15} className={active ? "text-bassani-600" : "text-gray-400"} />
+                    <span className="flex-1">{g.label}</span>
+                    <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 ${active ? "bg-bassani-100 text-bassani-700" : "bg-gray-100 text-gray-400"}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
 
-          <RoutingSection
-            icon={Mail}
-            title="Production: Stock Received Without Purchase Order"
-            description="Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved."
-            note="If this list is empty, no notification is sent. Typically the compliance officer."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
-              <EmailTagInput
-                emails={config.s6_flag_to}
-                onChange={upd("s6_flag_to")}
-                placeholder="compliance@bassanihealth.com"
-              />
+            <div className="flex-1 min-w-0 space-y-5">
+              {visibleKeys.map(rk => (
+                <RoutingSection key={rk.key} icon={rk.icon} title={rk.title} description={rk.description} note={rk.note}>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">{rk.label || "Notify these addresses:"}</p>
+                    <EmailTagInput
+                      emails={config[rk.key] || []}
+                      onChange={upd(rk.key)}
+                      placeholder={rk.placeholder}
+                    />
+                  </div>
+                </RoutingSection>
+              ))}
             </div>
-          </RoutingSection>
-
-          <RoutingSection
-            icon={Mail}
-            title="Onboarding: Documents Countersigned"
-            description="Triggered when all customer onboarding documents have been countersigned. Use this to notify Dean and Kashi so the welcome pack can be sent."
-            note="If this list is empty, no notification is sent."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
-              <EmailTagInput
-                emails={config.countersign_complete_to}
-                onChange={upd("countersign_complete_to")}
-                placeholder="dean@bassanihealth.com"
-              />
-            </div>
-          </RoutingSection>
-
-          <RoutingSection
-            icon={Mail}
-            title="Order Ready for Collection"
-            description="Triggered when an order passes QA and RP review and is cleared for dispatch."
-            note="Warehouse supervisors with a registered portal account are always notified automatically. Add addresses here for distribution lists or staff without portal accounts."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Additional recipients (added to supervisor list):</p>
-              <EmailTagInput
-                emails={config.order_ready_extra_to}
-                onChange={upd("order_ready_extra_to")}
-                placeholder="warehouse@bassanihealth.com"
-              />
-            </div>
-          </RoutingSection>
-
-          <RoutingSection
-            icon={Mail}
-            title="Order CC"
-            description="CC'd on order placed and order confirmed emails sent to resellers."
-            note="Useful for an operations inbox or account management team that needs visibility on all reseller orders without managing individual notifications."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">CC these addresses on reseller order emails:</p>
-              <EmailTagInput
-                emails={config.order_cc}
-                onChange={upd("order_cc")}
-                placeholder="ops@bassanihealth.com"
-              />
-            </div>
-          </RoutingSection>
-
-          <RoutingSection
-            icon={Mail}
-            title="Finance: Payment Auto-Confirmed"
-            description="Sent when the portal detects a paid invoice from bank records and auto-confirms the ticket — no manual click needed."
-            note="Add the Finance team addresses here. A single digest email is sent per check cycle listing all auto-confirmed invoices. If this list is empty, no email is sent but the ticket still advances automatically."
-          >
-            <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Notify these addresses:</p>
-              <EmailTagInput
-                emails={config.finance_notification_to}
-                onChange={upd("finance_notification_to")}
-                placeholder="finance@bassanihealth.com"
-              />
-            </div>
-          </RoutingSection>
+          </div>
 
           {embedded && (
             <div className="flex justify-end pt-2">

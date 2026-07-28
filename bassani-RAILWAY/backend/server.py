@@ -501,6 +501,13 @@ async def initialise_payment_check():
 
 
 @app.on_event("startup")
+async def initialise_notification_schedulers():
+    """Application-stall escalation (4h) + 17:00 SAST QA/RP and backorder digests."""
+    from services.scheduler import start_notification_schedulers
+    start_notification_schedulers()
+
+
+@app.on_event("startup")
 async def initialise_inbox():
     """Phase 11 — sales_inbox indexes, Graph subscription, and IMAP polling."""
     await _run_inbox_startup("sales", "sales_inbox", "sales_inbox")

@@ -1033,7 +1033,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Cross-team handoff from Sales → Orders → QA/RP → Finance is tracked end-to-end in the portal, with each team seeing only what's relevant to them and automatic handoff notifications — replacing reliance on ad-hoc email/verbal handoffs for order fulfilment status. This is the core reason the business wanted this portal built.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟡 In Progress — 8.1–8.12 code complete; DoD 8/9 items done; one remaining item is operational (create 6 named staff accounts via Users page — no code required)  
-**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23 · Sub-deploy 10 (8.12 Reseller order cart restoration) — 2026-06-29 · 8.38 Samples Account — 2026-07-15  
+**Completed:** Sub-deploy 1 (8.1 Roles & Permissions) — 2026-06-19 · Sub-deploy 2 (8.2–8.4 backend) — 2026-06-19 · Sub-deploy 3 (8.5 UI) — 2026-06-19 · Sub-deploy 4 (unified pipeline) — 2026-06-19 · Sub-deploy 5 (8.6 Quote Builder + Deposit + 8.7 Quote Edit) — 2026-06-21 · Sub-deploy 6 (8.8 Orders Tickets full-page detail) — 2026-06-22 · Sub-deploy 7 (8.9 Stock accuracy + Orders pipeline enforcement) — 2026-06-23 · Sub-deploy 8 (8.10 Orders screen read-only + Confirm Order in Sales Ticket) — 2026-06-23 · Sub-deploy 9 (8.11 Send Quote to customer) — 2026-06-23 · Sub-deploy 10 (8.12 Reseller order cart restoration) — 2026-06-29 · 8.38 Samples Account — 2026-07-15 · 8.45 Notification Escalation & Digests — 2026-07-28  
 
 ### Context
 Sourced from business process meeting minutes (2026-06-19). Two real-world mailboxes drive this: `sales@bassanihealth.com` (Merveille — customer-facing PO/RFQ intake and feedback) and `orders@bassanihealth.com` (Tshidi — fulfilment). A Sales ticket hands off to an Orders ticket once the customer confirms; the Orders ticket's outcome (complete / incomplete / cancelled) flows back to close out the Sales ticket.
@@ -1877,6 +1877,34 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - Sole Proprietor entity type hides Company Reg field and changes company name label
 - Staff can see all active Odoo accounts on the Customers page; "Has Orders" pill reverts to order-only view
 - Partner Directory is discoverable from the Customers nav section; clicking any company row opens its profile
+
+---
+
+#### 8.45 — Notification Escalation & Digests — Complete 2026-07-28
+
+**Goal:** Six workflow stalls that previously sat silently until someone happened to notice now escalate automatically by email: a submitted application with no signing documents generated after 4 hours, a customer's fully-signed documents waiting on countersignature, an order sitting ready for QA or RP inspection, and — at 17:00 SAST daily — a digest of every order still awaiting QA/RP sign-off and every order on backorder. Also redesigns the Email Notifications settings page (`EmailSettings.js`), which had grown to 6 hand-coded routing keys as one long flat page, into a sidebar-grouped layout ahead of these six new keys pushing it to 12.
+
+**Root cause found during implementation:** none of the three request-triggered notifications previously sent any email at all — `mark_ready` (packing board → QA/RP ready), `submit_signed_doc` (public signing endpoint), and there was no stale-application check anywhere. Confirmed by reading each function directly before writing the trigger code.
+
+- [x] `backend/routes/settings_routes.py` — `EmailRoutingConfig` gains 6 fields: `application_escalation_to`, `countersign_needed_to`, `qa_approval_to`, `rp_approval_to`, `qa_rp_daily_digest_to`, `backorder_daily_digest_to`
+- [x] `backend/services/email_service.py` — 6 new send functions, same convention as every existing one (guard on empty recipient list, composed from the shared HTML primitives, deep link via `settings.portal_url`). QA/RP approval-needed emails are the first to link to Order Passport (`/orders/{id}/passport`) rather than the general orders list; the two daily digests link to `/orders-tickets` and `/orders/backorders` respectively since a digest lists multiple orders and doesn't deep-link per row
+- [x] New `backend/services/scheduler.py` — the first "run at a specific wall-clock time" mechanism in the codebase (fixed UTC+2/SAST offset, no zoneinfo/tzdata dependency), plus a 30-minute interval loop for the escalation check, mirroring the existing Phase 22.1 payment-check loop shape. Started from one new `server.py` startup event. Application escalation stamps `escalation_notified_at` on the application doc so each stalled application is only escalated once, not every 30 minutes
+- [x] `backend/routes/public_routes.py::submit_signed_doc` — fires `send_countersign_needed` once the signing session reaches `fully_signed` (both NDA and SOA submitted, not on each individual document)
+- [x] `backend/routes/packing_board_routes.py::mark_ready` — fires both `send_qa_approval_needed` and `send_rp_approval_needed` (two independent recipient lists, since QA and RP are different people/roles even though they share one trigger point)
+- [x] `frontend/src/views/EmailSettings.js` — rebuilt around a `ROUTING_KEYS` metadata array (12 entries) grouped by a `GROUPS` array (Onboarding & Applications / Orders & Fulfilment / Finance / Production & Vault) into a sidebar-nav + content layout; adding a future notification type is one array entry, not a new hand-written card. Grouping is a navigation convenience only — every key keeps its own independent recipient list, no group-level defaults. `RoutingSection`/`EmailTagInput` unchanged and reused. Widened to `max-w-5xl` (the sidebar needs more room than the standard admin `max-w-4xl`)
+
+**Design decisions:**
+- **Countersigning-needed fires once, on full completion, not per document** — matches "customer submits signed copies" (plural) and avoids two separate emails per application for what is really one countersigning task.
+- **Escalation and both digests skip the query entirely if their recipient list is empty** — avoids stamping `escalation_notified_at` (or running a Mongo scan) for a notification nobody is configured to receive.
+- **Sidebar grouping is presentation-only** — no group-level default recipients, no merge logic. Keeps the redesign additive and low-risk; a group-level override tier can be added later if it's ever actually needed.
+
+### Definition of Done
+- [x] An application with no signing documents generated after 4 hours triggers exactly one escalation email with a working deep link, not a repeat every 30 minutes
+- [x] A customer submitting both signed onboarding documents triggers a countersigning-needed email to the configured list
+- [x] Marking an order ready on the packing board sends two separate emails (QA and RP) to their respective configured lists, each linking to that order's Passport
+- [x] At 17:00 SAST, a digest email lists every order still awaiting QA/RP sign-off (only if at least one exists and the list is configured)
+- [x] At 17:00 SAST, a separate digest email lists every order on backorder (only if at least one exists and the list is configured)
+- [x] Email Notifications settings page shows a sidebar of 4 groups; selecting a group filters the visible cards; Save still persists the full 12-key config regardless of which group is active
 
 ---
 
