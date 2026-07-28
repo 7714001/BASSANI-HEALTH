@@ -14,7 +14,7 @@ import { SearchableSelect } from "../components/ProductPickerDrawer";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
-  LoadingState, EmptyState, Badge, fmtR, fmtDate, parseDisplayName, applyVariantAlias,
+  LoadingState, EmptyState, Badge, fmtR, fmtDate, parseDisplayName,
 } from "../components/UI";
 
 
@@ -33,12 +33,15 @@ const MOVE_TYPE_META = {
 const MOVE_OUT_TYPES = new Set(["delivery", "adjustment_out", "consumed", "vendor_return"]);
 
 // Stable variant key for filter pill deduplication — joins all attribute groups.
-// aliasMap defaults to {} so staff-facing call sites (the admin Products
-// view) are unaffected and keep showing Odoo's raw attribute codes; only the
-// reseller order cart passes a real alias map.
-const getVariantLabel = (p, aliasMap = {}) => {
-  const { groups } = parseDisplayName((p.display_name || p.name) || "");
-  return groups.length > 0 ? groups.map(g => applyVariantAlias(g, aliasMap)).join(" / ") : null;
+// stripLeadingGroup defaults to false so staff-facing call sites (the admin
+// Products view) are unaffected; the reseller order cart passes true once a
+// Brand/Grade sub-category is selected, since the grade code (e.g. "EXO") is
+// then redundant — only strips when there's more than one group, so a
+// product with a single attribute (no separate grade+size split) is untouched.
+const getVariantLabel = (p, { stripLeadingGroup = false } = {}) => {
+  let { groups } = parseDisplayName((p.display_name || p.name) || "");
+  if (stripLeadingGroup && groups.length > 1) groups = groups.slice(1);
+  return groups.length > 0 ? groups.join(" / ") : null;
 };
 
 export function Products() {
@@ -771,7 +774,6 @@ export function Orders() {
   const [cartProdCat,      setCartProdCat     ] = useState("all"); // selected top-level parent-category id, or "all"
   const [cartProdSubCat,   setCartProdSubCat  ] = useState("all"); // selected child (brand/grade) id, or "all"
   const [cartParentCategories, setCartParentCategories] = useState([]);
-  const [cartVariantAliases, setCartVariantAliases] = useState({}); // {CODE: "Friendly Name"}, see Settings > Variant Aliases
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,             setCart            ] = useState([]);
@@ -806,9 +808,6 @@ export function Orders() {
     if (!isReseller) return;
     api.get("/api/parent-categories/")
       .then(r => setCartParentCategories(r.data.categories || []))
-      .catch(() => {});
-    api.get("/api/variant-aliases/")
-      .then(r => setCartVariantAliases(r.data.aliases || {}))
       .catch(() => {});
   }, [isReseller]);
 
@@ -949,14 +948,17 @@ export function Orders() {
   // to the selected parent category, so only variant/search/stock filter here.
   const cartTopLevelCategories = cartParentCategories.filter(c => !c.parent_id);
   const cartChildCategories    = cartProdCat === "all" ? [] : cartParentCategories.filter(c => c.parent_id === cartProdCat);
+  // Once a Brand/Grade sub-category is selected, its grade code is already
+  // implied — strip it from the variant label so "EXO / 1G" just reads "1G".
+  const cartVariantLabelOpts  = { stripLeadingGroup: cartProdSubCat !== "all" };
   const cartVariantOptions    = cartProdCat === "all" ? [] :
-    Array.from(new Set(cartProducts.map(p => getVariantLabel(p, cartVariantAliases)).filter(Boolean))).sort();
+    Array.from(new Set(cartProducts.map(p => getVariantLabel(p, cartVariantLabelOpts)).filter(Boolean))).sort();
   const cartFilteredProducts  = cartProducts
     .filter(p => {
       const q          = cartProdSearch.toLowerCase();
       const inStock     = (p.virtual_available ?? 0) > 0;
       const matchQ      = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-      const matchVariant = cartProdVariant === "all" || getVariantLabel(p, cartVariantAliases) === cartProdVariant;
+      const matchVariant = cartProdVariant === "all" || getVariantLabel(p, cartVariantLabelOpts) === cartProdVariant;
       const matchStock  = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
       return matchQ && matchVariant && matchStock;
     })
@@ -1146,7 +1148,10 @@ export function Orders() {
                     const outOfStock = (p.virtual_available ?? 0) <= 0;
                     const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
                     const minQty     = cartMoq[p.id] || 0;
-                    const { base, groups } = parseDisplayName(p.display_name || p.name || "");
+                    const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
+                    // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
+                    // is selected, repeating its code as a chip on every card is just noise.
+                    const groups = (cartProdSubCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
                     return (
                       <div key={p.id}
                         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
@@ -1158,7 +1163,7 @@ export function Orders() {
                           {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
                           <div className="flex items-center gap-1.5 flex-wrap mt-1">
                             {groups.map((g, i) => (
-                              <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{applyVariantAlias(g, cartVariantAliases)}</span>
+                              <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
                             ))}
                             {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
                             {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}

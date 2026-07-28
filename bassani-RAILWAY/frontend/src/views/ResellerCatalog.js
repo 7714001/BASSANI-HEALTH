@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName, applyVariantAlias } from "../components/UI";
+import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 
 const stockColor = (qty) =>
@@ -9,9 +9,15 @@ const stockColor = (qty) =>
   : qty < 10 ? "text-amber-600 font-semibold"
              : "text-bassani-700 font-semibold";
 
-const getVariantLabel = (p, aliasMap = {}) => {
-  const { groups } = parseDisplayName((p.display_name || p.name) || "");
-  return groups.length > 0 ? groups.map(g => applyVariantAlias(g, aliasMap)).join(" / ") : null;
+// stripLeadingGroup drops the first attribute group (the grade/brand code,
+// e.g. "EXO") once a Brand/Grade sub-category is already selected — showing
+// it again in the Variant dropdown would just repeat what the reseller has
+// already picked. Only strips when there's more than one group, so a product
+// with just a single attribute (no separate grade+size split) is untouched.
+const getVariantLabel = (p, { stripLeadingGroup = false } = {}) => {
+  let { groups } = parseDisplayName((p.display_name || p.name) || "");
+  if (stripLeadingGroup && groups.length > 1) groups = groups.slice(1);
+  return groups.length > 0 ? groups.join(" / ") : null;
 };
 
 export default function ResellerCatalog() {
@@ -24,7 +30,6 @@ export default function ResellerCatalog() {
   const [variant,    setVariant   ] = useState("all");
   const [categories, setCategories] = useState([]);
   const [moq,        setMoq       ] = useState({});
-  const [variantAliases, setVariantAliases] = useState({}); // {CODE: "Friendly Name"}, see Settings > Variant Aliases
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -34,9 +39,6 @@ export default function ResellerCatalog() {
       .catch(() => {});
     api.get("/api/reseller-catalog/")
       .then(r => setMoq(r.data.moq || {}))
-      .catch(() => {});
-    api.get("/api/variant-aliases/")
-      .then(r => setVariantAliases(r.data.aliases || {}))
       .catch(() => {});
   }, []);
 
@@ -67,13 +69,17 @@ export default function ResellerCatalog() {
   const topLevelCategories = categories.filter(c => !c.parent_id);
   const childCategories    = cat === "all" ? [] : categories.filter(c => c.parent_id === cat);
 
+  // Once a Brand/Grade sub-category is selected, its grade code is already
+  // implied — strip it from the variant label so "EXO / 1G" just reads "1G".
+  const variantLabelOpts = { stripLeadingGroup: subCat !== "all" };
+
   const visibleProducts = variant === "all"
     ? products
-    : products.filter(p => getVariantLabel(p, variantAliases) === variant);
+    : products.filter(p => getVariantLabel(p, variantLabelOpts) === variant);
 
   const variantOpts = cat === "all"
     ? []
-    : Array.from(new Set(products.map(p => getVariantLabel(p, variantAliases)).filter(Boolean))).sort();
+    : Array.from(new Set(products.map(p => getVariantLabel(p, variantLabelOpts)).filter(Boolean))).sort();
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -134,14 +140,17 @@ export default function ResellerCatalog() {
               header: "Product / SKU",
               cell: ({ row: { original: p } }) => {
                 const minQty = moq[p.id] || 0;
-                const { base, groups } = parseDisplayName(p.display_name || p.name || "");
+                const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
+                // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
+                // is selected, repeating its code as a chip on every row is just noise.
+                const groups = (subCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
                 return (
                   <div>
                     <p className="font-medium text-gray-900">{base}</p>
                     {groups.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-0.5">
                         {groups.map((g, i) => (
-                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{applyVariantAlias(g, variantAliases)}</span>
+                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
                         ))}
                       </div>
                     )}

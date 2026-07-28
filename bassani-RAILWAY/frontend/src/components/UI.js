@@ -38,15 +38,6 @@ export const parseDisplayName = (full = "") => {
   return { base: rest, groups };
 };
 
-// Portal-controlled friendly names for cryptic Odoo attribute-value codes
-// (e.g. "GD" -> "Greendoor", "EXO" -> "Exotic") shown on reseller-facing
-// variant chips/dropdowns — see Settings > Variant Aliases and
-// GET/PUT /api/variant-aliases/. Case-insensitive; falls back to the raw
-// token unchanged when no alias is configured for it. Staff-facing views
-// intentionally don't call this — they keep showing Odoo's raw codes.
-export const applyVariantAlias = (token, aliasMap) =>
-  (aliasMap && aliasMap[token.trim().toUpperCase()]) || token;
-
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV = [
   { label: "Dashboard",    path: "/",            icon: LayoutDashboard, section: "Main"      },

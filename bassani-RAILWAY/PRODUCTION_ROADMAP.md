@@ -753,7 +753,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 **Goal:** Full end-to-end commercial coverage. Resellers have complete visibility of the customer lifecycle.  
 **Estimate:** 2–3 weeks  
 **Status:** 🟢 Complete  
-**Completed:** 2026-06-23 · 7.4 — 2026-07-01 · 7.8 — 2026-07-02 · 7.12 — 2026-07-28 · 7.13 — 2026-07-28  
+**Completed:** 2026-06-23 · 7.4 — 2026-07-01 · 7.8 — 2026-07-02 · 7.12 — 2026-07-28  
 
 ### Tasks
 
@@ -963,25 +963,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - **Dropdowns over chips for category/brand/variant filtering** — chip rows work well for a handful of options but Bassani's real structure is ~15 top-level families, several with 2-5 children each; three searchable dropdowns stay compact and let a reseller type to narrow, reusing the existing `SearchableSelect` component rather than a new one. Binary toggle filters (In Stock/Out of Stock) stay as chips — that's still the right fit for a two-state toggle.
 - **A dedicated bulk-mapping view, not an extension of the per-category modal** — validated against Bassani's actual ~40-category list: assigning categories one at a time via search-and-click across N different Parent Category modals doesn't scale to a full first-time setup, and there was no single view to check what's still unmapped. The flat, one-row-per-Odoo-category table matches how the business had already planned the mapping on paper, so the tool should look like their plan, not like our data model.
 - **A second tab on the same page, not a separate nav item** — Parent Categories and Category Mapping are two views of the same underlying data (creating/naming a category vs. bulk-assigning Odoo categories to it), so a third sidebar entry would fragment one workflow across two places in the nav for no benefit.
-
-#### 7.13 — Variant Label Aliases — Added 2026-07-28
-
-> Testing 7.12 against real data surfaced a second readability problem, this time at the variant level: Odoo's own attribute-value codes are cryptic abbreviations (`GD`, `GH`, `EXO`, `IND`) that mean nothing to a reseller, and confirmed inconsistent across product lines (Flower and Pre Roll both use them, but not identically) — ruling out a hardcoded lookup table.
-
-**Goal:** Resellers see friendly variant names ("Greendoor," "Exotic") instead of raw Odoo attribute codes, everywhere a variant chip or dropdown appears on reseller-facing screens, without a code deploy every time Bassani's product attributes change.
-
-**Architecture:** Portal-layer concern, same philosophy as Parent Categories — a single `portal_settings` document (`_id: "variant_label_aliases"`) holding a flat `{CODE: "Friendly Name"}` dictionary, admin-editable from a third **Variant Aliases** tab on the Parent Categories page (not under Settings — this is part of the same "make the reseller catalog readable" job as the other two tabs, not a system-level setting). Applied entirely client-side: `applyVariantAlias(token, aliasMap)` in `UI.js` does a case-insensitive lookup, falling back to the raw token unchanged when no alias is configured. `getVariantLabel()` (shared by the admin Products view and the reseller order cart) takes the alias map as an optional parameter defaulting to `{}` — staff-facing call sites simply don't pass one, so they keep seeing Odoo's raw codes unchanged; only `ResellerCatalog.js` and the reseller order cart in `Views.js` pass a real map.
-
-- [x] `portal_settings` doc `variant_label_aliases` — `GET /api/variant-aliases/` (any authenticated user, resellers need client-side read access), `PUT /api/variant-aliases/` (full replace, gated on `products.manage` — same permission as the rest of the Parent Categories page it lives on); every write audit-logged as `variant_aliases.update`
-- [x] Variant Aliases tab (third tab on `ParentCategories.js`, alongside Parent Categories and Category Mapping) — add/remove key-value rows, explicit "Save Changes" button (not auto-save per row, since this is a rarely-edited dictionary, unlike Category Mapping's per-row auto-save). Considered a Settings tab first (matching `GTINPool.js`'s precedent for small key-value admin tools) but moved here — it's part of the same reseller-catalog-readability workflow as the other two tabs, not a general system setting, so it belongs with them, not buried in Settings
-- [x] `applyVariantAlias()` added to `UI.js`; `getVariantLabel()` in both `ResellerCatalog.js` and `Views.js` updated to alias each attribute group before joining them into the combined variant label
-- [x] Reseller-facing variant *chips* (not just the Variant dropdown) also aliased: the product table's group badges in `ResellerCatalog.js` and the order cart's product card in `Views.js` (which previously showed the raw, unsplit `display_name` including the code — now split via `parseDisplayName` into base name + aliased chips, matching `ResellerCatalog.js`'s presentation)
-
-**Design decisions:**
-- **Admin-configurable dictionary, not a hardcoded table** — confirmed necessary, not just cautious: Flower and Pre Roll both use grade codes but Bassani's own Odoo configuration isn't guaranteed consistent across product lines or over time; a portal-only setting means fixing a new abbreviation never needs a code change.
-- **Client-side application, not a server-side rewrite of display_name** — keeps Odoo's data untouched and avoids adding alias-resolution to every product-list endpoint; the alias map is tiny (a handful of entries) and cheap to fetch once per page load.
-- **Staff-facing views unaffected by default parameter, not a separate code path** — `getVariantLabel(p, aliasMap = {})` means staff call sites needed zero changes; only the two reseller-facing surfaces had to pass a real map.
-- **A tab on Parent Categories, not a Settings tab** — initially built under Settings (matching `GTINPool.js`'s precedent for small key-value tools) but relocated after review: Parent Categories, Category Mapping, and Variant Aliases are all facets of the same job — controlling what a reseller sees when browsing the catalog — so they belong together, not split across two different areas of the admin nav for no real reason.
+- **Redundant grade code stripped from the Variant dropdown once a Brand/Grade sub-category is picked, not aliased** — a short-lived attempt at solving this with an admin-editable "Variant Label Aliases" dictionary (translating codes like `EXO`/`GD`/`GH`/`IND` into friendly names) was built, tested, and removed the same day: once Bassani set up Indoor/Exotic/Greendoor/Greenhouse as real sub-categories under Flower (and under Pre Roll), the grade is already selected via the Brand/Grade dropdown, so repeating it in the Variant dropdown (`EXO / 1G`) is just noise, not an unreadable code — the fix is to drop the redundant leading attribute group entirely once a sub-category is active, not translate it. `getVariantLabel(p, { stripLeadingGroup })` in both `ResellerCatalog.js` and `Views.js` drops the first `parseDisplayName` group when `stripLeadingGroup` is true and the product has more than one group (so a product with only one attribute, e.g. Vapes with no shared grade attribute, is untouched); `stripLeadingGroup` is passed as `subCat !== "all"` (`cartProdSubCat` in the cart). The same stripping is applied to the inline variant chips shown on each product row/card, not just the dropdown, so the two stay consistent.
 
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
@@ -995,7 +977,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] "Suppliers" nav item in sidebar, gated by `suppliers.view`, with Truck icon
 - [x] Finance can register the remaining balance payment against the full sale invoice from the portal — no Odoo access required for any standard payment in the order lifecycle
 - [x] A reseller's category chips (catalog page and order cart) reflect admin-defined Parent Categories, not raw Odoo categories, with an Uncategorised bucket for anything unmapped; Odoo's own category structure remains untouched by this layer
-- [x] A reseller sees "Greendoor," "Greenhouse," "Exotic," and "Indoor" instead of Odoo's raw attribute codes anywhere a variant is shown, configurable by admin under Settings without a code deploy; staff-facing views are unaffected
+- [x] Once a reseller picks a Brand/Grade sub-category (e.g. "Exotic" under "Flower"), the Variant dropdown and inline variant chips stop repeating that grade code and show only the remaining attribute (e.g. "1G" instead of "EXO / 1G")
 
 ---
 
