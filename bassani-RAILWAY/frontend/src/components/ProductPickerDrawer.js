@@ -6,7 +6,7 @@ import { fmtR, parseDisplayName } from "./UI";
 // ── Searchable dropdown select ────────────────────────────────────────────────
 // Exported for reuse anywhere a category/variant-style filtered dropdown is
 // needed with the same look — e.g. the production module's Link Product picker.
-export function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled }) {
+export function SearchableSelect({ value, onChange, options, placeholder, searchPlaceholder, disabled, width = "w-44" }) {
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState("");
   const containerRef      = useRef(null);
@@ -40,14 +40,15 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
   const filtered = options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()));
 
   return (
-    <div ref={containerRef} className="relative">
-      {/* Trigger */}
+    <div ref={containerRef} className={`relative ${width}`}>
+      {/* Trigger — fixed width via the `width` prop so the box never resizes
+          between its placeholder and a selected label; label truncates instead. */}
       <button
         type="button"
         disabled={disabled}
         onClick={() => { if (!disabled) setOpen(v => !v); }}
         className={[
-          "flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors whitespace-nowrap",
+          "flex items-center justify-between gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors w-full",
           disabled
             ? "text-gray-300 border-gray-100 bg-gray-50 cursor-not-allowed"
             : value != null
@@ -55,7 +56,7 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
               : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
         ].join(" ")}
       >
-        <span className="max-w-[140px] truncate">
+        <span className="truncate">
           {selectedLabel ?? placeholder}
         </span>
         {value != null ? (
@@ -64,7 +65,7 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
             tabIndex={0}
             onClick={(e) => { e.stopPropagation(); onChange(null); }}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onChange(null); } }}
-            className="ml-0.5 text-bassani-400 hover:text-bassani-700 transition-colors cursor-pointer"
+            className="ml-0.5 text-bassani-400 hover:text-bassani-700 transition-colors cursor-pointer shrink-0"
             aria-label="Clear selection"
           >
             <X size={11} />
@@ -147,7 +148,7 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
 // Category — see ParentCategories.js). Panel stays open on pick so multiple
 // selections can be made in one sitting; selection is best reviewed via the
 // caller's own ChipRow of removable chips below the trigger.
-export function MultiSearchableSelect({ values = [], onChange, options, placeholder, searchPlaceholder, disabled }) {
+export function MultiSearchableSelect({ values = [], onChange, options, placeholder, searchPlaceholder, disabled, width = "w-44" }) {
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState("");
   const containerRef      = useRef(null);
@@ -180,13 +181,13 @@ export function MultiSearchableSelect({ values = [], onChange, options, placehol
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className={`relative ${width}`}>
       <button
         type="button"
         disabled={disabled}
         onClick={() => { if (!disabled) setOpen(v => !v); }}
         className={[
-          "flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors whitespace-nowrap",
+          "flex items-center justify-between gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors w-full",
           disabled
             ? "text-gray-300 border-gray-100 bg-gray-50 cursor-not-allowed"
             : values.length > 0
@@ -194,7 +195,7 @@ export function MultiSearchableSelect({ values = [], onChange, options, placehol
               : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
         ].join(" ")}
       >
-        <span className="max-w-[180px] truncate">
+        <span className="truncate">
           {values.length > 0 ? `${values.length} selected` : placeholder}
         </span>
         <ChevronDown
