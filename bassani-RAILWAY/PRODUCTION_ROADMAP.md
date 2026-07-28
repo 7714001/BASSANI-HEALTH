@@ -995,6 +995,17 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] `validateSAID`/`validateSAPhone` extracted from `PublicRegister.js` into shared `frontend/src/utils/validators.js`; `PublicRegister.js` now imports from there instead of a local definition
 - [x] `CUSTOMER_FIELDS` (`customer_routes.py`) gains `vat`; selecting an existing Odoo vendor partner in Step 1 now auto-fills VAT number (and flips the VAT toggle on) in addition to the name/email/phone/seller_code it already populated — entity type and address are not touched by this autofill (address has no UI in this wizard and stays that way)
 
+#### 7.15 — Product Images — Added 2026-07-28
+
+> Odoo already supports product images natively (`product.template.image_1920`, with smaller sizes auto-derived and auto-resized by Odoo's own ORM on write); the portal had zero image handling anywhere and every product-listing surface was text-only. Images are written straight to Odoo — no new storage system — and thumbnails now appear everywhere a product is listed, not just the admin catalogue.
+
+- [x] `PRODUCT_FIELDS` (`product_routes.py`) gains `image_128` — the base64 128px thumbnail only, never the full-resolution `image_1920`, in any list/read response. Since every product-listing surface (admin Products table, reseller catalogue, quote builder Browse Products drawer, per-row product search) already calls the same `GET /api/products/`, this one field addition makes thumbnails available everywhere at once
+- [x] `POST /{product_id}/image` (multipart) and `DELETE /{product_id}/image` — both `products.manage`-gated, resolve `product.product` → `product_tmpl_id` (image is template-level, same as name/price/category) and write/clear `image_1920`; upload validates content-type (JPEG/PNG/WEBP) and an 8MB cap
+- [x] New shared `ProductThumb` component (`UI.js`) — base64 thumbnail or placeholder, one definition reused by all five surfaces below
+- [x] New `ProductImageModal.js` — upload/replace/remove with a live preview before upload; "Remove Image" uses the standard confirmation-modal pattern (no `window.confirm`)
+- [x] Admin Products table (`Views.js`) gets a new leading thumbnail column; clicking it (`products.manage` only) opens `ProductImageModal`
+- [x] `ResellerCatalog.js`, `ProductPickerDrawer.js` (quote builder Browse Products), and `ProductLineRow.js` (per-row search, quote builder + reseller cart) all show the thumbnail read-only alongside the existing product name
+
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
 - [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
@@ -1011,6 +1022,9 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] A reseller sees and can act on every order/ticket for a customer linked to them, whether they or Bassani staff placed it, and earns commission on all of them; a customer linked today never retroactively generates commission for orders confirmed before the link existed
 - [x] Creating a Sole Proprietor sales agent shows ID Number instead of Company Reg Number, requires a valid 13-digit SA ID, and saves correctly; creating/editing a sales agent with no entity type selected behaves identically to before this change
 - [x] Selecting a linked Odoo vendor partner in the Sales Agent wizard with a VAT number populates the VAT toggle and number automatically
+- [x] Uploading an image on a product writes it to Odoo's `product.template.image_1920` and it appears in Odoo's own product form
+- [x] A product's thumbnail shows up on the admin Products table, reseller catalogue, quote builder Browse Products drawer, and per-row product search without a page reload after upload
+- [x] Removing a product's image reverts all four surfaces to the placeholder
 
 ---
 

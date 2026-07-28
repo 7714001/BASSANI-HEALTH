@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, fmtR, parseDisplayName } from "../components/UI";
+import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 
 const stockColor = (qty) =>
@@ -145,22 +145,25 @@ export default function ResellerCatalog() {
                 // is selected, repeating its code as a chip on every row is just noise.
                 const groups = (subCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
                 return (
-                  <div>
-                    <p className="font-medium text-gray-900">{base}</p>
-                    {groups.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-0.5">
-                        {groups.map((g, i) => (
-                          <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <p className="font-mono text-[10px] text-gray-400">{p.default_code || "—"}</p>
-                      {minQty > 0 && (
-                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">
-                          Min. {minQty} units
-                        </span>
+                  <div className="flex items-center gap-2.5">
+                    <ProductThumb product={p} size="sm" />
+                    <div>
+                      <p className="font-medium text-gray-900">{base}</p>
+                      {groups.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {groups.map((g, i) => (
+                            <span key={i} className="inline-block text-[10px] bg-bassani-50 text-bassani-700 rounded px-1.5 py-0.5 font-medium leading-none">{g}</span>
+                          ))}
+                        </div>
                       )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="font-mono text-[10px] text-gray-400">{p.default_code || "—"}</p>
+                        {minQty > 0 && (
+                          <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">
+                            Min. {minQty} units
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

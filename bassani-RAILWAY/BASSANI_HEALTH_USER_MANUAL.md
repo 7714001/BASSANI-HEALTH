@@ -1296,6 +1296,8 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 **Adding/editing products:** Products are managed in Odoo and synced automatically to the portal. Do not use the portal to create or edit products — use Odoo directly so all pricing, tax, and stock configurations are correct. The portal reflects Odoo as the source of truth.
 
+**Product images:** The one exception to the rule above. Click a product's thumbnail (leftmost column) to open the image manager — upload a JPEG, PNG, or WEBP (max 8MB), or remove the current image. The image is written directly to Odoo, so it also appears on the product there. The thumbnail updates immediately across the whole portal: the Products table, the reseller catalogue, the quote builder's product picker, and per-row product search all show it. Products with no image show a placeholder icon instead.
+
 **GS1 pharmaceutical labels:** Products with a valid GTIN barcode (set in Odoo's barcode field or assigned from the GTIN Pool) show a small **GS1** badge button in the Barcode column. Clicking it opens the label printing modal. You can enter the batch/lot number, expiry date, and starting serial number, choose Unit label (GS1 DataMatrix, 57×32mm), Carton label (GS1-128, 100×50mm), or both, set the quantity, select a Zebra printer, and click **Print to Zebra**. A live preview of the label renders in the modal as you type. If no Zebra printer is configured, use **Print via browser** to print to any connected printer. Printers are configured in **Settings → Label Printers**. Note: GTINs must be officially registered with GS1 South Africa before labels can be used on product dispatched to pharmacy — dummy GTINs may be used for setup and testing.
 
 **Set GTIN / Barcode:** The Barcode column shows either the current barcode value or a **+ Set GTIN** link. Clicking it opens the barcode manager modal, which handles all barcode operations in one place:
@@ -1854,6 +1856,7 @@ Sales agents are the people who sell Bassani Health products to customers on beh
 Go to **Products** to browse the Bassani Health product catalog. This is a read-only view showing only the products that Bassani admin has made available to resellers.
 
 Each product shows:
+- A product image, where Bassani admin has uploaded one (a placeholder icon shows otherwise)
 - Product name and SKU
 - Category
 - Sale price (the price you order at)

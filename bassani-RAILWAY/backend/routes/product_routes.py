@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from typing import Optional
 from pydantic import BaseModel
-from auth import get_current_user, require_admin
+import base64
+from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
 from middleware.audit import audit_log
@@ -66,7 +67,11 @@ PRODUCT_FIELDS = [
     "lst_price", "standard_price", "uom_id",
     "qty_available", "virtual_available", "taxes_id",
     "description", "description_sale", "active", "product_tmpl_id", "barcode",
+    "image_128",
 ]
+
+IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def _attach_tax_rates(odoo, products: list, company_id: Optional[int] = None) -> None:
@@ -646,6 +651,72 @@ async def set_product_barcode(
             after={"barcode": new_val},
         )
         return {"success": True, "barcode": new_val}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.post("/{product_id}/image")
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """
+    Upload/replace a product's image. Writes to product.template.image_1920 —
+    image lives at template level (shared across variants), same as name/price/
+    category. Odoo's ORM auto-derives and resizes image_1024/512/256/128 on write.
+    """
+    if file.content_type not in IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=422, detail="Only JPEG, PNG, or WEBP images are accepted")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=422, detail="Image must be under 8MB")
+
+    odoo = get_odoo_client()
+    try:
+        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id", "name"])
+        if not variants:
+            raise HTTPException(status_code=404, detail="Product not found")
+        template_id = variants[0]["product_tmpl_id"][0]
+        b64 = base64.b64encode(contents).decode()
+        odoo.write("product.template", [template_id], {"image_1920": b64})
+        thumb = odoo.read("product.product", [product_id], fields=["image_128"])
+        await audit_log(
+            "product.image_updated", "product", product_id,
+            entity_label=variants[0].get("name", ""),
+            user=current_user,
+            after={"filename": file.filename, "size_bytes": len(contents)},
+        )
+        return {"success": True, "image_128": thumb[0].get("image_128") if thumb else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+@router.delete("/{product_id}/image")
+async def remove_product_image(
+    product_id: int,
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """Clear a product's image in Odoo."""
+    odoo = get_odoo_client()
+    try:
+        variants = odoo.read("product.product", [product_id], fields=["product_tmpl_id", "name"])
+        if not variants:
+            raise HTTPException(status_code=404, detail="Product not found")
+        template_id = variants[0]["product_tmpl_id"][0]
+        odoo.write("product.template", [template_id], {"image_1920": False})
+        await audit_log(
+            "product.image_removed", "product", product_id,
+            entity_label=variants[0].get("name", ""),
+            user=current_user,
+        )
+        return {"success": True}
     except HTTPException:
         raise
     except Exception as e:

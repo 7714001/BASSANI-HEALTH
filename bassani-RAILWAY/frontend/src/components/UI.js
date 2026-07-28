@@ -808,6 +808,26 @@ export function Badge({ status, label, color, children }) {
   return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${style}`}>{text}</span>;
 }
 
+// ── Product thumbnail ────────────────────────────────────────────────────────
+// Renders a product's image_128 (base64, from PRODUCT_FIELDS) or a placeholder.
+// Shared by the admin Products table, ResellerCatalog, ProductPickerDrawer, and
+// ProductLineRow so the placeholder fallback only lives in one place.
+const THUMB_SIZES = { xs: "w-6 h-6", sm: "w-9 h-9", md: "w-12 h-12" };
+export function ProductThumb({ product, size = "sm", className = "" }) {
+  const dim = THUMB_SIZES[size] || THUMB_SIZES.sm;
+  if (product?.image_128) {
+    return (
+      <img src={`data:image/png;base64,${product.image_128}`} alt=""
+        className={`${dim} rounded-lg object-cover border border-gray-100 shrink-0 ${className}`} />
+    );
+  }
+  return (
+    <div className={`${dim} rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 border border-gray-100 shrink-0 ${className}`}>
+      <Package size={14} />
+    </div>
+  );
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 export function StatCard({ label, value, sub, accent }) {
   return (

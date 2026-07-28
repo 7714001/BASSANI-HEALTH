@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Search, X, Package, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import api from "../api";
-import { fmtR, parseDisplayName } from "./UI";
+import { fmtR, parseDisplayName, ProductThumb } from "./UI";
 
 // ── Searchable dropdown select ────────────────────────────────────────────────
 // Exported for reuse anywhere a category/variant-style filtered dropdown is
@@ -480,7 +480,9 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
                     key={p.id}
                     className="flex items-start justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors"
                   >
-                    <div className="min-w-0 flex-1 pr-4">
+                    <div className="flex items-start gap-3 min-w-0 flex-1 pr-4">
+                    <ProductThumb product={p} size="sm" className="mt-0.5" />
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-gray-900 leading-tight">{base}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {groups.map((g, i) => (
@@ -502,6 +504,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
                           <span className="text-[10px] text-gray-400">+{p.tax_rate}% VAT</span>
                         )}
                       </div>
+                    </div>
                     </div>
 
                     <div className="flex flex-col items-end gap-2 shrink-0">

@@ -10,11 +10,12 @@ import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, Hist
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import GTINPickerModal from "../components/GTINPickerModal";
+import ProductImageModal from "../components/ProductImageModal";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
-  LoadingState, EmptyState, Badge, fmtR, fmtDate, parseDisplayName,
+  LoadingState, EmptyState, Badge, ProductThumb, fmtR, fmtDate, parseDisplayName,
 } from "../components/UI";
 import { validateSAID } from "../utils/validators";
 
@@ -76,6 +77,7 @@ export function Products() {
   const [archiveConfirm, setArchiveConfirm] = useState(null);
   const [gs1Product,      setGs1Product     ] = useState(null);
   const [gtinPickerProduct, setGtinPickerProduct] = useState(null);
+  const [imageModalProduct, setImageModalProduct] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
 
@@ -316,6 +318,13 @@ export function Products() {
         </div>
         <DataTable
           columns={[
+            { id:"image", header:"", enableSorting:false, meta:{className:"w-14"}, cell:({ row:{original:p} }) =>
+              can("products.manage") ? (
+                <button onClick={e=>{e.stopPropagation();setImageModalProduct(p);}} title="Manage product image" className="block hover:opacity-75 transition-opacity">
+                  <ProductThumb product={p} size="sm" />
+                </button>
+              ) : <ProductThumb product={p} size="sm" />
+            },
             { accessorKey:"name", header:"Product / SKU", cell:({ row:{original:p} }) => {
               const { base, groups } = parseDisplayName(p.display_name || p.name || "");
               return (
@@ -586,6 +595,18 @@ export function Products() {
               p.id === gtinPickerProduct.id ? { ...p, barcode: gtin || "" } : p
             ));
             setGtinPickerProduct(null);
+          }}
+        />
+      )}
+      {imageModalProduct && (
+        <ProductImageModal
+          product={imageModalProduct}
+          onClose={() => setImageModalProduct(null)}
+          onUpdated={(image128) => {
+            setProducts(prev => prev.map(p =>
+              p.id === imageModalProduct.id ? { ...p, image_128: image128 } : p
+            ));
+            setImageModalProduct(null);
           }}
         />
       )}

@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import api from "../api";
-import { fmtR, parseDisplayName } from "./UI";
+import { fmtR, parseDisplayName, ProductThumb } from "./UI";
 
 export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, warehouseId, isSample }) {
   const [prodSearch, setProdSearch]     = useState(line._product_label || "");
@@ -169,6 +169,8 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                       title={outOfStock ? "No forecasted stock — cannot add to quote" : undefined}
                       className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors ${outOfStock ? "opacity-50 cursor-not-allowed bg-gray-50" : "hover:bg-bassani-50"}`}
                     >
+                      <div className="flex items-start gap-2 min-w-0">
+                      <ProductThumb product={p} size="xs" className="mt-0.5" />
                       <div className="min-w-0">
                         {(() => {
                           const { base, groups } = parseDisplayName(p.display_name || p.name || "");
@@ -187,6 +189,7 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                         })()}
                         {p.default_code && <p className="text-[10px] font-mono text-gray-400 mt-0.5">{p.default_code}</p>}
                         {p.description_sale && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{p.description_sale}</p>}
+                      </div>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-xs font-semibold text-gray-800">{fmtR(p.list_price)}</p>
