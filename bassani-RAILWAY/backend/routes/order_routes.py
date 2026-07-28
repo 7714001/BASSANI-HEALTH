@@ -10,6 +10,7 @@ from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
 from credit import credit_status
 from routes.settings_routes import get_email_routing
+from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_backorder_alert_internal,
@@ -66,24 +67,21 @@ async def list_orders(
     sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "desc"
     odoo = get_odoo_client()
 
-    allowed_odoo_ids: Optional[list] = None
-
-    # Reseller can only see their own orders
+    # Reseller sees every order for their linked customers, not just ones they
+    # personally placed (Phase 7.13) — ownership of the customer, not who
+    # placed the order, is what determines visibility.
     if current_user.get("role") == "reseller":
         reseller = await col("resellers").find_one(
             {"user_id": current_user["id"]}, NO_ID
         )
         reseller_id = reseller["id"] if reseller else None
-        commission_records = await col("order_commissions").find(
-            {"reseller_id": reseller_id}, NO_ID
-        ).to_list(length=10000)
-        allowed_odoo_ids = [int(r["odoo_order_id"]) for r in commission_records]
-        if not allowed_odoo_ids:
+        owned_partner_ids = await get_owned_partner_ids(reseller_id)
+        if not owned_partner_ids:
             return {"orders": [], "total": 0}
 
     domain = []
-    if allowed_odoo_ids is not None:
-        domain.append(("id", "in", allowed_odoo_ids))
+    if current_user.get("role") == "reseller":
+        domain.append(("commercial_partner_id", "in", list(owned_partner_ids)))
     if status and status != "all":
         domain.append(("state", "=", status))
     if partner_id:
@@ -338,29 +336,21 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
     """Get a single order with line items and commission breakdown."""
     odoo = get_odoo_client()
     try:
-        # Reseller access check — must own this order.
-        # Commission records only exist post-confirmation, so for draft quotes
-        # we fall back to checking the sales ticket's reseller_id.
+        records = odoo.read("sale.order", [order_id], fields=ORDER_FIELDS)
+        if not records:
+            raise HTTPException(status_code=404, detail="Order not found")
+        order = records[0]
+
+        # Reseller access check — must own this order's customer (Phase 7.13:
+        # ownership of the linked customer, not who physically placed the order).
         if current_user.get("role") == "reseller":
             reseller = await col("resellers").find_one(
                 {"user_id": current_user["id"]}, NO_ID
             )
             reseller_id = reseller["id"] if reseller else None
-            comm_check = await col("order_commissions").find_one(
-                {"odoo_order_id": str(order_id), "reseller_id": reseller_id}, NO_ID
-            )
-            if not comm_check:
-                ticket_check = await col("tickets").find_one(
-                    {"type": "sales", "order_id": order_id, "reseller_id": reseller_id},
-                    {"_id": 1},
-                )
-                if not ticket_check:
-                    raise HTTPException(status_code=403, detail="Access denied")
-
-        records = odoo.read("sale.order", [order_id], fields=ORDER_FIELDS)
-        if not records:
-            raise HTTPException(status_code=404, detail="Order not found")
-        order = records[0]
+            partner = order.get("partner_id")
+            if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
+                raise HTTPException(status_code=403, detail="Access denied")
 
         # Fetch partner address + VAT for order view header
         if order.get("partner_id"):
@@ -712,14 +702,13 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         raise HTTPException(status_code=404, detail="Order not found")
     order = orders[0]
 
-    # Reseller access check — same rule as GET /{order_id}
+    # Reseller access check — same rule as GET /{order_id}: must own this
+    # order's customer (Phase 7.13), not have personally placed it.
     if current_user.get("role") == "reseller":
         reseller = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1})
         reseller_id = reseller["id"] if reseller else None
-        allowed = await col("order_commissions").find_one({"odoo_order_id": str(resolved_id), "reseller_id": reseller_id}, {"_id": 1})
-        if not allowed:
-            allowed = await col("tickets").find_one({"type": "sales", "order_id": {"$in": [resolved_id, order_id]}, "reseller_id": reseller_id}, {"_id": 1})
-        if not allowed:
+        partner = order.get("partner_id")
+        if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
             raise HTTPException(status_code=403, detail="Access denied")
 
     # Partner detail
@@ -1097,6 +1086,15 @@ async def create_order(
     except Exception:
         pass  # Non-fatal — keep original partner_id if Odoo call fails
 
+    # Server-side enforcement that a reseller may only place orders for their
+    # own linked customers (Phase 7.13) — previously frontend-filtering only.
+    # Checked against effective_partner_id (post commercial_partner_id
+    # resolution), not the raw submitted id, so ordering against a contact
+    # person under an owned company is never incorrectly rejected.
+    if current_user.get("role") == "reseller":
+        if not await is_partner_owned_by(reseller_profile["id"], effective_partner_id):
+            raise HTTPException(status_code=403, detail="You can only place orders for your own customers")
+
     # Stock check — block the whole order if any line exceeds what's actually
     # available to promise (on-hand minus what's already reserved by other
     # orders), scoped to the resolved warehouse. The cart already disables
@@ -1282,20 +1280,7 @@ async def confirm_order(
     odoo = get_odoo_client()
     warnings: List[str] = []
 
-    # ── Reseller ownership check ───────────────────────────────────────────────
-    # Resellers may only confirm their own quotes (those whose ticket carries their reseller_id).
-    _sales_ticket = await col("tickets").find_one(
-        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1, "is_sample": 1}
-    )
-    if current_user.get("role") == "reseller":
-        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
-        _my_rid = _res_doc["id"] if _res_doc else None
-        if not _my_rid or not _sales_ticket or _sales_ticket.get("reseller_id") != _my_rid:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-    # ── Step 0: Credit check — hard gate unless explicitly overridden ──────────
-    # Unlike the warning at order creation, this blocks: confirming commits to
-    # an invoice, so it's the point where being over limit actually matters.
+    # ── Step 0: Read order — needed by both the ownership check and the credit check ──
     try:
         pre_rows = odoo.read("sale.order", [order_id], fields=["partner_id", "amount_total", "amount_untaxed", "company_id", "warehouse_id", "name"])
     except Exception as e:
@@ -1305,6 +1290,23 @@ async def confirm_order(
     _co = pre_rows[0].get("company_id")
     order_company_id = _co[0] if _co else None
     partner = pre_rows[0].get("partner_id")
+
+    # ── Reseller ownership check ───────────────────────────────────────────────
+    # Resellers may confirm any order for a customer linked to them (Phase 7.13),
+    # not just quotes they personally placed. _sales_ticket is still fetched here
+    # (for is_sample and, further below, packing-board/traceability display).
+    _sales_ticket = await col("tickets").find_one(
+        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1, "is_sample": 1}
+    )
+    if current_user.get("role") == "reseller":
+        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
+        _my_rid = _res_doc["id"] if _res_doc else None
+        if not partner or not await is_partner_owned_by(_my_rid, partner[0]):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # ── Credit check — hard gate unless explicitly overridden ──────────────────
+    # Unlike the warning at order creation, this blocks: confirming commits to
+    # an invoice, so it's the point where being over limit actually matters.
     if partner:
         partner_rows = odoo.read("res.partner", [partner[0]], fields=["credit", "credit_limit"])
         if partner_rows:
@@ -1507,23 +1509,28 @@ async def confirm_order(
         print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
 
     # ── Commission record ─────────────────────────────────────────────────────
-    # For reseller quotes the record was deferred from order creation — create it
-    # now at the first moment the order is financially committed.
-    # (_ticket_reseller_id is already resolved above, before the packing board step.)
-    # commission_eligible is checked here (at confirm time) so that toggling the flag
-    # off only affects orders confirmed after the change — past confirmed orders keep
-    # their records and are included in statements for the months they were placed.
+    # Phase 7.13: credited to whichever reseller the order's customer is
+    # currently linked to (customer_ownership), NOT to whoever physically
+    # placed the order (_ticket_reseller_id — still used above for the
+    # packing-board/traceability display only, never for commission credit).
+    # Resolved fresh right here, at confirm time — the same "resolve now, gate
+    # the insert, never revisit" pattern already used for commission_eligible
+    # below, which is what makes this non-retroactive with zero extra code:
+    # order_commissions records are only ever created going forward, so a
+    # customer linked today can never generate a record for an order that was
+    # already confirmed before the link existed.
     comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
-    if _ticket_reseller_id and not comm_lookup:
+    _owning_reseller_id = await get_owning_reseller_id(partner[0]) if partner else None
+    if _owning_reseller_id and not comm_lookup:
         try:
-            _reseller_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, NO_ID)
+            _reseller_doc = await col("resellers").find_one({"id": _owning_reseller_id}, NO_ID)
             if _reseller_doc and _reseller_doc.get("commission_eligible") is not False:
                 _reseller_name_val = _reseller_doc["name"] if _reseller_doc else ""
                 _cust_name_val = order_data["partner_id"][1] if order_data and order_data.get("partner_id") else ""
                 _order_subtotal = float(pre_rows[0].get("amount_untaxed", 0)) if pre_rows else 0
                 _comm_doc = {
                     "odoo_order_id": str(order_id),
-                    "reseller_id": _ticket_reseller_id,
+                    "reseller_id": _owning_reseller_id,
                     "reseller_name": _reseller_name_val,
                     "customer_partner_id": partner[0] if partner else None,
                     "customer_name": _cust_name_val,
@@ -1534,7 +1541,7 @@ async def confirm_order(
                 }
                 await col("order_commissions").insert_one(_comm_doc)
                 await col("resellers").update_one(
-                    {"id": _ticket_reseller_id},
+                    {"id": _owning_reseller_id},
                     {"$inc": {"total_sales": _order_subtotal}},
                 )
                 comm_lookup = _comm_doc

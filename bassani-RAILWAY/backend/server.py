@@ -284,6 +284,27 @@ async def initialise_users():
     if r.modified_count:
         logger.info("startup_migrated_orders_inbox_other", extra={"count": r.modified_count})
 
+    # Phase 7.13 — customer_ownership becomes the sole reseller access/commission
+    # gate (see backend/ownership.py); these indexes back that. Uniqueness on
+    # odoo_partner_id was previously enforced only at the application layer (a
+    # find_one-before-insert_one check in reseller_routes.py/customer_routes.py/
+    # onboarding_routes.py), never at the DB level — self-verify for existing
+    # duplicates before adding the unique constraint rather than risk a startup
+    # crash on data that predates this index.
+    _dupe_check = await col("customer_ownership").aggregate([
+        {"$group": {"_id": "$odoo_partner_id", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+    ]).to_list(length=50)
+    if _dupe_check:
+        logger.warning(
+            "startup_customer_ownership_duplicates_found — unique index skipped, resolve manually",
+            extra={"count": len(_dupe_check), "partner_ids": [d["_id"] for d in _dupe_check]},
+        )
+    else:
+        await col("customer_ownership").create_index([("odoo_partner_id", 1)], unique=True)
+    await col("customer_ownership").create_index([("reseller_id", 1)])
+    await col("tickets").create_index([("customer_id", 1)])
+
 
 def _make_inbox_indexes(collection: str):
     """Return the standard index list for any inbox collection."""

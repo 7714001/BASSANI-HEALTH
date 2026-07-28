@@ -29,6 +29,7 @@ from database import col, NO_ID
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
 from services.email_service import send_ticket_assigned
+from ownership import get_owned_partner_ids, is_partner_owned_by
 
 logger = logging.getLogger(__name__)
 
@@ -41,26 +42,54 @@ class TicketConnectionManager:
     """Manages active WebSocket connections for real-time ticket push notifications.
 
     Staff (any non-reseller role) receive every update.
-    Reseller connections receive only updates scoped to their own tickets.
+    Reseller connections receive only updates for tickets belonging to a
+    customer linked to them (Phase 7.13 — ownership-based, matching the REST
+    endpoints; a reseller connection caches its owned-partner-id set at
+    connect time rather than re-querying Mongo on every single broadcast for
+    every connected client, which wouldn't scale with many concurrent
+    reseller connections). The cache is invalidated (re-fetched) whenever
+    that reseller's customer_ownership links change — see refresh_reseller().
     Dead connections are pruned silently on the next broadcast.
+
+    Fixes a pre-existing bug found while rebuilding this for ownership: the
+    old scoping compared a Mongo ObjectId string (from ticket_websocket's
+    `str(reseller_doc["_id"])`) against the reseller's `id` field (a UUID) —
+    two different id spaces that could never match, so reseller connections
+    never actually received a live push, always silently falling back to
+    the next page refresh.
     """
     def __init__(self):
-        self._conns: list[tuple] = []  # (ws, role, reseller_id_str | None)
+        self._conns: list[tuple] = []  # (ws, role, reseller_id | None, owned_partner_ids: set | None)
 
-    def connect(self, ws: WebSocket, role: str, reseller_id: str | None):
+    async def connect(self, ws: WebSocket, role: str, reseller_id: str | None):
         # ws is already accepted by the caller by this point (see
         # ticket_websocket) — accepting here too would raise, since a
         # WebSocket can only be accepted once.
-        self._conns.append((ws, role, reseller_id))
+        owned = await get_owned_partner_ids(reseller_id) if role == "reseller" else None
+        self._conns.append((ws, role, reseller_id, owned))
 
     def disconnect(self, ws: WebSocket):
-        self._conns = [(w, r, rid) for (w, r, rid) in self._conns if w is not ws]
+        self._conns = [c for c in self._conns if c[0] is not ws]
 
-    async def broadcast(self, ticket_id: str, ticket_reseller_id: str | None = None):
+    async def refresh_reseller(self, reseller_id: str | None):
+        """Re-fetch the owned-partner-id cache for any live connection
+        belonging to this reseller — called from every customer_ownership
+        link/unlink/claim/onboarding-approve write site so an already-
+        connected reseller doesn't have to reconnect to see the effect."""
+        if not reseller_id:
+            return
+        updated: list = []
+        for ws, role, rid, owned in self._conns:
+            if role == "reseller" and rid == reseller_id:
+                owned = await get_owned_partner_ids(reseller_id)
+            updated.append((ws, role, rid, owned))
+        self._conns = updated
+
+    async def broadcast(self, ticket_id: str, ticket_customer_id: int | None = None):
         payload = {"type": "ticket_update", "ticket_id": ticket_id}
         dead: list = []
-        for ws, role, reseller_id in list(self._conns):
-            if role != "reseller" or reseller_id == ticket_reseller_id:
+        for ws, role, _rid, owned in list(self._conns):
+            if role != "reseller" or (owned and ticket_customer_id in owned):
                 try:
                     await ws.send_json(payload)
                 except Exception:
@@ -109,10 +138,13 @@ async def ticket_websocket(ws: WebSocket):
     role = user.get("role", "")
     reseller_id: str | None = None
     if role == "reseller":
-        reseller_doc = await col("resellers").find_one({"user_id": user["id"]}, {"_id": 1})
-        reseller_id = str(reseller_doc["_id"]) if reseller_doc else None
+        # Use the reseller's own `id` field (matches customer_ownership.reseller_id
+        # and every REST-side lookup) — not the Mongo _id ObjectId, which was the
+        # pre-existing bug described on TicketConnectionManager above.
+        reseller_doc = await col("resellers").find_one({"user_id": user["id"]}, {"id": 1, "_id": 0})
+        reseller_id = reseller_doc["id"] if reseller_doc else None
 
-    ticket_manager.connect(ws, role, reseller_id)
+    await ticket_manager.connect(ws, role, reseller_id)
     try:
         await ws.send_json({"type": "connected"})
         while True:
@@ -252,9 +284,22 @@ async def _reseller_id_for_user(user: dict) -> Optional[str]:
     return doc["id"] if doc else None
 
 
-def _assert_reseller_owns_ticket(ticket: dict, reseller_id: str) -> None:
-    """Raise 403 if this ticket does not belong to the given reseller."""
-    if ticket.get("reseller_id") != reseller_id:
+def _ticket_customer_partner_id(ticket: dict) -> Optional[int]:
+    """The Odoo partner id customer_ownership is actually keyed on for this
+    ticket. Order-linked tickets store an already commercial_partner_id-
+    resolved company id directly in customer_id (order_routes.py resolves it
+    before the ticket is even created). Manually-created tickets
+    (POST /api/tickets) may instead have customer_id pointing at a contact
+    person, with the resolved parent company separately in
+    customer_company_id — prefer that field when present."""
+    return ticket.get("customer_company_id") or ticket.get("customer_id")
+
+
+async def _assert_reseller_owns_ticket(ticket: dict, reseller_id: str) -> None:
+    """Raise 403 unless the reseller owns this ticket's customer (Phase 7.13:
+    ownership-based, not who-placed-it — ticket.reseller_id is kept for
+    traceability display only, no longer used as an access gate)."""
+    if not await is_partner_owned_by(reseller_id, _ticket_customer_partner_id(ticket)):
         raise HTTPException(status_code=403, detail="Access denied")
 
 
@@ -378,10 +423,21 @@ async def list_tickets(
         query["exit_status"] = exit_status
 
     if role == "reseller":
+        # Phase 7.13: a reseller sees every ticket for a customer linked to
+        # them, not just tickets they personally placed. customer_id is
+        # usually already the company-level id (order-linked tickets always
+        # resolve it that way at creation); the customer_company_id clause
+        # covers manually-created tickets where a contact person was picked.
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             return {"tickets": [], "total": 0}
-        query["reseller_id"] = rid
+        owned_ids = list(await get_owned_partner_ids(rid))
+        if not owned_ids:
+            return {"tickets": [], "total": 0}
+        query["$or"] = [
+            {"customer_id": {"$in": owned_ids}},
+            {"customer_company_id": {"$in": owned_ids}},
+        ]
     elif reseller_id and (current_user.get("is_super_admin") or role in ADMIN_ROLES):
         # Admin drilling into a specific reseller's pipeline (e.g. from Reseller Profile page)
         query["reseller_id"] = reseller_id
@@ -452,7 +508,7 @@ async def get_ticket(
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
-        _assert_reseller_owns_ticket(ticket, rid)
+        await _assert_reseller_owns_ticket(ticket, rid)
 
     # Full sync with Odoo on every detail fetch. Odoo is the financial source of truth.
     # Handles three cases: cancellation, and forward-advancement through the portal pipeline
@@ -486,8 +542,7 @@ async def get_ticket(
                     )
                     ticket["odoo_order_state"] = live_state
                     ticket["exit_status"]      = "cancelled"
-                    rid = ticket.get("reseller_id")
-                    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+                    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
                 else:
                     set_fields: dict = {"updated_at": now}
@@ -598,8 +653,7 @@ async def get_ticket(
                             mongo_op["$push"] = {"stage_history": {"$each": history}}
                         await col("tickets").update_one({"_id": oid}, mongo_op)
                         if history:
-                            rid = ticket.get("reseller_id")
-                            await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+                            await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
         except Exception:
             pass  # Non-fatal — stale display is better than a broken detail page
@@ -724,8 +778,7 @@ async def update_ticket_stage(
         after={"status": body.status, "exit_status": body.exit_status},
     )
     await broadcast_monitor_refresh()
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     if _au and _au.get("email"):
         background_tasks.add_task(
             send_ticket_assigned,
@@ -789,8 +842,7 @@ async def confirm_payment(
         "ticket.confirm_payment", "ticket", ticket_id, entity_label=ticket.get("customer_name", ""),
         user=current_user, detail={"payment_state": invoice["payment_state"], "amount_residual": invoice["amount_residual"]},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True, "payment_state": invoice["payment_state"]}
 
 
@@ -817,7 +869,7 @@ async def create_order_from_ticket(
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
-        _assert_reseller_owns_ticket(ticket, rid)
+        await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if ticket.get("order_id"):
@@ -907,8 +959,7 @@ async def create_order_from_ticket(
         user=current_user,
         after={"order_id": odoo_order_id, "status": "quote"},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True, "odoo_order_id": odoo_order_id}
 
 
@@ -933,7 +984,7 @@ async def cancel_order_from_ticket(
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
-        _assert_reseller_owns_ticket(ticket, rid)
+        await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
@@ -990,8 +1041,7 @@ async def cancel_order_from_ticket(
         user=current_user,
         detail={"order_id": order_id, "order_name": order["name"]},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True}
 
 
@@ -1019,7 +1069,7 @@ async def update_order_from_ticket(
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
-        _assert_reseller_owns_ticket(ticket, rid)
+        await _assert_reseller_owns_ticket(ticket, rid)
         if body.customer_id:
             raise HTTPException(status_code=403, detail="Resellers cannot change the customer on a quote")
     if ticket.get("exit_status"):
@@ -1145,8 +1195,7 @@ async def update_order_from_ticket(
         user=current_user,
         after={"order_id": order_id, "line_count": n, **ticket_field_updates},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True, "odoo_order_id": order_id}
 
 
@@ -1169,7 +1218,7 @@ async def send_quote(
         rid = await _reseller_id_for_user(current_user)
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
-        _assert_reseller_owns_ticket(ticket, rid)
+        await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
@@ -1239,8 +1288,7 @@ async def send_quote(
         user=current_user,
         detail={"order_id": order_id, "order_name": order["name"], "email_sent": email_sent},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
     result: dict = {"success": True, "email_sent": email_sent}
     if warning:
@@ -1436,8 +1484,7 @@ async def register_balance_payment(
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
                 "date": body.date, "payment_state": final_state, "amount_residual": final_residual},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual}
 
 
@@ -1713,8 +1760,7 @@ async def admin_override_payment(
         user=current_user,
         detail={"order_id": order_id, "order_name": order_data.get("name"), "override_by": actor},
     )
-    rid = ticket.get("reseller_id")
-    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True}
 
 
@@ -1821,7 +1867,7 @@ async def link_existing_order(
         before={"order_id": None, "status": ticket.get("status")},
         after={"order_id": body.order_id, "status": final_status, "order_name": order["name"]},
     )
-    await ticket_manager.broadcast(ticket_id, ticket.get("reseller_id"))
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
     return {
         "success":    True,
@@ -1902,7 +1948,7 @@ async def reassign_ticket(
         after={"assigned_to": body.assigned_to, "assigned_to_name": new_name},
     )
 
-    await ticket_manager.broadcast(ticket_id, ticket.get("reseller_id"))
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
     # Push notification to new assignee
     background_tasks.add_task(

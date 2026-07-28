@@ -143,7 +143,7 @@ To customise an admin's permissions:
 
 Before any reseller can earn commissions, you need to configure the tier bands. Go to **Commission** → **Tier Settings**.
 
-Commission is calculated as a percentage of the reseller's monthly turnover (excluding cancelled orders). You have full control over the tier structure — add as many tiers as needed, set the turnover brackets, and assign a rate to each.
+Commission is calculated as a percentage of the reseller's monthly turnover (excluding cancelled orders). "Turnover" means every order for a customer linked to that reseller, whether the reseller placed it themselves or Bassani staff took the order directly on the customer's behalf — commission follows the customer relationship, not who happened to click "place order." Linking an existing customer to a reseller only counts their orders from the date of the link onward, never retroactively. You have full control over the tier structure — add as many tiers as needed, set the turnover brackets, and assign a rate to each.
 
 **How to configure tiers:**
 
@@ -1648,6 +1648,8 @@ Customers created through the onboarding wizard are automatically linked to the 
 
 > If the customer is already linked to a different agent, the link will be blocked with a clear error message showing which agent currently owns that account.
 
+> **What linking actually does:** from the moment you link a customer, the agent gets full visibility of every order for that customer — including ones Bassani staff place directly on the customer's behalf — and earns commission on all of it, exactly as if they'd placed every order themselves. This is not retroactive: if the customer already has past orders, the agent does not earn commission on those, only on orders confirmed from the link date forward.
+
 **Unlinking a customer from a sales agent:**
 1. Open the agent's profile
 2. In the **Customers** section, click **Unlink** on the customer row
@@ -1977,11 +1979,11 @@ All applications are listed under **Applications**:
 ### Viewing Customer Profiles
 
 Click any customer under **My Customers** to see their full profile:
-- Their orders placed through you
+- All of their orders, whether you placed them or Bassani staff took the order directly on their behalf
 - Their outstanding invoices and account balance
 - Their account statement (all invoices and credit notes, filterable by date)
 
-> You only see orders that came through you. If the same customer has orders placed directly with Bassani (not through you), those are not shown on your view.
+> Once a customer is linked to you, you see everything for that customer — as if every order had come through you, even ones Bassani staff placed directly (e.g. the customer phoned in). You earn commission on all of it too. The only exception is timing: if an existing customer gets linked to you later, you don't retroactively earn commission on orders they placed before the link — only from the date they became your customer onward.
 
 ### Requesting a Credit Note
 

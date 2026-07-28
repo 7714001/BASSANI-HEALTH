@@ -49,9 +49,9 @@ The portal is the single interface through which all commercial operations are m
 A reseller partner logs into the portal and sees their own workspace:
 
 - **Product catalogue** — only the products Bassani has enabled for resellers, with real-time stock figures from the warehouse, browsable by clean, Bassani-defined categories (e.g. "Flower", a rotating "Specials" selection) rather than the underlying inventory system's own category names. Where Bassani has set a minimum order quantity on a product, this is displayed on the product card and enforced when the reseller builds their order.
-- **Customer management** — their onboarded customers, each with full account history, outstanding invoices, and account statements. Onboarding new customers goes through a structured five-step application process with mandatory documentation, reviewed and approved by Bassani admin. The address step uses Google Maps-powered autocomplete restricted to South African addresses, ensuring accurate address capture without manual typing errors.
+- **Customer management** — their onboarded customers, each with full account history, outstanding invoices, and account statements. This includes every order for that customer, not just ones the reseller personally placed — if Bassani staff take an order directly from a linked customer's phone call, it shows up on the reseller's view exactly as if they'd placed it themselves. Onboarding new customers goes through a structured five-step application process with mandatory documentation, reviewed and approved by Bassani admin. The address step uses Google Maps-powered autocomplete restricted to South African addresses, ensuring accurate address capture without manual typing errors.
 - **Order placement** — select a customer, build an order from the catalogue, submit. The system checks stock availability, customer credit limits, and whether a valid Section 21 authorisation exists for controlled substances, before the order is accepted.
-- **Commission dashboard** — monthly statements showing turnover, tier rate, and projected commission. Resellers can dispute statements or track payment history without calling Bassani.
+- **Commission dashboard** — monthly statements showing turnover, tier rate, and projected commission. Commission is earned on every order for a linked customer, regardless of who placed it, so a reseller is never short-changed for business Bassani staff helped close on their behalf. Linking an existing customer to a reseller only counts orders from the link date forward, never retroactively. Resellers can dispute statements or track payment history without calling Bassani.
 
 ### For the Sales Team
 
@@ -290,6 +290,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Capability | Status |
 |---|---|
 | Sales Agent portal — product catalogue, order placement, commission (eligibility-gated per agent) | Live |
+| Customer-linked order visibility and commission — a reseller sees and earns commission on every order for a customer linked to them, whether they or Bassani staff placed it; linking an existing customer never retroactively credits commission for that customer's past orders | Live |
 | Reseller quote flow — resellers build draft quotes via cart, manage them in My Quotes, edit/send/confirm; draft quotes visible to Bassani staff immediately so they can assign, track, and confirm on the reseller's behalf if needed | Live |
 | Minimum order quantities (MOQ) — per product, enforced in reseller order cart | Live |
 | Parent Categories — admin defines clean, Bassani-controlled category groupings for the reseller catalogue and order cart (e.g. "Flower" drilling down into Indoor/Exotic/Greendoor/Greenhouse, "Vapes" into its two brands, or a hand-picked rotating "Specials" selection), independent of the inventory system's own category names, which stay unchanged for internal staff | Live |

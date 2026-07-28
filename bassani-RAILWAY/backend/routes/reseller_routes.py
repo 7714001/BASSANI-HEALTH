@@ -8,6 +8,7 @@ from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
 from services.email_service import send_welcome_email
+from routes.ticket_routes import ticket_manager
 
 router = APIRouter(prefix="/api/resellers", tags=["resellers"])
 
@@ -506,6 +507,7 @@ async def link_customer_to_reseller(
         entity_label=records[0]["name"], user=current_user,
         detail={"odoo_partner_id": body.odoo_partner_id},
     )
+    await ticket_manager.refresh_reseller(reseller_id)
     return {"success": True, "customer_name": records[0]["name"]}
 
 
@@ -540,6 +542,7 @@ async def unlink_customer_from_reseller(
         entity_label=customer_name, user=current_user,
         detail={"odoo_partner_id": odoo_partner_id},
     )
+    await ticket_manager.refresh_reseller(reseller_id)
     return {"success": True}
 
 

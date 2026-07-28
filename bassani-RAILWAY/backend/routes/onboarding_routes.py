@@ -17,6 +17,7 @@ from services.email_service import (
 )
 from services.r2_client import r2_put, r2_delete, r2_presign, r2_get
 from config import get_settings as _get_settings
+from routes.ticket_routes import ticket_manager
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -1416,6 +1417,7 @@ async def approve_application(
         "created_by_username": current_user.get("username", ""),
         "onboarding_ref":      app_id,
     })
+    await ticket_manager.refresh_reseller(app["reseller_id"])
 
     # Transfer application docs to customer_documents by reference — same R2 keys,
     # no byte copy. Works for both portal-wizard and inbox-sourced applications.
@@ -1516,6 +1518,7 @@ async def approve_application_link(
         "created_by_username": current_user.get("username", ""),
         "onboarding_ref":      app_id,
     })
+    await ticket_manager.refresh_reseller(app["reseller_id"])
 
     # Transfer application docs to customer_documents by reference (same R2 keys, no byte copy)
     for doc in (app.get("documents") or []):

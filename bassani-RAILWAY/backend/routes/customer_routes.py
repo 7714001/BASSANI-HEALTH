@@ -10,6 +10,7 @@ from database import col, NO_ID
 from credit import credit_status
 from services.r2_client import r2_put, r2_delete, r2_presign
 from middleware.audit import audit_log
+from routes.ticket_routes import ticket_manager
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -225,7 +226,9 @@ async def customer_profile(
     Customer 360 view — aggregates Odoo orders + invoices + MongoDB ownership.
     Admins can view any customer; resellers can only view their own customers.
     """
-    reseller_order_ids: Optional[list] = None
+    # Phase 7.13: once access is granted (customer linked to this reseller),
+    # the reseller sees every order for this customer, not just ones they
+    # personally placed — no further narrowing of the order list below.
     if current_user.get("role") == "reseller":
         reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
         if not reseller:
@@ -236,11 +239,6 @@ async def customer_profile(
         })
         if not ownership:
             raise HTTPException(status_code=403, detail="Access denied")
-        # Only show orders this reseller placed
-        comm_records = await col("order_commissions").find(
-            {"reseller_id": reseller["id"]}, {"odoo_order_id": 1, "_id": 0}
-        ).to_list(5000)
-        reseller_order_ids = [int(r["odoo_order_id"]) for r in comm_records if r.get("odoo_order_id")]
 
     from datetime import date
     odoo = get_odoo_client()
@@ -255,20 +253,16 @@ async def customer_profile(
             customer[k] = None
     _attach_credit_hold([customer])
 
-    # Orders — resellers see only what they placed; admins see everything
-    if reseller_order_ids is not None and not reseller_order_ids:
-        all_orders = []  # reseller exists but has placed no orders
-    else:
-        order_domain = [("partner_id", "=", customer_id), ("state", "not in", ["cancel"])]
-        if reseller_order_ids:
-            order_domain.append(("id", "in", reseller_order_ids))
-        all_orders = odoo.search_read(
-            "sale.order",
-            domain=order_domain,
-            fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "invoice_status"],
-            limit=2000,
-            order="date_order desc",
-        )
+    # Orders — every order for this customer, same for resellers and admins
+    # once access is granted above (Phase 7.13).
+    order_domain = [("partner_id", "=", customer_id), ("state", "not in", ["cancel"])]
+    all_orders = odoo.search_read(
+        "sale.order",
+        domain=order_domain,
+        fields=["id", "name", "date_order", "amount_untaxed", "amount_total", "state", "invoice_status"],
+        limit=2000,
+        order="date_order desc",
+    )
 
     # Stats
     this_month = date.today().replace(day=1).isoformat()
@@ -619,6 +613,8 @@ async def create_customer(
             "created_at":           datetime.now(timezone.utc),
             "created_by_username":  current_user.get("username", ""),
         })
+        if reseller:
+            await ticket_manager.refresh_reseller(reseller["id"])
 
     # Persist staged onboarding documents into customer_documents
     for doc in (customer.documents or []):
@@ -672,6 +668,8 @@ async def claim_customer(
         "created_by_username": current_user.get("username", ""),
         "claimed":             True,
     })
+    if reseller:
+        await ticket_manager.refresh_reseller(reseller["id"])
     return {"success": True, "customer_name": records[0]["name"]}
 
 
