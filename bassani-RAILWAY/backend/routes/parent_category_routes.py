@@ -68,6 +68,10 @@ class ParentCategoryPreviewRequest(BaseModel):
     product_ids: List[int] = []
 
 
+class CategoryMappingUpdate(BaseModel):
+    target_id: Optional[str] = None  # parent_categories doc id (top-level or child), or null to unassign
+
+
 def _serialize(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),
@@ -303,5 +307,54 @@ async def delete_parent_category(
         entity_label=doc.get("name", ""),
         user=current_user,
         before=_serialize(doc),
+    )
+    return {"success": True}
+
+
+@router.put("/category-mapping/{odoo_category_id}")
+async def set_category_mapping(
+    odoo_category_id: int,
+    body: CategoryMappingUpdate,
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """Bulk-setup tool (the Category Mapping page): assign a single Odoo
+    category directly to a Parent Category or one of its sub-categories, in
+    one action. This is a MOVE, not an add — the category is removed from
+    every doc it currently belongs to before being added to the new target,
+    so the bulk table's one-category-has-one-home mental model always holds
+    even though the underlying schema still allows many-to-many (used by the
+    per-category edit modal's hand-pick flow, e.g. Specials)."""
+    target_oid = None
+    if body.target_id:
+        try:
+            target_oid = ObjectId(body.target_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid target category")
+        target_doc = await col("parent_categories").find_one({"_id": target_oid})
+        if not target_doc:
+            raise HTTPException(status_code=400, detail="Target category not found")
+
+    previous_docs = await col("parent_categories").find({"odoo_category_ids": odoo_category_id}).to_list(None)
+    previous_ids = [str(d["_id"]) for d in previous_docs]
+    now = datetime.now(timezone.utc)
+
+    if previous_ids:
+        await col("parent_categories").update_many(
+            {"odoo_category_ids": odoo_category_id},
+            {"$pull": {"odoo_category_ids": odoo_category_id}, "$set": {"updated_by": current_user["username"], "updated_at": now}},
+        )
+    if target_oid:
+        await col("parent_categories").update_one(
+            {"_id": target_oid},
+            {"$addToSet": {"odoo_category_ids": odoo_category_id}, "$set": {"updated_by": current_user["username"], "updated_at": now}},
+        )
+
+    await audit_log(
+        action="parent_category.category_mapped",
+        entity_type="odoo_category",
+        entity_id=str(odoo_category_id),
+        entity_label=str(odoo_category_id),
+        user=current_user,
+        detail={"from": previous_ids, "to": body.target_id},
     )
     return {"success": True}
