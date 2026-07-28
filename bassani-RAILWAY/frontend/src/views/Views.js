@@ -16,6 +16,15 @@ import {
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
   LoadingState, EmptyState, Badge, fmtR, fmtDate, parseDisplayName,
 } from "../components/UI";
+import { validateSAID } from "../utils/validators";
+
+const ENTITY_TYPES = [
+  { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
+  { value: "Close Corporation (CC)",      label: "Close Corporation (CC)"      },
+  { value: "Sole Proprietor",             label: "Sole Proprietor"             },
+  { value: "Partnership",                 label: "Partnership"                 },
+  { value: "Other",                       label: "Other"                       },
+];
 
 
 const MOVE_TYPE_META = {
@@ -1452,7 +1461,7 @@ export function Orders() {
 export function Resellers() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", entity_type:"", entity_type_other:"", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -1467,12 +1476,15 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,              setEditModal             ] = useState(false);
   const [editingId,              setEditingId             ] = useState(null);
-  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:null, warehouse_id:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:null, warehouse_id:"", entity_type:"", entity_type_other:"", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
   const [editSelectedCustomer,   setEditSelectedCustomer  ] = useState(null);
   const [saving,                 setSaving                ] = useState(false);
   const [editSaving,             setEditSaving            ] = useState(false);
 
   const [rStep, setRStep] = useState(1);
+
+  const isSoleProp     = form.entity_type === "Sole Proprietor";
+  const isEditSoleProp = editForm.entity_type === "Sole Proprietor";
 
   const load = async () => {
     setLoading(true);
@@ -1527,6 +1539,8 @@ export function Resellers() {
       email:       f.email       || c.email        || "",
       phone:       f.phone       || c.phone        || "",
       seller_code: f.seller_code || c.ref          || "",
+      vat_number:     c.vat ? c.vat : f.vat_number,
+      vat_registered: c.vat ? true : f.vat_registered,
     }));
   };
 
@@ -1550,6 +1564,7 @@ export function Resellers() {
       commission_eligible: r.commission_eligible !== false,
       odoo_partner_id: r.odoo_partner_id || null,
       warehouse_id: r.warehouse_id || "",
+      entity_type: r.entity_type || "", entity_type_other: r.entity_type_other || "", id_number: r.id_number || "",
       company_reg_number: r.company_reg_number || "",
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
       bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
@@ -1572,7 +1587,12 @@ export function Resellers() {
     setCustDropdownOpen(false);
     setCustomers([]);
     setCustomerSearch("");
-    setEditForm(f => ({ ...f, odoo_partner_id: c.id }));
+    setEditForm(f => ({
+      ...f,
+      odoo_partner_id: c.id,
+      vat_number:     c.vat ? c.vat : f.vat_number,
+      vat_registered: c.vat ? true : f.vat_registered,
+    }));
   };
 
   const editClearCustomer = () => {
@@ -1584,6 +1604,11 @@ export function Resellers() {
 
   const saveEdit = async () => {
     if (!editForm.name) return toast.error("Name required");
+    if (editForm.entity_type === "Other" && !editForm.entity_type_other.trim()) return toast.error("Please specify the entity type");
+    if (isEditSoleProp) {
+      if (!editForm.id_number.trim()) return toast.error("ID Number is required for a Sole Proprietor");
+      if (!validateSAID(editForm.id_number.trim())) return toast.error("Must be a valid 13-digit South African ID number");
+    }
     setEditSaving(true);
     try {
       const payload = { ...editForm };
@@ -1601,6 +1626,10 @@ export function Resellers() {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+    if (isSoleProp) {
+      if (!form.id_number.trim()) return toast.error("ID Number is required for a Sole Proprietor");
+      if (!validateSAID(form.id_number.trim())) return toast.error("Must be a valid 13-digit South African ID number");
+    }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -1789,6 +1818,21 @@ export function Resellers() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormGroup label="Business Name" required><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} autoFocus /></FormGroup>
                 <FormGroup label="Type"><Select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
+                <FormGroup label="Legal Entity Type">
+                  <Select value={form.entity_type} onChange={e=>{
+                    const v = e.target.value;
+                    setForm(f=>({ ...f, entity_type: v, entity_type_other: "",
+                      ...(v === "Sole Proprietor" ? { company_reg_number: "" } : { id_number: "" }) }));
+                  }}>
+                    <option value="">— Not specified —</option>
+                    {ENTITY_TYPES.map(({value,label})=><option key={value} value={value}>{label}</option>)}
+                  </Select>
+                </FormGroup>
+                {form.entity_type === "Other" && (
+                  <FormGroup label="Please specify entity type">
+                    <Input value={form.entity_type_other} onChange={e=>setForm({...form,entity_type_other:e.target.value})} placeholder="e.g. Non-profit organisation" />
+                  </FormGroup>
+                )}
                 <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
                 <FormGroup label="Contact Person"><Input value={form.contact_person} onChange={e=>setForm({...form,contact_person:e.target.value})} /></FormGroup>
                 <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
@@ -1806,6 +1850,7 @@ export function Resellers() {
                 <BtnPrimary onClick={() => {
                   if (!form.name) return toast.error("Business name is required");
                   if (!form.seller_code) return toast.error("Seller code is required");
+                  if (form.entity_type === "Other" && !form.entity_type_other.trim()) return toast.error("Please specify the entity type");
                   setRStep(3);
                 }}>Next →</BtnPrimary>
               </div>
@@ -1842,9 +1887,15 @@ export function Resellers() {
               <div>
                 <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <FormGroup label="Company Reg Number">
-                    <Input value={form.company_reg_number} onChange={e=>setForm({...form,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
-                  </FormGroup>
+                  {isSoleProp ? (
+                    <FormGroup label="ID Number" required>
+                      <Input value={form.id_number} onChange={e=>setForm({...form,id_number:e.target.value})} placeholder="8001015009087" maxLength={13} />
+                    </FormGroup>
+                  ) : (
+                    <FormGroup label="Company Reg Number">
+                      <Input value={form.company_reg_number} onChange={e=>setForm({...form,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
+                    </FormGroup>
+                  )}
                   <div className="space-y-2">
                     <FormGroup label="VAT">
                       <label className="flex items-center gap-2 cursor-pointer h-9">
@@ -1945,6 +1996,21 @@ export function Resellers() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <FormGroup label="Business Name" required><Input value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></FormGroup>
             <FormGroup label="Type"><Select value={editForm.type} onChange={e=>setEditForm({...editForm,type:e.target.value})}>{["Distributor","Agent","Broker"].map(t=><option key={t}>{t}</option>)}</Select></FormGroup>
+            <FormGroup label="Legal Entity Type">
+              <Select value={editForm.entity_type} onChange={e=>{
+                const v = e.target.value;
+                setEditForm(f=>({ ...f, entity_type: v, entity_type_other: "",
+                  ...(v === "Sole Proprietor" ? { company_reg_number: "" } : { id_number: "" }) }));
+              }}>
+                <option value="">— Not specified —</option>
+                {ENTITY_TYPES.map(({value,label})=><option key={value} value={value}>{label}</option>)}
+              </Select>
+            </FormGroup>
+            {editForm.entity_type === "Other" && (
+              <FormGroup label="Please specify entity type">
+                <Input value={editForm.entity_type_other} onChange={e=>setEditForm({...editForm,entity_type_other:e.target.value})} placeholder="e.g. Non-profit organisation" />
+              </FormGroup>
+            )}
             <FormGroup label="Contact Person"><Input value={editForm.contact_person} onChange={e=>setEditForm({...editForm,contact_person:e.target.value})} /></FormGroup>
             <FormGroup label="Email"><Input value={editForm.email} onChange={e=>setEditForm({...editForm,email:e.target.value})} /></FormGroup>
             <FormGroup label="Phone"><Input value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})} /></FormGroup>
@@ -1958,9 +2024,15 @@ export function Resellers() {
 
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <FormGroup label="Company Reg Number">
-              <Input value={editForm.company_reg_number} onChange={e=>setEditForm({...editForm,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
-            </FormGroup>
+            {isEditSoleProp ? (
+              <FormGroup label="ID Number" required>
+                <Input value={editForm.id_number} onChange={e=>setEditForm({...editForm,id_number:e.target.value})} placeholder="8001015009087" maxLength={13} />
+              </FormGroup>
+            ) : (
+              <FormGroup label="Company Reg Number">
+                <Input value={editForm.company_reg_number} onChange={e=>setEditForm({...editForm,company_reg_number:e.target.value})} placeholder="e.g. 2023/123456/07" />
+              </FormGroup>
+            )}
             <div className="space-y-2">
               <FormGroup label="VAT">
                 <label className="flex items-center gap-2 cursor-pointer h-9">

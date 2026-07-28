@@ -29,6 +29,9 @@ class ResellerCreate(BaseModel):
     warehouse_id: Optional[int] = None      # Odoo stock.warehouse this agent's orders draw from
     username: str                           # Login username for the portal
     password: str                           # Hashed immediately — never stored plain
+    entity_type: Optional[str] = ""         # Private Company (Pty) Ltd|Close Corporation (CC)|Sole Proprietor|Partnership|Other
+    entity_type_other: Optional[str] = ""
+    id_number: Optional[str] = ""           # SA ID number, Sole Proprietor agents only
     company_reg_number: Optional[str] = ""
     vat_registered: bool = False
     vat_number: Optional[str] = ""
@@ -50,6 +53,9 @@ class ResellerUpdate(BaseModel):
     commission_eligible: Optional[bool] = None
     odoo_partner_id: Optional[int] = None     # nullable — set to link, omit to leave unchanged
     warehouse_id: Optional[int] = None
+    entity_type: Optional[str] = None
+    entity_type_other: Optional[str] = None
+    id_number: Optional[str] = None
     company_reg_number: Optional[str] = None
     vat_registered: Optional[bool] = None
     vat_number: Optional[str] = None
@@ -195,6 +201,9 @@ async def create_reseller(
         "odoo_partner_id": reseller.odoo_partner_id,
         "warehouse_id": reseller.warehouse_id,
         "user_id": user_id,
+        "entity_type": reseller.entity_type or "",
+        "entity_type_other": reseller.entity_type_other or "",
+        "id_number": reseller.id_number or "",
         "company_reg_number": reseller.company_reg_number or "",
         "vat_registered": reseller.vat_registered,
         "vat_number": reseller.vat_number or "",

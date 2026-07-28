@@ -197,13 +197,15 @@ The first control on this step is the **Applicable for commission** checkbox. Ma
 > **Documents are not uploaded in this wizard.** Onboarding documents (NDA, Store Onboarding Agreement, etc.) are managed through the Customer Applications flow, not through the Sales Agent creation wizard.
 
 **Step 2 — Business Details**
-Review and adjust the name, email, phone, and seller code. For commission-eligible agents, these pre-fill from the selected Odoo partner. The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
+Review and adjust the name, email, phone, and seller code. For commission-eligible agents, these pre-fill from the selected Odoo partner (including VAT number, on Step 4, if the partner has one set in Odoo). The seller code is the unique lookup key used throughout the system (e.g. `ABC001`).
+
+Optionally set the **Legal Entity Type** — Private Company (Pty) Ltd, Close Corporation (CC), Sole Proprietor, Partnership, or Other. Leave it unset if you're not sure; the wizard behaves exactly as before. Selecting **Sole Proprietor** changes what Step 4 asks for (see below) — use this for an individual agent rather than a registered company.
 
 **Step 3 — Login Credentials**
 Set the portal username and password. The agent will be required to change their password on first login.
 
 **Step 4 — Financials**
-Enter company registration number, VAT details, and banking information. These are used for commission statement records.
+For a company entity type (or no entity type set), enter the Company Registration Number. For a **Sole Proprietor**, this field is replaced with an **ID Number** field instead — enter the agent's 13-digit South African ID number (validated automatically). VAT details and banking information are entered the same way regardless of entity type — VAT registration is optional for everyone, and banking details are always required since that's where commission gets paid out.
 
 Click **Create Sales Agent** on the final step. A welcome email is sent automatically to the agent's email address.
 

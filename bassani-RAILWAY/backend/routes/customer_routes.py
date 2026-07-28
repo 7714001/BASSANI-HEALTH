@@ -85,7 +85,7 @@ class LinkCompanyBody(BaseModel):
 CUSTOMER_FIELDS = [
     "id", "name", "ref", "email", "phone", "street", "city", "zip",
     "country_id", "customer_rank", "supplier_rank", "credit_limit", "credit",
-    "property_payment_term_id", "active", "comment", "is_company", "parent_id",
+    "property_payment_term_id", "active", "comment", "is_company", "parent_id", "vat",
 ]
 
 ADDRESS_FIELDS = ["id", "name", "type", "street", "street2", "city", "state_id", "zip", "country_id", "phone", "email", "function"]

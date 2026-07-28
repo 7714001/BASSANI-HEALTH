@@ -986,6 +986,15 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - **Ownership is looked up fresh on every REST request, not cached** — matches the existing correct pattern (`customer_routes.py`'s customer list/profile/statement, already ownership-gated before this phase); only the WebSocket layer needs an explicit cache, for scale (avoiding a Mongo query per broadcast per connection) rather than correctness.
 - **Unique index is self-verifying, not blindly applied** — `customer_ownership` uniqueness was previously enforced only at the application layer; a startup pre-flight aggregation checks for existing duplicates and skips the unique index (with a warning log) if any are found, rather than risk a startup crash against data that predates this index.
 
+#### 7.14 — Sales Agent Entity Type (Sole Proprietor Support) — Added 2026-07-28
+
+> The Add/Edit Sales Agent wizard was company-first: a flat Company Reg Number field with no way to represent an individual/sole-proprietor agent, who has no company registration number but does have a personal SA ID number. Mirrors the Legal Entity Type pattern already built for customer self-registration (Phase 8.44 / `PublicRegister.js`) rather than inventing a new one.
+
+- [x] `ResellerCreate`/`ResellerUpdate` (`reseller_routes.py`) gain `entity_type`, `entity_type_other`, `id_number` — all optional; existing resellers with no value render the wizard exactly as before
+- [x] `Resellers()` in `Views.js` — Legal Entity Type dropdown (same 5 options as `PublicRegister.js`'s `ENTITY_TYPES`) in both the create wizard's Step 2 and the edit modal's Business Details section. Selecting Sole Proprietor swaps the Company Reg Number field for a Luhn-validated ID Number field (same grid position); VAT and Banking sections are unconditional for every entity type, unchanged
+- [x] `validateSAID`/`validateSAPhone` extracted from `PublicRegister.js` into shared `frontend/src/utils/validators.js`; `PublicRegister.js` now imports from there instead of a local definition
+- [x] `CUSTOMER_FIELDS` (`customer_routes.py`) gains `vat`; selecting an existing Odoo vendor partner in Step 1 now auto-fills VAT number (and flips the VAT toggle on) in addition to the name/email/phone/seller_code it already populated — entity type and address are not touched by this autofill (address has no UI in this wizard and stays that way)
+
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
 - [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
@@ -1000,6 +1009,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] A reseller's category chips (catalog page and order cart) reflect admin-defined Parent Categories, not raw Odoo categories, with an Uncategorised bucket for anything unmapped; Odoo's own category structure remains untouched by this layer
 - [x] Once a reseller picks a Brand/Grade sub-category (e.g. "Exotic" under "Flower"), the Variant dropdown and inline variant chips stop repeating that grade code and show only the remaining attribute (e.g. "1G" instead of "EXO / 1G")
 - [x] A reseller sees and can act on every order/ticket for a customer linked to them, whether they or Bassani staff placed it, and earns commission on all of them; a customer linked today never retroactively generates commission for orders confirmed before the link existed
+- [x] Creating a Sole Proprietor sales agent shows ID Number instead of Company Reg Number, requires a valid 13-digit SA ID, and saves correctly; creating/editing a sales agent with no entity type selected behaves identically to before this change
+- [x] Selecting a linked Odoo vendor partner in the Sales Agent wizard with a VAT number populates the VAT toggle and number automatically
 
 ---
 
