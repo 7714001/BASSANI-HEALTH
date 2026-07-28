@@ -288,28 +288,28 @@ export default function S6Register() {
         <div className="max-w-4xl mx-auto w-full space-y-6">
 
           {/* Receive form */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <PackageCheck size={15} className="text-bassani-500" /> Receive Imported Stock
               </h3>
               {can("production.manage") && (
-                <button onClick={openManage} className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1">
+                <button onClick={openManage} className="text-xs text-bassani-600 hover:underline flex items-center gap-1">
                   <Plus size={12} /> Manage suppliers
                 </button>
               )}
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-xs text-gray-500 mb-4">
               One entry does everything: the batch number is generated, the stock is booked into the vault, and the Schedule 6 register entry is written. Your name and the time are captured automatically.
             </p>
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Supplier</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Supplier</label>
                 <select
                   value={supplier?.code || ""}
                   onChange={e => setSupplier(suppliers.find(s => s.code === e.target.value) || null)}
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 >
                   <option value="">Select supplier…</option>
                   {suppliers.map(s => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
@@ -317,23 +317,23 @@ export default function S6Register() {
               </div>
 
               <div ref={productBoxRef} className="relative">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Product</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Product</label>
                 <input
                   value={product ? `${product.name} (${product.code})` : productQuery}
                   onChange={e => { setProduct(null); setProductQuery(e.target.value); setProductOpen(true); }}
                   onFocus={() => setProductOpen(true)}
                   placeholder="Search by name or shortcode…"
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
                 {productOpen && (
-                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
                     {filteredProducts.length === 0 ? (
                       <p className="text-xs text-gray-400 px-3 py-2">No matching products</p>
                     ) : filteredProducts.map(p => (
                       <button
                         key={p.code}
                         onClick={() => { setProduct(p); setProductQuery(""); setProductOpen(false); }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex justify-between items-center"
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex justify-between items-center"
                       >
                         <span className="truncate">{p.name}</span>
                         <span className="font-mono text-xs text-gray-400 ml-2">{p.code}</span>
@@ -344,22 +344,22 @@ export default function S6Register() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Stock type</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Stock type</label>
                 <select
                   value={typeDigit}
                   onChange={e => setTypeDigit(Number(e.target.value))}
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 >
                   {(meta?.import_types || []).map(t => <option key={t.digit} value={t.digit}>{t.label}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Size (flower only)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Size (flower only)</label>
                 <select
                   value={subcat}
                   onChange={e => setSubcat(e.target.value)}
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 >
                   <option value="">Not applicable</option>
                   {(meta?.import_subcats || []).map(s => <option key={s.char} value={s.char}>{s.label}</option>)}
@@ -368,7 +368,7 @@ export default function S6Register() {
 
               {stageIsAmbiguous && (
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Has this delivery already been manicured?</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Has this delivery already been manicured?</label>
                   <div className="flex gap-2">
                     {[{ v: false, label: "No — unmanicured bulk" }, { v: true, label: "Yes — already manicured" }].map(o => (
                       <button
@@ -377,8 +377,8 @@ export default function S6Register() {
                         onClick={() => setAlreadyManicured(o.v)}
                         className={`flex-1 text-xs font-medium px-3 py-2 rounded-lg border transition-colors ${
                           alreadyManicured === o.v
-                            ? "bg-bassani-100 dark:bg-bassani-900/40 text-bassani-700 dark:text-bassani-300 border-bassani-300 dark:border-bassani-700"
-                            : "bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:text-gray-700 dark:hover:text-gray-200"
+                            ? "bg-bassani-100 text-bassani-700 border-bassani-300"
+                            : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700"
                         }`}
                       >
                         {o.label}
@@ -392,32 +392,32 @@ export default function S6Register() {
               )}
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Quantity quoted (grams or units)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Quantity quoted (grams or units)</label>
                 <input
                   type="number" min="0" step="any" value={qtyQuoted}
                   onChange={e => setQtyQuoted(e.target.value)}
                   placeholder="What the supplier said"
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Quantity received (grams or units)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Quantity received (grams or units)</label>
                 <input
                   type="number" min="0" step="any" value={qtyReceived}
                   onChange={e => setQtyReceived(e.target.value)}
                   placeholder="What was actually weighed in"
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Purchase order for this delivery</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Purchase order for this delivery</label>
                 <select
                   value={poChoice}
                   onChange={e => setPoChoice(e.target.value)}
                   disabled={!supplier}
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400 disabled:opacity-50"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400 disabled:opacity-50"
                 >
                   <option value="">{supplier ? "Select the purchase order…" : "Pick a supplier first"}</option>
                   {poList.map(p => (
@@ -428,7 +428,7 @@ export default function S6Register() {
                   <option value="flag">No purchase order found — flag for investigation</option>
                 </select>
                 {poChoice === "flag" && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
                     <AlertTriangle size={12} /> The receipt will be held and the compliance contact notified. It cannot be released until the flag is resolved.
                   </p>
                 )}
@@ -436,7 +436,7 @@ export default function S6Register() {
                   <p className="text-xs text-gray-400 mt-1">This supplier is not linked to a supplier account yet, so no purchase orders could be listed. An admin can link it under Manage suppliers.</p>
                 )}
                 {supplier && poInfo?.odoo_partner_found && poInfo?.linked === false && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  <p className="text-xs text-amber-600 mt-1">
                     Matched by name to "{poInfo.partner_name}". Ask an admin to link this supplier to its account under Manage suppliers to make the match permanent.
                   </p>
                 )}
@@ -446,7 +446,7 @@ export default function S6Register() {
               </div>
 
               {discrepancy !== null && discrepancy !== 0 && (
-                <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <p className="sm:col-span-2 text-xs text-amber-600 flex items-center gap-1">
                   <AlertTriangle size={12} />
                   {discrepancy > 0
                     ? `Received ${discrepancy} less than quoted. The difference is recorded on the register entry.`
@@ -455,10 +455,10 @@ export default function S6Register() {
               )}
 
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Documents received with this delivery</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Documents received with this delivery</label>
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
                   {DOCS.map(d => (
-                    <label key={d.key} className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
+                    <label key={d.key} className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={docs[d.key]}
@@ -472,23 +472,23 @@ export default function S6Register() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Comment (optional)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Comment (optional)</label>
                 <input
                   value={comment}
                   onChange={e => setComment(e.target.value)}
                   placeholder="Anything unusual about this delivery…"
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
               </div>
             </div>
 
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex-1 bg-gray-50 dark:bg-gray-900 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg px-4 py-3">
+              <div className="flex-1 bg-gray-50 border border-dashed border-gray-300 rounded-lg px-4 py-3">
                 {preview ? (
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="font-mono text-lg font-semibold text-gray-800 dark:text-gray-100 tracking-wide">{preview.batch_id}</span>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      Recorded as: <span className="font-semibold text-gray-700 dark:text-gray-200">{preview.stage ? (STAGE_LABELS[preview.stage] || preview.stage) : "Finished product"}</span>
+                    <span className="font-mono text-lg font-semibold text-gray-800 tracking-wide">{preview.batch_id}</span>
+                    <span className="text-xs text-gray-500">
+                      Recorded as: <span className="font-semibold text-gray-700">{preview.stage ? (STAGE_LABELS[preview.stage] || preview.stage) : "Finished product"}</span>
                     </span>
                   </div>
                 ) : (
@@ -503,9 +503,9 @@ export default function S6Register() {
           </div>
 
           {/* Register table */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-700 gap-3">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 gap-3">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <ClipboardList size={15} className="text-gray-400" /> S6 Register
                 <span className="text-xs font-normal text-gray-400">{total} receipts</span>
               </h3>
@@ -513,7 +513,7 @@ export default function S6Register() {
                 value={q}
                 onChange={e => { setQ(e.target.value); setPagination(p => ({ ...p, pageIndex: 0 })); }}
                 placeholder="Search supplier, product or batch…"
-                className="text-xs border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-64"
+                className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-64"
               />
             </div>
 
@@ -522,7 +522,7 @@ export default function S6Register() {
                 <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
               </div>
             ) : items.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 dark:text-gray-500">
+              <div className="text-center py-12 text-gray-400">
                 <ClipboardList size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No receipts recorded yet. Record the first one above.</p>
               </div>
@@ -530,7 +530,7 @@ export default function S6Register() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+                    <tr className="text-left text-xs font-medium text-gray-500 bg-gray-50">
                       <th className="px-5 py-2.5">Received</th>
                       <th className="px-5 py-2.5">Supplier</th>
                       <th className="px-5 py-2.5">Product</th>
@@ -542,48 +542,48 @@ export default function S6Register() {
                       <th className="px-5 py-2.5">By</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-100">
                     {items.map(r => (
-                      <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors align-top">
+                      <tr key={r.id} className="hover:bg-gray-50 transition-colors align-top">
                         <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(r.created_at)}</td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">{r.supplier_name}</td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[160px] truncate">
+                        <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{r.supplier_name}</td>
+                        <td className="px-5 py-3 text-gray-600 max-w-[160px] truncate">
                           {r.product_name}
                           <span className="block text-xs text-gray-400">{r.type_label}{r.subcat ? ` · ${r.subcat}` : ""}</span>
                         </td>
-                        <td className="px-5 py-3 font-mono text-xs text-gray-700 dark:text-gray-200 whitespace-nowrap" title={batchTitle(r.batch_id, r.product_name)}>{r.batch_id}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-gray-700 whitespace-nowrap" title={batchTitle(r.batch_id, r.product_name)}>{r.batch_id}</td>
                         <td className="px-5 py-3 text-right text-xs whitespace-nowrap">
-                          <span className="font-semibold text-gray-700 dark:text-gray-200">{r.qty_received}</span>
+                          <span className="font-semibold text-gray-700">{r.qty_received}</span>
                           {r.discrepancy ? (
-                            <span className="block text-amber-600 dark:text-amber-400">quoted {r.qty_quoted}</span>
+                            <span className="block text-amber-600">quoted {r.qty_quoted}</span>
                           ) : null}
                         </td>
                         <td className="px-5 py-3 text-xs whitespace-nowrap">
                           {r.po_name
-                            ? <span className="font-mono text-gray-600 dark:text-gray-300">{r.po_name}</span>
+                            ? <span className="font-mono text-gray-600">{r.po_name}</span>
                             : r.po_flag?.flagged
                               ? r.po_flag.resolved
                                 ? <span className="text-gray-400" title={r.po_flag.note}>Flag resolved</span>
-                                : <span className="text-red-600 dark:text-red-400 font-medium">No PO — flagged</span>
-                              : <span className="text-gray-300 dark:text-gray-600">None</span>}
+                                : <span className="text-red-600 font-medium">No PO — flagged</span>
+                              : <span className="text-gray-300">None</span>}
                         </td>
                         <td className="px-5 py-3">
                           {r.status === "released" ? (
-                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" title={r.released_by_name ? `Released by ${r.released_by_name}` : ""}>Released</span>
+                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700" title={r.released_by_name ? `Released by ${r.released_by_name}` : ""}>Released</span>
                           ) : r.status === "queried" ? (
-                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" title={r.query_note || ""}>Queried</span>
+                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700" title={r.query_note || ""}>Queried</span>
                           ) : (
-                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Awaiting release</span>
+                            <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Awaiting release</span>
                           )}
                         </td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400">
+                        <td className="px-5 py-3 text-xs text-gray-500">
                           {DOCS.filter(d => r.docs?.[d.key.replace("doc_", "")]).length === 0
-                            ? <span className="text-gray-300 dark:text-gray-600">None</span>
+                            ? <span className="text-gray-300">None</span>
                             : DOCS.filter(d => r.docs?.[d.key.replace("doc_", "")]).map(d => (
                                 <span key={d.key} className="inline-flex items-center gap-0.5 mr-2"><CheckCircle size={10} className="text-green-500" />{d.label.split(" ")[0]}</span>
                               ))}
                         </td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{r.actor_name}</td>
+                        <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{r.actor_name}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -604,7 +604,7 @@ export default function S6Register() {
       {/* Manage suppliers modal */}
       {manageOpen && (
         <Modal title="Manage Suppliers" onClose={() => setManageOpen(false)} width="max-w-2xl">
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             The supplier list used for imported stock. Linking a supplier to its account in the stock system makes purchase order lookups and receipts exact, instead of matching by name. Archiving hides a supplier from the receiving form without touching its history.
           </p>
 
@@ -614,14 +614,14 @@ export default function S6Register() {
               value={newSupplier.name}
               onChange={e => setNewSupplier(v => ({ ...v, name: e.target.value }))}
               placeholder="Supplier name"
-              className="flex-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+              className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
             />
             <input
               value={newSupplier.code}
               onChange={e => setNewSupplier(v => ({ ...v, code: e.target.value.toUpperCase() }))}
               maxLength={2}
               placeholder="Code"
-              className="w-full sm:w-20 text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+              className="w-full sm:w-20 text-sm font-mono border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
             />
             <BtnPrimary onClick={saveSupplier} disabled={savingSupplier || !newSupplier.name.trim() || newSupplier.code.trim().length !== 2}>
               {savingSupplier ? "Adding…" : "Add"}
@@ -629,22 +629,22 @@ export default function S6Register() {
           </div>
 
           {/* List */}
-          <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+          <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
             {manageList.map(s => (
               <div key={s.code} className={`flex items-center gap-3 px-3 py-2.5 text-sm ${s.active ? "" : "opacity-60"}`}>
-                <span className="font-mono text-xs font-semibold text-gray-500 dark:text-gray-400 w-8 shrink-0">{s.code}</span>
+                <span className="font-mono text-xs font-semibold text-gray-500 w-8 shrink-0">{s.code}</span>
                 <div className="flex-1 min-w-0">
-                  <span className="block truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+                  <span className="block truncate text-gray-700">{s.name}</span>
                   {s.odoo_partner_name ? (
-                    <span className="block text-xs text-green-600 dark:text-green-400 truncate flex items-center gap-1">
+                    <span className="block text-xs text-green-600 truncate flex items-center gap-1">
                       <Link2 size={10} /> Linked to {s.odoo_partner_name}
                     </span>
                   ) : (
-                    <span className="block text-xs text-amber-600 dark:text-amber-400">Not linked to a supplier account</span>
+                    <span className="block text-xs text-amber-600">Not linked to a supplier account</span>
                   )}
                 </div>
                 {!s.active && (
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 shrink-0">Archived</span>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 shrink-0">Archived</span>
                 )}
                 {s.odoo_partner_name ? (
                   <button onClick={() => doUnlink(s)} disabled={supplierBusy === s.code}
@@ -653,12 +653,12 @@ export default function S6Register() {
                   </button>
                 ) : (
                   <button onClick={() => { setLinkTarget(s); setVendorQuery(s.name); }} disabled={supplierBusy === s.code}
-                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline shrink-0">
+                    className="text-xs text-bassani-600 hover:underline shrink-0">
                     Link account
                   </button>
                 )}
                 <button onClick={() => toggleSupplier(s)} disabled={supplierBusy === s.code}
-                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 shrink-0">
+                  className="text-xs text-gray-400 hover:text-gray-600 shrink-0">
                   {s.active ? "Archive" : "Restore"}
                 </button>
               </div>
@@ -677,7 +677,7 @@ export default function S6Register() {
       {/* Link-to-account picker */}
       {linkTarget && (
         <Modal title={`Link ${linkTarget.name}`} onClose={() => setLinkTarget(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+          <p className="text-sm text-gray-600 mb-3">
             Search the supplier accounts in the stock system and pick the one that belongs to <strong>{linkTarget.name}</strong>. Purchase order lookups and goods receipts for this supplier will then always use that account.
           </p>
           <input
@@ -685,9 +685,9 @@ export default function S6Register() {
             onChange={e => setVendorQuery(e.target.value)}
             placeholder="Search supplier accounts…"
             autoFocus
-            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-2"
           />
-          <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-lg">
+          <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
             {vendorSearching ? (
               <p className="text-xs text-gray-400 px-3 py-3 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Searching…</p>
             ) : vendorResults.length === 0 ? (
@@ -698,9 +698,9 @@ export default function S6Register() {
               <button
                 key={v.id}
                 onClick={() => doLink(v)}
-                className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50"
               >
-                <span className="block text-gray-800 dark:text-gray-100">{v.name}</span>
+                <span className="block text-gray-800">{v.name}</span>
                 <span className="block text-xs text-gray-400">{[v.city, v.email].filter(Boolean).join(" · ") || "No contact details"}</span>
               </button>
             ))}

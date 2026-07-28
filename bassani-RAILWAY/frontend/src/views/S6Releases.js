@@ -125,7 +125,7 @@ export default function S6Releases() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto w-full space-y-4">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-gray-500">
             Imported stock stays in quarantine until it is released here. Check the delivery documents and quantities against the receipt, then release the batch or raise a query. Your release is recorded permanently with your name and the time.
           </p>
 
@@ -134,7 +134,7 @@ export default function S6Releases() {
               <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
             </div>
           ) : items.length === 0 ? (
-            <div className="text-center py-16 text-gray-400 dark:text-gray-500">
+            <div className="text-center py-16 text-gray-400">
               <ShieldCheck size={36} className="mx-auto mb-2 opacity-30" />
               <p className="text-sm">Nothing awaiting release. All imported stock has been signed off.</p>
             </div>
@@ -143,13 +143,13 @@ export default function S6Releases() {
             const docsIn    = Object.entries(r.docs || {}).filter(([, v]) => v).map(([k]) => DOC_LABELS[k]);
             const docsOut   = Object.entries(r.docs || {}).filter(([, v]) => !v).map(([k]) => DOC_LABELS[k]);
             return (
-              <div key={r.id} className={`bg-white dark:bg-gray-800 rounded-xl border p-5 ${
-                flagged ? "border-red-200 dark:border-red-900" : r.status === "queried" ? "border-amber-300 dark:border-amber-800" : "border-gray-200 dark:border-gray-700"
+              <div key={r.id} className={`bg-white rounded-xl border p-5 ${
+                flagged ? "border-red-200" : r.status === "queried" ? "border-amber-300" : "border-gray-200"
               }`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-100" title={batchTitle(r.batch_id, r.product_name)}>{r.batch_id}</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-300 mt-0.5">
+                    <p className="font-mono text-sm font-semibold text-gray-800" title={batchTitle(r.batch_id, r.product_name)}>{r.batch_id}</p>
+                    <p className="text-sm text-gray-600 mt-0.5">
                       {r.product_name} <span className="text-gray-400">· {r.type_label}{r.subcat ? ` · ${r.subcat}` : ""}</span>
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
@@ -157,40 +157,40 @@ export default function S6Releases() {
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">{r.qty_received} received</p>
+                    <p className="text-sm font-semibold text-gray-800">{r.qty_received} received</p>
                     {r.discrepancy ? (
-                      <p className="text-xs text-amber-600 dark:text-amber-400">quoted {r.qty_quoted} (short {r.discrepancy})</p>
+                      <p className="text-xs text-amber-600">quoted {r.qty_quoted} (short {r.discrepancy})</p>
                     ) : r.qty_quoted ? (
-                      <p className="text-xs text-green-600 dark:text-green-400">matches quoted</p>
+                      <p className="text-xs text-green-600">matches quoted</p>
                     ) : null}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs">
-                  <span className="text-gray-500 dark:text-gray-400">
+                  <span className="text-gray-500">
                     PO: {r.po_name
-                      ? <span className="font-mono text-gray-700 dark:text-gray-200">{r.po_name}</span>
+                      ? <span className="font-mono text-gray-700">{r.po_name}</span>
                       : flagged
-                        ? <span className="text-red-600 dark:text-red-400 font-medium">none — flagged for investigation</span>
+                        ? <span className="text-red-600 font-medium">none — flagged for investigation</span>
                         : r.po_flag?.resolved
                           ? <span title={r.po_flag.note}>none — flag resolved: {r.po_flag.note}</span>
                           : "none"}
                   </span>
                   {docsIn.length > 0 && (
-                    <span className="text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle size={11} /> {docsIn.join(", ")}</span>
+                    <span className="text-green-600 flex items-center gap-1"><CheckCircle size={11} /> {docsIn.join(", ")}</span>
                   )}
                   {docsOut.length > 0 && (
-                    <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1"><AlertTriangle size={11} /> Missing: {docsOut.join(", ")}</span>
+                    <span className="text-amber-600 flex items-center gap-1"><AlertTriangle size={11} /> Missing: {docsOut.join(", ")}</span>
                   )}
                 </div>
 
                 {r.status === "queried" && r.query_note && (
-                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
+                  <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
                     Query on record: {r.query_note}
                   </p>
                 )}
                 {r.comment && (
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Receiver's note: {r.comment}</p>
+                  <p className="mt-2 text-xs text-gray-500">Receiver's note: {r.comment}</p>
                 )}
 
                 <div className="flex justify-end gap-2 mt-4">
@@ -220,10 +220,10 @@ export default function S6Releases() {
       {/* Release confirm */}
       {releaseConfirm && (
         <Modal title="Release Batch" onClose={() => setReleaseConfirm(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          <p className="text-sm text-gray-600 mb-2">
             Release <strong className="font-mono">{releaseConfirm.batch_id}</strong> ({releaseConfirm.product_name}, {releaseConfirm.qty_received} received from {releaseConfirm.supplier_name})?
           </p>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             This is your Schedule 6 sign-off. The batch becomes available for issue from the vault, and the release is recorded permanently under your name.
           </p>
           <div className="flex justify-end gap-2">
@@ -236,7 +236,7 @@ export default function S6Releases() {
       {/* Query modal */}
       {queryTarget && (
         <Modal title="Query Receipt" onClose={() => setQueryTarget(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+          <p className="text-sm text-gray-600 mb-3">
             The batch stays locked in quarantine and your note goes on record. Describe what needs to be checked before <span className="font-mono">{queryTarget.batch_id}</span> can be released.
           </p>
           <textarea
@@ -244,7 +244,7 @@ export default function S6Releases() {
             onChange={e => setQueryNote(e.target.value)}
             rows={3}
             placeholder="e.g. COA missing, weight difference needs explanation from the supplier…"
-            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
           />
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setQueryTarget(null)}>Cancel</BtnSecondary>
@@ -256,14 +256,14 @@ export default function S6Releases() {
       {/* Resolve flag modal */}
       {resolveTarget && (
         <Modal title="Resolve Investigation Flag" onClose={() => setResolveTarget(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+          <p className="text-sm text-gray-600 mb-3">
             This receipt was flagged because no purchase order was found. Record the outcome of the investigation for <span className="font-mono">{resolveTarget.batch_id}</span>. The portal never creates purchase orders: if the investigation concluded with one raised in the stock system, link it here. Once resolved, the Responsible Pharmacist can release the batch.
           </p>
-          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Purchase order raised during the investigation (recommended)</label>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Purchase order raised during the investigation (recommended)</label>
           <select
             value={resolvePoChoice}
             onChange={e => setResolvePoChoice(e.target.value)}
-            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-3"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400 mb-3"
           >
             <option value="">No purchase order to link</option>
             {resolvePos.map(p => (
@@ -277,7 +277,7 @@ export default function S6Releases() {
             onChange={e => setResolveNote(e.target.value)}
             rows={3}
             placeholder="e.g. Order confirmed with the supplier and purchase order raised retrospectively…"
-            className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
           />
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setResolveTarget(null)}>Cancel</BtnSecondary>

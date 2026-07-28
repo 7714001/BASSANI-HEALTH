@@ -362,10 +362,14 @@ export default function SalesTickets() {
   useEffect(() => { detailRef.current = detail; }, [detail]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
     let delay = 1000;
+    let stopped = false; // set once the server confirms the token is invalid — retrying with the same token forever just spams the log for no benefit
     const connect = () => {
+      // Re-read on every attempt (not captured once at mount) so a session
+      // refreshed in the meantime is picked up automatically instead of the
+      // loop retrying forever with a token that has already expired.
+      const token = localStorage.getItem("token");
+      if (!token) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${protocol}://${window.location.host}/api/tickets/ws?token=${token}`);
       wsRef.current = ws;
@@ -373,6 +377,15 @@ export default function SalesTickets() {
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
+          if (msg.type === "auth_error") {
+            // The server accepted the socket then rejected the token — stop
+            // retrying (it will never succeed without a fresh login) and let
+            // the user know live updates have paused, instead of silently
+            // retrying every 30s forever.
+            stopped = true;
+            toast.error("Live ticket updates paused: your session has expired. Refresh the page to reconnect.", { id: "ticket-ws-auth-error" });
+            return;
+          }
           if (msg.type !== "ticket_update") return;
           const changedId = msg.ticket_id;
           // One fetch serves both the list update and the open detail panel.
@@ -396,6 +409,7 @@ export default function SalesTickets() {
       };
       ws.onclose = () => {
         setWsConnected(false);
+        if (stopped) return;
         reconnectRef.current = setTimeout(connect, delay);
         delay = Math.min(delay * 2, 30000);
       };

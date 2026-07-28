@@ -47,8 +47,10 @@ class TicketConnectionManager:
     def __init__(self):
         self._conns: list[tuple] = []  # (ws, role, reseller_id_str | None)
 
-    async def connect(self, ws: WebSocket, role: str, reseller_id: str | None):
-        await ws.accept()
+    def connect(self, ws: WebSocket, role: str, reseller_id: str | None):
+        # ws is already accepted by the caller by this point (see
+        # ticket_websocket) — accepting here too would raise, since a
+        # WebSocket can only be accepted once.
         self._conns.append((ws, role, reseller_id))
 
     def disconnect(self, ws: WebSocket):
@@ -76,10 +78,19 @@ async def ticket_websocket(ws: WebSocket):
     """Real-time ticket update stream. Any active portal user can subscribe.
 
     Auth: JWT passed as ?token= query param (same pattern as the packing board).
+    The socket is accepted BEFORE the token is checked, and an explicit
+    {"type": "auth_error"} message is sent before closing on failure, mirroring
+    packing_board_routes.py's _ws_reject: closing pre-accept has the ASGI
+    server (Uvicorn) reject the handshake as a bare HTTP 403 with no signal
+    reaching the browser at all (logged as "connection rejected (403
+    Forbidden)"), and Railway's proxy strips custom WebSocket close codes
+    even post-accept, so the client can't rely on reading the close code
+    either — an explicit message is the only channel that reliably arrives.
     On connect the server sends {type: "connected"}.
     On any ticket mutation the server pushes {type: "ticket_update", ticket_id: "..."}.
-    No inbound messages are expected — the connection is server-push only.
+    No other inbound messages are expected — the connection is server-push only.
     """
+    await ws.accept()
     cfg = get_settings()
     token = ws.query_params.get("token", "")
     try:
@@ -87,9 +98,11 @@ async def ticket_websocket(ws: WebSocket):
         username = payload.get("sub")
         user = await get_user_by_username(username) if username else None
         if not user or not user.get("active", True):
+            await ws.send_json({"type": "auth_error"})
             await ws.close(code=4001)
             return
     except Exception:
+        await ws.send_json({"type": "auth_error"})
         await ws.close(code=4001)
         return
 
@@ -99,7 +112,7 @@ async def ticket_websocket(ws: WebSocket):
         reseller_doc = await col("resellers").find_one({"user_id": user["id"]}, {"_id": 1})
         reseller_id = str(reseller_doc["_id"]) if reseller_doc else None
 
-    await ticket_manager.connect(ws, role, reseller_id)
+    ticket_manager.connect(ws, role, reseller_id)
     try:
         await ws.send_json({"type": "connected"})
         while True:

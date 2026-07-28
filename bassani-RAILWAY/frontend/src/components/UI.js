@@ -692,9 +692,9 @@ export function Pager({ pageIndex, pageSize, total, onPageChange, onPageSizeChan
   const to = Math.min(from + pageSize - 1, total || 0);
   const canPrev = pageIndex > 0;
   const canNext = pageIndex < pageCount - 1;
-  const btnCls = "px-2 py-1 rounded border border-gray-200 dark:border-gray-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors";
+  const btnCls = "px-2 py-1 rounded border border-gray-200 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors";
   return (
-    <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/40 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+    <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-gray-100 bg-gray-50/60 text-xs text-gray-500 flex-wrap">
       <span className="shrink-0 tabular-nums">{!total ? "No results" : `Showing ${from}–${to} of ${total}`}</span>
       <div className="flex items-center gap-1">
         <button onClick={() => onPageChange(0)} disabled={!canPrev} className={btnCls}>«</button>
@@ -705,7 +705,7 @@ export function Pager({ pageIndex, pageSize, total, onPageChange, onPageSizeChan
       </div>
       {onPageSizeChange && (
         <select value={pageSize} onChange={e => onPageSizeChange(Number(e.target.value))}
-          className="border border-gray-200 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-bassani-600">
+          className="border border-gray-200 rounded px-2 py-1 text-xs bg-white text-gray-700 focus:outline-none focus:border-bassani-600">
           {pageSizeOptions.map(s => <option key={s} value={s}>{s} per page</option>)}
         </select>
       )}

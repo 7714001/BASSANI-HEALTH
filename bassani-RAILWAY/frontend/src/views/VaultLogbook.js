@@ -316,25 +316,25 @@ export default function VaultLogbook() {
         <div className="max-w-4xl mx-auto w-full space-y-6">
 
           {!ledger.odoo_writes_live && (
-            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2.5">
+            <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
               <CloudOff size={14} />
               Movements are being recorded and queued. Stock levels shown here are calculated from the logbook and will be confirmed in the stock system once the production facility connection is live.
             </div>
           )}
 
           {/* Record movement */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-1">
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-1">
               <NotebookPen size={15} className="text-bassani-500" /> Record Movement
             </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-xs text-gray-500 mb-4">
               Pick the batch first. The system shows where it is and suggests the next step. Your name and the time are captured automatically.
             </p>
 
             <div className="grid sm:grid-cols-2 gap-4">
               {/* Step 1 — batch picker */}
               <div ref={batchBoxRef} className="relative sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">
                   1. Which batch?
                 </label>
                 <input
@@ -342,10 +342,10 @@ export default function VaultLogbook() {
                   onChange={e => { setBatch(null); setBatchQuery(e.target.value); setBatchOpen(true); }}
                   onFocus={() => setBatchOpen(true)}
                   placeholder="Search the batch registry…"
-                  className="w-full text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm font-mono border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
                 {batchOpen && (
-                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
                     {batchOptions.length === 0 ? (
                       <p className="text-xs text-gray-400 px-3 py-2">
                         No matching batches. Generate it on the Batch Registry page first.
@@ -354,10 +354,10 @@ export default function VaultLogbook() {
                       <button
                         key={b.batch_id}
                         onClick={() => { setBatch(b); setBatchQuery(""); setBatchOpen(false); }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 flex justify-between items-center gap-2"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex justify-between items-center gap-2"
                         title={batchTitle(b.batch_id, b.product_name)}
                       >
-                        <span className="font-mono text-gray-800 dark:text-gray-200 truncate">{b.batch_id}</span>
+                        <span className="font-mono text-gray-800 truncate">{b.batch_id}</span>
                         <span className="text-xs text-gray-400 truncate shrink-0">
                           {b.product_name}{stageLabel(b.batch_id) ? ` · ${stageLabel(b.batch_id)}` : ""}
                         </span>
@@ -369,23 +369,23 @@ export default function VaultLogbook() {
 
               {/* Selected batch summary — plain-language confirmation of what was picked */}
               {batch && (
-                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2.5">
-                  <span className="text-gray-500 dark:text-gray-400">
-                    Product: <span className="font-semibold text-gray-800 dark:text-gray-100">{batch.product_name}</span>
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs bg-gray-50 border border-gray-100 rounded-lg px-3 py-2.5">
+                  <span className="text-gray-500">
+                    Product: <span className="font-semibold text-gray-800">{batch.product_name}</span>
                   </span>
-                  <span className="text-gray-500 dark:text-gray-400">
-                    Stage: <span className="font-semibold text-gray-800 dark:text-gray-100">{stageLabel(batch.batch_id) || "Base batch"}</span>
+                  <span className="text-gray-500">
+                    Stage: <span className="font-semibold text-gray-800">{stageLabel(batch.batch_id) || "Base batch"}</span>
                   </span>
-                  <span className="text-gray-500 dark:text-gray-400">
-                    In vault now: <span className={`font-semibold ${vaultBalance > 0 ? "text-gray-800 dark:text-gray-100" : "text-amber-600 dark:text-amber-400"}`}>{fmtQty(vaultBalance)}</span>
+                  <span className="text-gray-500">
+                    In vault now: <span className={`font-semibold ${vaultBalance > 0 ? "text-gray-800" : "text-amber-600"}`}>{fmtQty(vaultBalance)}</span>
                   </span>
                   {outAtManicuring > 0.001 && (
-                    <span className="text-gray-500 dark:text-gray-400">
-                      Out at manicuring: <span className="font-semibold text-amber-600 dark:text-amber-400">{fmtQty(outAtManicuring)}</span>
+                    <span className="text-gray-500">
+                      Out at manicuring: <span className="font-semibold text-amber-600">{fmtQty(outAtManicuring)}</span>
                     </span>
                   )}
                   {awaitingRelease && (
-                    <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
                       Awaiting Responsible Pharmacist release
                     </span>
                   )}
@@ -394,7 +394,7 @@ export default function VaultLogbook() {
 
               {/* Step 2 — movement, gated by where the batch actually is */}
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">
                   2. What is happening to it?
                 </label>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -410,10 +410,10 @@ export default function VaultLogbook() {
                         disabled={!enabled}
                         className={`relative text-left rounded-lg border px-3 py-2.5 transition-colors ${
                           active && enabled
-                            ? "border-bassani-300 bg-bassani-50 dark:bg-bassani-900/30 dark:border-bassani-700"
+                            ? "border-bassani-300 bg-bassani-50"
                             : enabled
-                              ? "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
-                              : "border-gray-100 dark:border-gray-800 opacity-45 cursor-not-allowed"
+                              ? "border-gray-200 hover:border-gray-300"
+                              : "border-gray-100 opacity-45 cursor-not-allowed"
                         }`}
                       >
                         {suggested && (
@@ -421,7 +421,7 @@ export default function VaultLogbook() {
                             Next step
                           </span>
                         )}
-                        <span className={`flex items-center gap-1.5 text-xs font-semibold ${active && enabled ? "text-bassani-700 dark:text-bassani-300" : "text-gray-700 dark:text-gray-200"}`}>
+                        <span className={`flex items-center gap-1.5 text-xs font-semibold ${active && enabled ? "text-bassani-700" : "text-gray-700"}`}>
                           <Icon size={13} /> {m.label}
                         </span>
                         <span className="block text-[11px] text-gray-400 mt-0.5 leading-tight">
@@ -437,30 +437,30 @@ export default function VaultLogbook() {
               </div>
 
               {overIssue && (
-                <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">
+                <p className="sm:col-span-2 text-xs text-amber-600">
                   This is more than the {fmtQty(vaultBalance)} recorded in the vault for this batch. You can still record it, but double-check the weight and the batch before saving.
                 </p>
               )}
 
               {!isReturn && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Weight (grams)</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Weight (grams)</label>
                   <input
                     type="number" min="0" step="any" value={qty}
                     onChange={e => setQty(e.target.value)}
                     placeholder="e.g. 890"
-                    className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                   />
                 </div>
               )}
 
               {type === "receive" && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Source</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Source</label>
                   <select
                     value={source}
                     onChange={e => setSource(e.target.value)}
-                    className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                   >
                     {RECEIVE_SOURCES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
@@ -470,25 +470,25 @@ export default function VaultLogbook() {
               {isReturn && (
                 <>
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Manicured flower received back (grams)</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Manicured flower received back (grams)</label>
                     <input
                       type="number" min="0" step="any" value={mQty}
                       onChange={e => setMQty(e.target.value)}
                       placeholder="e.g. 5890"
-                      className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Trim received back (grams)</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Trim received back (grams)</label>
                     <input
                       type="number" min="0" step="any" value={tQty}
                       onChange={e => setTQty(e.target.value)}
                       placeholder="e.g. 730"
-                      className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                     />
                   </div>
                   {batch && (
-                    <p className="sm:col-span-2 text-xs text-gray-500 dark:text-gray-400">
+                    <p className="sm:col-span-2 text-xs text-gray-500">
                       The manicured and trim weights are booked in under{" "}
                       <span className="font-mono">{batch.batch_id.replace(/-(D|U|M|P|T|PC|TC|PCPR|TCPR)$/, "")}-M</span> and{" "}
                       <span className="font-mono">{batch.batch_id.replace(/-(D|U|M|P|T|PC|TC|PCPR|TCPR)$/, "")}-T</span>.
@@ -499,12 +499,12 @@ export default function VaultLogbook() {
               )}
 
               <div className={isReturn || type === "receive" ? "sm:col-span-2" : ""}>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Notes (optional)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Notes (optional)</label>
                 <input
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                   placeholder="Anything unusual about this movement…"
-                  className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-bassani-400"
                 />
               </div>
             </div>
@@ -518,16 +518,16 @@ export default function VaultLogbook() {
           </div>
 
           {/* Vault ledger */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <Vault size={15} className="text-gray-400" /> Vault Ledger
               </h3>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-400">What is in the vault right now, per batch</span>
                 {can("production.manage") && (
                   <button onClick={() => setRebuildConfirm(true)} disabled={rebuilding}
-                    className="text-xs text-bassani-600 dark:text-bassani-400 hover:underline flex items-center gap-1 shrink-0">
+                    className="text-xs text-bassani-600 hover:underline flex items-center gap-1 shrink-0">
                     {rebuilding ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                     Rebuild
                   </button>
@@ -539,7 +539,7 @@ export default function VaultLogbook() {
                 <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Loading…</span>
               </div>
             ) : ledger.total_groups === 0 ? (
-              <div className="text-center py-10 text-gray-400 dark:text-gray-500">
+              <div className="text-center py-10 text-gray-400">
                 <Vault size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No vault stock recorded yet. Record the first movement above.</p>
               </div>
@@ -547,7 +547,7 @@ export default function VaultLogbook() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+                    <tr className="text-left text-xs font-medium text-gray-500 bg-gray-50">
                       <th className="px-5 py-2.5">Batch</th>
                       <th className="px-5 py-2.5">Product</th>
                       <th className="px-5 py-2.5">Current form(s)</th>
@@ -556,7 +556,7 @@ export default function VaultLogbook() {
                       <th className="px-5 py-2.5">Last Movement</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-100">
                     {ledger.groups.map(g => {
                       const isOpen = !!expandedLedgerGroups[g.baseId];
                       const hasMultipleStages = g.rows.length > 1;
@@ -564,9 +564,9 @@ export default function VaultLogbook() {
                         <Fragment key={g.baseId}>
                           <tr
                             onClick={() => hasMultipleStages && setExpandedLedgerGroups(prev => ({ ...prev, [g.baseId]: !prev[g.baseId] }))}
-                            className={`transition-colors ${hasMultipleStages ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50" : ""}`}
+                            className={`transition-colors ${hasMultipleStages ? "cursor-pointer hover:bg-gray-50" : ""}`}
                           >
-                            <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200 whitespace-nowrap">
+                            <td className="px-5 py-3 font-mono text-gray-800 whitespace-nowrap">
                               <span className="inline-flex items-center gap-1.5">
                                 {hasMultipleStages ? (
                                   <ChevronRight size={13} className={`text-gray-400 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
@@ -576,20 +576,20 @@ export default function VaultLogbook() {
                                 <span title={batchTitle(g.baseId, g.product_name)}>{g.baseId}</span>
                               </span>
                             </td>
-                            <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[160px] truncate">{g.product_name}</td>
+                            <td className="px-5 py-3 text-gray-600 max-w-[160px] truncate">{g.product_name}</td>
                             <td className="px-5 py-3 text-xs whitespace-nowrap">
                               <div className="flex flex-wrap items-center gap-1">
                                 {g.activeRows.length === 0 ? (
-                                  <span className="text-gray-300 dark:text-gray-600">None in vault</span>
+                                  <span className="text-gray-300">None in vault</span>
                                 ) : g.activeRows.map(r => (
-                                  <span key={r.batch_id} className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                                  <span key={r.batch_id} className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
                                     {stageLabel(r.batch_id) || "Base"}
                                   </span>
                                 ))}
                               </div>
                             </td>
                             <td className={`px-5 py-3 text-right font-semibold whitespace-nowrap ${
-                              g.total < 0 ? "text-red-600 dark:text-red-400" : g.total === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-800 dark:text-gray-100"
+                              g.total < 0 ? "text-red-600" : g.total === 0 ? "text-gray-300" : "text-gray-800"
                             }`}>
                               {fmtQty(g.total)}
                             </td>
@@ -598,16 +598,16 @@ export default function VaultLogbook() {
                           </tr>
                           {isOpen && (
                             <tr>
-                              <td colSpan={6} className="px-5 py-3 bg-gray-50/70 dark:bg-gray-900/40">
+                              <td colSpan={6} className="px-5 py-3 bg-gray-50/70">
                                 <div className="space-y-1">
                                   {g.rows.map(r => (
-                                    <div key={r.batch_id} className="flex items-center justify-between gap-3 text-xs bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2">
-                                      <span className="font-mono text-gray-700 dark:text-gray-200" title={batchTitle(r.batch_id, r.product_name)}>
+                                    <div key={r.batch_id} className="flex items-center justify-between gap-3 text-xs bg-white border border-gray-100 rounded-lg px-3 py-2">
+                                      <span className="font-mono text-gray-700" title={batchTitle(r.batch_id, r.product_name)}>
                                         {r.batch_id}
                                         <span className="font-sans text-gray-400 ml-1.5">{stageLabel(r.batch_id) || "Base"}</span>
                                       </span>
-                                      <span className="flex items-center gap-4 text-gray-500 dark:text-gray-400">
-                                        <span className={`font-semibold ${r.qty_g < 0 ? "text-red-600 dark:text-red-400" : r.qty_g === 0 ? "text-gray-300 dark:text-gray-600" : "text-gray-700 dark:text-gray-200"}`}>
+                                      <span className="flex items-center gap-4 text-gray-500">
+                                        <span className={`font-semibold ${r.qty_g < 0 ? "text-red-600" : r.qty_g === 0 ? "text-gray-300" : "text-gray-700"}`}>
                                           {fmtQty(r.qty_g)}
                                         </span>
                                         <span>{r.movements} movement{r.movements !== 1 ? "s" : ""}</span>
@@ -636,9 +636,9 @@ export default function VaultLogbook() {
           </div>
 
           {/* Movement history */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Movement History</h3>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800">Movement History</h3>
             </div>
             {movements.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-8">No movements recorded yet.</p>
@@ -646,7 +646,7 @@ export default function VaultLogbook() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+                    <tr className="text-left text-xs font-medium text-gray-500 bg-gray-50">
                       <th className="px-5 py-2.5">When</th>
                       <th className="px-5 py-2.5">Movement</th>
                       <th className="px-5 py-2.5">Batch</th>
@@ -655,14 +655,14 @@ export default function VaultLogbook() {
                       <th className="px-5 py-2.5">Stock system</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-100">
                     {movements.map(m => (
-                      <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors align-top">
+                      <tr key={m.id} className="hover:bg-gray-50 transition-colors align-top">
                         <td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtWhen(m.created_at)}</td>
-                        <td className="px-5 py-3 text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap">{MOVE_LABEL[m.type] || m.type}</td>
+                        <td className="px-5 py-3 text-xs text-gray-600 whitespace-nowrap">{MOVE_LABEL[m.type] || m.type}</td>
                         <td className="px-5 py-3 text-xs" title={batchTitle(m.batch_id, m.product_name)}>
-                          <span className="font-mono text-gray-700 dark:text-gray-200">{m.batch_id}</span>
-                          <span className="block text-gray-500 dark:text-gray-400 mt-0.5">
+                          <span className="font-mono text-gray-700">{m.batch_id}</span>
+                          <span className="block text-gray-500 mt-0.5">
                             {m.product_name}{stageLabel(m.batch_id) ? ` · ${stageLabel(m.batch_id)}` : ""}
                           </span>
                           {(m.outputs || []).length > 0 && (
@@ -672,10 +672,10 @@ export default function VaultLogbook() {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-3 text-right text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                        <td className="px-5 py-3 text-right text-xs font-semibold text-gray-700 whitespace-nowrap">
                           {m.qty_g != null ? `${m.type === "receive" ? "+" : "-"}${fmtQty(m.qty_g)}` : ""}
                         </td>
-                        <td className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{m.actor_name}</td>
+                        <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{m.actor_name}</td>
                         <td className="px-5 py-3">
                           <SyncBadge status={m.odoo_sync} />
                           {m.odoo_error && <span className="block text-[11px] text-red-500 mt-0.5 max-w-[180px]">{m.odoo_error}</span>}
@@ -700,7 +700,7 @@ export default function VaultLogbook() {
       {/* GACP readiness probe results */}
       {probeOpen && (
         <Modal title="Stock System Access" onClose={() => setProbeOpen(false)} width="max-w-2xl">
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             What the portal's stock system connection can currently see. Use this to check whether the GACP production facility's company and warehouse are visible yet — Odoo hides companies and their warehouses from the connection entirely until access is granted, rather than showing an error.
           </p>
 
@@ -709,43 +709,43 @@ export default function VaultLogbook() {
               <Loader2 size={18} className="animate-spin mr-2" /> <span className="text-sm">Checking…</span>
             </div>
           ) : probeError ? (
-            <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+            <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
               <XCircle size={16} className="shrink-0 mt-0.5" /> {probeError}
             </div>
           ) : probeData && (
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-4 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg px-4 py-2.5">
-                <span className="text-gray-500 dark:text-gray-400">
+              <div className="flex flex-wrap gap-4 text-xs bg-gray-50 border border-gray-100 rounded-lg px-4 py-2.5">
+                <span className="text-gray-500">
                   Writes to the stock system:{" "}
-                  <span className={`font-semibold ${probeData.odoo_writes_live ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  <span className={`font-semibold ${probeData.odoo_writes_live ? "text-green-600" : "text-amber-600"}`}>
                     {probeData.odoo_writes_live ? "Live" : "Not enabled yet"}
                   </span>
                 </span>
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-gray-500">
                   GACP warehouse configured:{" "}
-                  <span className={`font-semibold ${probeData.gacp_warehouse_id ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  <span className={`font-semibold ${probeData.gacp_warehouse_id ? "text-green-600" : "text-amber-600"}`}>
                     {probeData.gacp_warehouse_id || "No"}
                   </span>
                 </span>
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-gray-500">
                   Manufacturing app:{" "}
-                  <span className={`font-semibold ${probeData.mrp_installed ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  <span className={`font-semibold ${probeData.mrp_installed ? "text-green-600" : "text-amber-600"}`}>
                     {probeData.mrp_installed === null ? "Unknown" : probeData.mrp_installed ? "Installed" : "Not installed"}
                   </span>
                 </span>
               </div>
 
               <div>
-                <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5">
                   <Building2 size={13} /> Companies visible to the stock system connection ({probeData.companies.length})
                 </p>
                 {probeData.companies.length === 0 ? (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">No companies are visible at all — the connection has not been granted access to anything yet.</p>
+                  <p className="text-sm text-amber-600">No companies are visible at all — the connection has not been granted access to anything yet.</p>
                 ) : (
                   <div className="space-y-3">
                     {probeData.companies.map(c => (
-                      <div key={c.id} className="border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2.5">
-                        <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                      <div key={c.id} className="border border-gray-100 rounded-lg px-3 py-2.5">
+                        <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
                           <Building2 size={13} className="text-gray-400" /> {c.name}
                         </p>
                         {c.warehouses.length === 0 ? (
@@ -754,11 +754,11 @@ export default function VaultLogbook() {
                           <div className="mt-1.5 ml-5 space-y-1.5">
                             {c.warehouses.map(w => (
                               <div key={w.id} className="text-xs">
-                                <p className="text-gray-700 dark:text-gray-200 font-medium flex items-center gap-1.5">
+                                <p className="text-gray-700 font-medium flex items-center gap-1.5">
                                   <Warehouse size={12} className="text-gray-400" />
                                   {w.name} {w.code && <span className="font-mono text-gray-400">({w.code})</span>}
                                   {probeData.gacp_warehouse_id === w.id && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300">GACP</span>
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-100 text-bassani-700">GACP</span>
                                   )}
                                 </p>
                                 {w.locations.length > 0 && (
@@ -795,10 +795,10 @@ export default function VaultLogbook() {
       {/* Rebuild ledger confirm */}
       {rebuildConfirm && (
         <Modal title="Rebuild Vault Ledger" onClose={() => setRebuildConfirm(false)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          <p className="text-sm text-gray-600 mb-2">
             This recomputes every batch's balance from the complete vault movement history and replaces the current ledger with the result.
           </p>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             Balances already update automatically as movements are recorded, so this is not needed for normal use — it's a reconciliation tool, useful if the numbers ever look wrong and you want to confirm they match the full history.
           </p>
           <div className="flex justify-end gap-2">
@@ -811,10 +811,10 @@ export default function VaultLogbook() {
       {/* Purge confirm */}
       {purgeConfirm && (
         <Modal title="Purge Test Data" onClose={() => setPurgeConfirm(false)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          <p className="text-sm text-gray-600 mb-2">
             This permanently deletes <strong>every batch and every vault movement</strong> so real operation can start with a clean registry. The product master list is kept, and batch sequence numbers start again from 001.
           </p>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             The audit trail keeps its complete history of everything that was recorded, including this purge. Records already written to the stock system cannot be purged and will block this action.
           </p>
           <div className="flex justify-end gap-2">
@@ -827,7 +827,7 @@ export default function VaultLogbook() {
       {/* Sync confirm */}
       {syncConfirm && (
         <Modal title="Sync Staged Movements" onClose={() => setSyncConfirm(false)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             This replays all {ledger.staged_movements} staged vault records against the stock system, oldest first.
             It only works once the production facility connection has been switched on. Continue?
           </p>
