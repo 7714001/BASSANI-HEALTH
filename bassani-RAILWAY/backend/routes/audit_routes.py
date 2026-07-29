@@ -9,6 +9,7 @@ from typing import Optional
 from datetime import datetime
 from auth import require_permission
 from database import col, NO_ID
+from middleware.audit import sanitize_for_json
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
@@ -47,6 +48,10 @@ async def get_audit_log(
         .limit(limit)
         .to_list(limit)
     )
+    # Sanitize on read too, not just on write (middleware/audit.py) — self-heals
+    # historical rows written before that fix existed, without needing a data
+    # migration or ever deleting audit history to work around a bad row.
+    logs = [sanitize_for_json(log) for log in logs]
     return {"logs": logs, "total": total}
 
 

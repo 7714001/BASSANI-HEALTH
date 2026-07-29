@@ -18,7 +18,8 @@ from services.email_service import (
     send_qa_rp_daily_digest, send_order_ready_for_collection, send_order_confirmed,
     send_backorder_daily_digest, send_payment_auto_confirmed, send_s6_flag_notification,
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
-    send_recurring_order_skipped_internal,
+    send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
+    send_recurring_order_upcoming,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -78,11 +79,27 @@ TEST_EMAIL_SENDERS: dict = {
     "recurring_order_accepted_to": lambda to: send_recurring_order_accepted_internal(
         [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
     ),
+    "recurring_order_needs_confirm_to": lambda to: send_recurring_order_needs_confirm_internal(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        reason="Test Pharmacy (Pty) Ltd is over their credit limit by R5,000.00 (credit R55,000.00 of R50,000.00 limit).",
+    ),
     "recurring_order_declined_to": lambda to: send_recurring_order_declined_internal(
         [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
     ),
     "recurring_order_skipped_to": lambda to: send_recurring_order_skipped_internal(
         [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+    ),
+    # Preview-only — this one always goes straight to the customer on file, not a
+    # configurable staff list, so there's no matching EmailRoutingConfig field. It
+    # still gets a Send Test entry so admins can see what the customer receives.
+    "recurring_order_upcoming": lambda to: send_recurring_order_upcoming(
+        customer_email=to, customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        lines=[
+            {"name": "Test Product 1G", "qty": 10},
+            {"name": "Test Product 3G", "qty": 5},
+        ],
+        order_total=4250.00, scheduled_date="15 August 2026",
+        review_url=f"{settings.portal_url}/recurring/test-token",
     ),
 }
 
@@ -105,7 +122,8 @@ class EmailRoutingConfig(BaseModel):
     backorder_daily_digest_to: List[str] = []   # 17:00 daily — orders waiting on stock
     finance_notification_to:   List[str] = []
     s6_flag_to:                List[str] = []   # S6 receipt flagged: no purchase order found
-    recurring_order_accepted_to: List[str] = []  # customer accepted a recurring order occurrence (incl. needing manual confirm)
+    recurring_order_accepted_to: List[str] = []  # customer accepted a recurring order occurrence
+    recurring_order_needs_confirm_to: List[str] = []  # accepted, but auto-confirm was blocked (e.g. credit limit) — needs manual staff review
     recurring_order_declined_to: List[str] = []  # customer declined a recurring order occurrence
     recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
 
@@ -129,6 +147,7 @@ async def get_email_routing() -> dict:
         "finance_notification_to":  doc.get("finance_notification_to", []),
         "s6_flag_to":               doc.get("s6_flag_to", []),
         "recurring_order_accepted_to": doc.get("recurring_order_accepted_to", []),
+        "recurring_order_needs_confirm_to": doc.get("recurring_order_needs_confirm_to", []),
         "recurring_order_declined_to": doc.get("recurring_order_declined_to", []),
         "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
     }

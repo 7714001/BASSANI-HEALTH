@@ -188,11 +188,24 @@ const ROUTING_KEYS = [
     placeholder: "ops@bassanihealth.com",
   },
   {
+    key: "recurring_order_upcoming", group: "orders", icon: Mail, previewOnly: true,
+    title: "Recurring Order: Upcoming (Customer Notice)",
+    description: "Sent 2 days before each recurring order occurrence, directly to the customer on file — asking them to review and accept or decline.",
+    note: "This one always goes straight to the customer, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
+  },
+  {
     key: "recurring_order_accepted_to", group: "orders", icon: Mail,
     title: "Recurring Order: Accepted",
-    description: "Triggered when a customer accepts an upcoming recurring order occurrence. Also covers the case where acceptance could not auto-confirm (e.g. over credit limit) and needs manual staff review.",
+    description: "Triggered when a customer accepts an upcoming recurring order occurrence — it has auto-confirmed and is now awaiting a registered deposit.",
     note: "If this list is empty, no notification is sent.",
     placeholder: "sales@bassanihealth.com",
+  },
+  {
+    key: "recurring_order_needs_confirm_to", group: "orders", icon: Mail,
+    title: "Recurring Order: Needs Manual Confirmation",
+    description: "Triggered when a customer accepts an upcoming recurring order occurrence but it could not auto-confirm (e.g. the customer is over their credit limit) — a staff member needs to review and confirm manually.",
+    note: "If this list is empty, no notification is sent. Consider routing this to whoever handles credit limit overrides, since it's more urgent than a plain acceptance.",
+    placeholder: "finance@bassanihealth.com",
   },
   {
     key: "recurring_order_declined_to", group: "orders", icon: Mail,
@@ -224,7 +237,10 @@ const ROUTING_KEYS = [
   },
 ];
 
-const BLANK_CONFIG = ROUTING_KEYS.reduce((acc, rk) => ({ ...acc, [rk.key]: [] }), {});
+// previewOnly keys (e.g. recurring_order_upcoming) have no configurable recipient
+// list — they always go straight to a specific person on the relevant record — so
+// they're excluded from the saved EmailRoutingConfig entirely.
+const BLANK_CONFIG = ROUTING_KEYS.filter(rk => !rk.previewOnly).reduce((acc, rk) => ({ ...acc, [rk.key]: [] }), {});
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
@@ -343,14 +359,16 @@ export default function EmailSettings({ embedded = false }) {
                     />
                   }
                 >
-                  <div>
-                    <p className="text-xs font-semibold text-gray-600 mb-2">{rk.label || "Notify these addresses:"}</p>
-                    <EmailTagInput
-                      emails={config[rk.key] || []}
-                      onChange={upd(rk.key)}
-                      placeholder={rk.placeholder}
-                    />
-                  </div>
+                  {!rk.previewOnly && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-600 mb-2">{rk.label || "Notify these addresses:"}</p>
+                      <EmailTagInput
+                        emails={config[rk.key] || []}
+                        onChange={upd(rk.key)}
+                        placeholder={rk.placeholder}
+                      />
+                    </div>
+                  )}
                 </RoutingSection>
               ))}
             </div>

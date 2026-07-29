@@ -202,6 +202,10 @@ async def create_parent_category(
         "updated_at": now,
     }
     result = await col("parent_categories").insert_one(vals)
+    # insert_one() mutates vals in place, adding a raw ObjectId `_id` key — pass a
+    # copy without it to the audit log, not the same dict, so `after` never ends
+    # up with a value the API layer can't JSON-encode back out (see 2026-07-30 fix).
+    audit_vals = {k: v for k, v in vals.items() if k != "_id"}
 
     if body.product_ids:
         await sync_reseller_catalog_additions(
@@ -214,7 +218,7 @@ async def create_parent_category(
         entity_id=str(result.inserted_id),
         entity_label=body.name,
         user=current_user,
-        after=vals,
+        after=audit_vals,
     )
     doc = await col("parent_categories").find_one({"_id": result.inserted_id})
     return {"success": True, "category": _serialize(doc)}

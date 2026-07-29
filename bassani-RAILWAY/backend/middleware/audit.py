@@ -11,7 +11,30 @@ Usage:
 """
 from datetime import datetime, timezone
 from typing import Optional, Any
+from bson import ObjectId
 from database import col
+
+
+def sanitize_for_json(value: Any) -> Any:
+    """Recursively convert raw ObjectId values into strings.
+
+    before/after/detail are freeform — callers sometimes pass a dict straight
+    out of an insert_one() call, and pymongo mutates that dict in place to add
+    a raw ObjectId `_id` key (see parent_category_routes.py's create endpoint,
+    fixed 2026-07-30, for the bug this caused: it stores into Mongo fine, since
+    BSON supports ObjectId natively, but FastAPI's jsonable_encoder can't
+    serialize a raw ObjectId back out, so the whole audit list 500s the moment
+    a row like this is read). Applied both at write time here and again at read
+    time in audit_routes.py, so already-broken historical rows self-heal on
+    the next read too, rather than needing a data migration.
+    """
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [sanitize_for_json(v) for v in value]
+    return value
 
 
 async def audit_log(
@@ -38,9 +61,9 @@ async def audit_log(
             "actor_id":       user.get("id") if user else None,
             "actor_role":     user.get("role") if user else None,
             "reseller_id":    reseller_id,
-            "before":         before,
-            "after":          after,
-            "detail":         detail or {},
+            "before":         sanitize_for_json(before),
+            "after":          sanitize_for_json(after),
+            "detail":         sanitize_for_json(detail) or {},
             "ip":             ip,
             "created_at":     datetime.now(timezone.utc),
         })

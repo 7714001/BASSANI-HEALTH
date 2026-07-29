@@ -626,9 +626,9 @@ async def accept_recurring_occurrence(token: str, background_tasks: BackgroundTa
                 }},
             },
         )
-        if routing.get("recurring_order_accepted_to"):
+        if routing.get("recurring_order_needs_confirm_to"):
             send_recurring_order_needs_confirm_internal(
-                routing["recurring_order_accepted_to"],
+                routing["recurring_order_needs_confirm_to"],
                 customer_name=ticket.get("customer_name", ""), order_ref=order_ref, reason=e.detail,
             )
     return {"success": True}
