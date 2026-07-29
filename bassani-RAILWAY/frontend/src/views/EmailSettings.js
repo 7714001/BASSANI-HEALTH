@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package } from "lucide-react";
+import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package, Send } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, LoadingState } from "../components/UI";
@@ -60,17 +60,18 @@ function EmailTagInput({ emails, onChange, placeholder = "Add email address…" 
 
 // ── Section card ───────────────────────────────────────────────────────────────
 
-function RoutingSection({ icon: Icon, title, description, note, children }) {
+function RoutingSection({ icon: Icon, title, description, note, headerAction, children }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
       <div className="px-6 py-4 border-b border-gray-50 flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-bassani-50 flex items-center justify-center shrink-0">
           <Icon size={15} className="text-bassani-600" />
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-gray-900">{title}</p>
           <p className="text-xs text-gray-400 mt-0.5">{description}</p>
         </div>
+        {headerAction}
       </div>
       <div className="px-6 py-5 space-y-3">
         {children}
@@ -79,6 +80,25 @@ function RoutingSection({ icon: Icon, title, description, note, children }) {
         )}
       </div>
     </div>
+  );
+}
+
+// ── Send Test button ──────────────────────────────────────────────────────────
+// Fires the real template with fabricated dummy data at whatever address is
+// currently in the shared test-email field, so an admin can see exactly what a
+// notification looks like without waiting for its real trigger event.
+
+function SendTestButton({ testEmail, sending, onSend }) {
+  return (
+    <button
+      onClick={onSend}
+      disabled={sending || !testEmail}
+      title={testEmail ? `Send a test to ${testEmail}` : "Enter a test email address above first"}
+      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-bassani-700 bg-bassani-50 hover:bg-bassani-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+    >
+      {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+      Send Test
+    </button>
   );
 }
 
@@ -213,6 +233,8 @@ export default function EmailSettings({ embedded = false }) {
   const [saving,      setSaving     ] = useState(false);
   const [config,      setConfig     ] = useState(BLANK_CONFIG);
   const [activeGroup, setActiveGroup] = useState(GROUPS[0].id);
+  const [testEmail,   setTestEmail  ] = useState("");
+  const [sendingKey,  setSendingKey ] = useState(null); // routing key currently sending, or null
 
   useEffect(() => {
     api.get("/api/settings/email-routing")
@@ -222,6 +244,19 @@ export default function EmailSettings({ embedded = false }) {
   }, []);
 
   const upd = (key) => (val) => setConfig(c => ({ ...c, [key]: val }));
+
+  const sendTest = async (key) => {
+    if (!testEmail) return;
+    setSendingKey(key);
+    try {
+      await api.post("/api/settings/email-routing/test", { key, to: testEmail });
+      toast.success(`Test email sent to ${testEmail}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send test email");
+    } finally {
+      setSendingKey(null);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -257,6 +292,21 @@ export default function EmailSettings({ embedded = false }) {
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
         <div className="max-w-5xl mx-auto w-full space-y-5">
 
+          <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-center gap-3 flex-wrap">
+            <Send size={15} className="text-bassani-500 shrink-0" />
+            <div className="flex-1 min-w-[220px]">
+              <p className="text-xs font-semibold text-gray-700">Test email address</p>
+              <p className="text-[11px] text-gray-400">Enter an address, then click Send Test on any notification below to preview it with sample data.</p>
+            </div>
+            <input
+              type="email"
+              value={testEmail}
+              onChange={e => setTestEmail(e.target.value)}
+              placeholder="you@bassanihealth.com"
+              className="w-64 px-3 py-2 text-sm border border-gray-200 rounded-xl outline-none focus:border-bassani-400"
+            />
+          </div>
+
           <div className="flex gap-5 items-start">
             <nav className="w-56 shrink-0 bg-white rounded-2xl border border-gray-100 p-2 space-y-1">
               {GROUPS.map(g => {
@@ -283,7 +333,16 @@ export default function EmailSettings({ embedded = false }) {
 
             <div className="flex-1 min-w-0 space-y-5">
               {visibleKeys.map(rk => (
-                <RoutingSection key={rk.key} icon={rk.icon} title={rk.title} description={rk.description} note={rk.note}>
+                <RoutingSection
+                  key={rk.key} icon={rk.icon} title={rk.title} description={rk.description} note={rk.note}
+                  headerAction={
+                    <SendTestButton
+                      testEmail={testEmail}
+                      sending={sendingKey === rk.key}
+                      onSend={() => sendTest(rk.key)}
+                    />
+                  }
+                >
                   <div>
                     <p className="text-xs font-semibold text-gray-600 mb-2">{rk.label || "Notify these addresses:"}</p>
                     <EmailTagInput

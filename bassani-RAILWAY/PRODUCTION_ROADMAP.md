@@ -1974,6 +1974,25 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.48 — Send Test Email on Notification Settings — Complete 2026-07-29
+
+**Goal:** Let an admin verify what any configured notification actually looks like — enter an email address, click Send Test on any notification card in Settings > Email Notifications, and receive the real template populated with fabricated dummy data. No waiting for the real trigger event (an application stalling for 4 hours, an order reaching QA, etc.) just to see the copy and layout.
+
+- [x] `backend/routes/settings_routes.py` — `POST /email-routing/test` (`settings.manage`-gated, same permission as configuring routing): looks up the posted `key` in `TEST_EMAIL_SENDERS`, a dict of one lambda per `ROUTING_KEYS` entry that calls the real `email_service.py` send function with realistic fabricated data (fake company/order/reference names, never real records) at the submitted address. `order_cc` isn't a standalone template — it's a `cc=` add-on to reseller order emails — so its test previews via `send_order_confirmed` with the test address as the primary recipient instead.
+- [x] `frontend/src/views/EmailSettings.js` — one shared test-email input above the notification cards; `RoutingSection` gains a `headerAction` slot; each card renders a `SendTestButton` that POSTs `{key, to}` and reports success/failure via toast.
+
+**Design decisions:**
+- **One shared test-email field, not one per card** — matches the real workflow (an admin tests several notification types in a row against their own inbox), and avoids 15 duplicate input fields.
+- **Real templates, fabricated data — never real records.** The test-send path never reads from the database; every value is a hardcoded placeholder, so there's no risk of a test click leaking a real customer's name or order details.
+- **A missing dispatch entry 400s clearly** rather than silently no-opping — surfaces immediately if a future notification type is added to `ROUTING_KEYS` without its `TEST_EMAIL_SENDERS` counterpart.
+
+### Definition of Done
+- [x] Every one of the 15 configured notification types has a working Send Test button that delivers a realistic preview
+- [x] The test email address field is shared across all cards — no need to re-enter it per notification
+- [x] A failed send (e.g. invalid address, Resend misconfiguration) reports a clear error via toast rather than failing silently
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.

@@ -5,15 +5,91 @@ The get_email_routing() helper is imported by other routes that need to
 resolve recipients at send time. It reads from MongoDB first, falling
 back to the support_email env var default.
 """
+import re
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 from auth import require_permission
 from database import col
 from config import get_settings
+from services.email_service import (
+    send_onboarding_submitted, send_application_escalation, send_countersign_needed,
+    send_countersign_complete_notification, send_qa_approval_needed, send_rp_approval_needed,
+    send_qa_rp_daily_digest, send_order_ready_for_collection, send_order_confirmed,
+    send_backorder_daily_digest, send_payment_auto_confirmed, send_s6_flag_notification,
+    send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
+    send_recurring_order_skipped_internal,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 settings = get_settings()
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# One dummy-data sender per ROUTING_KEYS entry (frontend/src/views/EmailSettings.js) —
+# lets an admin preview exactly what a real notification looks like without waiting
+# for the real trigger event. Fabricated data only, never touches real records.
+# order_cc isn't its own template (it's a cc= add-on to reseller order emails), so
+# it previews via send_order_confirmed with the test address as the primary recipient.
+TEST_EMAIL_SENDERS: dict = {
+    "application_submitted_to": lambda to: send_onboarding_submitted(
+        company_name="Test Pharmacy (Pty) Ltd", reseller_name="Jane Reseller",
+        app_ref="APP-TEST01", to=[to], source="reseller",
+    ),
+    "application_escalation_to": lambda to: send_application_escalation(
+        [to], app_id="APP-TEST01", company_name="Test Pharmacy (Pty) Ltd", hours_pending=5.5,
+    ),
+    "countersign_needed_to": lambda to: send_countersign_needed(
+        [to], app_id="APP-TEST01", company_name="Test Pharmacy (Pty) Ltd",
+    ),
+    "countersign_complete_to": lambda to: send_countersign_complete_notification(
+        [to], company_name="Test Pharmacy (Pty) Ltd", app_id="APP-TEST01",
+    ),
+    "qa_approval_to": lambda to: send_qa_approval_needed(
+        [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",
+    ),
+    "rp_approval_to": lambda to: send_rp_approval_needed(
+        [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",
+    ),
+    "qa_rp_daily_digest_to": lambda to: send_qa_rp_daily_digest(
+        [to], items=[
+            {"order_ref": "S00999", "customer_name": "Test Pharmacy (Pty) Ltd", "missing": ["QA"]},
+            {"order_ref": "S01000", "customer_name": "Sample Wellness Centre", "missing": ["QA", "RP"]},
+        ],
+    ),
+    "order_ready_extra_to": lambda to: send_order_ready_for_collection(
+        order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", packer_name="Test Packer",
+        supervisor_emails=[to],
+    ),
+    "order_cc": lambda to: send_order_confirmed(
+        order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_total=12500.00,
+        reseller_name="Jane Reseller", reseller_email=to,
+    ),
+    "backorder_daily_digest_to": lambda to: send_backorder_daily_digest(
+        [to], items=[{"order_ref": "S00999", "customer_name": "Test Pharmacy (Pty) Ltd", "picking_name": "WH/OUT/00123"}],
+    ),
+    "finance_notification_to": lambda to: send_payment_auto_confirmed(
+        [to], confirmed_items=[{"customer_name": "Test Pharmacy (Pty) Ltd", "order_id": "999", "invoice_name": "INV/2026/0999"}],
+    ),
+    "s6_flag_to": lambda to: send_s6_flag_notification(
+        [to], supplier_name="Test Supplier", product_name="Test Product 1G", batch_id="BISB-TST101-290726",
+        qty_received="10", actor_name="Test User",
+    ),
+    "recurring_order_accepted_to": lambda to: send_recurring_order_accepted_internal(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+    ),
+    "recurring_order_declined_to": lambda to: send_recurring_order_declined_internal(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+    ),
+    "recurring_order_skipped_to": lambda to: send_recurring_order_skipped_internal(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+    ),
+}
+
+
+class TestEmailRequest(BaseModel):
+    key: str
+    to: str
 
 
 class EmailRoutingConfig(BaseModel):
@@ -74,6 +150,26 @@ async def update_email_routing_config(
         {"$set": body.model_dump()},
         upsert=True,
     )
+    return {"success": True}
+
+
+@router.post("/email-routing/test")
+async def send_test_email(
+    body: TestEmailRequest,
+    _: dict = Depends(require_permission("settings.manage")),
+):
+    """Send a real notification template, populated with fabricated dummy data,
+    to whatever address the admin types in — so they can see exactly what a
+    notification looks like without waiting for its real trigger event."""
+    sender = TEST_EMAIL_SENDERS.get(body.key)
+    if not sender:
+        raise HTTPException(status_code=400, detail=f"Unknown notification key: {body.key}")
+    if not _EMAIL_RE.match(body.to):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    try:
+        sender(body.to)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to send test email: {str(e)}")
     return {"success": True}
 
 

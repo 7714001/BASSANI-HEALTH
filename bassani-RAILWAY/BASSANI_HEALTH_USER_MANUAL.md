@@ -247,6 +247,8 @@ The portal sends automated notifications to different recipients depending on th
 
 Go to **Settings > Email Notifications** (requires the `settings.manage` permission — Super Admin has it by default, and it can be granted to individual admin accounts via the Users permission panel). Notifications are organised into a sidebar of four groups — click a group to see just its notifications:
 
+**Previewing what a notification actually looks like:** Type an email address into the **Test email address** field at the top of the page, then click **Send Test** on any notification card. A real copy of that email is sent immediately to the address you entered, filled in with sample data (a fake customer, order reference, etc.) so you can check the wording and layout without waiting for the real event to happen. Sending a test never touches real customer or order data and has no effect on the actual notification recipient list.
+
 **Onboarding & Applications**
 - **New Customer Application** — a reseller submits an onboarding application. Falls back to the `SUPPORT_EMAIL` env var if this list is empty.
 - **Application Stalled (4+ Hours)** — a submitted application has gone 4+ hours with no signing documents generated. Checked every 30 minutes; each stalled application is only escalated once. Empty list = no check runs.
