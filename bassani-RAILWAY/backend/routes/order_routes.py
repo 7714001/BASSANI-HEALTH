@@ -14,6 +14,7 @@ from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_backorder_alert_internal,
+    send_deposit_due_proforma,
 )
 
 logger = logging.getLogger(__name__)
@@ -1269,13 +1270,32 @@ async def confirm_order(
     override_credit: bool = Query(False),
     current_user: dict = Depends(_require_confirm_access),
 ):
+    """Staff/reseller-driven entry point. See _confirm_order_core for the full
+    sequence — recurring_order_routes.py's accept endpoint (Phase 8.46) calls
+    _confirm_order_core directly for the customer-triggered auto-confirm path,
+    with a synthetic system actor in place of current_user."""
+    return await _confirm_order_core(order_id, current_user, background_tasks, override_credit)
+
+
+async def _confirm_order_core(
+    order_id: int,
+    current_user: dict,
+    background_tasks: BackgroundTasks,
+    override_credit: bool = False,
+) -> dict:
     """
-    Confirm a quotation. On success, three further steps run in sequence:
-      1. Create + post the customer invoice (out_invoice) in Odoo
-      2. Create + post a reseller commission vendor bill (in_invoice) if applicable
-      3. Queue the order on the packing board
-    Steps 2–4 are non-fatal: failures are returned as warnings so the admin can
+    Confirm a quotation. On success, further steps run in sequence:
+      1. Advance the linked ticket to awaiting_deposit (Phase 8.47 — a 50%
+         deposit must be registered before the order reaches the packing board)
+      2. Create a reseller commission record if applicable
+      3. Email the customer a pro-forma invoice stating the deposit due
+    Steps 2-3 are non-fatal: failures are returned as warnings so the admin can
     resolve them manually in Odoo without needing to re-confirm.
+
+    current_user's role gates the reseller-ownership check below — a synthetic
+    system actor (role not "reseller") skips it, since the recurring-order
+    accept path already confirmed the order belongs to an already-linked
+    customer at setup time.
     """
     odoo = get_odoo_client()
     warnings: List[str] = []
@@ -1347,166 +1367,48 @@ async def confirm_order(
         except Exception:
             raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
 
-    # Read order data needed by all subsequent steps
-    order_data = None
-    try:
-        rows = odoo.read(
-            "sale.order",
-            [order_id],
-            fields=["name", "partner_id", "picking_ids", "note", "warehouse_id"],
-        )
-        order_data = rows[0] if rows else None
-    except Exception as e:
-        warnings.append(f"Could not read order after confirm: {str(e)}")
-
-    # Resolve reseller ID early — needed by both packing board and commission steps.
+    # Resolve reseller ID early — needed by the ticket handoff, proforma CC, and
+    # commission steps below.
     _ticket_reseller_id = _sales_ticket.get("reseller_id") if _sales_ticket else None
+    _order_ref_str = pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}"
 
-    # ── Shortfall detection — check if all stock was reserved ─────────────────
-    # Odoo reserves stock on confirm. If reserved_availability < product_uom_qty
-    # on any move, the order can only be partially fulfilled. Invoice creation is
-    # deferred to collection time for partial orders so we never invoice for goods
-    # that haven't shipped yet.
-    is_partial = False
-    shortfalls: List[dict] = []
-    try:
-        if order_data and order_data.get("picking_ids"):
-            _pick_for_check = order_data["picking_ids"][0]
-            _pick_rows = odoo.read("stock.picking", [_pick_for_check], fields=["move_ids"])
-            if _pick_rows and _pick_rows[0].get("move_ids"):
-                _check_moves = odoo.read(
-                    "stock.move", _pick_rows[0]["move_ids"],
-                    fields=["product_id", "product_uom_qty", "reserved_availability"],
-                )
-                for _cm in _check_moves:
-                    _ordered  = float(_cm.get("product_uom_qty", 0))
-                    _reserved = float(_cm.get("reserved_availability", 0))
-                    if _reserved < _ordered:
-                        is_partial = True
-                        shortfalls.append({
-                            "name":          _cm["product_id"][1] if _cm.get("product_id") else "Unknown",
-                            "qty_ordered":   _ordered,
-                            "qty_available": _reserved,
-                            "qty_short":     round(_ordered - _reserved, 4),
-                        })
-    except Exception as _se:
-        logger.warning("confirm_shortfall_check_failed",
-                       extra={"order_id": order_id, "error": str(_se)})
-
-    # Invoice creation is deferred to mark_complete on the packing board (after QA + RP
-    # sign-off). This is when the order is "ready for collection" and the customer is
-    # expected to pay before collecting. Sample tickets never produce an invoice.
+    # ── Ticket handoff — advance to awaiting_deposit ───────────────────────────
+    # Phase 8.47: a confirmed order can no longer reach the packing board
+    # immediately. A 50% deposit must be registered first (register-deposit,
+    # ticket_routes.py) — that's the step that actually creates the packing
+    # board entry ("order ticket"), via _queue_packing_board() below. Stock
+    # shortfall detection and packing-board creation are both deferred to that
+    # point too, since a deposit can take days to arrive and stock reservations
+    # can shift in the meantime — recomputing then is more accurate than reusing
+    # a snapshot taken here.
+    #
+    # Sample tickets are the one structural exception: every line is forced to
+    # price_unit = 0.0 at quote-build time (create_order_from_ticket), so "50%
+    # of the order total" is always zero — there is nothing to deposit. They
+    # skip straight to the packing board here, unchanged from Phase 8.38's
+    # original design (no Finance action at any stage of a sample order).
     _is_sample_ticket = bool(_sales_ticket.get("is_sample")) if _sales_ticket else False
-
-    # ── Step 3: Packing board (non-blocking) ─────────────────────────────────
-    try:
-        if order_data and order_data.get("picking_ids"):
-            picking_id = order_data["picking_ids"][0]
-            pickings = odoo.read(
-                "stock.picking",
-                [picking_id],
-                fields=["name", "origin", "move_ids"],
+    if _sales_ticket and _is_sample_ticket:
+        try:
+            await _queue_packing_board(order_id, background_tasks)
+        except Exception as e:
+            warnings.append(f"Could not queue sample order for packing: {str(e)}")
+    elif _sales_ticket:
+        try:
+            _now_c = datetime.now(timezone.utc)
+            await col("tickets").update_one(
+                {"_id": _sales_ticket["_id"]},
+                {
+                    "$set": {"status": "awaiting_deposit", "updated_at": _now_c},
+                    "$push": {"stage_history": {
+                        "status": "awaiting_deposit", "exit_status": None,
+                        "actor_id": None, "actor_name": "system",
+                        "at": _now_c, "note": "Order confirmed — awaiting 50% deposit",
+                    }},
+                },
             )
-            picking = pickings[0] if pickings else None
-
-            if picking:
-                items = []
-                if picking.get("move_ids"):
-                    moves = odoo.read(
-                        "stock.move",
-                        picking["move_ids"],
-                        fields=["product_id", "product_uom_qty", "reserved_availability", "product_uom"],
-                    )
-                    for m in moves:
-                        pname = m["product_id"][1] if m.get("product_id") else "Unknown"
-                        prod = (
-                            odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
-                            if m.get("product_id") else []
-                        )
-                        sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        qty_ordered   = float(m.get("product_uom_qty", 0))
-                        qty_reserved  = float(m.get("reserved_availability", qty_ordered))
-                        items.append({
-                            "name": pname, "sku": sku,
-                            "product_id": m["product_id"][0] if m.get("product_id") else None,
-                            "qty": qty_ordered,           # backward-compat alias
-                            "qty_ordered": qty_ordered,
-                            "qty_reserved": qty_reserved,
-                            "is_backordered": qty_reserved < qty_ordered,
-                            "location": "",
-                        })
-
-                partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
-                is_reseller_order = bool(_ticket_reseller_id)
-                reseller_name_val = None
-                if _ticket_reseller_id:
-                    _res_pb = await col("resellers").find_one({"id": _ticket_reseller_id}, {"name": 1, "_id": 0})
-                    reseller_name_val = _res_pb["name"] if _res_pb else None
-
-                from routes.packing_board_routes import manager
-                now = datetime.now(timezone.utc)
-                doc = {
-                    "order_id": str(order_id),
-                    "odoo_picking_id": picking_id,
-                    "picking_name": picking["name"],
-                    "is_backorder": False,
-                    "parent_packing_id": None,
-                    "waiting_stock": False,
-                    "has_pending_invoice": is_partial,
-                    "warehouse_id":   order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
-                    "warehouse_name": order_data["warehouse_id"][1] if order_data.get("warehouse_id") else None,
-                    "customer_name": partner_name,
-                    "customer_city": "",
-                    "items": items,
-                    "total_units": int(sum(i["qty_ordered"] for i in items)),
-                    "inv_num": "",
-                    "is_sample": _is_sample_ticket,
-                    "dn_num": picking["name"],
-                    "ps_num": order_data["name"],
-                    "notes": order_data.get("note") or "",
-                    "is_reseller": is_reseller_order,
-                    "reseller_id": _ticket_reseller_id or None,
-                    "reseller_name": reseller_name_val,
-                    "order_value": float(pre_rows[0].get("amount_total") or 0) if pre_rows else None,
-                    "packer_name": None,
-                    "status": "queued",
-                    "queued_at": now,
-                    "packed_at": None,
-                    "ready_at": None,
-                    "collected_at": None,
-                    "collected_by": None,
-                    "cancelled_at": None,
-                    "incomplete_at": None,
-                    "completed_at": None,
-                    "incomplete_reason": None,
-                    "delivery_validated": None,
-                    "qa_approved_by": None, "qa_approved_at": None,
-                    "rp_approved_by": None, "rp_approved_at": None,
-                    "item_ticks": {i["sku"]: False for i in items},
-                }
-                await col("packing_board").replace_one({"order_id": str(order_id)}, doc, upsert=True)
-                await manager.broadcast({"type": "entry_update", "data": {**doc, "queued_at": now.isoformat()}})
-
-                # Phase 8.4 — hand off to the linked Sales ticket, if one exists.
-                # The Orders side has no separate collection (see packing_board
-                # above); orders_ticket_ref just flags that the handoff happened.
-                sales_ticket = await col("tickets").find_one(
-                    {"type": "sales", "order_id": order_id, "exit_status": None}
-                )
-                if sales_ticket:
-                    await col("tickets").update_one(
-                        {"_id": sales_ticket["_id"]},
-                        {
-                            "$set": {"status": "confirmed_wip", "orders_ticket_ref": str(order_id), "updated_at": now},
-                            "$push": {"stage_history": {
-                                "status": "confirmed_wip", "exit_status": None,
-                                "actor_id": None, "actor_name": "system",
-                                "at": now, "note": "Auto-linked to Orders on order confirmation",
-                            }},
-                        },
-                    )
-    except Exception as e:
-        print(f"⚠️  Packing board auto-queue failed for order {order_id}: {e}")
+        except Exception as e:
+            warnings.append(f"Could not advance ticket to awaiting_deposit: {str(e)}")
 
     # ── Commission record ─────────────────────────────────────────────────────
     # Phase 7.13: credited to whichever reseller the order's customer is
@@ -1526,7 +1428,7 @@ async def confirm_order(
             _reseller_doc = await col("resellers").find_one({"id": _owning_reseller_id}, NO_ID)
             if _reseller_doc and _reseller_doc.get("commission_eligible") is not False:
                 _reseller_name_val = _reseller_doc["name"] if _reseller_doc else ""
-                _cust_name_val = order_data["partner_id"][1] if order_data and order_data.get("partner_id") else ""
+                _cust_name_val = partner[1] if partner else ""
                 _order_subtotal = float(pre_rows[0].get("amount_untaxed", 0)) if pre_rows else 0
                 _comm_doc = {
                     "odoo_order_id": str(order_id),
@@ -1549,29 +1451,234 @@ async def confirm_order(
             print(f"⚠️  Commission record creation failed at confirm for order {order_id}: {_ce}")
 
     await audit_log("order.confirm", "order", order_id,
-                    entity_label=order_data.get("name", "") if order_data else "",
+                    entity_label=pre_rows[0].get("name", "") if pre_rows else "",
                     user=current_user,
                     detail={"warnings": warnings},
                     reseller_id=comm_lookup.get("reseller_id") if comm_lookup else None)
 
-    _order_ref_str = pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}"
+    # ── Proforma invoice — automatic, tells the customer what to pay ──────────
+    # Phase 8.47: Odoo's native Pro-Forma Invoice report (must be enabled in
+    # Odoo's Sales settings — group_proforma_sales) is fetched live via XML-RPC
+    # and emailed straight to the customer, with the reseller CC'd if this is a
+    # reseller-placed order, so nobody has to open Odoo to produce this document.
+    # Non-fatal: a missing/disabled report degrades to a warning, not a failed
+    # confirm — the order is already confirmed in Odoo at this point regardless.
+    # Skipped for sample orders — every line is priced at R0.00, so there is no
+    # deposit due and no invoice for the customer to act on.
+    try:
+        if not _is_sample_ticket:
+            _customer_email = None
+            if partner:
+                _p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+                _customer_email = _p_rows[0].get("email") if _p_rows else None
+            if not _customer_email:
+                warnings.append("Customer has no email on file — proforma invoice was not sent")
+            else:
+                _pdf_result = odoo.execute(
+                    "ir.actions.report", "_render_qweb_pdf",
+                    "sale.report_saleorder_pro_forma_invoice", [order_id],
+                )
+                _pdf_bytes = _pdf_result[0]
+                if hasattr(_pdf_bytes, "data"):
+                    _pdf_bytes = _pdf_bytes.data
+                _reseller_email_cc = None
+                if _ticket_reseller_id:
+                    _res_email_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, {"email": 1, "_id": 0})
+                    _reseller_email_cc = _res_email_doc.get("email") if _res_email_doc else None
+                background_tasks.add_task(
+                    send_deposit_due_proforma,
+                    customer_email=_customer_email,
+                    customer_name=partner[1] if partner else "",
+                    order_ref=_order_ref_str,
+                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                    pdf_bytes=bytes(_pdf_bytes),
+                    cc=[_reseller_email_cc] if _reseller_email_cc else None,
+                )
+    except Exception as e:
+        logger.warning("proforma_invoice_failed", extra={"order_id": order_id, "error": str(e)})
+        warnings.append(f"Could not send proforma invoice: {str(e)}")
+
+    return {
+        "success": True,
+        "warnings": warnings,
+    }
+
+
+async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks) -> None:
+    """
+    Create the packing board entry ("order ticket") for a confirmed sale order
+    and advance its linked Sales ticket to confirmed_wip.
+
+    Phase 8.47: this used to run inline inside confirm_order. It now only runs
+    once a 50% deposit has been registered (register-deposit, ticket_routes.py)
+    — a confirmed order sits at awaiting_deposit until then. Stock reservations
+    are re-read fresh here rather than reused from confirm time, since a deposit
+    can take days to arrive and reservations can shift in that window. Failures
+    are logged and swallowed (non-fatal) — the deposit itself is already
+    registered in Odoo by the time this runs, so a packing-board hiccup here
+    shouldn't be reported back as a failed deposit registration; staff can
+    recover manually via the existing auto-sync path if needed.
+    """
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read(
+            "sale.order", [order_id],
+            fields=["name", "partner_id", "picking_ids", "note", "warehouse_id", "amount_total"],
+        )
+    except Exception as e:
+        logger.warning("queue_packing_board_read_failed", extra={"order_id": order_id, "error": str(e)})
+        return
+    order_data = rows[0] if rows else None
+    if not order_data or not order_data.get("picking_ids"):
+        return
+
+    sales_ticket = await col("tickets").find_one(
+        {"type": "sales", "order_id": order_id, "exit_status": None}
+    )
+    _ticket_reseller_id = sales_ticket.get("reseller_id") if sales_ticket else None
+    _is_sample_ticket = bool(sales_ticket.get("is_sample")) if sales_ticket else False
+
+    # ── Shortfall detection — check if all stock is currently reserved ────────
+    is_partial = False
+    shortfalls: List[dict] = []
+    try:
+        _pick_for_check = order_data["picking_ids"][0]
+        _pick_rows = odoo.read("stock.picking", [_pick_for_check], fields=["move_ids"])
+        if _pick_rows and _pick_rows[0].get("move_ids"):
+            _check_moves = odoo.read(
+                "stock.move", _pick_rows[0]["move_ids"],
+                fields=["product_id", "product_uom_qty", "reserved_availability"],
+            )
+            for _cm in _check_moves:
+                _ordered  = float(_cm.get("product_uom_qty", 0))
+                _reserved = float(_cm.get("reserved_availability", 0))
+                if _reserved < _ordered:
+                    is_partial = True
+                    shortfalls.append({
+                        "name":          _cm["product_id"][1] if _cm.get("product_id") else "Unknown",
+                        "qty_ordered":   _ordered,
+                        "qty_available": _reserved,
+                        "qty_short":     round(_ordered - _reserved, 4),
+                    })
+    except Exception as _se:
+        logger.warning("queue_packing_board_shortfall_check_failed",
+                       extra={"order_id": order_id, "error": str(_se)})
+
+    picking_id = order_data["picking_ids"][0]
+    pickings = odoo.read("stock.picking", [picking_id], fields=["name", "origin", "move_ids"])
+    picking = pickings[0] if pickings else None
+    if not picking:
+        return
+
+    items = []
+    if picking.get("move_ids"):
+        moves = odoo.read(
+            "stock.move", picking["move_ids"],
+            fields=["product_id", "product_uom_qty", "reserved_availability", "product_uom"],
+        )
+        for m in moves:
+            pname = m["product_id"][1] if m.get("product_id") else "Unknown"
+            prod = (
+                odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
+                if m.get("product_id") else []
+            )
+            sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
+            qty_ordered  = float(m.get("product_uom_qty", 0))
+            qty_reserved = float(m.get("reserved_availability", qty_ordered))
+            items.append({
+                "name": pname, "sku": sku,
+                "product_id": m["product_id"][0] if m.get("product_id") else None,
+                "qty": qty_ordered,           # backward-compat alias
+                "qty_ordered": qty_ordered,
+                "qty_reserved": qty_reserved,
+                "is_backordered": qty_reserved < qty_ordered,
+                "location": "",
+            })
+
+    partner_name = order_data["partner_id"][1] if order_data.get("partner_id") else ""
+    is_reseller_order = bool(_ticket_reseller_id)
+    reseller_name_val = None
+    if _ticket_reseller_id:
+        _res_pb = await col("resellers").find_one({"id": _ticket_reseller_id}, {"name": 1, "_id": 0})
+        reseller_name_val = _res_pb["name"] if _res_pb else None
+
+    from routes.packing_board_routes import manager
+    now = datetime.now(timezone.utc)
+    doc = {
+        "order_id": str(order_id),
+        "odoo_picking_id": picking_id,
+        "picking_name": picking["name"],
+        "is_backorder": False,
+        "parent_packing_id": None,
+        "waiting_stock": False,
+        "has_pending_invoice": is_partial,
+        "warehouse_id":   order_data["warehouse_id"][0] if order_data.get("warehouse_id") else None,
+        "warehouse_name": order_data["warehouse_id"][1] if order_data.get("warehouse_id") else None,
+        "customer_name": partner_name,
+        "customer_city": "",
+        "items": items,
+        "total_units": int(sum(i["qty_ordered"] for i in items)),
+        "inv_num": "",
+        "is_sample": _is_sample_ticket,
+        "dn_num": picking["name"],
+        "ps_num": order_data["name"],
+        "notes": order_data.get("note") or "",
+        "is_reseller": is_reseller_order,
+        "reseller_id": _ticket_reseller_id or None,
+        "reseller_name": reseller_name_val,
+        "order_value": float(order_data.get("amount_total") or 0),
+        "packer_name": None,
+        "status": "queued",
+        "queued_at": now,
+        "packed_at": None,
+        "ready_at": None,
+        "collected_at": None,
+        "collected_by": None,
+        "cancelled_at": None,
+        "incomplete_at": None,
+        "completed_at": None,
+        "incomplete_reason": None,
+        "delivery_validated": None,
+        "qa_approved_by": None, "qa_approved_at": None,
+        "rp_approved_by": None, "rp_approved_at": None,
+        "item_ticks": {i["sku"]: False for i in items},
+    }
+    await col("packing_board").replace_one({"order_id": str(order_id)}, doc, upsert=True)
+    await manager.broadcast({"type": "entry_update", "data": {**doc, "queued_at": now.isoformat()}})
+
+    if sales_ticket:
+        await col("tickets").update_one(
+            {"_id": sales_ticket["_id"]},
+            {
+                "$set": {"status": "confirmed_wip", "orders_ticket_ref": str(order_id), "updated_at": now},
+                "$push": {"stage_history": {
+                    "status": "confirmed_wip", "exit_status": None,
+                    "actor_id": None, "actor_name": "system",
+                    "at": now, "note": "Deposit registered — order queued for packing",
+                }},
+            },
+        )
+
+    # ── Reseller "order confirmed" / partial notifications, and the internal
+    # backorder alert — deferred to this point (deposit registered) since the
+    # order only actually enters the fulfilment pipeline now.
+    comm_lookup = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
     _routing = await get_email_routing()
+    _order_ref_str = order_data.get("name", f"#{order_id}")
 
     if comm_lookup and comm_lookup.get("reseller_id"):
         _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _reseller and _reseller.get("email"):
             if is_partial:
-                _pb_entry = await col("packing_board").find_one({"order_id": str(order_id)}, {"items": 1})
                 _shipped_lines = [
                     {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
-                    for i in (_pb_entry or {}).get("items", [])
-                    if not i.get("is_backordered")
+                    for i in items if not i.get("is_backordered")
                 ]
                 background_tasks.add_task(
                     send_order_confirmed_partial,
                     order_ref=_order_ref_str,
                     customer_name=comm_lookup.get("customer_name", ""),
-                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                    order_total=float(order_data.get("amount_total", 0)),
                     reseller_name=comm_lookup.get("reseller_name", ""),
                     reseller_email=_reseller["email"],
                     shipped_lines=_shipped_lines,
@@ -1583,13 +1690,12 @@ async def confirm_order(
                     send_order_confirmed,
                     order_ref=_order_ref_str,
                     customer_name=comm_lookup.get("customer_name", ""),
-                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+                    order_total=float(order_data.get("amount_total", 0)),
                     reseller_name=comm_lookup.get("reseller_name", ""),
                     reseller_email=_reseller["email"],
                     cc=_routing["order_cc"] or None,
                 )
 
-    # Internal backorder alert — fire for any partial order regardless of reseller
     if is_partial and _routing.get("order_to"):
         background_tasks.add_task(
             send_backorder_alert_internal,
@@ -1599,11 +1705,6 @@ async def confirm_order(
             reseller_name=comm_lookup.get("reseller_name") if comm_lookup else None,
             backorder_lines=shortfalls,
         )
-
-    return {
-        "success": True,
-        "warnings": warnings,
-    }
 
 
 @router.put("/{order_id}/cancel")

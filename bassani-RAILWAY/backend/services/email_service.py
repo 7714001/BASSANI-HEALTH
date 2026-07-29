@@ -300,13 +300,57 @@ def send_order_cancelled(
           _wrap(body))
 
 
+def send_deposit_due_proforma(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    order_total: float,
+    pdf_bytes: bytes,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the customer the moment staff confirm their order (or a recurring
+    order auto-confirms on acceptance) — Phase 8.47. Attaches Odoo's Pro-Forma
+    Invoice PDF and states the 50% deposit due; the order does not reach the
+    packing board until that deposit is registered by Bassani finance."""
+    if not customer_email:
+        return
+    deposit_amount = order_total * 0.5
+    body = (
+        _h1("Your order is confirmed")
+        + _p(f"Hi {customer_name},")
+        + _p("Thank you for your order. Please find your pro-forma invoice attached, "
+             "confirming the items and total. A 50% deposit is required before your "
+             "order can move into fulfilment.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Order total", f"R{order_total:,.2f}"),
+            ("Deposit due (50%)",
+             f'<strong style="font-size:16px;color:#0f6e56;">R{deposit_amount:,.2f}</strong>'),
+        ], tint="#f0fdf9", border="#bbf7d0")
+        + _p(f"Please make payment to {settings.bank_name}, account number "
+             f"{settings.bank_account}, branch code {settings.bank_branch}, using your "
+             f"order reference as the payment description.")
+        + _divider()
+        + _p("Once your deposit has been received and confirmed, we will begin "
+             "preparing your order.", muted=True)
+    )
+    _send(
+        customer_email, f"Order Confirmed, Deposit Due: {order_ref}",
+        _wrap(body), attachments=[{
+            "filename": f"{order_ref} Pro-Forma Invoice.pdf",
+            "content": list(pdf_bytes),
+        }],
+        cc=cc or None,
+    )
+
+
 # Ticket emails
 
 _STAGE_LABELS = {
     "open": "New Inquiry",
     "quote": "Quote",
     "sale_order": "Sale Order",
-    "invoice": "Invoice",
+    "awaiting_deposit": "Awaiting Deposit",
     "confirmed_wip": "In Progress",
     "ready_for_collection": "Ready for Collection",
 }
@@ -1510,3 +1554,120 @@ def send_backorder_daily_digest(to: "list[str]", items: list) -> None:
         + _p("Log in to the portal for full details on each order.", muted=True)
     )
     _send(to, f"Backorders: {count} order{'s' if count != 1 else ''} require attention", _wrap(body))
+
+
+# Recurring order emails — Phase 8.46
+
+def send_recurring_order_upcoming(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    lines: list,
+    order_total: float,
+    scheduled_date: str,
+    review_url: str,
+) -> None:
+    """Sent to the customer 2 days before a recurring order's scheduled date.
+    lines: [{name, qty}]. Reviewing and accepting confirms the order; Bassani
+    still registers the deposit before it moves into fulfilment."""
+    if not customer_email:
+        return
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:7px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">{l.get("name", "")}</td>'
+        f'<td style="padding:7px 0 7px 16px;font-size:13px;color:#475569;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">{l.get("qty", 0):g}</td>'
+        f'</tr>'
+        for l in lines
+    )
+    body = (
+        _h1("Your regular order is coming up")
+        + _p(f"Hi {customer_name},")
+        + _p(f"Based on your regular ordering schedule, we are preparing the order below for "
+             f"<strong>{scheduled_date}</strong>. Please review it and let us know if you would "
+             "like to go ahead.")
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + f'<thead><tr>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">Item</th>'
+        + f'<th style="text-align:right;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Qty</th>'
+        + f'</tr></thead>'
+        + f'<tbody>{rows}</tbody>'
+        + f'</table>'
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Estimated total", f"R{order_total:,.2f}"),
+        ])
+        + _button("Review and respond", review_url)
+        + _divider()
+        + _p("If we do not hear from you in time, this order will simply be skipped and your "
+             "regular schedule will continue as normal from the next date.", muted=True)
+    )
+    _send(customer_email, f"Your Order is Coming Up: {scheduled_date}", _wrap(body))
+
+
+def send_recurring_order_accepted_internal(to: "list[str]", customer_name: str, order_ref: str) -> None:
+    """Sent to staff when a customer accepts a recurring order occurrence — it
+    has auto-confirmed in Odoo and is now awaiting a registered deposit."""
+    if not to:
+        return
+    body = (
+        _h1("Recurring order accepted")
+        + _p(f"<strong>{customer_name}</strong> has accepted their upcoming recurring order "
+             f"({order_ref}). It has been confirmed and is now awaiting a registered 50% deposit "
+             "before it can move onto the packing board.")
+        + _button("Open orders", f"{settings.portal_url}/orders-tickets")
+        + _divider()
+        + _p("Log in to the portal to register the deposit.", muted=True)
+    )
+    _send(to, f"Recurring Order Accepted: {order_ref}", _wrap(body))
+
+
+def send_recurring_order_needs_confirm_internal(to: "list[str]", customer_name: str, order_ref: str, reason: str) -> None:
+    """Sent to staff when a customer accepts a recurring order occurrence but
+    automatic confirmation was blocked (e.g. the customer is over their credit
+    limit) — a staff member must review and confirm manually with an explicit override."""
+    if not to:
+        return
+    body = (
+        _h1("Recurring order needs manual confirmation")
+        + _p(f"<strong>{customer_name}</strong> has accepted their upcoming recurring order "
+             f"({order_ref}), but it could not be confirmed automatically.")
+        + _info_box([
+            ("Reason", reason),
+        ], tint="#fffbeb", border="#fde68a")
+        + _button("Review order", f"{settings.portal_url}/orders-tickets")
+        + _divider()
+        + _p("Log in to the portal to review and confirm this order manually.", muted=True)
+    )
+    _send(to, f"Action Needed, Recurring Order: {order_ref}", _wrap(body))
+
+
+def send_recurring_order_declined_internal(to: "list[str]", customer_name: str, order_ref: str) -> None:
+    """Sent to staff when a customer declines a recurring order occurrence."""
+    if not to:
+        return
+    body = (
+        _h1("Recurring order declined")
+        + _p(f"<strong>{customer_name}</strong> declined their upcoming recurring order "
+             f"({order_ref}). The draft order has been cancelled. Their regular schedule "
+             "will continue from the next date.")
+        + _divider()
+        + _p("No action is required.", muted=True)
+    )
+    _send(to, f"Recurring Order Declined: {order_ref}", _wrap(body))
+
+
+def send_recurring_order_skipped_internal(to: "list[str]", customer_name: str, order_ref: str) -> None:
+    """Sent to staff when a recurring order occurrence expires with no
+    customer response — 'skip and continue', the schedule keeps running."""
+    if not to:
+        return
+    body = (
+        _h1("Recurring order skipped, no response")
+        + _p(f"<strong>{customer_name}</strong> did not respond in time to their upcoming "
+             f"recurring order ({order_ref}). This occurrence has been skipped and the draft "
+             "order cancelled. Their regular schedule will continue from the next date.")
+        + _divider()
+        + _p("No action is required.", muted=True)
+    )
+    _send(to, f"Recurring Order Skipped: {order_ref}", _wrap(body))

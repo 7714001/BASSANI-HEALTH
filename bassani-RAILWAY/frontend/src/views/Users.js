@@ -29,6 +29,7 @@ const PERMISSION_GROUPS = [
       { key: "view",    label: "View orders" },
       { key: "confirm", label: "Confirm orders" },
       { key: "cancel",  label: "Cancel orders" },
+      { key: "recurring_manage", label: "Manage recurring order schedules" },
     ],
   },
   {
@@ -219,7 +220,7 @@ const EMPTY_PERMISSIONS = Object.fromEntries(
 // Mirrors backend DEFAULT_ADMIN_PERMISSIONS — pre-selected when creating a new admin account.
 const DEFAULT_ADMIN_PERMS = {
   products:   { manage: false },
-  orders:     { view: true,  confirm: false, cancel: false },
+  orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
   customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
   commission: { view: true,  generate_statements: false, mark_paid: false, configure_tiers: false },
   resellers:  { view: true,  manage: false },
@@ -247,7 +248,7 @@ const PRODUCTION_ROLES = new Set(["vault_custodian"]);
 const ROLE_DEFAULT_PERMS = {
   sales: {
     products:   { manage: false },
-    orders:     { view: true,  confirm: false, cancel: false },
+    orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: true,  manage: true,   approve_onboarding: false, reject_onboarding: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
@@ -266,7 +267,7 @@ const ROLE_DEFAULT_PERMS = {
   },
   orders_clerk: {
     products:   { manage: false },
-    orders:     { view: true,  confirm: false, cancel: false },
+    orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
@@ -285,7 +286,7 @@ const ROLE_DEFAULT_PERMS = {
   },
   finance: {
     products:   { manage: false },
-    orders:     { view: true,  confirm: false, cancel: false },
+    orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false },
     commission: { view: true,  generate_statements: true,  mark_paid: true,  configure_tiers: false },
     resellers:  { view: true,  manage: false },
@@ -304,7 +305,7 @@ const ROLE_DEFAULT_PERMS = {
   },
   qa_manager: {
     products:   { manage: false },
-    orders:     { view: true,  confirm: false, cancel: false },
+    orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
@@ -323,7 +324,7 @@ const ROLE_DEFAULT_PERMS = {
   },
   responsible_pharmacist: {
     products:   { manage: false },
-    orders:     { view: true,  confirm: false, cancel: false },
+    orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
@@ -343,7 +344,7 @@ const ROLE_DEFAULT_PERMS = {
   },
   vault_custodian: {
     products:   { manage: false },
-    orders:     { view: false, confirm: false, cancel: false },
+    orders:     { view: false, confirm: false, cancel: false, recurring_manage: false },
     customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },

@@ -12,7 +12,7 @@ import {
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
-  Layers, Archive, PackageCheck, FolderTree,
+  Layers, Archive, PackageCheck, FolderTree, Repeat,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -65,6 +65,7 @@ const NAV = [
   { label: "Orders Inbox",       path: "/orders-inbox",     icon: Mail,   section: "Orders",  permission: "orders_inbox.view",       showOrdersInboxBadge: true },
   { label: "Orders Tickets",     path: "/tickets/orders",   icon: Ticket, section: "Orders",  permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Backorders",         path: "/orders/backorders", icon: Clock,  section: "Orders",  permission: "orders.view" },
+  { label: "Recurring Orders",   path: "/orders/recurring",  icon: Repeat, section: "Orders",  permission: "orders.recurring_manage" },
   { label: "Batch Registry",     path: "/production/batches",   icon: Layers,       section: "Production", permission: "production.batch_generate" },
   { label: "Vault Logbook",      path: "/production/vault",     icon: Archive,      section: "Production", permission: "production.vault" },
   { label: "S6 Receiving",       path: "/production/receiving", icon: PackageCheck, section: "Production", permission: "production.vault" },

@@ -245,7 +245,7 @@ Until the domain is verified, emails will send from Resend's sandbox domain. Rea
 
 The portal sends automated notifications to different recipients depending on the event. You can override and extend these without touching Railway environment variables.
 
-Go to **Settings > Email Notifications** (visible to Super Admin only). Notifications are organised into a sidebar of four groups — click a group to see just its notifications:
+Go to **Settings > Email Notifications** (requires the `settings.manage` permission — Super Admin has it by default, and it can be granted to individual admin accounts via the Users permission panel). Notifications are organised into a sidebar of four groups — click a group to see just its notifications:
 
 **Onboarding & Applications**
 - **New Customer Application** — a reseller submits an onboarding application. Falls back to the `SUPPORT_EMAIL` env var if this list is empty.
@@ -493,7 +493,7 @@ MongoDB is your portal's primary database — it stores reseller profiles, commi
 Every order in Bassani Health — whether placed by a reseller online or brought in by Merveille from a customer email — flows through the same pipeline:
 
 ```
-INQUIRY → QUOTE → SALE ORDER → CONFIRMED WIP → PACKING → QA + RP APPROVAL → COMPLETE
+INQUIRY → QUOTE → SALE ORDER → AWAITING DEPOSIT → CONFIRMED WIP → PACKING → QA + RP APPROVAL → COMPLETE
 ```
 
 Each step is handled by a different team member, and the portal enforces that no step is skipped. Here is how real orders move through the system:
@@ -503,21 +503,24 @@ Each step is handled by a different team member, and the portal enforces that no
 1. Merveille creates a **Sales Ticket** (Direct Inquiry) and builds a quote in the portal — no Odoo needed
 2. The quote is emailed to the pharmacy directly from the ticket
 3. The pharmacy confirms — Merveille advances the ticket to Sale Order stage
-4. Merveille confirms the order from the ticket — Odoo creates a confirmed sale order and the packing queue is updated automatically (no deposit step)
-5. Tshidi sees the order in her Orders Tickets and marks it as Packing
-6. The warehouse packs the order — the packer ticks items on their handheld
-7. When packing is done, Tshidi marks it Ready
-8. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
-9. Tshidi marks it Complete — the invoice is created in Odoo automatically and the ticket advances to Ready for Collection
-10. Finance (Kashi or Ragini) sees the invoice on the ticket and registers payment when it arrives — no Odoo needed
-11. Customer collects their order — Tshidi marks it Collected — Merveille's Sales Ticket automatically updates to Complete
+4. Merveille confirms the order from the ticket — Odoo creates a confirmed sale order. The customer is automatically emailed a pro-forma invoice showing the 50% deposit due. The ticket sits at **Awaiting Deposit** — it does **not** go to the packing board yet.
+5. The pharmacy pays the deposit. Finance (Kashi or Ragini) registers it on the ticket — this creates the down payment invoice and payment record in Odoo automatically, and is what actually queues the order for packing. There is no way to skip this step, for any order.
+6. Tshidi sees the order in her Orders Tickets and marks it as Packing
+7. The warehouse packs the order — the packer ticks items on their handheld
+8. When packing is done, Tshidi marks it Ready
+9. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
+10. Tshidi marks it Complete — the (remaining balance) invoice is created in Odoo automatically and the ticket advances to Ready for Collection
+11. Finance sees the invoice on the ticket and registers the balance payment when it arrives — no Odoo needed
+12. Customer collects their order — Tshidi marks it Collected — Merveille's Sales Ticket automatically updates to Complete
 
 **Example: A reseller places an order online.**
 
 1. Reseller logs in, browses the catalogue, and places an order — a Sales Ticket is created automatically
 2. The ticket is unassigned — Merveille sees it in her queue and claims it
-3. She confirms the order from the ticket — it goes straight to the packing board
-4. The rest of the flow is identical: packing → QA/RP → Mark Complete (invoice created) → Finance confirms payment → customer collects
+3. She confirms the order from the ticket — the customer gets the pro-forma invoice email automatically and the ticket sits at Awaiting Deposit
+4. The rest of the flow is identical: Finance registers the deposit (queues packing) → packing → QA/RP → Mark Complete (balance invoice created) → Finance confirms balance payment → customer collects
+
+**Recurring orders:** If a customer orders the same thing on a regular schedule, Merveille (or the reseller) can click **Make Recurring** on a ticket that already has a quote built, and set how often it repeats (weekly, every 2 weeks, or monthly). Two days before each repeat date, the portal automatically emails the customer a link showing what's about to be ordered — the customer can accept or decline it themselves, no login needed. Accepting confirms the order automatically in Odoo (same as Merveille clicking Confirm Order); Finance still has to register the deposit before it moves to packing, exactly like any other order. If the customer doesn't respond in time, that one order is simply skipped and the schedule carries on to the next date — nothing breaks and nobody needs to intervene. Staff can see and manage all recurring schedules under **Orders > Recurring Orders**.
 
 ---
 
@@ -617,7 +620,7 @@ Once the customer confirms their order:
 1. Click **Confirm Order** in the right sidebar
 2. If the customer is over their credit limit, you will be prompted to confirm the override
 3. The portal checks stock availability — if all items are in stock, the order confirms immediately. If some items are short, a modal appears showing what will ship now and what will be backordered. Confirm to proceed with a partial delivery, or cancel to wait
-4. On confirmation, the ticket automatically advances to `Confirmed WIP` and the order joins the packing queue
+4. On confirmation, the customer is automatically emailed a pro-forma invoice showing the 50% deposit due, and the ticket advances to `Awaiting Deposit`. The order does **not** join the packing queue yet — Finance has to register the deposit first (see the Finance Team section). You can also set up a recurring schedule for this customer from the ticket detail once the quote exists — see **Recurring Orders** below.
 
 > **If the stock check modal shows a red "Partial fulfilment blocked" notice:** The backorder option is not available because one or more products on the order have their Odoo invoicing policy set to "Ordered quantities" instead of "Delivered quantities". A partial delivery requires the "Delivered quantities" setting so the invoice reflects what actually shipped. To fix: open the product in Odoo, go to the General Information tab, change Invoicing Policy to "Delivered quantities", and save. Then return to the ticket and click Confirm Order again.
 
@@ -632,7 +635,17 @@ If the customer is not interested:
 
 ### What Happens After Confirmation
 
-Once an order is confirmed, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
+Once an order is confirmed, it sits at `Awaiting Deposit` until Finance registers the 50% deposit — this is the same for every order, no exceptions. Once that's done, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
+
+### Recurring Orders
+
+For a customer who orders on a regular schedule, click **Make Recurring** on a ticket that already has a quote built (any status, including before it's confirmed). Choose how often it repeats — weekly, every 2 weeks, or monthly — and optionally an end date or a maximum number of repeats. Two days before each repeat date, the portal automatically:
+
+1. Builds a fresh draft order in Odoo with the same products and quantities (at current pricing, not the original price)
+2. Creates a new Sales Ticket for it, which appears in the queue like any other new ticket
+3. Emails the customer directly (not you) a link to review and accept or decline
+
+If the customer accepts, the order confirms itself automatically — you don't need to click Confirm Order for it. It still needs Finance to register the deposit before it moves into fulfilment, exactly like a normal order. If the customer declines, or simply doesn't respond in time, that occurrence is skipped and the schedule carries on to the next date by itself.
 
 ---
 
@@ -943,11 +956,22 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 
 ### When Finance Acts
 
-Finance is involved at one point in the order pipeline: after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the invoice in Odoo. The ticket advances to **Ready for Collection**.
+Finance is involved at **two** points in the order pipeline:
 
-At that point, you will see the invoice on the ticket and can register payment once the customer pays.
+1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit — this applies to every order, no exceptions.
+2. **Ready for Collection** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo, and you register the balance payment once the customer pays.
 
-### Registering Payment
+### Registering the Deposit
+
+1. Open the Sales Ticket (it will be in **Awaiting Deposit** status)
+2. Click **Register Deposit** in the right sidebar
+3. Choose the invoice type — usually **Fixed Amount**, pre-filled at 50% of the order total, but you can enter a different amount if needed
+4. Select the payment journal (which bank account the funds arrived in) and the payment date
+5. Click **Register in Odoo**
+
+This creates the down payment invoice and records the payment against it in Odoo in one step, and immediately queues the order onto the packing board — this is the only way an order reaches packing. Until this is done, the order simply sits at Awaiting Deposit no matter how long it takes.
+
+### Registering the Balance Payment
 
 1. Open the Sales Ticket (it will be in **Ready for Collection** status)
 2. Click **Register Balance Payment** in the right sidebar
@@ -1460,8 +1484,9 @@ The Orders screen is a **monitoring view** — you cannot confirm, cancel, or pl
 What you can do here:
 - See every order's status in Odoo
 - See the linked Sales Ticket status and packing board status for each order
-- For confirmed orders not yet in the packing queue: click **Queue for Packing** (requires `tickets.manage`)
 - For old draft orders without a Sales Ticket: click **Create Sales Ticket** to bring them into the pipeline
+
+> A confirmed order that hasn't reached the packing queue is normal, not an error — it's waiting on Finance to register the 50% deposit (Awaiting Deposit status on the linked Sales Ticket). There is no "queue it anyway" override anymore — every order reaches packing the same way, through a registered deposit.
 
 **Reseller orders:** If an order was placed by a reseller partner on behalf of a customer, the Customer column shows the reseller's name in a purple badge beneath the customer name. This appears for all reseller orders — including those from resellers who are not commission-eligible.
 
@@ -1901,7 +1926,11 @@ When you click Confirm Order, the portal checks current stock availability befor
 
 On your **My Quotes** detail view, when an order is partially fulfilled you can see the split: items that shipped are listed under "Shipping now" and backordered items under "Backordered" with quantities.
 
-> Once an order is confirmed, Bassani staff pick it up for packing, QA/RP approval, and fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
+> Once an order is confirmed, your customer receives a pro-forma invoice by email showing the 50% deposit due. Bassani's finance team registers that deposit once it's paid — only then does the order move onto the packing board for fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
+
+### Recurring Orders
+
+If a customer orders on a regular schedule, you can set up a recurring order from a ticket that already has a confirmed order (Merveille can also do this from her side for a direct-inquiry customer). Two days before each repeat date, the portal emails the customer directly — not you — a link to review and accept or decline that occurrence. Accepting confirms the order automatically; Bassani finance still needs to register the deposit before it moves into fulfilment, same as any other order. If the customer doesn't respond, that occurrence is simply skipped and the schedule continues from the next date — nothing further is required from you.
 
 ### Viewing Your Commissions
 
@@ -2136,6 +2165,8 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Register balance (final) payment | Kashi or Ragini (finance) |
 | Confirm payment received | Kashi or Ragini (finance) |
 | Confirm an order | Merveille or anyone with `orders.confirm` |
+| Set up a recurring order on a ticket | Merveille (sales) or any reseller, on their own tickets |
+| Pause/resume/cancel a recurring order schedule | Admin with `orders.recurring_manage` |
 | Move order from queued to packing | Tshidi (orders_clerk) |
 | Move order from packing to ready | Tshidi (orders_clerk) |
 | Mark order incomplete | Tshidi (orders_clerk) |
@@ -2165,7 +2196,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Unlink customer from sales agent | Admin only |
 | Record invoice payment | Admin with `invoices.record_payment` |
 | Create/edit admin accounts | Super Admin only |
-| Configure email routing | Super Admin only |
+| Configure email routing | Admin with `settings.manage` |
 | View document templates and download any version | Any admin |
 | Upload new document template version | Super Admin only |
 | Activate / roll back document template version | Super Admin only |

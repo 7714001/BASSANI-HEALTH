@@ -605,6 +605,7 @@ from routes.search_routes             import router as search_router
 from routes.monitor_routes            import router as monitor_router
 from routes.places_routes             import router as places_router
 from routes.production_routes         import router as production_router
+from routes.recurring_order_routes    import router as recurring_order_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -618,7 +619,7 @@ for router in [
     stock_report_router, public_router, partner_router, upload_request_router,
     doc_template_router, signing_authority_router, profile_router,
     label_router, bank_recon_router, gtin_pool_router, search_router, monitor_router,
-    places_router, production_router,
+    places_router, production_router, recurring_order_router,
 ]:
     app.include_router(router)
 

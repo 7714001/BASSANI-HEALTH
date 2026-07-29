@@ -16,7 +16,14 @@ import uuid
 from database import col, NO_ID
 from services.r2_client import r2_put, r2_delete
 from routes.settings_routes import get_email_routing
-from services.email_service import send_countersign_needed
+from services.email_service import (
+    send_countersign_needed,
+    send_recurring_order_accepted_internal,
+    send_recurring_order_needs_confirm_internal,
+    send_recurring_order_declined_internal,
+)
+from odoo_client import get_odoo_client
+from routes.order_routes import _confirm_order_core
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -526,3 +533,135 @@ async def submit_signed_doc(token: str, doc_type: str, background_tasks: Backgro
             )
 
     return {"success": True, "doc_type": doc_type, "all_signed": all_signed}
+
+
+# ── Public recurring-order review endpoints — Phase 8.46 ──────────────────────
+# Serve the /recurring/:token page (no auth required). The token is a
+# single-use accept_token stamped directly on the recurring-generated ticket
+# (see routes/recurring_order_routes.py) — one ticket, one token, one purpose,
+# so no separate token collection is needed.
+
+def _get_recurring_ticket_or_404(ticket: Optional[dict]):
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Link not found or has already been used")
+    expires_at = ticket.get("accept_token_expires_at")
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=410, detail="This link has expired. Please contact Bassani Health.")
+    if ticket.get("exit_status") or ticket.get("customer_accepted_at") or ticket.get("customer_declined_at"):
+        raise HTTPException(status_code=400, detail="This order has already been actioned")
+
+
+@router.get("/recurring/{token}")
+async def get_recurring_occurrence(token: str):
+    ticket = await col("tickets").find_one({"accept_token": token}, NO_ID)
+    _get_recurring_ticket_or_404(ticket)
+
+    odoo = get_odoo_client()
+    order_id = ticket["order_id"]
+    rows = odoo.read("sale.order", [order_id], fields=["name", "amount_total", "order_line"])
+    order = rows[0] if rows else {}
+    line_ids = order.get("order_line") or []
+    lines = odoo.read("sale.order.line", line_ids, fields=["name", "product_uom_qty", "price_subtotal"]) if line_ids else []
+
+    scheduled_for = ticket.get("scheduled_for")
+    return {
+        "customer_name": ticket.get("customer_name", ""),
+        "order_ref": order.get("name", f"#{order_id}"),
+        "order_total": order.get("amount_total", 0),
+        "scheduled_for": scheduled_for.isoformat() if scheduled_for else None,
+        "lines": [
+            {"name": l.get("name"), "qty": l.get("product_uom_qty"), "subtotal": l.get("price_subtotal")}
+            for l in lines
+        ],
+    }
+
+
+@router.post("/recurring/{token}/accept")
+async def accept_recurring_occurrence(token: str, background_tasks: BackgroundTasks):
+    ticket = await col("tickets").find_one({"accept_token": token})
+    _get_recurring_ticket_or_404(ticket)
+
+    now = datetime.now(timezone.utc)
+    order_ref = f"#{ticket['order_id']}"
+    routing = await get_email_routing()
+    system_actor = {"id": None, "name": "System (Customer Acceptance)", "role": "system"}
+
+    try:
+        await _confirm_order_core(ticket["order_id"], system_actor, background_tasks)
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {
+                "$set": {"customer_accepted_at": now, "updated_at": now},
+                "$push": {"stage_history": {
+                    "status": ticket["status"], "exit_status": None,
+                    "actor_id": None, "actor_name": "system",
+                    "at": now, "note": "Customer accepted — order auto-confirmed",
+                }},
+            },
+        )
+        if routing.get("recurring_order_accepted_to"):
+            send_recurring_order_accepted_internal(
+                routing["recurring_order_accepted_to"],
+                customer_name=ticket.get("customer_name", ""), order_ref=order_ref,
+            )
+    except HTTPException as e:
+        # Credit-limit block (402) — the automated path can't silently override
+        # this, so leave the order in draft and flag it for a staff member to
+        # review and confirm manually with an explicit override.
+        if e.status_code != 402:
+            raise
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {
+                "$set": {
+                    "customer_accepted_at": now, "needs_manual_confirm": True,
+                    "manual_confirm_reason": e.detail, "updated_at": now,
+                },
+                "$push": {"stage_history": {
+                    "status": ticket["status"], "exit_status": None,
+                    "actor_id": None, "actor_name": "system",
+                    "at": now, "note": f"Customer accepted, but auto-confirm was blocked: {e.detail}",
+                }},
+            },
+        )
+        if routing.get("recurring_order_accepted_to"):
+            send_recurring_order_needs_confirm_internal(
+                routing["recurring_order_accepted_to"],
+                customer_name=ticket.get("customer_name", ""), order_ref=order_ref, reason=e.detail,
+            )
+    return {"success": True}
+
+
+@router.post("/recurring/{token}/decline")
+async def decline_recurring_occurrence(token: str):
+    ticket = await col("tickets").find_one({"accept_token": token})
+    _get_recurring_ticket_or_404(ticket)
+
+    now = datetime.now(timezone.utc)
+    odoo = get_odoo_client()
+    if ticket.get("order_id"):
+        try:
+            odoo.execute("sale.order", "action_cancel", [ticket["order_id"]])
+        except Exception:
+            pass
+
+    await col("tickets").update_one(
+        {"_id": ticket["_id"]},
+        {
+            "$set": {"customer_declined_at": now, "exit_status": "not_interested", "updated_at": now},
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": "not_interested",
+                "actor_id": None, "actor_name": "system",
+                "at": now, "note": "Customer declined the recurring order",
+            }},
+        },
+    )
+    routing = await get_email_routing()
+    if routing.get("recurring_order_declined_to"):
+        send_recurring_order_declined_internal(
+            routing["recurring_order_declined_to"],
+            customer_name=ticket.get("customer_name", ""), order_ref=f"#{ticket['order_id']}",
+        )
+    return {"success": True}

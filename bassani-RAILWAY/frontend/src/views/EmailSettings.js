@@ -168,6 +168,27 @@ const ROUTING_KEYS = [
     placeholder: "ops@bassanihealth.com",
   },
   {
+    key: "recurring_order_accepted_to", group: "orders", icon: Mail,
+    title: "Recurring Order: Accepted",
+    description: "Triggered when a customer accepts an upcoming recurring order occurrence. Also covers the case where acceptance could not auto-confirm (e.g. over credit limit) and needs manual staff review.",
+    note: "If this list is empty, no notification is sent.",
+    placeholder: "sales@bassanihealth.com",
+  },
+  {
+    key: "recurring_order_declined_to", group: "orders", icon: Mail,
+    title: "Recurring Order: Declined",
+    description: "Triggered when a customer declines an upcoming recurring order occurrence. No action is required — the schedule continues from the next date.",
+    note: "If this list is empty, no notification is sent.",
+    placeholder: "sales@bassanihealth.com",
+  },
+  {
+    key: "recurring_order_skipped_to", group: "orders", icon: Mail,
+    title: "Recurring Order: Skipped (No Response)",
+    description: "Triggered when a recurring order occurrence expires with no customer response. The draft order is cancelled and the schedule continues from the next date.",
+    note: "If this list is empty, no notification is sent.",
+    placeholder: "sales@bassanihealth.com",
+  },
+  {
     key: "finance_notification_to", group: "finance", icon: Mail,
     title: "Finance: Payment Auto-Confirmed",
     description: "Sent when the portal detects a paid invoice from bank records and auto-confirms the ticket — no manual click needed.",
@@ -235,14 +256,6 @@ export default function EmailSettings({ embedded = false }) {
 
       <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
         <div className="max-w-5xl mx-auto w-full space-y-5">
-
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
-            <p className="text-xs font-semibold text-amber-700 mb-1">Super Admin only</p>
-            <p className="text-xs text-amber-600 leading-relaxed">
-              Changes to email routing take effect immediately for all future notifications.
-              Enter addresses then press Enter or comma to add. Click the tag to remove.
-            </p>
-          </div>
 
           <div className="flex gap-5 items-start">
             <nav className="w-56 shrink-0 bg-white rounded-2xl border border-gray-100 p-2 space-y-1">

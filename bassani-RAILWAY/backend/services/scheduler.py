@@ -24,6 +24,10 @@ from services.email_service import (
     send_qa_rp_daily_digest,
     send_backorder_daily_digest,
 )
+from routes.recurring_order_routes import (
+    generate_recurring_notices,
+    expire_unaccepted_occurrences,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,4 +151,8 @@ def start_notification_schedulers() -> None:
     asyncio.create_task(_interval_loop("application_escalation", 1800, check_stale_applications))
     asyncio.create_task(_daily_loop("qa_rp", 17, 0, run_qa_rp_digest))
     asyncio.create_task(_daily_loop("backorder", 17, 0, run_backorder_digest))
+    # Phase 8.46 — recurring orders: T-2-day notice/generation, then a same-day
+    # sweep for occurrences nobody responded to in time.
+    asyncio.create_task(_daily_loop("recurring_notice", 8, 0, generate_recurring_notices))
+    asyncio.create_task(_daily_loop("recurring_expire", 18, 0, expire_unaccepted_occurrences))
     logger.info("notification_schedulers_started")

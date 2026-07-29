@@ -59,11 +59,14 @@ Every order — whether placed by a reseller or initiated by a direct customer i
 
 1. **Open** — a customer inquiry arrives (by email or directly in the system)
 2. **Quote** — the sales rep builds a formal quotation in the system, which is automatically sent to the customer via the company email address
-3. **Sale Confirmed** — the customer accepts; the order is formally created in the financial system and immediately queued for packing
-4. **In Fulfilment** — the order moves to the warehouse
-5. **Ready for Collection** — after QA and RP sign-off, the invoice is automatically created and the customer is notified
+3. **Sale Confirmed** — the customer accepts; the order is formally created in the financial system and the customer is automatically emailed a pro-forma invoice for the 50% deposit due
+4. **Awaiting Deposit** — the order sits here, not yet visible to the warehouse, until Finance registers the deposit against the real financial record. This is a hard rule with no exceptions for any customer or order type — it is the only way an order reaches the packing board.
+5. **In Fulfilment** — once the deposit is registered, the order moves to the warehouse
+6. **Ready for Collection** — after QA and RP sign-off, the (remaining balance) invoice is automatically created and the customer is notified
 
 The sales team can see every ticket in their queue, claim unassigned orders, and see the full history of every action taken on every order.
+
+**Recurring orders.** For customers who order the same thing on a regular schedule, the sales team (or the reseller) can set the ticket to repeat weekly, every two weeks, or monthly. Two days ahead of each occurrence, the system automatically prepares the next order and emails the customer directly, asking them to confirm or decline — no phone call or portal login needed on their end. Confirming places the order automatically; it still goes through the same deposit step as any other order before Bassani starts fulfilling it. If the customer doesn't respond in time, that one occurrence is simply skipped and the schedule quietly continues from the next date — nobody needs to chase it or restart anything.
 
 **Email inbox integration.** The portal includes a two-panel email inbox connected directly to Bassani's operational mailboxes (sales@ and orders@). Emails from customers and resellers arrive in the inbox alongside the corresponding ticket, so the sales team never needs to switch between the portal and a separate mail client to manage a customer conversation. Importantly, the pipeline does not depend on the inbox to function — orders can be created and processed entirely through the portal without any email ever arriving. The inbox connection is an operational convenience that reduces context-switching and keeps the full conversation history in one place. For reseller customer onboarding specifically, documents received by email can be saved directly to the pending application from inside the inbox view, rather than requiring a manual download and re-upload.
 
@@ -227,10 +230,13 @@ The diagram below shows how the upstream (Phase 13 — Production Module) and do
 ║  ┌─────────────────────────────────────────────────────────────────────┐    ║
 ║  │  SALES PIPELINE                                                     │    ║
 ║  │                                                                     │    ║
-║  │  Reseller order / Direct customer inquiry                          │    ║
+║  │  Reseller order / Direct customer inquiry (or an automated         │    ║
+║  │  recurring order occurrence — see below)                           │    ║
 ║  │  → Quote built in portal (sent to customer automatically)          │    ║
-║  │  → Deposit registered (verified against financial record)          │    ║
-║  │  → Order confirmed → Sale order created in financial system        │    ║
+║  │  → Order confirmed → Sale order created in financial system,       │    ║
+║  │    customer emailed a pro-forma invoice automatically              │    ║
+║  │  → 50% deposit registered (verified against financial record) —    │    ║
+║  │    this is the only way an order reaches the packing board         │    ║
 ║  │  → Section 21 authorisation validated (named patient orders)       │    ║
 ║  └───────────────────────────┬─────────────────────────────────────────┘    ║
 ║                              ↓                                               ║
@@ -297,7 +303,8 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Parent Categories — admin defines clean, Bassani-controlled category groupings for the reseller catalogue and order cart (e.g. "Flower" drilling down into Indoor/Exotic/Greendoor/Greenhouse, "Vapes" into its two brands, or a hand-picked rotating "Specials" selection), independent of the inventory system's own category names, which stay unchanged for internal staff | Live |
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
-| Sales ticket pipeline — inquiry → quote → confirm → packing → QA/RP → invoice → collect | Live |
+| Sales ticket pipeline — inquiry → quote → confirm → 50% deposit registered → packing → QA/RP → invoice → collect. The deposit is a mandatory step for every order, with an automatic pro-forma invoice emailed to the customer the moment their order is confirmed. | Live |
+| Recurring orders — a ticket can be set to repeat weekly, every two weeks, or monthly; the customer is emailed directly to confirm or decline each occurrence 2 days ahead, with no portal login required; a missed response simply skips that occurrence and the schedule continues | Live |
 | Email inbox integration — sales@ and orders@ mailboxes connected to the portal; documents saveable directly to onboarding applications from inbox | Live |
 | Packing board — real-time warehouse floor with QA/RP approval | Live |
 | Finance — invoice management, payment confirmation, credit limit enforcement | Live |

@@ -29,6 +29,9 @@ class EmailRoutingConfig(BaseModel):
     backorder_daily_digest_to: List[str] = []   # 17:00 daily — orders waiting on stock
     finance_notification_to:   List[str] = []
     s6_flag_to:                List[str] = []   # S6 receipt flagged: no purchase order found
+    recurring_order_accepted_to: List[str] = []  # customer accepted a recurring order occurrence (incl. needing manual confirm)
+    recurring_order_declined_to: List[str] = []  # customer declined a recurring order occurrence
+    recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
 
 
 async def get_email_routing() -> dict:
@@ -49,6 +52,9 @@ async def get_email_routing() -> dict:
         "backorder_daily_digest_to": doc.get("backorder_daily_digest_to", []),
         "finance_notification_to":  doc.get("finance_notification_to", []),
         "s6_flag_to":               doc.get("s6_flag_to", []),
+        "recurring_order_accepted_to": doc.get("recurring_order_accepted_to", []),
+        "recurring_order_declined_to": doc.get("recurring_order_declined_to", []),
+        "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
     }
 
 

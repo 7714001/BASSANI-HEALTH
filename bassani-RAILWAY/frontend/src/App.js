@@ -50,6 +50,8 @@ import ResetPassword         from "./views/ResetPassword";
 import StockReport           from "./views/StockReport";
 import PublicRegister        from "./views/PublicRegister";
 import SigningPage           from "./views/SigningPage";
+import RecurringOrderReview  from "./views/RecurringOrderReview";
+import RecurringOrders       from "./views/RecurringOrders";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
@@ -168,6 +170,7 @@ export default function App() {
         <Route path="/register"     element={<HcpRegister />} />
         <Route path="/apply"        element={<PublicRegister />} />
         <Route path="/sign/:token"  element={<SigningPage />} />
+        <Route path="/recurring/:token" element={<RecurringOrderReview />} />
         <Route path="/upload-docs/:token" element={<PublicDocUpload />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />
@@ -287,6 +290,9 @@ export default function App() {
         } />
         <Route path="/tickets/orders" element={
           <ProtectedRoute><AppLayout><OrdersTickets /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/orders/recurring" element={
+          <ProtectedRoute permission="orders.recurring_manage"><AppLayout><RecurringOrders /></AppLayout></ProtectedRoute>
         } />
         <Route path="/catalogue/categories" element={
           <ProtectedRoute permission="products.manage"><AppLayout><ProductCategories /></AppLayout></ProtectedRoute>

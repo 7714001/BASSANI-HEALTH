@@ -23,9 +23,10 @@ from auth import (
     get_current_user, get_user_by_username, require_super_admin, ADMIN_ROLES, TICKET_ROLES,
 )
 from routes.monitor_routes import broadcast_monitor_refresh
+from routes.order_routes import _queue_packing_board
 from odoo_client import get_odoo_client, odoo as odoo_call
 from warehouse_context import company_context
-from database import col, NO_ID
+from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
 from services.email_service import send_ticket_assigned
@@ -156,7 +157,7 @@ async def ticket_websocket(ws: WebSocket):
 
 
 # Forward stages — a ticket normally moves left to right through these.
-STATUSES = ["open", "quote", "sale_order", "confirmed_wip", "ready_for_collection", "incomplete"]
+STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "ready_for_collection", "incomplete"]
 
 # Side-exits — reachable from most stages, not a fixed final step (mirrors how
 # Odoo's own sale.order can cancel from draft, sent, *or* sale).
@@ -208,6 +209,10 @@ class TicketOrderUpdate(BaseModel):
     note: Optional[str] = ""
 
 
+class TicketDepositRegister(BaseModel):
+    invoice_type: str = "fixed"   # 'fixed' | 'percentage' | 'delivered'
+    amount: Optional[float] = None   # required for 'fixed'
+    percentage: Optional[float] = None  # required for 'percentage', 0 < x <= 100
     date: str           # YYYY-MM-DD
     journal_id: int
     note: Optional[str] = ""
@@ -556,9 +561,13 @@ async def get_ticket(
                         set_fields["odoo_order_state"] = live_state
 
                     # ── Determine target portal status ─────────────────────
-                    # Confirmed orders (sale/done) advance directly to confirmed_wip —
-                    # no deposit or invoice step in the pipeline.
-                    _s2s = {"draft": "quote", "sent": "quote", "sale": "confirmed_wip", "done": "confirmed_wip"}
+                    # Confirmed orders (sale/done) advance to awaiting_deposit —
+                    # a 50% deposit must be registered (via register-deposit,
+                    # below) before a packing board entry can be created. This
+                    # applies even to orders confirmed directly in Odoo, bypassing
+                    # the portal's confirm flow entirely: the deposit gate is not
+                    # something a particular confirm path can skip.
+                    _s2s = {"draft": "quote", "sent": "quote", "sale": "awaiting_deposit", "done": "awaiting_deposit"}
                     target_status = _s2s.get(live_state, current_status)
 
                     target_idx = STATUSES.index(target_status) if target_status in STATUSES else 0
@@ -566,8 +575,8 @@ async def get_ticket(
                     # ── Advance (never go backward) ────────────────────────
                     if target_idx > current_idx:
                         _notes = {
-                            "sale_order":    f"Auto-sync: Odoo order confirmed (state: {live_state})",
-                            "confirmed_wip": f"Auto-sync: Odoo order confirmed (state: {live_state})",
+                            "sale_order":       f"Auto-sync: Odoo order confirmed (state: {live_state})",
+                            "awaiting_deposit": f"Auto-sync: Odoo order confirmed (state: {live_state})",
                         }
                         for stage in STATUSES[current_idx + 1 : target_idx + 1]:
                             history.append({
@@ -578,73 +587,6 @@ async def get_ticket(
                             })
                         set_fields["status"] = target_status
                         ticket["status"]     = target_status
-
-                    # ── Packing board — create entry if order is confirmed
-                    # but was never pushed through the portal confirm flow.
-                    if live_state in ("sale", "done") and not ticket.get("orders_ticket_ref"):
-                        try:
-                            items       = []
-                            dn_num      = ""
-                            picking_ids = row.get("picking_ids", [])
-                            if picking_ids:
-                                pkgs = odoo.read("stock.picking", [picking_ids[0]], fields=["name", "move_ids"])
-                                if pkgs:
-                                    dn_num = pkgs[0].get("name", "")
-                                    if pkgs[0].get("move_ids"):
-                                        moves = odoo.read(
-                                            "stock.move", pkgs[0]["move_ids"],
-                                            fields=["product_id", "product_uom_qty"],
-                                        )
-                                        for m in moves:
-                                            pname = m["product_id"][1] if m.get("product_id") else "Unknown"
-                                            prods = (
-                                                odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
-                                                if m.get("product_id") else []
-                                            )
-                                            sku = (prods[0].get("default_code") or str(m["product_id"][0])) if prods else ""
-                                            items.append({"name": pname, "sku": sku, "product_id": m["product_id"][0] if m.get("product_id") else None, "qty": m["product_uom_qty"], "location": ""})
-
-                            comm_data = await col("order_commissions").find_one(
-                                {"odoo_order_id": str(order_id)}, NO_ID
-                            )
-                            _pb_reseller_name = (
-                                comm_data.get("reseller_name") if comm_data
-                                else ticket.get("reseller_name")
-                            )
-                            if not _pb_reseller_name and ticket.get("reseller_id"):
-                                _res_pb = await col("resellers").find_one(
-                                    {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
-                                )
-                                _pb_reseller_name = _res_pb["name"] if _res_pb else None
-                            pb_doc = {
-                                "order_id":       str(order_id),
-                                "warehouse_id":   row["warehouse_id"][0]  if row.get("warehouse_id") else None,
-                                "warehouse_name": row["warehouse_id"][1]  if row.get("warehouse_id") else None,
-                                "customer_name":  row["partner_id"][1]    if row.get("partner_id")   else "",
-                                "customer_city":  "",
-                                "items":          items,
-                                "total_units":    int(sum(i["qty"] for i in items)),
-                                "inv_num":        "",
-                                "dn_num":         dn_num,
-                                "ps_num":         row.get("name", ""),
-                                "notes":          row.get("note") or "",
-                                "is_reseller":    bool(comm_data) or bool(ticket.get("reseller_id")),
-                                "reseller_name":  _pb_reseller_name,
-                                "packer_name": None, "status": "queued", "queued_at": now,
-                                "packed_at": None, "ready_at": None, "collected_at": None,
-                                "cancelled_at": None, "incomplete_at": None, "completed_at": None,
-                                "incomplete_reason": None,
-                                "qa_approved_by": None, "qa_approved_at": None,
-                                "rp_approved_by": None, "rp_approved_at": None,
-                                "item_ticks": {i["sku"]: False for i in items},
-                            }
-                            await col("packing_board").replace_one(
-                                {"order_id": str(order_id)}, pb_doc, upsert=True
-                            )
-                            set_fields["orders_ticket_ref"] = str(order_id)
-                            ticket["orders_ticket_ref"]     = str(order_id)
-                        except Exception as _pb_err:
-                            print(f"⚠️  Auto-sync packing board failed: {_pb_err}")
 
                     # ── Commit ────────────────────────────────────────────
                     if set(set_fields) - {"updated_at"} or history:
@@ -1296,6 +1238,224 @@ async def send_quote(
     return result
 
 
+@router.get("/payment-journals")
+async def list_payment_journals(
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Return Odoo bank/cash journals for the deposit registration modal.
+    Builds the same descriptive display_label as the invoices journals endpoint
+    so the finance team sees bank account numbers and company names, not generic
+    'Bank' labels that are indistinguishable in a multi-company setup."""
+    odoo = get_odoo_client()
+    try:
+        journals = odoo.search_read(
+            "account.journal",
+            domain=[["type", "in", ["bank", "cash"]], ["active", "=", True]],
+            fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
+            limit=50,
+            order="company_id asc, type asc, name asc",
+        )
+        company_ids = {j["company_id"][0] for j in journals if j.get("company_id")}
+        multi_company = len(company_ids) > 1
+        for j in journals:
+            bank_account = j.get("bank_account_id")
+            acc_display  = bank_account[1] if bank_account and bank_account is not False else None
+            base         = acc_display or j.get("code") or j["name"]
+            company_name = j["company_id"][1] if j.get("company_id") else None
+            j["display_label"] = f"{base} — {company_name}" if (multi_company and company_name) else base
+        return {"journals": journals}
+    except Exception as e:
+        print(f"⚠️  payment-journals: {e}")
+        return {"journals": []}
+
+
+@router.post("/{ticket_id}/register-deposit")
+async def register_deposit(
+    ticket_id: str,
+    body: TicketDepositRegister,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """
+    Register the 50% deposit against the linked sale order — Phase 8.47. This is
+    the gate that determines whether an order ever reaches the packing board:
+      1. Create a down payment invoice via Odoo's advance payment wizard
+      2. Post the invoice (account.move → action_post)
+      3. Register and reconcile payment via account.payment.register wizard
+      4. Stamp payment_confirmed_by/at + link invoice_id on the ticket
+      5. Queue the packing board entry (_queue_packing_board, order_routes.py)
+         and advance the ticket to confirmed_wip — nothing gets this far without
+         a registered deposit, whether the order was confirmed by staff or
+         auto-confirmed via an accepted recurring order.
+
+    Keeps Odoo as the financial source of truth — nothing is bypassed.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build the quote first")
+    if ticket.get("status") != "awaiting_deposit":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ticket must be awaiting a deposit to register one (current stage: {ticket.get('status')})",
+        )
+    if ticket.get("payment_confirmed_at"):
+        raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+
+    invoice_type = body.invoice_type or "fixed"
+    if invoice_type not in ("fixed", "percentage", "delivered"):
+        raise HTTPException(status_code=400, detail="invoice_type must be 'fixed', 'percentage', or 'delivered'")
+    if invoice_type == "fixed":
+        if not body.amount or body.amount <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be positive for a fixed invoice")
+    if invoice_type == "percentage":
+        if not body.percentage or not (0 < body.percentage <= 100):
+            raise HTTPException(status_code=400, detail="Percentage must be between 0 and 100")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+
+    # Resolve the order's company and validate it is confirmed before running the wizard
+    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name"])
+    if not _order_co:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    _order_row = _order_co[0]
+    if _order_row.get("state") != "sale":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order {_order_row.get('name')} must be confirmed before registering a deposit (current state: {_order_row.get('state')})",
+        )
+    _co = _order_row.get("company_id")
+    order_company_id = _co[0] if _co else None
+    _cctx = company_context(order_company_id)
+
+    # Step 1: Create down payment invoice via Odoo wizard
+    ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
+    wizard_vals: dict = {"advance_payment_method": invoice_type}
+    if invoice_type == "fixed":
+        wizard_vals["fixed_amount"] = body.amount
+    elif invoice_type == "percentage":
+        wizard_vals["amount"] = body.percentage
+    try:
+        wizard_id = odoo_call(
+            "sale.advance.payment.inv", "create",
+            [wizard_vals],
+            {"context": ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
+
+    try:
+        odoo_call(
+            "sale.advance.payment.inv", "create_invoices",
+            [[wizard_id]],
+            {"context": ctx},
+        )
+    except Exception as e:
+        # create_invoices returns an Odoo action dict that may contain None values,
+        # which Odoo's own XML-RPC marshaller rejects. The invoice is still created —
+        # we verify it exists by reading invoice_ids below rather than trusting the return value.
+        logger.warning("deposit_create_invoices_response_error",
+                       extra={"wizard_id": wizard_id, "error": str(e)})
+
+    # Resolve the new invoice (highest ID among this order's invoices)
+    try:
+        order_data = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+        inv_ids = order_data[0].get("invoice_ids", []) if order_data else []
+        if not inv_ids:
+            raise HTTPException(status_code=502, detail="Deposit invoice was not created in Odoo — check Odoo configuration")
+        invoice_id = max(inv_ids)
+        odoo.execute("account.move", "action_post", [invoice_id])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to post deposit invoice: {str(e)}")
+
+    # Resolve invoice amount for non-fixed types (Odoo computes it)
+    if invoice_type != "fixed":
+        inv_row = odoo.read("account.move", [invoice_id], fields=["amount_residual"])
+        pay_amount = inv_row[0]["amount_residual"] if inv_row else body.amount
+    else:
+        pay_amount = body.amount
+
+    # Step 2: Register and reconcile payment via Odoo wizard
+    try:
+        pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
+        pay_wizard_id = odoo_call(
+            "account.payment.register", "create",
+            [{
+                "amount": pay_amount,
+                "journal_id": body.journal_id,
+                "payment_date": body.date,
+            }],
+            {"context": pay_ctx},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+
+    try:
+        odoo_call(
+            "account.payment.register", "action_create_payments",
+            [[pay_wizard_id]],
+            {"context": pay_ctx},
+        )
+    except Exception as e:
+        # Same Odoo XML-RPC serialisation quirk on the action response.
+        # Verify the payment actually landed before treating this as a failure.
+        try:
+            updated = odoo.read("account.move", [invoice_id], fields=["payment_state"])
+            if not updated or updated[0].get("payment_state") not in ("in_payment", "paid"):
+                raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+        logger.warning("deposit_payment_response_error",
+                       extra={"invoice_id": invoice_id, "error": str(e)})
+
+    # Stamp ticket
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_confirmed_by": current_user["id"],
+                "payment_confirmed_at": now,
+                "invoice_id": invoice_id,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now,
+                "note": body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.register_deposit", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
+    )
+
+    # Gate enforcement point — nothing reaches the packing board without this.
+    try:
+        await _queue_packing_board(order_id, background_tasks)
+    except Exception as e:
+        logger.warning("queue_packing_board_after_deposit_failed",
+                       extra={"ticket_id": ticket_id, "order_id": order_id, "error": str(e)})
+
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    return {"success": True, "invoice_id": invoice_id}
 
 
 @router.get("/{ticket_id}/invoice-balance")
@@ -1621,147 +1781,6 @@ async def create_ticket_from_order(
     )
     await notify_ticket_assigned("sales", customer_name, current_user["id"])
     return {"success": True, "ticket_id": str(result.inserted_id), "status": initial_status}
-
-
-@router.post("/{ticket_id}/admin-override-payment")
-async def admin_override_payment(
-    ticket_id: str,
-    current_user: dict = Depends(require_permission("tickets.manage")),
-):
-    """Admin shortcut for confirmed Odoo orders where payment is known to have been received
-    but hasn't gone through the standard Finance deposit registration flow (e.g. legacy orders,
-    pre-portal payments, or cases where Odoo already reflects payment).
-
-    Marks payment confirmed at the portal layer and creates the packing board entry.
-    Does NOT write to Odoo — the financial record must already exist in Odoo separately.
-    """
-    try:
-        oid = ObjectId(ticket_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid ticket ID")
-    ticket = await col("tickets").find_one({"_id": oid})
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    if ticket.get("exit_status"):
-        raise HTTPException(status_code=400, detail=f"Ticket is closed as '{ticket['exit_status']}'")
-    if not ticket.get("order_id"):
-        raise HTTPException(status_code=400, detail="No linked order on this ticket")
-    if ticket.get("payment_confirmed_at"):
-        raise HTTPException(status_code=400, detail="Payment already confirmed on this ticket")
-    if ticket.get("orders_ticket_ref"):
-        raise HTTPException(status_code=400, detail="Order is already in the packing queue")
-
-    order_id = ticket["order_id"]
-    odoo = get_odoo_client()
-    try:
-        rows = odoo.read(
-            "sale.order", [order_id],
-            fields=["name", "partner_id", "state", "warehouse_id", "picking_ids", "note", "invoice_ids"],
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
-    if not rows:
-        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
-    order_data = rows[0]
-    if order_data["state"] != "sale":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order {order_data['name']} is not confirmed in Odoo (state: {order_data['state']}). Confirm the order in Odoo first.",
-        )
-
-    # Build packing board entry from Odoo picking data
-    items: list = []
-    dn_num = ""
-    inv_name = ""
-    if order_data.get("invoice_ids"):
-        try:
-            inv_rows = odoo.read("account.move", [order_data["invoice_ids"][0]], fields=["name"])
-            inv_name = inv_rows[0]["name"] if inv_rows else ""
-        except Exception:
-            pass
-    if order_data.get("picking_ids"):
-        try:
-            picking_id = order_data["picking_ids"][0]
-            pickings = odoo.read("stock.picking", [picking_id], fields=["name", "move_ids"])
-            picking = pickings[0] if pickings else None
-            if picking:
-                dn_num = picking["name"]
-                if picking.get("move_ids"):
-                    moves = odoo.read("stock.move", picking["move_ids"], fields=["product_id", "product_uom_qty"])
-                    for m in moves:
-                        pname = m["product_id"][1] if m.get("product_id") else "Unknown"
-                        prod = (
-                            odoo.read("product.product", [m["product_id"][0]], fields=["default_code"])
-                            if m.get("product_id") else []
-                        )
-                        sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
-                        items.append({"name": pname, "sku": sku, "product_id": m["product_id"][0] if m.get("product_id") else None, "qty": m["product_uom_qty"], "location": ""})
-        except Exception as e:
-            logger.warning("admin_override_picking_read_error", extra={"order_id": order_id, "error": str(e)})
-
-    comm_data = await col("order_commissions").find_one({"odoo_order_id": str(order_id)}, NO_ID)
-    now = datetime.now(timezone.utc)
-    actor = _actor(current_user)
-
-    _pb_reseller_name = (
-        comm_data.get("reseller_name") if comm_data
-        else ticket.get("reseller_name")
-    )
-    if not _pb_reseller_name and ticket.get("reseller_id"):
-        _res_pb = await col("resellers").find_one(
-            {"id": ticket["reseller_id"]}, {"name": 1, "_id": 0}
-        )
-        _pb_reseller_name = _res_pb["name"] if _res_pb else None
-
-    pb_doc = {
-        "order_id":       str(order_id),
-        "warehouse_id":   order_data["warehouse_id"][0]  if order_data.get("warehouse_id") else None,
-        "warehouse_name": order_data["warehouse_id"][1]  if order_data.get("warehouse_id") else None,
-        "customer_name":  order_data["partner_id"][1]    if order_data.get("partner_id")   else "",
-        "customer_city":  "",
-        "items":          items,
-        "total_units":    int(sum(i["qty"] for i in items)),
-        "inv_num":        inv_name,
-        "dn_num":         dn_num,
-        "ps_num":         order_data.get("name", ""),
-        "notes":          order_data.get("note") or "",
-        "is_reseller":    bool(comm_data) or bool(ticket.get("reseller_id")),
-        "reseller_name":  _pb_reseller_name,
-        "packer_name": None, "status": "queued", "queued_at": now,
-        "packed_at": None, "ready_at": None, "collected_at": None,
-        "cancelled_at": None, "incomplete_at": None, "completed_at": None,
-        "incomplete_reason": None,
-        "qa_approved_by": None, "qa_approved_at": None,
-        "rp_approved_by": None, "rp_approved_at": None,
-        "item_ticks": {i["sku"]: False for i in items},
-    }
-    await col("packing_board").replace_one({"order_id": str(order_id)}, pb_doc, upsert=True)
-
-    await col("tickets").update_one(
-        {"_id": oid},
-        {
-            "$set": {
-                "payment_confirmed_by": current_user["id"],
-                "payment_confirmed_at": now,
-                "orders_ticket_ref": str(order_id),
-                "updated_at": now,
-            },
-            "$push": {"stage_history": {
-                "status": ticket["status"], "exit_status": None,
-                "actor_id": current_user["id"], "actor_name": actor,
-                "at": now,
-                "note": f"Admin override by {actor}: payment marked confirmed, order queued for packing. Financial record must be confirmed in Odoo separately.",
-            }},
-        },
-    )
-    await audit_log(
-        "ticket.admin_override_payment", "ticket", ticket_id,
-        entity_label=ticket.get("customer_name", ""),
-        user=current_user,
-        detail={"order_id": order_id, "order_name": order_data.get("name"), "override_by": actor},
-    )
-    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
-    return {"success": True}
 
 
 @router.post("/{ticket_id}/link-order")
