@@ -108,11 +108,11 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
     <Modal title="Set GTIN / Barcode" onClose={onClose} width="max-w-xl">
 
       {/* Product context */}
-      <div className="mb-4 px-3 py-2.5 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-0.5">Product</p>
-        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{product.name}</p>
+      <div className="mb-4 px-3 py-2.5 bg-gray-50 rounded-lg border border-gray-200">
+        <p className="text-xs text-gray-500 mb-0.5">Product</p>
+        <p className="text-sm font-semibold text-gray-900">{product.name}</p>
         {product.default_code && (
-          <p className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5">{product.default_code}</p>
+          <p className="text-xs text-gray-400 font-mono mt-0.5">{product.default_code}</p>
         )}
       </div>
 
@@ -120,18 +120,18 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
       {product.barcode && (
         <div className={`mb-4 px-3 py-2.5 rounded-lg border ${
           isPoolAssigned
-            ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700"
-            : "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700"
+            ? "bg-green-50 border-green-200"
+            : "bg-amber-50 border-amber-200"
         }`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium mb-0.5 flex items-center gap-1.5">
                 {isPoolAssigned
-                  ? <><CheckCircle size={12} className="text-green-600 dark:text-green-400 shrink-0" /><span className="text-green-700 dark:text-green-300">Assigned from pool</span></>
-                  : <><Tag size={12} className="text-amber-600 dark:text-amber-400 shrink-0" /><span className="text-amber-700 dark:text-amber-300">Custom barcode</span></>
+                  ? <><CheckCircle size={12} className="text-green-600 shrink-0" /><span className="text-green-700">Assigned from pool</span></>
+                  : <><Tag size={12} className="text-amber-600 shrink-0" /><span className="text-amber-700">Custom barcode</span></>
                 }
               </p>
-              <p className="font-mono text-sm text-gray-800 dark:text-gray-200">{product.barcode}</p>
+              <p className="font-mono text-sm text-gray-800">{product.barcode}</p>
             </div>
             {isPoolAssigned ? (
               <BtnDanger onClick={() => setUnassignConfirm(true)} disabled={unassigning} loading={unassigning}>
@@ -152,8 +152,8 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
 
       {/* Confirm: unassign pool GTIN */}
       {unassignConfirm && (
-        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg">
-          <p className="text-sm text-red-800 dark:text-red-200 mb-2">
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-800 mb-2">
             This will clear the barcode from <strong>{product.name}</strong> and return GTIN <strong className="font-mono">{product.barcode}</strong> to the available pool.
           </p>
           <div className="flex gap-2 justify-end">
@@ -165,8 +165,8 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
 
       {/* Confirm: clear custom barcode */}
       {clearConfirm && (
-        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg">
-          <p className="text-sm text-red-800 dark:text-red-200 mb-2">
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-800 mb-2">
             Clear the barcode <strong className="font-mono">{product.barcode}</strong> from <strong>{product.name}</strong>?
           </p>
           <div className="flex gap-2 justify-end">
@@ -179,8 +179,8 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
       {/* Pool GTINs */}
       <div className="mb-5">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Assign from pool</p>
-          <span className="text-xs text-gray-400 dark:text-gray-500">{available.length} available</span>
+          <p className="text-sm font-medium text-gray-700">Assign from pool</p>
+          <span className="text-xs text-gray-400">{available.length} available</span>
         </div>
         <div className="relative mb-3">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -188,7 +188,7 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Filter by GTIN number…"
-            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
           />
         </div>
         {loading ? (
@@ -197,7 +197,7 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
             <span className="text-sm">Loading pool…</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-6 text-gray-400 dark:text-gray-500">
+          <div className="text-center py-6 text-gray-400">
             <Tag size={24} className="mx-auto mb-1.5 opacity-40" />
             <p className="text-sm">
               {available.length === 0
@@ -206,13 +206,13 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
             </p>
           </div>
         ) : (
-          <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+          <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
             {filtered.map((g, i) => (
               <div
                 key={g.gtin}
-                className={`flex items-center justify-between px-3 py-2.5 ${i > 0 ? "border-t border-gray-100 dark:border-gray-700" : ""} hover:bg-gray-50 dark:hover:bg-gray-800/50`}
+                className={`flex items-center justify-between px-3 py-2.5 ${i > 0 ? "border-t border-gray-100" : ""} hover:bg-gray-50`}
               >
-                <span className="font-mono text-sm text-gray-800 dark:text-gray-200">{g.gtin}</span>
+                <span className="font-mono text-sm text-gray-800">{g.gtin}</span>
                 <button
                   onClick={() => assignFromPool(g.gtin)}
                   disabled={!!assigning}
@@ -228,26 +228,26 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
       </div>
 
       {/* Custom GTIN */}
-      <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
-        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Or enter a custom barcode</p>
+      <div className="pt-4 border-t border-gray-100">
+        <p className="text-sm font-medium text-gray-700 mb-2">Or enter a custom barcode</p>
         <div className="flex gap-2">
           <input
             value={customGtin}
             onChange={e => setCustomGtin(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") applyCustom(); }}
             placeholder="e.g. 6009123456789"
-            className="flex-1 text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
+            className="flex-1 text-sm font-mono border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400"
           />
           <BtnPrimary onClick={applyCustom} disabled={!customGtin.trim() || savingCustom} loading={savingCustom}>
             Apply
           </BtnPrimary>
         </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+        <p className="text-xs text-gray-400 mt-1.5">
           Accepts any barcode format. Use a GS1-registered GTIN for pharmaceutical dispatch.
         </p>
       </div>
 
-      <div className="flex justify-end mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+      <div className="flex justify-end mt-4 pt-3 border-t border-gray-100">
         <BtnSecondary onClick={onClose}>Close</BtnSecondary>
       </div>
     </Modal>

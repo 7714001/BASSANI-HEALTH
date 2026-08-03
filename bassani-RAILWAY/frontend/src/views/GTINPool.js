@@ -108,8 +108,8 @@ export default function GTINPool({ embedded }) {
   }
 
   const StatCard = ({ label, value, color }) => (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 px-5 py-4 flex-1">
-      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">{label}</p>
+    <div className="bg-white rounded-xl border border-gray-200 px-5 py-4 flex-1">
+      <p className="text-xs text-gray-500 font-medium mb-1">{label}</p>
       <p className={`text-2xl font-bold ${color}`}>{value}</p>
     </div>
   );
@@ -120,15 +120,15 @@ export default function GTINPool({ embedded }) {
 
         {/* Stats */}
         <div className="flex gap-4">
-          <StatCard label="Total GTINs"  value={stats.total}     color="text-gray-800 dark:text-gray-100" />
-          <StatCard label="Available"    value={stats.available} color="text-green-600 dark:text-green-400" />
-          <StatCard label="Assigned"     value={stats.assigned}  color="text-bassani-600 dark:text-bassani-400" />
+          <StatCard label="Total GTINs"  value={stats.total}     color="text-gray-800" />
+          <StatCard label="Available"    value={stats.available} color="text-green-600" />
+          <StatCard label="Assigned"     value={stats.assigned}  color="text-bassani-600" />
         </div>
 
         {/* Upload */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">Add GTINs to Pool</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-1">Add GTINs to Pool</h3>
+          <p className="text-xs text-gray-500 mb-3">
             Paste GTIN codes below, one per line (or comma-separated). GS1 check digit is validated before saving.
           </p>
           <textarea
@@ -136,23 +136,23 @@ export default function GTINPool({ embedded }) {
             onChange={e => { setUploadText(e.target.value); setUploadResult(null); }}
             rows={5}
             placeholder={"6009123456789\n6009123456796\n6009123456802\n…"}
-            className="w-full text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
+            className="w-full text-sm font-mono border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 resize-y"
           />
 
           {uploadResult && (
             <div className="mt-2 flex flex-wrap gap-3 text-xs">
               {uploadResult.added > 0 && (
-                <span className="flex items-center gap-1 text-green-700 dark:text-green-400">
+                <span className="flex items-center gap-1 text-green-700">
                   <CheckCircle size={12} /> {uploadResult.added} added
                 </span>
               )}
               {uploadResult.skipped > 0 && (
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-gray-500">
                   {uploadResult.skipped} already in pool (skipped)
                 </span>
               )}
               {uploadResult.invalid?.length > 0 && (
-                <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                <span className="flex items-center gap-1 text-red-600">
                   <AlertCircle size={12} /> {uploadResult.invalid.length} invalid: {uploadResult.invalid.join(", ")}
                 </span>
               )}
@@ -168,9 +168,9 @@ export default function GTINPool({ embedded }) {
         </div>
 
         {/* GTIN table */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">GTIN Registry</h3>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+            <h3 className="text-sm font-semibold text-gray-800">GTIN Registry</h3>
             <div className="flex gap-1">
               {["all", "available", "assigned"].map(f => (
                 <button
@@ -178,8 +178,8 @@ export default function GTINPool({ embedded }) {
                   onClick={() => setStatusFilter(f)}
                   className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors capitalize ${
                     statusFilter === f
-                      ? "bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      ? "bg-bassani-100 text-bassani-700"
+                      : "text-gray-500 hover:text-gray-700"
                   }`}
                 >
                   {f}
@@ -194,7 +194,7 @@ export default function GTINPool({ embedded }) {
               <span className="text-sm">Loading…</span>
             </div>
           ) : items.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 dark:text-gray-500">
+            <div className="text-center py-12 text-gray-400">
               <Tag size={32} className="mx-auto mb-2 opacity-30" />
               <p className="text-sm">
                 {statusFilter === "all"
@@ -206,7 +206,7 @@ export default function GTINPool({ embedded }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+                  <tr className="text-left text-xs font-medium text-gray-500 bg-gray-50">
                     <th className="px-5 py-2.5">GTIN</th>
                     <th className="px-5 py-2.5">Status</th>
                     <th className="px-5 py-2.5">Product</th>
@@ -214,38 +214,38 @@ export default function GTINPool({ embedded }) {
                     <th className="px-5 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                <tbody className="divide-y divide-gray-100">
                   {items.map(item => (
-                    <tr key={item.gtin} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                      <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200">{item.gtin}</td>
+                    <tr key={item.gtin} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 font-mono text-gray-800">{item.gtin}</td>
                       <td className="px-5 py-3">
                         <div className="flex flex-col items-start gap-1">
                           {item.status === "assigned" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700">
                               <CheckCircle size={11} /> Assigned
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
                               Available
                             </span>
                           )}
                           {item.status === "assigned" && item.odoo_synced === false && (
                             <span
                               title={item.sync_error || "Not synced to Odoo"}
-                              className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                              className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"
                             >
                               <AlertCircle size={11} /> Not synced to Odoo
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[200px] truncate">
-                        {item.product_name || <span className="text-gray-300 dark:text-gray-600">—</span>}
+                      <td className="px-5 py-3 text-gray-600 max-w-[200px] truncate">
+                        {item.product_name || <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-5 py-3 text-gray-400 dark:text-gray-500 text-xs whitespace-nowrap">
+                      <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">
                         {item.assigned_at
                           ? new Date(item.assigned_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })
-                          : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-5 py-3 text-right">
                         {item.status === "assigned" ? (
@@ -254,7 +254,7 @@ export default function GTINPool({ embedded }) {
                               <button
                                 onClick={() => retrySync(item.gtin)}
                                 disabled={retrying === item.gtin}
-                                className="text-xs text-amber-600 dark:text-amber-400 hover:text-amber-700 flex items-center gap-1"
+                                className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1"
                               >
                                 {retrying === item.gtin
                                   ? <Loader2 size={12} className="animate-spin" />
@@ -265,7 +265,7 @@ export default function GTINPool({ embedded }) {
                             <button
                               onClick={() => setUnassignConfirm(item)}
                               disabled={unassigning}
-                              className="text-xs text-orange-600 dark:text-orange-400 hover:text-orange-700 flex items-center gap-1"
+                              className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1"
                             >
                               <Unlink size={12} /> Unassign
                             </button>
@@ -292,7 +292,7 @@ export default function GTINPool({ embedded }) {
       {/* Delete confirm */}
       {deleteConfirm && (
         <Modal title="Remove GTIN" onClose={() => setDeleteConfirm(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             Remove <strong className="font-mono">{deleteConfirm}</strong> from the pool? It will no longer be selectable when assigning GTINs to products.
           </p>
           <div className="flex justify-end gap-2">
@@ -305,7 +305,7 @@ export default function GTINPool({ embedded }) {
       {/* Unassign confirm */}
       {unassignConfirm && (
         <Modal title="Unassign GTIN" onClose={() => setUnassignConfirm(null)}>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             Unassign <strong className="font-mono">{unassignConfirm.gtin}</strong> from <strong>{unassignConfirm.product_name}</strong>? This clears the barcode from the product in Odoo and returns the GTIN to the available pool.
           </p>
           <div className="flex justify-end gap-2">
