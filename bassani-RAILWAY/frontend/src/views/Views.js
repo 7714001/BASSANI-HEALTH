@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers, Link2 } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
+import BarcodeExportModal from "../components/BarcodeExportModal";
 import GTINPickerModal from "../components/GTINPickerModal";
 import ProductImageModal from "../components/ProductImageModal";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
@@ -76,6 +77,7 @@ export function Products() {
   const [archivingId,    setArchivingId   ] = useState(null);
   const [archiveConfirm, setArchiveConfirm] = useState(null);
   const [gs1Product,      setGs1Product     ] = useState(null);
+  const [barcodeExportProduct, setBarcodeExportProduct] = useState(null);
   const [gtinPickerProduct, setGtinPickerProduct] = useState(null);
   const [imageModalProduct, setImageModalProduct] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -360,6 +362,15 @@ export function Products() {
                       GS1
                     </button>
                   )}
+                  {p.barcode && can("labels.print") && (
+                    <button
+                      onClick={() => setBarcodeExportProduct(p)}
+                      title="Export a plain retail barcode (PNG/SVG) for packaging artwork"
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors leading-none"
+                    >
+                      Export
+                    </button>
+                  )}
                 </div>
               );
             }},
@@ -586,6 +597,7 @@ export function Products() {
         </Modal>
       )}
       {gs1Product && <GS1LabelModal product={gs1Product} onClose={() => setGs1Product(null)} />}
+      {barcodeExportProduct && <BarcodeExportModal product={barcodeExportProduct} onClose={() => setBarcodeExportProduct(null)} />}
       {gtinPickerProduct && (
         <GTINPickerModal
           product={gtinPickerProduct}

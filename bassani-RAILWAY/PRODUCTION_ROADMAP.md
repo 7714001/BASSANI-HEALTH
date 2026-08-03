@@ -3108,6 +3108,22 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 
 ---
 
+### 12.7 — Plain Retail Barcode Export — Complete 2026-08-03
+
+**Goal:** Bassani's retail product lines (e.g. CannaCraze Cannabis Soda) ship in externally pre-printed packaging (sleeves per flavour) rather than portal-printed labels. The packaging printer needs a plain retail barcode graphic to embed in their print-ready artwork — just the GTIN, no batch/lot/expiry/serial data. This is a distinct need from the existing GS1 Label feature (12.4), which is specifically the DataMatrix/GS1-128 traceability format for per-unit pharmacy dispatch labels.
+
+**Key distinction (confirmed with the product owner):** every barcode Bassani uses is still a GS1 GTIN number underneath — GS1 isn't pharmacy-specific, it's the standard behind every retail barcode. What differs is the *symbol*: a retail product needs the GTIN alone as an ordinary EAN-13, while pharmacy dispatch needs the GTIN plus batch/expiry/serial as a GS1 DataMatrix. The portal previously had no way to produce the plain version as a standalone graphic — setting `product.barcode` only stores a number, and the GS1 Label modal only renders the compliance format.
+
+- [x] `frontend/src/components/BarcodeExportModal.js` (new) — renders an EAN-13 barcode (falls back to Code128 if the barcode isn't a clean 12-13 digit GTIN) via `bwip-js`, sized to the real **GS1 General Specifications retail barcode standard**: nominal 37.29 × 25.93mm at 100% magnification, adjustable 80%-200% via a slider (below 80% risks unreliable scans at checkout, per spec). Downloads as SVG (vector, recommended for packaging artwork — resizable by the printer/designer with no quality loss) or PNG (300 DPI raster fallback).
+- [x] Sizing is driven by `bwip-js`'s own millimeter-native `width`/`height` options (confirmed against the installed 4.11.2 build, not assumed) rather than pixel/scale guesswork: `height` specifically sets bar height, and passing the GS1 nominal bar height (22.85mm) with `includetext:true` reproduces the textbook 25.93mm total. True rendered size is read back from the returned SVG's `viewBox` divided by the `scaleX`/`scaleY` bwip-js mutates onto the passed options object (it auto-picks these for rendering quality at small sizes) — verified empirically to track the requested size within normal barcode-generator snap-rounding tolerance at every magnification from 80%-200%.
+- [x] `frontend/src/views/Views.js` — new **Export** button in the Products table's Barcode column, alongside the existing GS1 button, gated on `labels.print` and requiring any barcode value (not just a strict GTIN, since the Code128 fallback handles non-GTIN codes).
+- [x] No backend changes — this is fully client-side (bwip-js renders and the browser downloads directly), since it's a one-off design asset, not a repeated operational print job like the GS1/Zebra path.
+
+**Design decisions:**
+- **SVG recommended over PNG** — the deliverable goes into external packaging artwork the printer will place and likely resize themselves, so vector avoids any quality loss regardless of final print size. PNG is offered at 300 DPI purely as a fallback for tools that can't take vector input.
+- **GS1 magnification (%), not arbitrary small/medium/large presets** — matches the actual language a packaging printer or GS1 SA will use, and visibly anchors the choice to the legal 80%-200% range rather than an app-invented scale.
+- **Separate modal from GS1LabelModal.js, not a mode toggle inside it** — the two serve genuinely different audiences (external packaging printer vs. Bassani's own pharmacy dispatch floor) and reusing one modal for both would blur a distinction worth keeping clear in the UI.
+
 ### Definition of Done
 
 - [x] Every product with a barcode set in Odoo shows that barcode value in the Products admin table
