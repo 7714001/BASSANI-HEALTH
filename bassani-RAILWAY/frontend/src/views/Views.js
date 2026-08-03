@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers, Link2 } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers, Link2, Tag, Printer, AlertTriangle } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -346,38 +346,41 @@ export function Products() {
             { accessorKey:"barcode", header:"Barcode", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({ row:{original:p} })=>{
               const isGtin = /^\d{13,14}$/.test(p.barcode || "");
               return (
-                <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                  {p.barcode && (
-                    <span
-                      className={`font-mono text-xs ${p.barcode_pending_sync ? "text-amber-600" : "text-gray-500"}`}
-                      title={p.barcode_pending_sync ? "Assigned in the portal, but not yet saved to this product in Odoo — see GTIN Pool for details" : undefined}
-                    >
-                      {p.barcode}{p.barcode_pending_sync && " ⚠"}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => setGtinPickerProduct(p)}
-                    className="text-[11px] text-bassani-500 hover:text-bassani-700 font-medium transition-colors whitespace-nowrap"
+                <div className="flex flex-col gap-1" onClick={e => e.stopPropagation()}>
+                  <span
+                    className={`inline-flex items-center gap-1 font-mono text-xs ${p.barcode ? (p.barcode_pending_sync ? "text-amber-600" : "text-gray-600") : "text-gray-300 italic font-sans"}`}
+                    title={p.barcode_pending_sync ? "Assigned in the portal, but not yet saved to this product in Odoo — see GTIN Pool for details" : undefined}
                   >
-                    {p.barcode ? "Edit" : "+ Set GTIN"}
-                  </button>
-                  {isGtin && can("labels.print") && (
+                    {p.barcode || "No barcode"}
+                    {p.barcode_pending_sync && <AlertTriangle size={11} className="text-amber-500 shrink-0" />}
+                  </span>
+                  <div className="flex items-center gap-0.5 -ml-1">
                     <button
-                      onClick={() => setGs1Product(p)}
-                      className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-bassani-50 text-bassani-700 hover:bg-bassani-100 border border-bassani-200 transition-colors leading-none"
+                      onClick={() => setGtinPickerProduct(p)}
+                      title={p.barcode ? "Edit barcode" : "Set GTIN from pool"}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-bassani-600 hover:bg-bassani-50 transition-colors"
                     >
-                      GS1
+                      <Tag size={12} />
                     </button>
-                  )}
-                  {p.barcode && can("labels.print") && (
-                    <button
-                      onClick={() => setBarcodeExportProduct(p)}
-                      title="Export a plain retail barcode (PNG/SVG) for packaging artwork"
-                      className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors leading-none"
-                    >
-                      Export
-                    </button>
-                  )}
+                    {isGtin && can("labels.print") && (
+                      <button
+                        onClick={() => setGs1Product(p)}
+                        title="Print GS1 label"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-bassani-600 hover:bg-bassani-50 transition-colors"
+                      >
+                        <Printer size={12} />
+                      </button>
+                    )}
+                    {p.barcode && can("labels.print") && (
+                      <button
+                        onClick={() => setBarcodeExportProduct(p)}
+                        title="Export a plain retail barcode (PNG/SVG) for packaging artwork"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-bassani-600 hover:bg-bassani-50 transition-colors"
+                      >
+                        <Download size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             }},
