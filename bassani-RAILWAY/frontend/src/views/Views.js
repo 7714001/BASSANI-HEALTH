@@ -347,7 +347,14 @@ export function Products() {
               const isGtin = /^\d{13,14}$/.test(p.barcode || "");
               return (
                 <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                  {p.barcode && <span className="font-mono text-xs text-gray-500">{p.barcode}</span>}
+                  {p.barcode && (
+                    <span
+                      className={`font-mono text-xs ${p.barcode_pending_sync ? "text-amber-600" : "text-gray-500"}`}
+                      title={p.barcode_pending_sync ? "Assigned in the portal, but not yet saved to this product in Odoo — see GTIN Pool for details" : undefined}
+                    >
+                      {p.barcode}{p.barcode_pending_sync && " ⚠"}
+                    </span>
+                  )}
                   <button
                     onClick={() => setGtinPickerProduct(p)}
                     className="text-[11px] text-bassani-500 hover:text-bassani-700 font-medium transition-colors whitespace-nowrap"
@@ -916,6 +923,7 @@ export function Orders() {
         product_id: pid, product_uom_qty: minQty, price_unit: product.list_price,
         name: product.display_name || product.name, _sku: product.default_code || "",
         _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0,
+        _image128: product.image_128 || null,
       }];
     });
   };
@@ -1197,18 +1205,21 @@ export function Orders() {
                     return (
                       <div key={p.id}
                         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
-                        <div className="flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
-                            {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
-                          </div>
-                          {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
-                          <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                            {groups.map((g, i) => (
-                              <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
-                            ))}
-                            {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
-                            {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
+                        <div className="flex-1 flex items-start gap-3">
+                          <ProductThumb product={p} size="lg" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
+                              {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
+                            </div>
+                            {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                              {groups.map((g, i) => (
+                                <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
+                              ))}
+                              {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+                              {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center justify-between gap-2">
@@ -1314,9 +1325,12 @@ export function Orders() {
                   {cart.map(item => (
                     <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
-                          {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                        <div className="flex items-start gap-2 min-w-0">
+                          <ProductThumb product={{ image_128: item._image128 }} size="xs" className="mt-0.5" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
+                            {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                          </div>
                         </div>
                         <button onClick={() => removeFromCart(item.product_id)}
                           className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>

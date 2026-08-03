@@ -311,6 +311,12 @@ export default function GS1LabelModal({ product, onClose }) {
                 </span>
               )}
             </div>
+            {product.barcode_pending_sync && (
+              <p className="flex items-center gap-1 text-[10px] text-amber-600 font-medium mt-1">
+                <AlertTriangle size={11} />
+                Reserved in the portal but not yet saved to this product in Odoo (see GTIN Pool). Labels will print correctly, but double-check the Odoo record is caught up before relying on it elsewhere.
+              </p>
+            )}
           </div>
         </div>
 

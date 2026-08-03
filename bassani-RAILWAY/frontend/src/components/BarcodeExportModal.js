@@ -154,6 +154,17 @@ export default function BarcodeExportModal({ product, onClose }) {
         <p className="text-xs font-mono text-gray-500 mt-0.5">{barcode || "No barcode set"}</p>
       </div>
 
+      {product.barcode_pending_sync && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5 mb-4">
+          <AlertTriangle size={13} className="text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700">
+            This GTIN is reserved in the portal but not yet saved to this product in Odoo (see GTIN Pool
+            for details). The export below is safe to use, but double-check the Odoo record catches up
+            before treating it as final.
+          </p>
+        </div>
+      )}
+
       {!barcode ? (
         <div className="text-center py-8 text-gray-400">
           <AlertTriangle size={22} className="mx-auto mb-2 text-amber-400" />

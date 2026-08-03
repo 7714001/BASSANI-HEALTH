@@ -11,6 +11,34 @@ from parent_categories import resolve_parent_category_product_ids
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
+
+async def _apply_pending_gtin_fallback(products: list) -> None:
+    """A GTIN assigned from the pool (gtin_pool_routes.py) can fail to sync to
+    Odoo (e.g. the API service account lacking write access to that product's
+    company) while still succeeding in the portal — by design, so the
+    reservation isn't blocked on an Odoo-side access issue. Odoo's own
+    `barcode` field genuinely stays empty in that case, so anything reading
+    straight from Odoo (this list, GS1LabelModal, BarcodeExportModal) would
+    otherwise show no barcode at all despite one being reserved and known.
+    Backfills it from `gtin_pool` for display and label/barcode generation,
+    flagged via `barcode_pending_sync` so the UI can distinguish it from a
+    barcode Odoo actually has on record. Mutates `products` in place."""
+    missing_ids = [p["id"] for p in products if not p.get("barcode") and p.get("id")]
+    if not missing_ids:
+        return
+    pending = await col("gtin_pool").find(
+        {"status": "assigned", "odoo_synced": False, "odoo_product_id": {"$in": missing_ids}},
+        {"odoo_product_id": 1, "gtin": 1, "_id": 0},
+    ).to_list(length=None)
+    if not pending:
+        return
+    gtin_by_product = {p["odoo_product_id"]: p["gtin"] for p in pending}
+    for p in products:
+        gtin = gtin_by_product.get(p.get("id"))
+        if gtin:
+            p["barcode"] = gtin
+            p["barcode_pending_sync"] = True
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class ProductCreate(BaseModel):
@@ -238,6 +266,7 @@ async def list_products(
                 p["list_price"] = p.pop("lst_price", 0)
             _attach_tax_rates(odoo, products, company_id)
             total = odoo.count("product.product", domain)
+        await _apply_pending_gtin_fallback(products)
         return {"products": products, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

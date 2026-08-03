@@ -813,7 +813,7 @@ export function Badge({ status, label, color, children }) {
 // Renders a product's image_128 (base64, from PRODUCT_FIELDS) or a placeholder.
 // Shared by the admin Products table, ResellerCatalog, ProductPickerDrawer, and
 // ProductLineRow so the placeholder fallback only lives in one place.
-const THUMB_SIZES = { xs: "w-6 h-6", sm: "w-9 h-9", md: "w-12 h-12" };
+const THUMB_SIZES = { xs: "w-6 h-6", sm: "w-9 h-9", md: "w-12 h-12", lg: "w-16 h-16" };
 export function ProductThumb({ product, size = "sm", className = "" }) {
   const dim = THUMB_SIZES[size] || THUMB_SIZES.sm;
   if (product?.image_128) {
