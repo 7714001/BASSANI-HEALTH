@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, Tag, Trash2, Unlink, CheckCircle, AlertCircle } from "lucide-react";
+import { Loader2, Tag, Trash2, Unlink, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
@@ -20,6 +20,7 @@ export default function GTINPool({ embedded }) {
   const [unassignConfirm, setUnassignConfirm] = useState(null);  // pool item
   const [deleting, setDeleting]               = useState(false);
   const [unassigning, setUnassigning]         = useState(false);
+  const [retrying, setRetrying]               = useState(null);  // gtin string being retried
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,13 +83,27 @@ export default function GTINPool({ embedded }) {
     setUnassignConfirm(null);
     setUnassigning(true);
     try {
-      await api.post(`/api/gtin-pool/${item.gtin}/unassign`);
-      toast.success(`GTIN ${item.gtin} released from ${item.product_name}`);
+      const r = await api.post(`/api/gtin-pool/${item.gtin}/unassign`);
+      if (r.data.warning) toast.error(r.data.warning, { duration: 8000 });
+      else toast.success(`GTIN ${item.gtin} released from ${item.product_name}`);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to unassign GTIN");
     } finally {
       setUnassigning(false);
+    }
+  }
+
+  async function retrySync(gtin) {
+    setRetrying(gtin);
+    try {
+      await api.post(`/api/gtin-pool/${gtin}/retry-sync`);
+      toast.success(`GTIN ${gtin} synced to Odoo`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Still failed to sync to Odoo");
+    } finally {
+      setRetrying(null);
     }
   }
 
@@ -204,15 +219,25 @@ export default function GTINPool({ embedded }) {
                     <tr key={item.gtin} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                       <td className="px-5 py-3 font-mono text-gray-800 dark:text-gray-200">{item.gtin}</td>
                       <td className="px-5 py-3">
-                        {item.status === "assigned" ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300">
-                            <CheckCircle size={11} /> Assigned
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
-                            Available
-                          </span>
-                        )}
+                        <div className="flex flex-col items-start gap-1">
+                          {item.status === "assigned" ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700 dark:bg-bassani-900/40 dark:text-bassani-300">
+                              <CheckCircle size={11} /> Assigned
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                              Available
+                            </span>
+                          )}
+                          {item.status === "assigned" && item.odoo_synced === false && (
+                            <span
+                              title={item.sync_error || "Not synced to Odoo"}
+                              className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                            >
+                              <AlertCircle size={11} /> Not synced to Odoo
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-3 text-gray-600 dark:text-gray-300 max-w-[200px] truncate">
                         {item.product_name || <span className="text-gray-300 dark:text-gray-600">—</span>}
@@ -224,13 +249,27 @@ export default function GTINPool({ embedded }) {
                       </td>
                       <td className="px-5 py-3 text-right">
                         {item.status === "assigned" ? (
-                          <button
-                            onClick={() => setUnassignConfirm(item)}
-                            disabled={unassigning}
-                            className="text-xs text-orange-600 dark:text-orange-400 hover:text-orange-700 flex items-center gap-1 ml-auto"
-                          >
-                            <Unlink size={12} /> Unassign
-                          </button>
+                          <div className="flex items-center justify-end gap-3">
+                            {item.odoo_synced === false && (
+                              <button
+                                onClick={() => retrySync(item.gtin)}
+                                disabled={retrying === item.gtin}
+                                className="text-xs text-amber-600 dark:text-amber-400 hover:text-amber-700 flex items-center gap-1"
+                              >
+                                {retrying === item.gtin
+                                  ? <Loader2 size={12} className="animate-spin" />
+                                  : <RefreshCw size={12} />}
+                                Retry Sync
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setUnassignConfirm(item)}
+                              disabled={unassigning}
+                              className="text-xs text-orange-600 dark:text-orange-400 hover:text-orange-700 flex items-center gap-1"
+                            >
+                              <Unlink size={12} /> Unassign
+                            </button>
+                          </div>
                         ) : (
                           <button
                             onClick={() => setDeleteConfirm(item.gtin)}

@@ -44,11 +44,15 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
   async function assignFromPool(gtin) {
     setAssigning(gtin);
     try {
-      await api.post(`/api/gtin-pool/${gtin}/assign`, {
+      const r = await api.post(`/api/gtin-pool/${gtin}/assign`, {
         odoo_product_id: product.id,
         product_name: product.name,
       });
-      toast.success(`GTIN ${gtin} assigned to ${product.name}`);
+      if (r.data.odoo_synced === false) {
+        toast.error(r.data.warning || `GTIN ${gtin} linked in the portal, but Odoo was not updated.`, { duration: 8000 });
+      } else {
+        toast.success(`GTIN ${gtin} assigned to ${product.name}`);
+      }
       onAssigned(gtin);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to assign GTIN");
@@ -60,8 +64,12 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
     setUnassigning(true);
     setUnassignConfirm(false);
     try {
-      await api.post(`/api/gtin-pool/${product.barcode}/unassign`);
-      toast.success("GTIN released back to pool");
+      const r = await api.post(`/api/gtin-pool/${product.barcode}/unassign`);
+      if (r.data.warning) {
+        toast.error(r.data.warning, { duration: 8000 });
+      } else {
+        toast.success("GTIN released back to pool");
+      }
       onAssigned(null);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to unassign GTIN");

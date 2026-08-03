@@ -89,6 +89,8 @@ async def bulk_add(
             "product_name":    None,
             "assigned_at":     None,
             "assigned_by":     None,
+            "odoo_synced":     None,
+            "sync_error":      None,
             "created_at":      now,
         })
         added.append(gtin)
@@ -152,10 +154,20 @@ async def assign_gtin(
             status_code=409,
             detail=f"GTIN {gtin} is already assigned to {doc.get('product_name', 'another product')}.",
         )
+
+    # The Odoo write is best-effort, not a hard gate — if it fails (e.g. the API
+    # service account lacks write access to this specific product's company),
+    # the assignment still goes ahead in the portal so the GTIN isn't blocked on
+    # an Odoo-side access-rights issue someone else needs to fix. odoo_synced
+    # tracks whether the two sides actually agree; surfaced in the GTIN Pool
+    # list and retryable via /retry-sync once the Odoo issue is resolved.
+    odoo_synced = True
+    sync_error = None
     try:
         get_odoo_client().write("product.template", [body.odoo_product_id], {"barcode": gtin})
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to update barcode in Odoo: {exc}")
+        odoo_synced = False
+        sync_error = str(exc)
 
     await col("gtin_pool").update_one(
         {"gtin": gtin},
@@ -165,12 +177,52 @@ async def assign_gtin(
             "product_name":    body.product_name,
             "assigned_at":     datetime.now(timezone.utc),
             "assigned_by":     current_user.get("username"),
+            "odoo_synced":     odoo_synced,
+            "sync_error":      sync_error,
         }},
     )
     await audit_log(
         "gtin_pool.assigned", "gtin_pool", gtin,
         entity_label=gtin, user=current_user,
-        detail={"product_id": body.odoo_product_id, "product_name": body.product_name},
+        detail={"product_id": body.odoo_product_id, "product_name": body.product_name,
+                "odoo_synced": odoo_synced, "sync_error": sync_error},
+    )
+    result = {"success": True, "gtin": gtin, "odoo_synced": odoo_synced}
+    if not odoo_synced:
+        result["warning"] = (
+            f"Linked in the portal, but the barcode could not be updated in Odoo ({sync_error}). "
+            "Labels for this product won't show the new GTIN until this is resolved and synced."
+        )
+    return result
+
+
+@router.post("/{gtin}/retry-sync")
+async def retry_gtin_sync(
+    gtin: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Re-attempt the Odoo barcode write for a GTIN that assigned successfully
+    in the portal but failed to sync to Odoo (see assign_gtin)."""
+    doc = await col("gtin_pool").find_one({"gtin": gtin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="GTIN not found in pool")
+    if doc.get("status") != "assigned" or not doc.get("odoo_product_id"):
+        raise HTTPException(status_code=400, detail="This GTIN is not currently assigned to a product")
+
+    try:
+        get_odoo_client().write("product.template", [doc["odoo_product_id"]], {"barcode": gtin})
+    except Exception as exc:
+        await col("gtin_pool").update_one({"gtin": gtin}, {"$set": {"sync_error": str(exc)}})
+        raise HTTPException(status_code=502, detail=f"Still failed to update barcode in Odoo: {exc}")
+
+    await col("gtin_pool").update_one(
+        {"gtin": gtin},
+        {"$set": {"odoo_synced": True, "sync_error": None}},
+    )
+    await audit_log(
+        "gtin_pool.sync_retried", "gtin_pool", gtin,
+        entity_label=gtin, user=current_user,
+        detail={"product_id": doc["odoo_product_id"]},
     )
     return {"success": True, "gtin": gtin}
 
@@ -187,10 +239,19 @@ async def unassign_gtin(
         raise HTTPException(status_code=404, detail="GTIN not found in pool")
     if doc.get("status") != "assigned":
         raise HTTPException(status_code=409, detail="This GTIN is not currently assigned.")
-    try:
-        get_odoo_client().write("product.template", [doc["odoo_product_id"]], {"barcode": False})
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to clear barcode in Odoo: {exc}")
+
+    # Same best-effort philosophy as assign: don't let an Odoo-side access
+    # issue leave the GTIN stuck assigned in the portal with no way back to
+    # the pool. If it was never actually synced to Odoo (odoo_synced is False),
+    # there's nothing to clear there in the first place, so skip the write.
+    odoo_synced = True
+    sync_error = None
+    if doc.get("odoo_synced") is not False:
+        try:
+            get_odoo_client().write("product.template", [doc["odoo_product_id"]], {"barcode": False})
+        except Exception as exc:
+            odoo_synced = False
+            sync_error = str(exc)
 
     prev_product = doc.get("product_name")
     await col("gtin_pool").update_one(
@@ -201,11 +262,20 @@ async def unassign_gtin(
             "product_name":    None,
             "assigned_at":     None,
             "assigned_by":     None,
+            "odoo_synced":     None,
+            "sync_error":      None,
         }},
     )
     await audit_log(
         "gtin_pool.unassigned", "gtin_pool", gtin,
         entity_label=gtin, user=current_user,
-        detail={"product_id": doc.get("odoo_product_id"), "product_name": prev_product},
+        detail={"product_id": doc.get("odoo_product_id"), "product_name": prev_product,
+                "odoo_clear_synced": odoo_synced, "sync_error": sync_error},
     )
-    return {"success": True, "gtin": gtin}
+    result = {"success": True, "gtin": gtin}
+    if not odoo_synced:
+        result["warning"] = (
+            f"Released in the portal, but the barcode could not be cleared from the product in Odoo ({sync_error}). "
+            "Clear it manually in Odoo if needed."
+        )
+    return result
