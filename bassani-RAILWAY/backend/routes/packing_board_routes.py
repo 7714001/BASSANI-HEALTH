@@ -25,7 +25,7 @@ from auth import require_admin, get_current_user, get_user_by_username, require_
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
-from odoo_client import get_odoo_client
+from odoo_client import get_odoo_client, odoo as odoo_call
 from routes.settings_routes import get_email_routing
 from routes.monitor_routes import broadcast_monitor_refresh
 from services.email_service import (
@@ -793,6 +793,7 @@ async def complete_entry(
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
     invoice_warning: Optional[str] = None
+    invoice_sent = False
     try:
         odoo = get_odoo_client()
         sale_order_id = int(entry["order_id"])
@@ -812,6 +813,32 @@ async def complete_entry(
             invoice_id = inv_rows[0]["id"]
             invoice_name = inv_rows[0]["name"]
             odoo.execute("account.move", "action_post", [invoice_id])
+            # Auto-send the final invoice to the customer via Odoo's own mail
+            # system (same mechanism as ticket_routes.py's manual "Send Invoice"
+            # action) — non-fatal, mirrors send_deposit_due_proforma's degrade-to-warning
+            # pattern so a missing/misconfigured Odoo mail template never blocks completion.
+            try:
+                _templates = odoo.search_read(
+                    "mail.template",
+                    [("model", "=", "account.move")],
+                    fields=["id", "name"],
+                    limit=10,
+                )
+                _inv_template = next(
+                    (t for t in _templates if "invoice" in t["name"].lower()),
+                    _templates[0] if _templates else None,
+                )
+                if _inv_template:
+                    odoo_call(
+                        "mail.template", "send_mail",
+                        [_inv_template["id"], invoice_id],
+                        {"force_send": True},
+                    )
+                    invoice_sent = True
+                else:
+                    invoice_warning = "Invoice created but no invoice email template found in Odoo — configure one under Email > Templates"
+            except Exception as e:
+                invoice_warning = f"Invoice created but the email may not have been sent: {e}"
     except Exception as e:
         invoice_warning = f"Invoice creation failed: {e}"
 
@@ -822,7 +849,10 @@ async def complete_entry(
                 {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None}
             )
             if _st:
-                await col("tickets").update_one({"_id": _st["_id"]}, {"$set": {"invoice_id": invoice_id}})
+                _ticket_set: dict = {"invoice_id": invoice_id}
+                if invoice_sent:
+                    _ticket_set["invoice_sent_at"] = now
+                await col("tickets").update_one({"_id": _st["_id"]}, {"$set": _ticket_set})
         except Exception:
             pass
 

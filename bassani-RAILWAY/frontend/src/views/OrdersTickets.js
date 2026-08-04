@@ -43,7 +43,7 @@ const STATUS_LABEL = {
   packing:         "Packing In Progress",
   ready:           "Ready for Inspection",
   collected:       "Collected",
-  complete:        "Complete",
+  complete:        "Ready for Collection",
   incomplete:      "Incomplete",
   cancelled:       "Cancelled",
   cleared:         "Cleared",
@@ -865,11 +865,13 @@ export default function OrdersTickets() {
                         </div>
                       )}
 
-                      {/* orders_clerk: mark as collected (partial orders only — creates invoice) */}
-                      {canOrders && detail.status === "complete" && detail.has_pending_invoice && !detail.collected_at && (
+                      {/* orders_clerk: mark as collected — every delivery (full or partial) needs this explicit step */}
+                      {canOrders && detail.status === "complete" && !detail.collected_at && (
                         <div className="bg-teal-50 border border-teal-100 rounded-2xl p-4">
                           <p className="text-xs text-teal-700 mb-3">
-                            Customer has collected this delivery. Marking as collected will create the invoice in Odoo for the items delivered.
+                            {detail.has_pending_invoice
+                              ? "Customer has collected this delivery. Marking as collected will create the invoice in Odoo for the items delivered."
+                              : "Confirm the customer has collected this order."}
                           </p>
                           {detail.collected_at ? (
                             <p className="text-xs text-green-600 flex items-center gap-1.5">

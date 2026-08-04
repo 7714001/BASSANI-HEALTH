@@ -84,7 +84,7 @@ const ORDER_STATE_COLOR = {
 
 const PACK_STATUS_LABEL = {
   queued: "Queued", packing: "Packing", ready: "Ready for Inspection",
-  complete: "Complete", collected: "Collected", incomplete: "Incomplete",
+  complete: "Ready for Collection", collected: "Collected", incomplete: "Incomplete",
   cancelled: "Cancelled", waiting_stock: "Waiting for Stock",
 };
 const PACK_STATUS_COLOR = {
