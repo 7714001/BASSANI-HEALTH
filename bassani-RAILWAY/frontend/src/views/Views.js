@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, X, Layers, Link2, Tag, Printer, AlertTriangle } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, Layers, Link2, Tag, Printer, AlertTriangle } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -289,34 +289,39 @@ export function Products() {
             </div>
           </div>
 
-          {/* Adaptive filter row — categories at top level, variants when drilled in */}
-          <ChipRow>
-            {cat === "all" ? (
-              ["all", ...categories.map(c => c.name)].map(c => (
-                <FilterPill key={c} label={c === "all" ? "All" : c} active={cat === c}
-                  onClick={() => { setLoading(true); setProducts([]); setCat(c); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }} />
-              ))
-            ) : (
-              <>
-                {/* Active category as removable crumb — click anywhere to go back */}
-                <button
-                  onClick={() => { setLoading(true); setProducts([]); setCat("all"); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-bassani-600 text-white shrink-0 hover:bg-bassani-700 transition-colors"
-                >
-                  {cat} <X size={11} className="opacity-80" />
-                </button>
-                <span className="text-gray-200 select-none self-center">|</span>
-                {(() => {
-                  const opts = Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
-                  if (opts.length === 0) return null;
-                  return [
-                    <FilterPill key="__all__" label="All variants" active={variant === "all"} onClick={() => setVariant("all")} />,
-                    ...opts.map(v => <FilterPill key={v} label={v} active={variant === v} onClick={() => setVariant(v)} />)
-                  ];
-                })()}
-              </>
-            )}
-          </ChipRow>
+          {/* Category + variant filters — searchable dropdowns rather than a
+              chip row, matching ResellerCatalog.js/the reseller order cart's
+              pattern. Same original Odoo category list as before (categories
+              state from /api/products/categories, filtered by name exactly
+              as this page already did) — only the widget changed. */}
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
+              <SearchableSelect
+                value={cat === "all" ? null : cat}
+                onChange={v => { setLoading(true); setProducts([]); setCat(v ?? "all"); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }}
+                options={categories.map(c => ({ value: c.name, label: c.name }))}
+                placeholder="All categories"
+                searchPlaceholder="Search categories…"
+              />
+            </div>
+            {cat !== "all" && (() => {
+              const opts = Array.from(new Set(products.map(p => getVariantLabel(p)).filter(Boolean))).sort();
+              if (opts.length === 0) return null;
+              return (
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Variant</label>
+                  <SearchableSelect
+                    value={variant === "all" ? null : variant}
+                    onChange={v => setVariant(v ?? "all")}
+                    options={opts.map(v => ({ value: v, label: v }))}
+                    placeholder="All variants"
+                    searchPlaceholder="Search…"
+                  />
+                </div>
+              );
+            })()}
+          </div>
         </div>
         <DataTable
           columns={[
