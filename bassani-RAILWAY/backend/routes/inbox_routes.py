@@ -17,14 +17,17 @@ Architecture notes:
 - Customer matching is best-effort: we look up the sender's email against
   res.partner in Odoo.  Unknown senders are flagged is_unknown_sender=True and
   must be linked or onboarded before a ticket can be created.
-- Attachment bytes are never stored; they are fetched on-demand from Graph.
+- Ingest (Graph webhook + poll, IMAP poll) delegates to services.inbox_service,
+  the same shared pipeline used by the onboarding and orders inboxes. Graph
+  attachment bytes are eagerly copied to R2 at ingest time (see inbox_service);
+  they are never re-fetched from Graph on the read path except as a fallback
+  for messages ingested before that behaviour was added.
 """
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import httpx
 
-from bson import Binary as BsonBinary, ObjectId
+from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -35,22 +38,21 @@ from middleware.audit import audit_log
 from odoo_client import get_odoo_client
 from services.graph_client import (
     get_attachment_content,
-    get_message,
     graph_configured,
-    list_attachments,
-    mark_as_read,
     send_reply as graph_send_reply,
 )
 from services.graph_subscription import get_client_state
 import re as _re
 
 from services.imap_client import (
-    get_config as get_imap_config,
     imap_configured,
     send_reply as imap_send_reply,
 )
-from services.inbox_service import resolve_customer as _resolve_customer
+from services.inbox_service import ingest_graph_message, ingest_imap_message
 from services.notification_service import notify_ticket_assigned
+
+_COLLECTION = "sales_inbox"
+_MAILBOX    = "sales"
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
@@ -131,268 +133,6 @@ def _actor(user: dict) -> str:
 
 
 
-async def _ingest_message(graph_message_id: str) -> None:
-    """
-    Fetch one Graph message and persist it to sales_inbox.
-    Called from BackgroundTasks — never raises; logs errors instead.
-    Idempotent: duplicate graph_message_id is silently skipped.
-    """
-    existing = await col("sales_inbox").find_one(
-        {"graph_message_id": graph_message_id}, {"_id": 1}
-    )
-    if existing:
-        return
-
-    try:
-        msg = await get_message(graph_message_id, mailbox_address=_active_mailbox_address())
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            # Message was deleted/moved before we could fetch it — known Graph
-            # webhook behaviour (ZAP, spam filter, inbox rule).  Not actionable.
-            logger.info(
-                "inbox_message_not_found graph_message_id=%s (removed before fetch)",
-                graph_message_id,
-            )
-        else:
-            logger.error(
-                "inbox_message_fetch_failed graph_message_id=%s error=%s",
-                graph_message_id,
-                exc,
-            )
-        return
-    except Exception as exc:
-        logger.error(
-            "inbox_message_fetch_failed graph_message_id=%s error=%s",
-            graph_message_id,
-            exc,
-        )
-        return
-
-    from_addr   = msg.get("from", {}).get("emailAddress", {})
-    from_email  = (from_addr.get("address") or "").lower().strip()
-    from_name   = from_addr.get("name") or from_email
-    conv_id     = msg.get("conversationId", "")
-    subject     = msg.get("subject", "(no subject)")
-    body_preview = msg.get("bodyPreview", "")[:500]
-    body_html   = msg.get("body", {}).get("content", "")
-    received_str = msg.get("receivedDateTime", "")
-    has_att     = msg.get("hasAttachments", False)
-
-    try:
-        received_at = datetime.fromisoformat(received_str.replace("Z", "+00:00"))
-    except Exception:
-        received_at = datetime.now(timezone.utc)
-
-    # Fetch attachment metadata (not content — content is on-demand via download endpoint)
-    attachments: list = []
-    if has_att:
-        try:
-            raw = await list_attachments(graph_message_id)
-            attachments = [
-                {
-                    "id": a["id"],
-                    "name": a.get("name", ""),
-                    "content_type": a.get("contentType", ""),
-                    "size_bytes": a.get("size", 0),
-                }
-                for a in raw
-            ]
-        except Exception as exc:
-            logger.warning("inbox_attachments_fetch_failed error=%s", exc)
-
-    customer_id, customer_name = await _resolve_customer(from_email)
-    is_unknown = customer_id is None
-
-    # Thread detection — is this a reply to an existing conversation?
-    is_reply = False
-    thread_root_id: Optional[str] = None
-    linked_ticket_id: Optional[str] = None
-    if conv_id:
-        prior = await col("sales_inbox").find_one(
-            {"graph_conversation_id": conv_id, "is_reply": False},
-            {"_id": 1, "ticket_id": 1},
-            sort=[("received_at", 1)],
-        )
-        if prior:
-            is_reply = True
-            thread_root_id = str(prior["_id"])
-            linked_ticket_id = prior.get("ticket_id")
-
-    doc = {
-        "graph_message_id":    graph_message_id,
-        "graph_conversation_id": conv_id,
-        "mailbox_address":     _active_mailbox_address(),
-        "from_email":          from_email,
-        "from_name":           from_name,
-        "subject":             subject,
-        "body_preview":        body_preview,
-        "body_html":           body_html,
-        "received_at":         received_at,
-        "has_attachments":     has_att,
-        "attachments":         attachments,
-        "customer_id":         customer_id,
-        "customer_name":       customer_name,
-        "is_unknown_sender":   is_unknown,
-        "ticket_id":           linked_ticket_id if is_reply else None,
-        "is_reply":            is_reply,
-        "thread_root_id":      thread_root_id,
-        "status":              "reply" if is_reply else "unhandled",
-        "is_read":             False,
-        "created_at":          datetime.now(timezone.utc),
-        "handled_by":          None,
-        "handled_at":          None,
-    }
-    await col("sales_inbox").insert_one(doc)
-
-    if is_reply:
-        logger.info(
-            "inbox_reply_appended conv_id=%s linked_ticket=%s", conv_id, linked_ticket_id
-        )
-    else:
-        logger.info(
-            "inbox_message_stored from=%s subject=%s customer_found=%s",
-            from_email,
-            subject,
-            not is_unknown,
-        )
-
-    # Mark read in Outlook so staff don't see duplicates there
-    try:
-        await mark_as_read(graph_message_id)
-    except Exception:
-        pass
-
-
-async def _ingest_imap_message(msg: dict) -> None:
-    """
-    Persist one IMAP-sourced message to sales_inbox.
-    Idempotent: duplicate message_id is silently skipped.
-    Called from the polling loop — never raises; logs errors instead.
-    """
-    message_id = msg.get("message_id")
-    if message_id:
-        existing = await col("sales_inbox").find_one(
-            {"imap_message_id": message_id}, {"_id": 1}
-        )
-        if existing:
-            return
-
-    from_email   = msg.get("from_email", "").lower().strip()
-    from_name    = msg.get("from_name", from_email)
-    subject      = msg.get("subject", "(no subject)")
-    in_reply_to  = msg.get("in_reply_to", "")
-    references   = msg.get("references", "")
-    received_at  = msg.get("received_at") or datetime.now(timezone.utc)
-    body_html    = msg.get("body_html", "")
-    body_preview = msg.get("body_preview", "")[:500]
-    has_att      = msg.get("has_attachments", False)
-    attachments  = msg.get("attachments", [])
-    imap_uid     = msg.get("imap_uid", "")
-
-    customer_id, customer_name = await _resolve_customer(from_email)
-    is_unknown = customer_id is None
-
-    # Thread detection: walk In-Reply-To then References to find any ancestor
-    # already in the inbox, even when the immediate parent is missing.
-    is_reply = False
-    thread_root_id: Optional[str] = None
-    linked_ticket_id: Optional[str] = None
-
-    ancestor = None
-    if in_reply_to:
-        ancestor = await col("sales_inbox").find_one(
-            {"imap_message_id": in_reply_to},
-            {"_id": 1, "ticket_id": 1, "thread_root_id": 1},
-        )
-    if not ancestor and references:
-        # Walk references newest-first to find the closest known ancestor
-        for ref_mid in reversed(references.split()):
-            ancestor = await col("sales_inbox").find_one(
-                {"imap_message_id": ref_mid.strip()},
-                {"_id": 1, "ticket_id": 1, "thread_root_id": 1},
-            )
-            if ancestor:
-                break
-    if ancestor:
-        is_reply = True
-        thread_root_id = str(ancestor.get("thread_root_id") or ancestor["_id"])
-        linked_ticket_id = ancestor.get("ticket_id")
-
-    # Strip attachment bytes before inserting the inbox doc — they're too large
-    # to embed and will be stored separately in sales_inbox_attachments.
-    attachments_meta = [
-        {k: v for k, v in att.items() if k != "_content"}
-        for att in attachments
-    ]
-    doc = {
-        "imap_message_id":   message_id,
-        "imap_uid":          imap_uid,
-        "imap_in_reply_to":  in_reply_to,
-        "imap_references":   references,
-        "mailbox_address":   _active_mailbox_address(),
-        "from_email":        from_email,
-        "from_name":         from_name,
-        "subject":           subject,
-        "body_preview":      body_preview,
-        "body_html":         body_html,
-        "received_at":       received_at,
-        "has_attachments":   has_att,
-        "attachments":       attachments_meta,
-        "customer_id":       customer_id,
-        "customer_name":     customer_name,
-        "is_unknown_sender": is_unknown,
-        "ticket_id":         linked_ticket_id if is_reply else None,
-        "is_reply":          is_reply,
-        "thread_root_id":    thread_root_id,
-        "status":            "reply" if is_reply else "unhandled",
-        "is_read":           False,
-        "created_at":        datetime.now(timezone.utc),
-        "handled_by":        None,
-        "handled_at":        None,
-    }
-    result = await col("sales_inbox").insert_one(doc)
-    item_id_str = str(result.inserted_id)
-
-    # Mark read in IMAP immediately after the message is safely in MongoDB.
-    # This ordering guarantees we never mark an email read without having stored
-    # it. Attachment failures below are non-fatal and must not block this step.
-    if imap_uid:
-        try:
-            from services.imap_client import mark_as_read as imap_mark_read
-            await imap_mark_read(imap_uid)
-        except Exception as exc:
-            logger.warning("imap_mark_read_failed uid=%s error=%s", imap_uid, exc)
-
-    # Persist attachment bytes to sales_inbox_attachments (separate collection).
-    # Wrapped individually — a single bad attachment must not orphan the message.
-    for i, att in enumerate(attachments):
-        content = att.get("_content", b"")
-        if not content:
-            continue
-        try:
-            att_result = await col("sales_inbox_attachments").insert_one({
-                "inbox_item_id": item_id_str,
-                "name":          att["name"],
-                "content_type":  att["content_type"],
-                "size_bytes":    att["size_bytes"],
-                "content":       BsonBinary(content),
-            })
-            await col("sales_inbox").update_one(
-                {"_id": result.inserted_id},
-                {"$set": {f"attachments.{i}.imap_attachment_id": str(att_result.inserted_id)}},
-            )
-        except Exception as exc:
-            logger.warning(
-                "imap_attachment_store_failed inbox_id=%s name=%s error=%s",
-                item_id_str, att.get("name"), exc,
-            )
-
-    logger.info(
-        "inbox_imap_message_stored from=%s subject=%s reply=%s customer_found=%s",
-        from_email, subject, is_reply, not is_unknown,
-    )
-
-
 # ── Graph webhook ─────────────────────────────────────────────────────────────
 
 @router.post("/graph-webhook", include_in_schema=False)
@@ -418,7 +158,7 @@ async def graph_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    stored_client_state = await get_client_state()
+    stored_client_state = await get_client_state(_MAILBOX)
 
     for notification in body.get("value", []):
         # Reject any notification that doesn't match our stored client_state.
@@ -440,7 +180,7 @@ async def graph_webhook(
         if not graph_message_id:
             continue
 
-        background_tasks.add_task(_ingest_message, graph_message_id)
+        background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, graph_message_id)
 
     return Response(status_code=202)
 
@@ -463,27 +203,30 @@ async def poll_inbox(
 
     if graph_configured():
         from services.graph_client import list_messages
+        mailbox_address = _active_mailbox_address()
         try:
-            msgs = await list_messages(filter_str=_graph_catchup_filter(), top=50)
+            msgs = await list_messages(
+                filter_str=_graph_catchup_filter(), top=50, mailbox_address=mailbox_address
+            )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
         count = 0
         for m in msgs:
             mid = m.get("id", "")
             if mid:
-                background_tasks.add_task(_ingest_message, mid)
+                background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, mid)
                 count += 1
         return {"queued": count, "backend": "graph"}
 
     # IMAP backend
     from services.imap_client import fetch_new_messages
     try:
-        msgs = await fetch_new_messages()
+        msgs = await fetch_new_messages(_MAILBOX)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"IMAP error: {exc}")
     count = 0
     for m in msgs:
-        background_tasks.add_task(_ingest_imap_message, m)
+        background_tasks.add_task(ingest_imap_message, _COLLECTION, _MAILBOX, m)
         count += 1
     return {"queued": count, "backend": "imap"}
 
@@ -703,7 +446,7 @@ async def download_attachment(
 
     try:
         content, content_type, filename = await get_attachment_content(
-            item["graph_message_id"], attachment_id
+            item["graph_message_id"], attachment_id, mailbox_address=_active_mailbox_address()
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not fetch attachment: {exc}")
@@ -1084,10 +827,11 @@ async def reply_to_email(
             detail="A reply was just sent to this thread. Wait a moment before sending another.",
         )
 
+    mailbox_address = _active_mailbox_address()
     sent_message_id = None
     try:
-        if graph_configured() and item.get("graph_message_id"):
-            await graph_send_reply(item["graph_message_id"], body.body_html)
+        if graph_configured() and item.get("graph_message_id") and mailbox_address:
+            await graph_send_reply(item["graph_message_id"], body.body_html, mailbox_address=mailbox_address)
         else:
             subj = item.get("subject", "")
             if not subj.lower().startswith("re:"):
@@ -1102,6 +846,7 @@ async def reply_to_email(
                 body_html=body.body_html,
                 in_reply_to=parent_mid,
                 references=refs,
+                mailbox=_MAILBOX,
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not send reply: {exc}")
@@ -1113,8 +858,9 @@ async def reply_to_email(
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
     preview = _re.sub(r"<[^>]+>", "", body.body_html)[:500].strip()
-    imap_cfg = get_imap_config()
-    from_email_out = imap_cfg["mailbox_address"] if imap_cfg else item.get("from_email", "")
+    # mailbox_address already resolved above (Graph or IMAP) — using item's own
+    # from_email here would be wrong: it's the customer's address, not ours.
+    from_email_out = mailbox_address or item.get("from_email", "")
     thread_root = item.get("thread_root_id") or item_id
     outgoing = {
         "mailbox_address":     from_email_out,

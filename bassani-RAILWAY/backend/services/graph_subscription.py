@@ -17,6 +17,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import sentry_sdk
 
 from config import get_settings
 from database import col
@@ -152,11 +153,35 @@ async def ensure_subscription(mailbox: str = "sales", mailbox_address: str = "")
             return
         except Exception as exc:
             logger.warning("graph_subscription_renewal_failed mailbox=%s error=%s", mailbox, exc)
+            # Not a full alert yet — falling through to create_subscription()
+            # below as a fallback. If that also fails, the except block there
+            # raises the real alert. This message just gives visibility into
+            # a degraded-but-recovering renewal, since a mailbox renewing via
+            # fallback every cycle instead of a clean renew is worth noticing
+            # before it becomes an outage.
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("mailbox", mailbox)
+                scope.set_tag("graph_subscription_stage", "renew")
+                sentry_sdk.capture_message(
+                    f"Graph subscription renewal failed for mailbox '{mailbox}', "
+                    f"falling back to fresh subscription create: {exc}",
+                    level="warning",
+                )
 
     try:
         await create_subscription(mailbox=mailbox, mailbox_address=address)
     except Exception as exc:
         logger.error("graph_subscription_create_failed mailbox=%s error=%s", mailbox, exc)
+        # This is the terminal failure: renewal (if attempted) and creation
+        # have both failed, so this mailbox now has no live Graph subscription
+        # and no other mechanism will re-establish one until the next call to
+        # ensure_subscription (the 12h renewal loop, or a server restart) —
+        # meanwhile inbound mail only arrives via the periodic reconciliation
+        # sweep in server.py, not in near-real-time. Worth paging on.
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("mailbox", mailbox)
+            scope.set_tag("graph_subscription_stage", "create")
+            sentry_sdk.capture_exception(exc)
 
 
 async def get_client_state(mailbox: str = "sales") -> str | None:

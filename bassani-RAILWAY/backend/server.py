@@ -444,6 +444,53 @@ async def _run_inbox_startup(
 
         asyncio.create_task(_graph_renewal_loop())
 
+        # Graph's counterpart to the IMAP 60s poll loop below. Webhook delivery
+        # plus the one-shot startup catch-up above are not, on their own, a
+        # complete safety net: if the subscription silently lapses (a renewal
+        # failure that today only produces a log line, not an alert), Graph
+        # messages stop arriving until someone notices and hits /poll manually
+        # or the server redeploys. This sweep re-runs the same 72h catch-up on
+        # a fixed interval so a lapsed subscription self-heals within one cycle
+        # instead of silently forever. ingest_graph_message is idempotent on
+        # graph_message_id, so re-sweeping the same window costs one dedup
+        # check per already-seen message.
+        _graph_reconcile_running = [False]
+
+        async def _graph_reconcile_loop():
+            while True:
+                await asyncio.sleep(1800)  # 30 minutes
+                if not graph_configured():
+                    continue
+                addr = get_graph_mailbox_address(mailbox)
+                if not addr:
+                    continue
+                if _graph_reconcile_running[0]:
+                    logger.warning("%s_graph_reconcile_skipped — previous still running", label)
+                    continue
+                _graph_reconcile_running[0] = True
+                try:
+                    from services.graph_client import list_messages
+                    from datetime import datetime as _dt, timedelta as _td, timezone as _tz2
+                    cutoff = (_dt.now(_tz2.utc) - _td(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    msgs = await list_messages(
+                        filter_str=f"receivedDateTime ge {cutoff}", top=50, mailbox_address=addr
+                    )
+                    for i, m in enumerate(msgs):
+                        mid = m.get("id", "")
+                        if not mid:
+                            continue
+                        if i:
+                            await asyncio.sleep(0.2)
+                        await ingest_graph_message(collection, mailbox, mid)
+                    logger.info("%s_graph_reconcile_complete found=%d", label, len(msgs))
+                except Exception as exc:
+                    logger.error("%s_graph_reconcile_error error=%s", label, exc)
+                finally:
+                    _graph_reconcile_running[0] = False
+
+        asyncio.create_task(_graph_reconcile_loop())
+        logger.info("%s_graph_reconcile_loop_started interval_s=1800", label)
+
     _poll_running = [False]
 
     async def _imap_poll_loop():
