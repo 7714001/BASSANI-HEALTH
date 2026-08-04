@@ -93,7 +93,30 @@ function StatusBadge({ status }) {
 // ── AttachmentList ────────────────────────────────────────────────────────────
 
 function AttachmentList({ attachments, itemId }) {
+  const [downloadingKey, setDownloadingKey] = useState(null);
   if (!attachments || attachments.length === 0) return null;
+
+  // A plain <a href> here would navigate the browser directly to the API
+  // URL with no Authorization header (the JWT is only attached by the app's
+  // axios instance, never by a raw browser navigation) — every click 401'd
+  // with "Not authenticated" regardless of who clicked it. Fetch the bytes
+  // through the authenticated api instance instead, then trigger the
+  // download from a blob, same pattern as DocumentTemplates.js.
+  const download = async (url, name, key) => {
+    setDownloadingKey(key);
+    try {
+      const res = await api.get(url, { responseType: "blob" });
+      const blobUrl = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = name || "attachment"; a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      toast.error("Could not download attachment");
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
   return (
     <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/5">
       {attachments.map((att, i) => {
@@ -112,16 +135,19 @@ function AttachmentList({ attachments, itemId }) {
           </span>
         );
         return (
-          <a key={key} href={url} target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-[11px] text-gray-700 hover:bg-gray-100 transition-colors"
+          <button key={key} type="button" onClick={() => download(url, att.name, key)}
+            disabled={downloadingKey === key}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-[11px] text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-60"
           >
             <Paperclip size={10} className="text-gray-400" />
             {att.name}
             {att.size_bytes > 0 && (
               <span className="text-gray-400 ml-0.5">({Math.round(att.size_bytes / 1024)}KB)</span>
             )}
-            <ExternalLink size={9} className="text-gray-400" />
-          </a>
+            {downloadingKey === key
+              ? <Loader2 size={9} className="text-gray-400 animate-spin" />
+              : <ExternalLink size={9} className="text-gray-400" />}
+          </button>
         );
       })}
     </div>
