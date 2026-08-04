@@ -37,10 +37,25 @@ TEMPLATES: dict[str, str] = {
 
 # Documents submitted by the customer at registration time.
 # NDA + Store Onboarding Agreement are sent by admin via signing session after review.
-REQUIRED_DOC_TYPES: dict[str, str] = {
+# Business applicants submit a CIPC certificate; individual (natural-person)
+# applicants have no company registration, so they submit an ID document and a
+# Section 21 outcome letter instead (8.50).
+BUSINESS_DOC_TYPES: dict[str, str] = {
     "customer_information_form":  "Signed Customer Information Form",
     "cipc_certificate":           "CIPC Company Registration Certificate",
 }
+INDIVIDUAL_DOC_TYPES: dict[str, str] = {
+    "customer_information_form":  "Signed Customer Information Form",
+    "id_document":                "Copy of ID Document",
+    "section21_outcome":          "Section 21 Outcome Letter",
+}
+# Union — used to validate any doc_type on the generic upload/delete endpoints,
+# regardless of which registration type it belongs to.
+REQUIRED_DOC_TYPES: dict[str, str] = {**BUSINESS_DOC_TYPES, **INDIVIDUAL_DOC_TYPES}
+
+
+def _required_doc_types_for(registration_type: str) -> dict[str, str]:
+    return INDIVIDUAL_DOC_TYPES if registration_type == "individual" else BUSINESS_DOC_TYPES
 
 # Doc types accepted via the signing session flow (not the regular upload endpoint)
 SIGNING_SESSION_DOC_TYPES: frozenset[str] = frozenset({"nda", "store_onboarding_agreement"})
@@ -51,8 +66,12 @@ class PublicRegistration(BaseModel):
     documents:           list = []
     referral_code:       Optional[str] = None   # reseller portal user_id from ?ref= param
 
-    # Step 1 — Business details
-    company_name:             str
+    # "business" (company, default) or "individual" (natural person / named
+    # patient — no company, ID + Section 21 outcome letter instead of CIPC).
+    registration_type:        str = "business"
+
+    # Step 1 — Business details (individual registrations leave these blank)
+    company_name:             Optional[str] = ""
     trading_name:             Optional[str] = ""
     registration_number:      Optional[str] = ""
     vat_number:               Optional[str] = ""
@@ -83,6 +102,7 @@ class PublicRegistration(BaseModel):
     ordering_volume: Optional[str] = ""
     referral_source: Optional[str] = ""
     notes:           Optional[str] = ""
+    diagnosis_indication: Optional[str] = ""   # individual registrations only
 
 
 def _validate_session(session_id: str) -> None:
@@ -228,6 +248,11 @@ async def submit_public_registration(
     from routes.settings_routes import get_email_routing
     from services.email_service import send_onboarding_submitted
 
+    if registration.registration_type not in ("business", "individual"):
+        raise HTTPException(status_code=400, detail="Invalid registration type")
+    if registration.registration_type == "business" and not (registration.company_name or "").strip():
+        raise HTTPException(status_code=400, detail="Company name is required")
+
     # Resolve referral code to reseller (silently ignored if invalid)
     reseller_id   = None
     reseller_name = ""
@@ -239,9 +264,10 @@ async def submit_public_registration(
             reseller_id   = reseller.get("id")
             reseller_name = reseller.get("name") or reseller.get("company_name", "")
 
-    # Require initial 2 documents at submission
+    # Require the initial documents for this registration type at submission
+    # (business: CIF + CIPC; individual: CIF + ID document + Section 21 outcome letter)
     submitted_types = {d.get("doc_type") for d in (registration.documents or [])}
-    missing = [label for dtype, label in REQUIRED_DOC_TYPES.items()
+    missing = [label for dtype, label in _required_doc_types_for(registration.registration_type).items()
                if dtype not in submitted_types]
     if missing:
         raise HTTPException(
@@ -273,7 +299,7 @@ async def submit_public_registration(
     routing = await get_email_routing()
     background_tasks.add_task(
         send_onboarding_submitted,
-        company_name=registration.company_name,
+        company_name=registration.company_name or registration.contact_name,
         reseller_name=reseller_name or "Direct (self-service)",
         app_ref=ref,
         to=routing["application_submitted_to"],
@@ -298,9 +324,11 @@ async def submit_public_registration(
         use_graph = graph_configured() and bool(onboarding_graph_address)
         mailbox_configured = use_graph or bool(imap_cfg)
 
+        display_name = registration.company_name or registration.contact_name
+
         if not mailbox_configured:
             send_registration_confirmation(
-                company_name=registration.company_name,
+                company_name=display_name,
                 contact_name=registration.contact_name,
                 contact_email=registration.contact_email,
                 app_ref=ref,
@@ -311,8 +339,8 @@ async def submit_public_registration(
             imap_cfg.get("mailbox_address") or imap_cfg.get("imap_username", "")
         )
 
-        contact_name = registration.contact_name or registration.company_name
-        subject = f"Application Received: {registration.company_name}"
+        contact_name = registration.contact_name or display_name
+        subject = f"Application Received: {display_name}"
         body_html = _email_wrap(
             _h1("We have received your application")
             + _p(f"Hi {contact_name},")
@@ -322,7 +350,7 @@ async def submit_public_registration(
             )
             + _info_box([
                 ("Reference",     ref),
-                ("Business name", registration.company_name),
+                ("Name",          display_name),
                 ("Contact email", registration.contact_email),
             ])
             + _divider()

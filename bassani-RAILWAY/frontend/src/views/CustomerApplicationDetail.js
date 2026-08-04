@@ -1432,6 +1432,11 @@ export default function CustomerApplicationDetail() {
                 {app.id}
               </span>
               <StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />
+              {app.registration_type === "individual" && (
+                <span className="text-[11px] text-blue-700 font-semibold bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+                  Individual
+                </span>
+              )}
               {app.reseller_name && (
                 <span className="text-xs text-gray-400">
                   Submitted by <strong className="text-gray-600">{app.reseller_name}</strong> · {fmtDate(app.submitted_at)}
@@ -1460,25 +1465,43 @@ export default function CustomerApplicationDetail() {
             {/* Main content — left 2/3 */}
             <div className="lg:col-span-2 space-y-5">
 
-              <Card icon={Building2} title="Business Details">
-                <Row label={app.entity_type === "Sole Proprietor" ? "Business / Trading Name" : "Registered Company Name"} value={app.company_name} />
-                <Row label="Trading Name"         value={app.trading_name} />
-                {(app.business_category || app.entity_type) ? (
-                  <>
-                    <Row label="Business Category" value={app.business_category === "Other" ? (app.business_category_other || "Other") : app.business_category} />
-                    <Row label="Legal Entity Type" value={app.entity_type === "Other" ? (app.entity_type_other || "Other") : app.entity_type} />
-                    {app.section22c_licensed && <Row label="Section 22C Licensed" value="Yes" />}
-                  </>
-                ) : (
-                  <Row label="Business Type" value={app.business_type} />
-                )}
-                <Row label="Registration Number" value={app.registration_number} mono />
-                <Row label="VAT Number"          value={app.vat_number} mono />
-              </Card>
+              {app.registration_type === "individual" ? (
+                <Card icon={User} title="Registration Details">
+                  <Row label="Registration Type" value="Individual (natural person)" />
+                  <Row label="SA ID Number"       value={app.signatory_id_number} mono />
+                  {app.diagnosis_indication && (
+                    <div className="pt-3 mt-1">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Diagnosis / Indication</p>
+                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{app.diagnosis_indication}</p>
+                    </div>
+                  )}
+                </Card>
+              ) : (
+                <Card icon={Building2} title="Business Details">
+                  <Row label={app.entity_type === "Sole Proprietor" ? "Business / Trading Name" : "Registered Company Name"} value={app.company_name} />
+                  <Row label="Trading Name"         value={app.trading_name} />
+                  {(app.business_category || app.entity_type) ? (
+                    <>
+                      <Row label="Business Category" value={app.business_category === "Other" ? (app.business_category_other || "Other") : app.business_category} />
+                      <Row label="Legal Entity Type" value={app.entity_type === "Other" ? (app.entity_type_other || "Other") : app.entity_type} />
+                      {app.section22c_licensed && <Row label="Section 22C Licensed" value="Yes" />}
+                    </>
+                  ) : (
+                    <Row label="Business Type" value={app.business_type} />
+                  )}
+                  <Row label="Registration Number" value={app.registration_number} mono />
+                  <Row label="VAT Number"          value={app.vat_number} mono />
+                </Card>
+              )}
 
               <Card icon={User} title="Primary Contact">
                 <Row label="Full Name"    value={app.contact_name} />
-                <Row label="Position"     value={app.contact_position} />
+                {app.registration_type !== "individual" && (
+                  <>
+                    <Row label="Position"     value={app.contact_position} />
+                    <Row label="SA ID Number" value={app.signatory_id_number} mono />
+                  </>
+                )}
                 <Row label="Email"        value={app.contact_email} />
                 <Row label="Phone"        value={app.contact_phone} />
                 <Row label="Alt. Phone"   value={app.contact_alt_phone} />
@@ -1524,7 +1547,9 @@ export default function CustomerApplicationDetail() {
               <Card title="Application Details">
                 <MetaRow label="Reference"    value={app.id} />
                 <MetaRow label="Status"       value={<StatusBadge status={deriveStatus(app, docs, signingSession)} size="md" />} />
-                {(app.business_category || app.entity_type) ? (
+                {app.registration_type === "individual" ? (
+                  <MetaRow label="Type" value="Individual" />
+                ) : (app.business_category || app.entity_type) ? (
                   <>
                     <MetaRow label="Category" value={app.business_category === "Other" ? (app.business_category_other || "Other") : app.business_category} />
                     <MetaRow label="Entity"   value={app.entity_type === "Other" ? (app.entity_type_other || "Other") : app.entity_type} />

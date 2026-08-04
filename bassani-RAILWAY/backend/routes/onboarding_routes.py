@@ -34,9 +34,12 @@ TEMPLATES: dict[str, str] = {
     "customer-information-form.pdf":  "Customer Information Form",
 }
 
-# All four are required before an application can be approved:
+# All four are required before a business application can be approved:
 # customer_information_form + cipc_certificate submitted by customer;
 # nda + store_onboarding_agreement sent via signing session after admin review.
+# This is the reseller-submitted onboarding wizard's document set — that flow
+# is business-only (see 8.50 for the individual/natural-person path, which
+# only extends the self-service /apply flow in public_routes.py).
 REQUIRED_DOC_TYPES: dict[str, str] = {
     "customer_information_form":  "Signed Customer Information Form",
     "cipc_certificate":           "CIPC Company Registration Certificate",
@@ -44,9 +47,40 @@ REQUIRED_DOC_TYPES: dict[str, str] = {
     "store_onboarding_agreement": "Signed Store Onboarding Agreement",
 }
 
+# Individual (natural-person) self-service applications swap the CIPC
+# certificate for an ID document + Section 21 outcome letter (8.50).
+INDIVIDUAL_DOC_TYPES: dict[str, str] = {
+    "id_document":       "Copy of ID Document",
+    "section21_outcome": "Section 21 Outcome Letter",
+}
+
+# Union — used to validate/label any doc_type on the generic admin upload,
+# replace, and delete endpoints, regardless of which flow it came from.
+ALL_DOC_TYPES: dict[str, str] = {**REQUIRED_DOC_TYPES, **INDIVIDUAL_DOC_TYPES}
+
 # Subset of REQUIRED_DOC_TYPES that have a Bassani signature field and therefore
 # require countersigning by the signing authority holder before approval.
 BASSANI_SIG_DOC_TYPES: frozenset[str] = frozenset({"nda", "store_onboarding_agreement"})
+
+
+def _required_doc_types(app: dict) -> dict[str, str]:
+    """Final approval-gate document set for an application — business (CIPC)
+    vs individual (ID document + Section 21 outcome letter)."""
+    if app.get("registration_type") == "individual":
+        return {
+            "customer_information_form":  REQUIRED_DOC_TYPES["customer_information_form"],
+            **INDIVIDUAL_DOC_TYPES,
+            "nda":                        REQUIRED_DOC_TYPES["nda"],
+            "store_onboarding_agreement": REQUIRED_DOC_TYPES["store_onboarding_agreement"],
+        }
+    return REQUIRED_DOC_TYPES
+
+
+def _pre_signing_doc_types(app: dict) -> dict[str, str]:
+    """Docs required before Generate Documents can run — everything except
+    NDA/Store Onboarding Agreement, which are only sent after this review gate."""
+    return {k: v for k, v in _required_doc_types(app).items()
+            if k not in ("nda", "store_onboarding_agreement")}
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -624,7 +658,7 @@ async def upload_document(
     is_admin = current_user.get("is_super_admin") or perms.get("customers", {}).get("manage")
     if role != "reseller" and not is_admin:
         raise HTTPException(status_code=403, detail="Not authorised to upload onboarding documents")
-    if doc_type not in REQUIRED_DOC_TYPES:
+    if doc_type not in ALL_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
 
     ext = os.path.splitext(file.filename or "")[1] or ".pdf"
@@ -635,7 +669,7 @@ async def upload_document(
 
     return {
         "doc_type":    doc_type,
-        "label":       REQUIRED_DOC_TYPES[doc_type],
+        "label":       ALL_DOC_TYPES[doc_type],
         "r2_key":      key,
         "filename":    file.filename,
         "size":        len(contents),
@@ -655,7 +689,7 @@ async def delete_document(
     is_admin = current_user.get("is_super_admin") or perms.get("customers", {}).get("manage")
     if role != "reseller" and not is_admin:
         raise HTTPException(status_code=403, detail="Not authorised to remove onboarding documents")
-    if doc_type not in REQUIRED_DOC_TYPES:
+    if doc_type not in ALL_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
 
     # Try both .pdf and other common extensions
@@ -950,7 +984,7 @@ async def replace_application_document(
         raise HTTPException(status_code=404, detail="Application not found")
     if app.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Only pending applications can be updated")
-    if doc_type not in REQUIRED_DOC_TYPES:
+    if doc_type not in ALL_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
 
     session_id = app.get("document_session_id")
@@ -973,7 +1007,7 @@ async def replace_application_document(
     now = datetime.now(timezone.utc)
     new_doc = {
         "doc_type":    doc_type,
-        "label":       REQUIRED_DOC_TYPES[doc_type],
+        "label":       ALL_DOC_TYPES[doc_type],
         "r2_key":      key,
         "filename":    file.filename,
         "size":        len(contents),
@@ -1150,7 +1184,7 @@ async def send_welcome_pack(
             continue
         file_bytes = await r2_get(key)
         if file_bytes:
-            label = REQUIRED_DOC_TYPES.get(doc.get("doc_type", ""), "Document")
+            label = ALL_DOC_TYPES.get(doc.get("doc_type", ""), "Document")
             ext = _file_ext(doc.get("filename", ""))
             attachments.append({"filename": f"{label}{ext}", "content": list(file_bytes)})
 
@@ -1285,7 +1319,7 @@ async def approve_application(
     # to the customer profile after the account is created (via the inbox thread).
     if not is_inbox_source:
         submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
-        missing = [label for dtype, label in REQUIRED_DOC_TYPES.items() if dtype not in submitted_types]
+        missing = [label for dtype, label in _required_doc_types(app).items() if dtype not in submitted_types]
         if missing:
             raise HTTPException(
                 status_code=400,
@@ -1333,7 +1367,9 @@ async def approve_application(
     # names, no VAT) both needed to become separate company profiles with
     # the same contact linked to each. See linked_contact_note below for how
     # that's surfaced instead of blocked.
-    if app.get("vat_number"):
+    is_individual = app.get("registration_type") == "individual"
+
+    if not is_individual and app.get("vat_number"):
         try:
             vat_matches = odoo.search_read(
                 "res.partner",
@@ -1355,7 +1391,7 @@ async def approve_application(
                 },
             )
 
-    if app.get("trading_name"):
+    if not is_individual and app.get("trading_name"):
         _dup_app = await col("customer_onboarding").find_one({
             "id": {"$ne": app_id},
             "status": "approved",
@@ -1371,6 +1407,27 @@ async def approve_application(
                         f"\"{app['trading_name']}\" was already approved ({_dup_app['id']})."
                     ),
                     "existing": {"application_id": _dup_app["id"], "odoo_partner_id": _dup_app.get("odoo_partner_id")},
+                },
+            )
+
+    # Individual duplicate check — unlike businesses, one person is not
+    # legitimately "multiple branches," so a matching SA ID number on another
+    # approved individual application blocks outright (checked against the
+    # portal's own records, not Odoo — there is no dedicated ID-number field
+    # on res.partner to match against).
+    if is_individual and app.get("signatory_id_number"):
+        _dup_individual = await col("customer_onboarding").find_one({
+            "id": {"$ne": app_id},
+            "status": "approved",
+            "registration_type": "individual",
+            "signatory_id_number": app["signatory_id_number"].strip(),
+        })
+        if _dup_individual:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"An individual application with this ID number was already approved ({_dup_individual['id']}).",
+                    "existing": {"application_id": _dup_individual["id"], "odoo_partner_id": _dup_individual.get("odoo_partner_id")},
                 },
             )
 
@@ -1399,44 +1456,62 @@ async def approve_application(
         except Exception:
             pass  # best-effort — never block approval on this lookup failing
 
-    # Build internal notes — prefer new structured fields, fall back to legacy business_type
-    category  = app.get("business_category") or app.get("business_type") or ""
-    entity    = app.get("entity_type", "")
-    if app.get("business_category") == "Other":
-        category = app.get("business_category_other") or "Other"
-    if app.get("entity_type") == "Other":
-        entity = app.get("entity_type_other") or "Other"
-    notes_parts = []
-    if category:  notes_parts.append(f"Category: {category}")
-    if entity:    notes_parts.append(f"Entity: {entity}")
-    if app.get("section22c_licensed"): notes_parts.append("Section 22C Licensed")
-    if app.get("registration_number"): notes_parts.append(f"Reg: {app['registration_number']}")
-    if app.get("vat_number"):          notes_parts.append(f"VAT: {app['vat_number']}")
-    if app.get("trading_name"):        notes_parts.append(f"Trading as: {app['trading_name']}")
-    notes_parts.append(f"Onboarded via: {app_id}")
+    if is_individual:
+        # Individual (natural-person) applications create a single standalone
+        # res.partner — the applicant IS the contact, so there is no separate
+        # company + child contact structure to build.
+        notes_parts = []
+        if app.get("signatory_id_number"): notes_parts.append(f"SA ID: {app['signatory_id_number']}")
+        notes_parts.append(f"Onboarded via: {app_id}")
 
-    # Trading name folded into the display name itself, not just the comment
-    # field — two branches of the same legal entity (e.g. "Cannapure Plus
-    # NPC" operating in both Witbank and Dullstroom) would otherwise be
-    # indistinguishable everywhere the customer name is shown: order lists,
-    # the dashboard, invoices, ticket headers. Confirmed 2026-08-04.
-    _display_name = app["company_name"]
-    if app.get("trading_name") and app["trading_name"].strip().lower() != app["company_name"].strip().lower():
-        _display_name = f"{app['company_name']} - {app['trading_name']}"
+        _display_name = app.get("contact_name") or app.get("company_name") or "Individual Customer"
 
-    vals: dict = {
-        "name":          _display_name,
-        "company_type":  "company",
-        "customer_rank": 1,
-        "comment":       " | ".join(notes_parts),
-    }
+        vals: dict = {
+            "name":          _display_name,
+            "company_type":  "person",
+            "customer_rank": 1,
+            "comment":       " | ".join(notes_parts),
+        }
+    else:
+        # Build internal notes — prefer new structured fields, fall back to legacy business_type
+        category  = app.get("business_category") or app.get("business_type") or ""
+        entity    = app.get("entity_type", "")
+        if app.get("business_category") == "Other":
+            category = app.get("business_category_other") or "Other"
+        if app.get("entity_type") == "Other":
+            entity = app.get("entity_type_other") or "Other"
+        notes_parts = []
+        if category:  notes_parts.append(f"Category: {category}")
+        if entity:    notes_parts.append(f"Entity: {entity}")
+        if app.get("section22c_licensed"): notes_parts.append("Section 22C Licensed")
+        if app.get("registration_number"): notes_parts.append(f"Reg: {app['registration_number']}")
+        if app.get("vat_number"):          notes_parts.append(f"VAT: {app['vat_number']}")
+        if app.get("trading_name"):        notes_parts.append(f"Trading as: {app['trading_name']}")
+        notes_parts.append(f"Onboarded via: {app_id}")
+
+        # Trading name folded into the display name itself, not just the comment
+        # field — two branches of the same legal entity (e.g. "Cannapure Plus
+        # NPC" operating in both Witbank and Dullstroom) would otherwise be
+        # indistinguishable everywhere the customer name is shown: order lists,
+        # the dashboard, invoices, ticket headers. Confirmed 2026-08-04.
+        _display_name = app["company_name"]
+        if app.get("trading_name") and app["trading_name"].strip().lower() != app["company_name"].strip().lower():
+            _display_name = f"{app['company_name']} - {app['trading_name']}"
+
+        vals: dict = {
+            "name":          _display_name,
+            "company_type":  "company",
+            "customer_rank": 1,
+            "comment":       " | ".join(notes_parts),
+        }
+        if app.get("vat_number"): vals["vat"] = app["vat_number"]
+
     if app.get("contact_email"):  vals["email"]   = app["contact_email"]
     if app.get("contact_phone"):  vals["phone"]   = app["contact_phone"]
     if app.get("street"):         vals["street"]  = app["street"]
     if app.get("suburb"):         vals["street2"] = app["suburb"]
     if app.get("city"):           vals["city"]    = app["city"]
     if app.get("postal_code"):    vals["zip"]     = app["postal_code"]
-    if app.get("vat_number"):     vals["vat"]     = app["vat_number"]
     # Province → Odoo state_id; country always South Africa
     from routes.customer_routes import _resolve_za_state_id, _get_za_country_id
     if app.get("province"):
@@ -1452,8 +1527,10 @@ async def approve_application(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to create Odoo customer: {str(e)}")
 
-    # Create a child contact person for the primary signatory
-    if app.get("contact_name"):
+    # Create a child contact person for the primary signatory — business
+    # applications only. Individuals are already the top-level partner record
+    # created above, so there is no separate contact to add.
+    if not is_individual and app.get("contact_name"):
         contact_vals: dict = {
             "name":      app["contact_name"],
             "parent_id": partner_id,
@@ -1479,6 +1556,16 @@ async def approve_application(
         "onboarding_ref":      app_id,
     })
     await ticket_manager.refresh_reseller(app["reseller_id"])
+
+    # Persist diagnosis/indication onto the ongoing customer record (portal-layer
+    # data, not financial — belongs in customer_metadata per architecture
+    # principle #5) so it survives beyond this one-off application document.
+    if is_individual and app.get("diagnosis_indication"):
+        await col("customer_metadata").update_one(
+            {"odoo_partner_id": partner_id},
+            {"$set": {"diagnosis_indication": app["diagnosis_indication"]}},
+            upsert=True,
+        )
 
     # Transfer application docs to customer_documents by reference — same R2 keys,
     # no byte copy. Works for both portal-wizard and inbox-sourced applications.
@@ -1523,7 +1610,7 @@ async def approve_application(
                     {"$set": {
                         "status":        "archived",
                         "customer_id":   partner_id,
-                        "customer_name": app.get("company_name", ""),
+                        "customer_name": _display_name,
                     }},
                 )
             except Exception:
@@ -1541,7 +1628,7 @@ async def approve_application(
     if _res and _res.get("email"):
         background_tasks.add_task(
             send_onboarding_approved,
-            company_name=app.get("company_name", ""),
+            company_name=_display_name,
             reseller_name=app.get("reseller_name", ""),
             reseller_email=_res["email"],
             customer_contact_email=app.get("contact_email"),
@@ -1612,7 +1699,7 @@ async def approve_application_link(
         }},
     )
     await audit_log("onboarding.approve_link", "customer_onboarding", app_id,
-                    entity_label=app.get("company_name", ""), user=current_user,
+                    entity_label=app.get("company_name") or app.get("contact_name", ""), user=current_user,
                     detail={"odoo_partner_id": body.odoo_partner_id, "linked_to_existing": True},
                     reseller_id=app.get("reseller_id"))
 
@@ -1620,7 +1707,7 @@ async def approve_application_link(
     if _res and _res.get("email"):
         background_tasks.add_task(
             send_onboarding_approved,
-            company_name=app.get("company_name", ""),
+            company_name=app.get("company_name") or app.get("contact_name", ""),
             reseller_name=app.get("reseller_name", ""),
             reseller_email=_res["email"],
             customer_contact_email=app.get("contact_email"),
@@ -1647,9 +1734,8 @@ async def generate_signing_docs(
         raise HTTPException(status_code=400, detail="Signing documents can only be generated for pending applications")
 
     submitted_types = {d.get("doc_type") for d in (app.get("documents") or [])}
-    for required in ("customer_information_form", "cipc_certificate"):
+    for required, label in _pre_signing_doc_types(app).items():
         if required not in submitted_types:
-            label = REQUIRED_DOC_TYPES.get(required, required)
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot generate signing documents — {label} has not been submitted yet",
@@ -1661,7 +1747,9 @@ async def generate_signing_docs(
     expires_at = now + timedelta(days=30)
 
     form_snapshot = {
-        "company_name":        app.get("company_name", ""),
+        # Individual applications have no company_name — NDA/Store Onboarding
+        # Agreement prefill falls back to the applicant's own name.
+        "company_name":        app.get("company_name") or app.get("contact_name", ""),
         "trading_name":        app.get("trading_name", ""),
         "registration_number": app.get("registration_number", ""),
         "vat_number":          app.get("vat_number", ""),
@@ -1699,7 +1787,7 @@ async def generate_signing_docs(
 
     await audit_log(
         "onboarding.generate_signing_docs", "customer_onboarding", app_id,
-        entity_label=app.get("company_name", ""), user=current_user,
+        entity_label=app.get("company_name") or app.get("contact_name", ""), user=current_user,
         after={"signing_session_token": token, "expires_at": expires_at.isoformat(), "status": "generated"},
     )
     return {"success": True, "token": token, "expires_at": expires_at.isoformat()}

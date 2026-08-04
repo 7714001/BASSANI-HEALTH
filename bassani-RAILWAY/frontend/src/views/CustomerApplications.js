@@ -153,10 +153,10 @@ export default function CustomerApplications() {
             { accessorKey: "id", header: "Reference",
               cell: ({ row: { original: a } }) =>
                 <span className="font-mono text-xs text-bassani-700 font-semibold">{a.id}</span> },
-            { id: "company", header: "Business Name", enableSorting: false,
+            { id: "company", header: "Name", enableSorting: false,
               cell: ({ row: { original: a } }) => (
                 <div>
-                  <p className="font-semibold text-sm text-gray-900">{a.company_name}</p>
+                  <p className="font-semibold text-sm text-gray-900">{a.company_name || a.contact_name}</p>
                   {a.trading_name && <p className="text-xs text-gray-400">t/a {a.trading_name}</p>}
                 </div>
               )},
@@ -166,7 +166,9 @@ export default function CustomerApplications() {
                 : <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">Direct Application</span> },
             { id: "type", header: "Type", enableSorting: false,
               cell: ({ row: { original: a } }) =>
-                <span className="text-xs text-gray-500">{a.business_type}</span> },
+                a.registration_type === "individual"
+                  ? <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">Individual</span>
+                  : <span className="text-xs text-gray-500">Business</span> },
             { id: "contact", header: "Contact", enableSorting: false,
               cell: ({ row: { original: a } }) => (
                 <div>

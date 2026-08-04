@@ -62,7 +62,22 @@ const SIGN_DOCS = [
   { type: "customer_information_form", label: "Customer Information Form", filename: "customer-information-form.pdf" },
 ];
 
+// Non-signed documents uploaded at registration — business applicants prove
+// company registration via CIPC; individuals (natural persons / named
+// patients) have no company, so they instead prove identity and Section 21
+// authorisation directly.
+const UPLOAD_DOCS = {
+  business: [
+    { type: "cipc_certificate", label: "CIPC Company Registration Certificate", hint: "Upload your official CIPC certificate (PDF, JPG, or PNG)" },
+  ],
+  individual: [
+    { type: "id_document",       label: "Copy of ID Document",        hint: "Upload a clear copy of your South African ID (PDF, JPG, or PNG)" },
+    { type: "section21_outcome", label: "Section 21 Outcome Letter",  hint: "Upload your Section 21 application outcome letter (PDF, JPG, or PNG)" },
+  ],
+};
+
 const BLANK = {
+  registration_type: "business",
   company_name: "", trading_name: "", registration_number: "",
   vat_number: "",
   business_category: "", business_category_other: "",
@@ -73,6 +88,7 @@ const BLANK = {
   street: "", suburb: "", city: "", province: "",
   postal_code: "", country: "South Africa",
   ordering_volume: "", referral_source: "", notes: "",
+  diagnosis_indication: "",
 };
 
 // ── Small UI components ────────────────────────────────────────────────────────
@@ -410,12 +426,12 @@ export default function PublicRegister() {
 
   const [referrerName, setReferrerName] = useState(null);
 
-  // uploads holds both portal-signed PDFs and the CIPC manual upload
+  // uploads holds both portal-signed PDFs and the manually-uploaded docs (CIPC, or ID + Section 21)
   const [uploads,      setUploads]      = useState({});
   const [uploadingDoc, setUploadingDoc] = useState(null);
   const [removingDoc,  setRemovingDoc]  = useState(null);
   const [signingDoc,   setSigningDoc]   = useState(null); // doc type currently open in CustomerSigningModal
-  const cipcFileRef = useRef(null);
+  const fileInputEls = useRef({}); // { [docType]: <input> DOM node }
 
   const [errors, setErrors] = useState({});
 
@@ -423,7 +439,9 @@ export default function PublicRegister() {
     setForm(f => ({ ...f, [field]: e.target.value }));
     setErrors(prev => ({ ...prev, [field]: undefined }));
   };
+  const isIndividual     = form.registration_type === "individual";
   const isSoleProprietor = form.entity_type === "Sole Proprietor";
+  const requiredUploadDocs = UPLOAD_DOCS[form.registration_type] || UPLOAD_DOCS.business;
 
   useEffect(() => {
     if (!refCode) return;
@@ -434,18 +452,18 @@ export default function PublicRegister() {
 
   // ── Document helpers ────────────────────────────────────────────────────────
 
-  const uploadCipc = async (file) => {
-    setUploadingDoc("cipc_certificate");
+  const uploadDoc = async (docType, file) => {
+    setUploadingDoc(docType);
     try {
       const fd = new FormData();
       fd.append("file", file);
       const { data } = await api.post(
-        `/api/public/documents/upload?session_id=${sessionId}&doc_type=cipc_certificate`,
+        `/api/public/documents/upload?session_id=${sessionId}&doc_type=${docType}`,
         fd,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      setUploads(prev => ({ ...prev, cipc_certificate: data }));
-      toast.success("CIPC certificate uploaded");
+      setUploads(prev => ({ ...prev, [docType]: data }));
+      toast.success(`${data.label || "Document"} uploaded`);
     } catch {
       toast.error("Upload failed — please try again");
     } finally {
@@ -469,7 +487,7 @@ export default function PublicRegister() {
 
   const validateStep = () => {
     const errs = {};
-    if (step === 0) {
+    if (step === 0 && !isIndividual) {
       if (!form.business_category)
         errs.business_category = "Please select a business category";
       if (form.business_category === "Other" && !form.business_category_other.trim())
@@ -494,7 +512,7 @@ export default function PublicRegister() {
     if (step === 1) {
       if (!form.contact_name.trim())
         errs.contact_name = "Full name is required";
-      if (!form.contact_position.trim())
+      if (!isIndividual && !form.contact_position.trim())
         errs.contact_position = "Position / title is required";
       const idNum = form.signatory_id_number.trim();
       if (!idNum)
@@ -523,8 +541,9 @@ export default function PublicRegister() {
     }
     setErrors(errs);
     if (step === 4) {
-      const missingSigned = SIGN_DOCS.filter(d => !uploads[d.type]);
-      if (missingSigned.length || !uploads.cipc_certificate) return false;
+      const missingSigned  = SIGN_DOCS.filter(d => !uploads[d.type]);
+      const missingUploads = requiredUploadDocs.filter(d => !uploads[d.type]);
+      if (missingSigned.length || missingUploads.length) return false;
     }
     return Object.keys(errs).length === 0;
   };
@@ -561,7 +580,7 @@ export default function PublicRegister() {
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Application Submitted</h2>
           <p className="text-gray-500 text-sm mb-5">
-            Thank you. Your application for <strong>{form.company_name}</strong> has been submitted
+            Thank you. Your application for <strong>{form.company_name || form.contact_name}</strong> has been submitted
             and is pending review. You will receive a confirmation email shortly.
           </p>
           <div className="bg-gray-50 rounded-xl p-4 mb-6">
@@ -580,10 +599,11 @@ export default function PublicRegister() {
 
   // ── Step 4 — Sign Documents ─────────────────────────────────────────────────
 
-  const signedCount = SIGN_DOCS.filter(d => uploads[d.type]).length;
-  const allSigned   = signedCount === SIGN_DOCS.length;
-  const hasCipc     = !!uploads.cipc_certificate;
-  const readyToSubmit = allSigned && hasCipc;
+  const signedCount    = SIGN_DOCS.filter(d => uploads[d.type]).length;
+  const allSigned      = signedCount === SIGN_DOCS.length;
+  const uploadedCount  = requiredUploadDocs.filter(d => uploads[d.type]).length;
+  const allUploaded    = uploadedCount === requiredUploadDocs.length;
+  const readyToSubmit  = allSigned && allUploaded;
 
   const step5Content = (
     <div className="space-y-5">
@@ -656,61 +676,70 @@ export default function PublicRegister() {
         </div>
       </div>
 
-      {/* CIPC certificate upload */}
+      {/* Non-signed document uploads — CIPC for a business, ID + Section 21 outcome for an individual */}
       <div>
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Company registration</p>
-        <div className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
-          hasCipc ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
-        }`}>
-          <div className="shrink-0">
-            {uploadingDoc === "cipc_certificate"
-              ? <Loader2 size={15} className="text-bassani-500 animate-spin" />
-              : hasCipc
-                ? <CheckCircle size={15} className="text-green-600" />
-                : <FileText    size={15} className="text-gray-400"  />
-            }
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className={`text-xs font-semibold truncate ${hasCipc ? "text-green-800" : "text-gray-700"}`}>
-              CIPC Company Registration Certificate
-            </p>
-            {hasCipc
-              ? <p className="text-[10px] text-green-600 mt-0.5">{uploads.cipc_certificate?.filename}</p>
-              : <p className="text-[10px] text-gray-400 mt-0.5">Upload your official CIPC certificate (PDF, JPG, or PNG)</p>
-            }
-          </div>
-          {hasCipc ? (
-            <button
-              onClick={() => removeDoc("cipc_certificate")}
-              disabled={!!removingDoc}
-              title="Remove and re-upload"
-              className="shrink-0 p-1 rounded hover:bg-green-100 text-green-500 hover:text-red-400 transition-colors disabled:opacity-50"
-            >
-              {removingDoc === "cipc_certificate" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-            </button>
-          ) : (
-            <>
-              <input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png"
-                className="hidden"
-                ref={cipcFileRef}
-                onChange={e => {
-                  if (e.target.files[0]) uploadCipc(e.target.files[0]);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                onClick={() => cipcFileRef.current?.click()}
-                disabled={!!uploadingDoc}
-                className="shrink-0 flex items-center gap-1 text-xs font-semibold
-                  text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors"
-              >
-                <Upload size={11} />
-                Upload
-              </button>
-            </>
-          )}
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          {isIndividual ? "Identity and Section 21 authorisation" : "Company registration"}
+        </p>
+        <div className="space-y-2">
+          {requiredUploadDocs.map(doc => {
+            const uploaded = !!uploads[doc.type];
+            return (
+              <div key={doc.type} className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
+                uploaded ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"
+              }`}>
+                <div className="shrink-0">
+                  {uploadingDoc === doc.type
+                    ? <Loader2 size={15} className="text-bassani-500 animate-spin" />
+                    : uploaded
+                      ? <CheckCircle size={15} className="text-green-600" />
+                      : <FileText    size={15} className="text-gray-400"  />
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-semibold truncate ${uploaded ? "text-green-800" : "text-gray-700"}`}>
+                    {doc.label}
+                  </p>
+                  {uploaded
+                    ? <p className="text-[10px] text-green-600 mt-0.5">{uploads[doc.type]?.filename}</p>
+                    : <p className="text-[10px] text-gray-400 mt-0.5">{doc.hint}</p>
+                  }
+                </div>
+                {uploaded ? (
+                  <button
+                    onClick={() => removeDoc(doc.type)}
+                    disabled={!!removingDoc}
+                    title="Remove and re-upload"
+                    className="shrink-0 p-1 rounded hover:bg-green-100 text-green-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    {removingDoc === doc.type ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                  </button>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      ref={el => { fileInputEls.current[doc.type] = el; }}
+                      onChange={e => {
+                        if (e.target.files[0]) uploadDoc(doc.type, e.target.files[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => fileInputEls.current[doc.type]?.click()}
+                      disabled={!!uploadingDoc}
+                      className="shrink-0 flex items-center gap-1 text-xs font-semibold
+                        text-bassani-600 hover:text-bassani-700 disabled:opacity-50 transition-colors"
+                    >
+                      <Upload size={11} />
+                      Upload
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -718,7 +747,9 @@ export default function PublicRegister() {
         <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
           <AlertCircle size={13} className="text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
-            Sign the Customer Information Form and upload your CIPC certificate to submit your application.
+            {isIndividual
+              ? "Sign the Customer Information Form and upload your ID document and Section 21 outcome letter to submit your application."
+              : "Sign the Customer Information Form and upload your CIPC certificate to submit your application."}
           </p>
         </div>
       )}
@@ -728,8 +759,44 @@ export default function PublicRegister() {
   // ── Step content ────────────────────────────────────────────────────────────
 
   const stepContent = [
-    // Step 0 — Business Details
+    // Step 0 — Business Details / Your Details
     <div key="0" className="space-y-4">
+      <Field label="Registering as">
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { value: "business",   label: "A business",   icon: Building2, hint: "Pharmacy, dispensary, clinic, or other registered entity" },
+            { value: "individual", label: "An individual", icon: User,      hint: "Named patient with a Section 21 outcome letter" },
+          ].map(({ value, label, icon: Icon, hint }) => {
+            const active = form.registration_type === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setForm(f => ({ ...f, registration_type: value }))}
+                className={`text-left rounded-xl border-2 px-3 py-2.5 transition-colors ${
+                  active ? "border-bassani-500 bg-bassani-50" : "border-gray-200 bg-white hover:border-gray-300"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <Icon size={13} className={active ? "text-bassani-600" : "text-gray-400"} />
+                  <span className={`text-sm font-semibold ${active ? "text-bassani-800" : "text-gray-700"}`}>{label}</span>
+                </div>
+                <p className="text-[10px] text-gray-400 leading-snug">{hint}</p>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {isIndividual ? (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+          <p className="text-xs text-blue-700 leading-relaxed">
+            In the next steps we&apos;ll collect your contact details and address, then ask you to sign
+            the Customer Information Form and upload a copy of your ID and your Section 21 outcome letter.
+          </p>
+        </div>
+      ) : (
+      <>
       <Field label="Business Category" required error={errors.business_category}>
         <SelectInput
           value={form.business_category}
@@ -844,21 +911,31 @@ export default function PublicRegister() {
           )}
         </>
       )}
+      </>
+      )}
     </div>,
 
     // Step 1 — Primary Contact
     <div key="1" className="space-y-4">
       <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
-        Please provide details for the person signing the onboarding documents.
+        {isIndividual
+          ? "Please provide your own details — you'll be signing the onboarding documents yourself."
+          : "Please provide details for the person signing the onboarding documents."}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {isIndividual ? (
         <Field label="Full Name" required error={errors.contact_name}>
           <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" error={!!errors.contact_name} autoFocus />
         </Field>
-        <Field label="Position / Title" required error={errors.contact_position}>
-          <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" error={!!errors.contact_position} />
-        </Field>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Full Name" required error={errors.contact_name}>
+            <TextInput value={form.contact_name} onChange={upd("contact_name")} placeholder="Jane Smith" error={!!errors.contact_name} autoFocus />
+          </Field>
+          <Field label="Position / Title" required error={errors.contact_position}>
+            <TextInput value={form.contact_position} onChange={upd("contact_position")} placeholder="Pharmacist / Manager" error={!!errors.contact_position} />
+          </Field>
+        </div>
+      )}
       <Field label="SA ID Number" required error={errors.signatory_id_number}>
         <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="8001015009087" maxLength={13} error={!!errors.signatory_id_number} />
       </Field>
@@ -912,6 +989,20 @@ export default function PublicRegister() {
 
     // Step 3 — Additional Information
     <div key="3" className="space-y-4">
+      {isIndividual && (
+        <Field label="Diagnosis / Indication">
+          <TextArea
+            value={form.diagnosis_indication}
+            onChange={upd("diagnosis_indication")}
+            placeholder="The medical condition this treatment is for…"
+            rows={3}
+          />
+          <p className="mt-1.5 text-[10px] text-gray-400 leading-relaxed">
+            Optional. Helps our team tailor product guidance to your treatment. Treated as
+            confidential and only used internally by Bassani Health.
+          </p>
+        </Field>
+      )}
       <Field label="Expected Monthly Order Volume">
         <SelectInput value={form.ordering_volume} onChange={upd("ordering_volume")}>
           <option value="">— Select range —</option>
@@ -938,6 +1029,8 @@ export default function PublicRegister() {
     // Step 4 — Sign Documents
     step5Content,
   ];
+
+  const stepLabel = step === 0 && isIndividual ? "Your Details" : STEPS[step].label;
 
   // ── Page layout ─────────────────────────────────────────────────────────────
 
@@ -981,7 +1074,7 @@ export default function PublicRegister() {
         {/* Step indicators — mobile: progress bar; sm+: icon stepper */}
         <div className="sm:hidden space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-bassani-700">{STEPS[step].label}</span>
+            <span className="text-sm font-semibold text-bassani-700">{stepLabel}</span>
             <span className="text-xs text-gray-400">Step {step + 1} of {STEPS.length}</span>
           </div>
           <div className="flex gap-1">
@@ -1028,7 +1121,7 @@ export default function PublicRegister() {
           <div className="px-6 py-5 border-b border-gray-50">
             <div className="flex items-center gap-2">
               {(() => { const Icon = STEPS[step].icon; return <Icon size={16} className="text-bassani-600" />; })()}
-              <h2 className="text-sm font-bold text-gray-900">{STEPS[step].label}</h2>
+              <h2 className="text-sm font-bold text-gray-900">{stepLabel}</h2>
               <span className="ml-auto text-xs text-gray-400">Step {step + 1} of {STEPS.length}</span>
             </div>
           </div>
@@ -1082,8 +1175,8 @@ export default function PublicRegister() {
               {step >= 4 && (
                 <div className="flex justify-between">
                   <span className="text-gray-400">Documents</span>
-                  <span className={`font-medium ${allSigned && hasCipc ? "text-green-700" : "text-amber-600"}`}>
-                    {signedCount}/1 signed{hasCipc ? " + CIPC" : ""}
+                  <span className={`font-medium ${allSigned && allUploaded ? "text-green-700" : "text-amber-600"}`}>
+                    {signedCount}/1 signed, {uploadedCount}/{requiredUploadDocs.length} uploaded
                   </span>
                 </div>
               )}
