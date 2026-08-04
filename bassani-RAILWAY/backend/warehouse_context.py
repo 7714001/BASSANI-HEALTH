@@ -2,15 +2,18 @@
 
 Single source of truth for warehouse scoping, used by every route that reads
 or writes warehouse-specific stock data (products, forecasts, reports, stock
-levels, order/packing-board creation):
+levels, orders, order/packing-board creation):
 
-  - warehouse_supervisor / packer — fixed `warehouse_id` on their user document
-  - reseller                       — `warehouse_id` on their reseller profile,
-                                      falls back to the global admin-set default
-  - admin / super_admin            — `active_warehouse_id` selected in the
-                                      top-nav switcher, falls back to the global
-                                      admin-set default when not explicitly set
-  - all other staff roles          — global admin-set default warehouse
+  - reseller           — external role, no self-service switcher. Fixed to
+                          `warehouse_id` on their reseller profile, falling
+                          back to the global admin-set default.
+  - every internal role — self-service `active_warehouse_id` selected in the
+                          top-nav switcher (2026-08-04: opened up from
+                          admin/super_admin-only to every internal role).
+                          Falls back to a fixed `warehouse_id` assignment for
+                          roles that have one pinned on their user document
+                          (e.g. warehouse_supervisor/packer's assigned floor),
+                          then the global admin-set default.
 """
 from typing import Optional
 from database import col
@@ -51,13 +54,8 @@ def company_context(company_id: Optional[int]) -> dict:
 async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
     role = current_user.get("role")
 
-    # Supervisor / packer / vault custodian: fixed to their assigned warehouse
-    # (vault_custodian will be pinned to the GACP warehouse once access to it
-    # is confirmed; falls through to the global default until then)
-    if role in ("warehouse_supervisor", "packer", "vault_custodian"):
-        return current_user.get("warehouse_id") or await _get_global_default_warehouse_id()
-
-    # Reseller: use their profile warehouse; fall back to global default
+    # Reseller: external role, no self-service switcher — fixed to their
+    # profile warehouse, falling back to the global default.
     if role == "reseller":
         reseller = await col("resellers").find_one(
             {"user_id": current_user.get("id")}, {"_id": 0, "warehouse_id": 1}
@@ -65,12 +63,15 @@ async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
         wh_id = reseller.get("warehouse_id") if reseller else None
         return wh_id or await _get_global_default_warehouse_id()
 
-    # Admin / super_admin: use their active selection; fall back to global default
-    if role in ("admin", "super_admin"):
-        return current_user.get("active_warehouse_id") or await _get_global_default_warehouse_id()
-
-    # All other staff roles (sales, finance, qa_manager, etc.): global default
-    return await _get_global_default_warehouse_id()
+    # Every internal role: the top-nav switcher is the self-service
+    # preference. Falls back to a fixed assignment for roles that have one
+    # pinned (warehouse_supervisor/packer/vault_custodian's assigned floor,
+    # set by an admin), then the global admin-set default.
+    return (
+        current_user.get("active_warehouse_id")
+        or current_user.get("warehouse_id")
+        or await _get_global_default_warehouse_id()
+    )
 
 
 def odoo_context(warehouse_id: Optional[int], company_id: Optional[int] = None) -> Optional[dict]:

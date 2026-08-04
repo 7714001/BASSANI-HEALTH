@@ -62,7 +62,9 @@ async def list_orders(
     sort_dir: str = Query("desc"),
     current_user: dict = Depends(get_current_user),
 ):
-    """List orders from Odoo. Reseller users only see their own orders."""
+    """List orders from Odoo. Reseller users only see their own orders.
+    Warehouse-scoped for every role via resolve_warehouse_id() — the same
+    self-service top-nav selection Products/Reports already use."""
     _SORTABLE = {"date_order", "name", "amount_untaxed", "amount_total"}
     sort_by  = sort_by  if sort_by  in _SORTABLE          else "date_order"
     sort_dir = sort_dir if sort_dir in ("asc", "desc")    else "desc"
@@ -80,7 +82,11 @@ async def list_orders(
         if not owned_partner_ids:
             return {"orders": [], "total": 0}
 
+    warehouse_id = await resolve_warehouse_id(current_user)
+
     domain = []
+    if warehouse_id:
+        domain.append(("warehouse_id", "=", warehouse_id))
     if current_user.get("role") == "reseller":
         domain.append(("commercial_partner_id", "in", list(owned_partner_ids)))
     if status and status != "all":

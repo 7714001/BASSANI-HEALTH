@@ -1039,7 +1039,7 @@ export function Orders() {
       setOrders(r.data.orders); setOrderTotal(r.data.total);
     } catch { toast.error("Failed to load orders"); }
     finally { setLoading(false); }
-  }, [search, status, orderPag, orderSort]);
+  }, [search, status, orderPag, orderSort, user?.active_warehouse_id]);
 
   useEffect(() => { load(); }, [load]);
 

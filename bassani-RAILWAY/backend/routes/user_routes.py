@@ -80,12 +80,15 @@ async def set_active_warehouse(
     body: WarehouseSelect,
     current_user: dict = Depends(get_current_user),
 ):
-    """Admin/super_admin self-service: switch which warehouse the portal top-nav
-    selector scopes stock/product/order reads to. Drives `active_warehouse_id`
-    on the user's own document — distinct from the fixed `warehouse_id` assigned
-    to warehouse_supervisor/packer accounts."""
-    if current_user.get("role") not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail="Only admin accounts can switch warehouses")
+    """Self-service for every internal role: switch which warehouse the portal
+    top-nav selector scopes stock/product/order reads to. Drives
+    `active_warehouse_id` on the user's own document — distinct from the fixed
+    `warehouse_id` assigned to warehouse_supervisor/packer/vault_custodian
+    accounts, which `resolve_warehouse_id()` falls back to only when
+    `active_warehouse_id` hasn't been set. Resellers are external and have a
+    fixed warehouse on their reseller profile instead — no switcher for them."""
+    if current_user.get("role") == "reseller":
+        raise HTTPException(status_code=403, detail="Resellers have a fixed warehouse and cannot switch")
 
     await col("users").update_one(
         {"_id": ObjectId(current_user["id"])},
