@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 import io
+import re
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
@@ -1316,36 +1317,87 @@ async def approve_application(
 
     odoo = get_odoo_client()
 
-    # Duplicate check — block if email or VAT already exists in Odoo
-    dup_conditions = []
-    if app.get("contact_email"):
-        dup_conditions.append(("email", "=", app["contact_email"].strip().lower()))
+    # True-duplicate checks — these still block approval:
+    #   1. A matching VAT number is a real same-legal-entity signal.
+    #   2. The exact same company_name + trading_name combination already
+    #      approved is almost certainly an accidental resubmission of the
+    #      same branch, not a genuinely new one.
+    # Deliberately NOT blocking on the contact email matching an existing
+    # partner/contact — for this business, "same person, another branch" is
+    # the normal case (one owner running several stores, sometimes under
+    # separate legal entities with different CIPC docs, sometimes the same
+    # entity operating multiple branches under one CIPC registration), not a
+    # duplicate. Confirmed 2026-08-04 against real applications: two
+    # "Curabliss" entities (different CIPC docs, same signatory) and two
+    # "Cannapure Plus NPC" branches (identical CIPC docs, different trading
+    # names, no VAT) both needed to become separate company profiles with
+    # the same contact linked to each. See linked_contact_note below for how
+    # that's surfaced instead of blocked.
     if app.get("vat_number"):
-        dup_conditions.append(("vat", "=", app["vat_number"].strip()))
-    if dup_conditions:
-        dup_domain = [("active", "=", True), "|", ("customer_rank", ">", 0), ("is_company", "=", True)]
-        if len(dup_conditions) == 2:
-            dup_domain += ["|"] + dup_conditions
-        else:
-            dup_domain += dup_conditions
         try:
-            dup_matches = odoo.search_read(
-                "res.partner", domain=dup_domain,
+            vat_matches = odoo.search_read(
+                "res.partner",
+                domain=[
+                    ("active", "=", True), ("vat", "=", app["vat_number"].strip()),
+                    "|", ("customer_rank", ">", 0), ("is_company", "=", True),
+                ],
                 fields=["id", "name", "email", "vat"], limit=1,
             )
-            if dup_matches:
-                m = {k: (None if v is False else v) for k, v in dup_matches[0].items()}
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "message": "A customer with this email or VAT number already exists.",
-                        "existing": m,
-                    },
-                )
-        except HTTPException:
-            raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Odoo duplicate check failed: {str(e)}")
+        if vat_matches:
+            m = {k: (None if v is False else v) for k, v in vat_matches[0].items()}
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "A customer with this VAT number already exists.",
+                    "existing": m,
+                },
+            )
+
+    if app.get("trading_name"):
+        _dup_app = await col("customer_onboarding").find_one({
+            "id": {"$ne": app_id},
+            "status": "approved",
+            "company_name": {"$regex": f"^{re.escape(app['company_name'].strip())}$", "$options": "i"},
+            "trading_name": {"$regex": f"^{re.escape(app['trading_name'].strip())}$", "$options": "i"},
+        })
+        if _dup_app:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        f"An application for \"{app['company_name']}\" trading as "
+                        f"\"{app['trading_name']}\" was already approved ({_dup_app['id']})."
+                    ),
+                    "existing": {"application_id": _dup_app["id"], "odoo_partner_id": _dup_app.get("odoo_partner_id")},
+                },
+            )
+
+    # Informational only — never blocks approval. Surfaced in the audit log
+    # (detail below) so it's visible on the customer record if anyone goes
+    # looking, without adding friction to the common case.
+    linked_contact_note: Optional[str] = None
+    if app.get("contact_email"):
+        try:
+            _existing_contacts = odoo.search_read(
+                "res.partner",
+                domain=[("active", "=", True), ("email", "=", app["contact_email"].strip().lower())],
+                fields=["id", "name", "parent_id", "is_company"],
+                limit=10,
+            )
+            _other_companies = sorted(set(
+                c["name"] if c.get("is_company") else c["parent_id"][1]
+                for c in _existing_contacts
+                if c.get("is_company") or c.get("parent_id")
+            ))
+            if _other_companies:
+                linked_contact_note = (
+                    f"{app.get('contact_name') or app['contact_email']} is also a contact on: "
+                    + ", ".join(_other_companies)
+                )
+        except Exception:
+            pass  # best-effort — never block approval on this lookup failing
 
     # Build internal notes — prefer new structured fields, fall back to legacy business_type
     category  = app.get("business_category") or app.get("business_type") or ""
@@ -1363,8 +1415,17 @@ async def approve_application(
     if app.get("trading_name"):        notes_parts.append(f"Trading as: {app['trading_name']}")
     notes_parts.append(f"Onboarded via: {app_id}")
 
+    # Trading name folded into the display name itself, not just the comment
+    # field — two branches of the same legal entity (e.g. "Cannapure Plus
+    # NPC" operating in both Witbank and Dullstroom) would otherwise be
+    # indistinguishable everywhere the customer name is shown: order lists,
+    # the dashboard, invoices, ticket headers. Confirmed 2026-08-04.
+    _display_name = app["company_name"]
+    if app.get("trading_name") and app["trading_name"].strip().lower() != app["company_name"].strip().lower():
+        _display_name = f"{app['company_name']} - {app['trading_name']}"
+
     vals: dict = {
-        "name":          app["company_name"],
+        "name":          _display_name,
         "company_type":  "company",
         "customer_rank": 1,
         "comment":       " | ".join(notes_parts),
@@ -1468,9 +1529,12 @@ async def approve_application(
             except Exception:
                 pass  # non-fatal
 
+    _approve_detail: dict = {"odoo_partner_id": partner_id}
+    if linked_contact_note:
+        _approve_detail["linked_contact_note"] = linked_contact_note
     await audit_log("onboarding.approve", "customer_onboarding", app_id,
-                    entity_label=app.get("company_name", ""), user=current_user,
-                    detail={"odoo_partner_id": partner_id},
+                    entity_label=_display_name, user=current_user,
+                    detail=_approve_detail,
                     reseller_id=app.get("reseller_id"))
 
     _res = await col("resellers").find_one({"id": app.get("reseller_id")}, {"email": 1, "_id": 0})
