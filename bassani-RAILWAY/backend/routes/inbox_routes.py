@@ -48,7 +48,7 @@ from services.imap_client import (
     imap_configured,
     send_reply as imap_send_reply,
 )
-from services.inbox_service import ingest_graph_message, ingest_imap_message
+from services.inbox_service import ingest_graph_message, ingest_imap_message, graph_catchup_message_ids
 from services.notification_service import notify_ticket_assigned
 
 _COLLECTION = "sales_inbox"
@@ -97,12 +97,6 @@ def _active_mailbox_address() -> str:
     if cfg:
         return cfg.get("mailbox_address") or cfg.get("imap_username", "")
     return ""
-
-
-def _graph_catchup_filter() -> str:
-    """OData filter equivalent to IMAP's 72-hour SINCE window."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
-    return f"receivedDateTime ge {cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
 
 def _not_configured() -> None:
@@ -202,21 +196,14 @@ async def poll_inbox(
         _not_configured()
 
     if graph_configured():
-        from services.graph_client import list_messages
         mailbox_address = _active_mailbox_address()
         try:
-            msgs = await list_messages(
-                filter_str=_graph_catchup_filter(), top=50, mailbox_address=mailbox_address
-            )
+            message_ids = await graph_catchup_message_ids(_COLLECTION, mailbox_address)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
-        count = 0
-        for m in msgs:
-            mid = m.get("id", "")
-            if mid:
-                background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, mid)
-                count += 1
-        return {"queued": count, "backend": "graph"}
+        for mid in message_ids:
+            background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, mid)
+        return {"queued": len(message_ids), "backend": "graph"}
 
     # IMAP backend
     from services.imap_client import fetch_new_messages

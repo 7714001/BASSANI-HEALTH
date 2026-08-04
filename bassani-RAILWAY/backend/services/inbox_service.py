@@ -47,6 +47,72 @@ async def resolve_customer(from_email: str) -> tuple[Optional[int], Optional[str
     return cid, cname
 
 
+# ── Adaptive Graph catch-up ────────────────────────────────────────────────────
+# The startup catch-up, the periodic reconciliation sweep, and the manual Sync
+# button all need to answer the same question: "what has Graph got that we
+# don't yet?" A fixed lookback window (e.g. 72h) caps how long an outage can
+# be before messages are silently unrecoverable through normal means — if a
+# Graph subscription lapses and nothing notices for longer than the window,
+# everything before the window's edge is gone from the portal's perspective
+# even though Graph still has it. Anchoring the window to the last message we
+# actually stored removes that ceiling: a gap of any length is fully covered
+# on the next sweep, and the 72h constant only matters for a mailbox that has
+# never ingested anything yet (first connect).
+
+_DEFAULT_CATCHUP_HOURS = 72
+_CATCHUP_OVERLAP = timedelta(hours=1)
+# 10 pages * 50/page = up to 500 messages recovered per sweep. A backlog
+# beyond that is picked up by the next sweep — already-stored messages dedupe
+# instantly, so cost stays proportional to what's actually new, not to how
+# far back the window reaches.
+_MAX_CATCHUP_PAGES = 10
+
+
+async def last_ingested_at(collection: str, mailbox_address: str) -> Optional[datetime]:
+    """
+    Timestamp of the most recently stored inbound message for this mailbox,
+    or None if nothing has ever been ingested (brand new or freshly
+    reconnected mailbox).
+    """
+    match: dict = {"is_outgoing": {"$ne": True}}
+    if mailbox_address:
+        match["mailbox_address"] = mailbox_address
+    doc = await col(collection).find_one(
+        match, {"received_at": 1}, sort=[("received_at", -1)]
+    )
+    return doc.get("received_at") if doc else None
+
+
+async def graph_catchup_message_ids(collection: str, mailbox_address: str) -> list[str]:
+    """
+    List every Graph message id received since the adaptive catch-up bound
+    (see module docstring above), walking pages via `skip` until exhausted or
+    _MAX_CATCHUP_PAGES is reached. Listing only — does not ingest; callers
+    dispatch ingestion however suits their context (a FastAPI BackgroundTask
+    for the manual poll endpoint, a staggered asyncio task for the startup/
+    reconciliation loops).
+    """
+    from services.graph_client import list_messages
+
+    last = await last_ingested_at(collection, mailbox_address)
+    cutoff = (last - _CATCHUP_OVERLAP) if last else (
+        datetime.now(timezone.utc) - timedelta(hours=_DEFAULT_CATCHUP_HOURS)
+    )
+    filter_str = f"receivedDateTime ge {cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+    message_ids: list[str] = []
+    for page in range(_MAX_CATCHUP_PAGES):
+        msgs = await list_messages(
+            filter_str=filter_str, top=50, skip=page * 50, mailbox_address=mailbox_address
+        )
+        if not msgs:
+            break
+        message_ids.extend(m.get("id", "") for m in msgs if m.get("id"))
+        if len(msgs) < 50:
+            break
+    return message_ids
+
+
 # ── Thread read ───────────────────────────────────────────────────────────────
 
 async def mark_thread_read(collection: str, item_id: str) -> None:

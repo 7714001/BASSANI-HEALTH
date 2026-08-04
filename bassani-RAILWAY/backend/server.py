@@ -355,7 +355,7 @@ async def _run_inbox_startup(
         imap_configured as imap_ok,
         fetch_new_messages,
     )
-    from services.inbox_service import ingest_graph_message, ingest_imap_message
+    from services.inbox_service import ingest_graph_message, ingest_imap_message, graph_catchup_message_ids
 
     for coro in _make_inbox_indexes(collection):
         try:
@@ -409,13 +409,12 @@ async def _run_inbox_startup(
 
     if graph_configured() and mailbox_address:
         try:
-            from services.graph_client import list_messages
-            from datetime import datetime, timedelta, timezone as _tz
-            _cutoff = (datetime.now(_tz.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            msgs = await list_messages(
-                filter_str=f"receivedDateTime ge {_cutoff}", top=50, mailbox_address=mailbox_address
-            )
-            logger.info("%s_graph_startup_catchup found=%d", label, len(msgs))
+            # Adaptive window — anchored to the last message we actually
+            # stored for this mailbox, not a fixed lookback, so a gap of any
+            # length is fully covered on the very first startup catch-up
+            # rather than only the last 72h of it. See inbox_service.py.
+            message_ids = await graph_catchup_message_ids(collection, mailbox_address)
+            logger.info("%s_graph_startup_catchup found=%d", label, len(message_ids))
 
             # Stagger ingest tasks — each one makes 3+ Graph API calls, so firing
             # all simultaneously causes 429 bursts. 200 ms between tasks keeps us
@@ -426,7 +425,6 @@ async def _run_inbox_startup(
                         await asyncio.sleep(0.2)
                     asyncio.create_task(ingest_graph_message(collection, mailbox, mid))
 
-            message_ids = [m.get("id", "") for m in msgs if m.get("id")]
             asyncio.create_task(_staggered_catchup(message_ids))
         except Exception as exc:
             logger.warning("%s_graph_startup_catchup_failed error=%s", label, exc)
@@ -449,11 +447,13 @@ async def _run_inbox_startup(
         # complete safety net: if the subscription silently lapses (a renewal
         # failure that today only produces a log line, not an alert), Graph
         # messages stop arriving until someone notices and hits /poll manually
-        # or the server redeploys. This sweep re-runs the same 72h catch-up on
-        # a fixed interval so a lapsed subscription self-heals within one cycle
-        # instead of silently forever. ingest_graph_message is idempotent on
-        # graph_message_id, so re-sweeping the same window costs one dedup
-        # check per already-seen message.
+        # or the server redeploys. This sweep re-runs the same adaptive
+        # catch-up on a fixed interval so a lapsed subscription self-heals —
+        # regardless of how long it was down for, not just up to a fixed
+        # lookback ceiling — within one cycle instead of silently forever.
+        # ingest_graph_message is idempotent on graph_message_id, so
+        # re-sweeping already-covered ground costs one dedup check per
+        # already-seen message.
         _graph_reconcile_running = [False]
 
         async def _graph_reconcile_loop():
@@ -469,20 +469,12 @@ async def _run_inbox_startup(
                     continue
                 _graph_reconcile_running[0] = True
                 try:
-                    from services.graph_client import list_messages
-                    from datetime import datetime as _dt, timedelta as _td, timezone as _tz2
-                    cutoff = (_dt.now(_tz2.utc) - _td(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    msgs = await list_messages(
-                        filter_str=f"receivedDateTime ge {cutoff}", top=50, mailbox_address=addr
-                    )
-                    for i, m in enumerate(msgs):
-                        mid = m.get("id", "")
-                        if not mid:
-                            continue
+                    message_ids = await graph_catchup_message_ids(collection, addr)
+                    for i, mid in enumerate(message_ids):
                         if i:
                             await asyncio.sleep(0.2)
                         await ingest_graph_message(collection, mailbox, mid)
-                    logger.info("%s_graph_reconcile_complete found=%d", label, len(msgs))
+                    logger.info("%s_graph_reconcile_complete found=%d", label, len(message_ids))
                 except Exception as exc:
                     logger.error("%s_graph_reconcile_error error=%s", label, exc)
                 finally:

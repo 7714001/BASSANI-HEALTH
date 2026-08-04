@@ -30,7 +30,12 @@ from services.imap_client import (
     imap_configured,
     send_reply as imap_send_reply,
 )
-from services.inbox_service import ingest_graph_message, ingest_imap_message, mark_thread_read
+from services.inbox_service import (
+    ingest_graph_message,
+    ingest_imap_message,
+    mark_thread_read,
+    graph_catchup_message_ids,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/orders-inbox", tags=["orders-inbox"])
@@ -136,19 +141,13 @@ async def poll_inbox(
     mailbox_address = get_graph_mailbox_address(_MAILBOX)
 
     if graph_configured() and mailbox_address:
-        from services.graph_client import list_messages
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            msgs = await list_messages(filter_str=f"receivedDateTime ge {cutoff}", top=50, mailbox_address=mailbox_address)
+            message_ids = await graph_catchup_message_ids(_COLLECTION, mailbox_address)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Graph API error: {exc}")
-        count = 0
-        for m in msgs:
-            mid = m.get("id", "")
-            if mid:
-                background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, mid)
-                count += 1
-        return {"queued": count, "backend": "graph"}
+        for mid in message_ids:
+            background_tasks.add_task(ingest_graph_message, _COLLECTION, _MAILBOX, mid)
+        return {"queued": len(message_ids), "backend": "graph"}
 
     from services.imap_client import fetch_new_messages
     try:
