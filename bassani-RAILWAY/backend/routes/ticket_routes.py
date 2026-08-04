@@ -510,17 +510,34 @@ async def list_tickets(
 
 @router.get("/payment-journals")
 async def list_payment_journals(
+    order_id: Optional[int] = None,
     current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
 ):
-    """Return Odoo bank/cash journals for the deposit registration modal.
+    """Return Odoo bank/cash journals for the deposit/balance registration modals.
     Builds the same descriptive display_label as the invoices journals endpoint
     so the finance team sees bank account numbers and company names, not generic
-    'Bank' labels that are indistinguishable in a multi-company setup."""
+    'Bank' labels that are indistinguishable in a multi-company setup.
+
+    When order_id is given, scoped to that order's own company — registering a
+    payment against a journal from the wrong company is a hard Odoo error
+    (payments must be in the same company as the invoice), so filtering the
+    options here prevents the mistake instead of surfacing it as a raw Odoo
+    error after the fact. Falls back to every company's journals if order_id
+    is omitted or its company can't be resolved, rather than blocking the
+    modal outright."""
     odoo = get_odoo_client()
+    domain: list = [["type", "in", ["bank", "cash"]], ["active", "=", True]]
+    if order_id:
+        try:
+            order_rows = odoo.read("sale.order", [order_id], fields=["company_id"])
+            if order_rows and order_rows[0].get("company_id"):
+                domain.append(["company_id", "=", order_rows[0]["company_id"][0]])
+        except Exception as e:
+            logger.warning("payment_journals_order_company_resolve_failed order_id=%s error=%s", order_id, e)
     try:
         journals = odoo.search_read(
             "account.journal",
-            domain=[["type", "in", ["bank", "cash"]], ["active", "=", True]],
+            domain=domain,
             fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
             limit=50,
             order="company_id asc, type asc, name asc",
@@ -1364,6 +1381,30 @@ async def register_deposit(
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
 
+    # Defense in depth — /payment-journals already scopes the dropdown to this
+    # order's company, but re-check server-side in case the list was fetched
+    # before the ticket had an order, went stale, or this was called directly.
+    # A journal from the wrong company is a hard Odoo error deep inside the
+    # payment wizard; catching the mismatch here gives a clear portal message
+    # instead of a raw Odoo fault.
+    if order_company_id and body.journal_id:
+        try:
+            _journal_rows = odoo.read("account.journal", [body.journal_id], fields=["name", "company_id"])
+        except Exception:
+            _journal_rows = None
+        if _journal_rows:
+            _journal_co = _journal_rows[0].get("company_id")
+            _journal_co_id = _journal_co[0] if _journal_co else None
+            if _journal_co_id and _journal_co_id != order_company_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Payment method \"{_journal_rows[0]['name']}\" belongs to a different "
+                        f"company than order {_order_row.get('name')} — select a payment method "
+                        f"for this order's own warehouse."
+                    ),
+                )
+
     # Step 1: Create down payment invoice via Odoo wizard
     ctx = {"active_ids": [order_id], "active_model": "sale.order", "active_id": order_id, **_cctx}
     wizard_vals: dict = {"advance_payment_method": invoice_type}
@@ -1578,6 +1619,25 @@ async def register_balance_payment(
     _co = order_row.get("company_id")
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
+
+    # Defense in depth — see the equivalent check in register_deposit above.
+    if order_company_id and body.journal_id:
+        try:
+            _journal_rows = odoo.read("account.journal", [body.journal_id], fields=["name", "company_id"])
+        except Exception:
+            _journal_rows = None
+        if _journal_rows:
+            _journal_co = _journal_rows[0].get("company_id")
+            _journal_co_id = _journal_co[0] if _journal_co else None
+            if _journal_co_id and _journal_co_id != order_company_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Payment method \"{_journal_rows[0]['name']}\" belongs to a different "
+                        f"company than order {order_row.get('name')} — select a payment method "
+                        f"for this order's own warehouse."
+                    ),
+                )
 
     # Find the full invoice — the out_invoice with the largest amount_total
     inv_ids = order_row.get("invoice_ids", [])

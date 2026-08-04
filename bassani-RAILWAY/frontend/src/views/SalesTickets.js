@@ -989,7 +989,7 @@ export default function SalesTickets() {
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     try {
       const [journalRes, orderRes] = await Promise.all([
-        api.get("/api/tickets/payment-journals"),
+        api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
         detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
       ]);
       const journals = journalRes.data.journals || [];
@@ -1042,7 +1042,7 @@ export default function SalesTickets() {
     setBalanceInfo(null);
     try {
       const [journalRes, balanceRes] = await Promise.all([
-        api.get("/api/tickets/payment-journals"),
+        api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
         api.get(`/api/tickets/${detail.id}/invoice-balance`),
       ]);
       const journals = journalRes.data.journals || [];
