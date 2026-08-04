@@ -1081,6 +1081,40 @@ def send_order_ready_for_collection_reseller(
           _wrap(body), cc=cc or None)
 
 
+def send_order_ready_for_collection_customer(
+    customer_email: str,
+    order_ref: str,
+    customer_name: str,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the actual customer account (main company email, cc'd to every
+    other contact on file) when their order is ready for collection —
+    independent of send_order_ready_for_collection_reseller above, which only
+    reaches a reseller who placed the order on the customer's behalf and does
+    nothing for a staff-placed order with no reseller attached."""
+    if not customer_email:
+        return
+    body = (
+        _h1("Your order is ready for collection")
+        + _p(f"Hi {customer_name},")
+        + _p(
+            "Your order has been packed and cleared by our QA and Responsible "
+            "Pharmacist. It is now ready for collection."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Status", _badge("Ready for collection", "#059669")),
+        ], tint="#f0fdf4", border="#86efac")
+        + _divider()
+        + _p(
+            "Please visit our facility to collect, or contact us to arrange dispatch.",
+            muted=True,
+        )
+    )
+    _send(customer_email, f"Your Order is Ready for Collection: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
 # ── Partial fulfilment and backorder emails (Phase 8.23) ──────────────────────
 
 def _item_rows(items: list, qty_key: str = "qty") -> str:

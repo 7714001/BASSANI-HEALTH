@@ -19,7 +19,7 @@ from services.email_service import (
     send_backorder_daily_digest, send_payment_auto_confirmed, send_s6_flag_notification,
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
     send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
-    send_recurring_order_upcoming,
+    send_recurring_order_upcoming, send_order_ready_for_collection_customer,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -61,6 +61,13 @@ TEST_EMAIL_SENDERS: dict = {
     "order_ready_extra_to": lambda to: send_order_ready_for_collection(
         order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", packer_name="Test Packer",
         supervisor_emails=[to],
+    ),
+    # Preview-only — this one always goes straight to the customer account
+    # resolved from Odoo (main company email + every other contact on file),
+    # not a configurable staff list, so there's no matching EmailRoutingConfig
+    # field. Same shape as recurring_order_upcoming below.
+    "order_ready_customer": lambda to: send_order_ready_for_collection_customer(
+        customer_email=to, order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd",
     ),
     "order_cc": lambda to: send_order_confirmed(
         order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_total=12500.00,

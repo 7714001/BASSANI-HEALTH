@@ -16,6 +16,7 @@ survives server restarts.
 import asyncio
 import json
 import jwt
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from services.email_service import (
     send_order_packing_started,
     send_order_ready_for_collection,
     send_order_ready_for_collection_reseller,
+    send_order_ready_for_collection_customer,
     send_partial_delivery_ready,
     send_backorder_created_internal,
     send_backorder_stock_ready,
@@ -38,6 +40,7 @@ from services.email_service import (
     send_rp_approval_needed,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
 settings = get_settings()
 
@@ -115,13 +118,66 @@ async def push_update(entry: dict):
     await manager.broadcast({"type": "entry_update", "data": entry}, warehouse_id=entry.get("warehouse_id"))
 
 
-async def _sync_sales_ticket(order_id: str, outcome: str, reason: Optional[str] = None):
+async def _resolve_customer_notification_recipients(odoo, partner_id: int) -> tuple:
+    """Resolve recipients for a customer-facing milestone email (currently:
+    ready for collection) — the account's main company email plus every
+    other active contact on file, so the notification reaches the actual
+    customer regardless of who placed the order (reseller or Bassani staff).
+
+    Returns (company_email, other_contact_emails). Best-effort: returns
+    (None, []) on any Odoo error rather than raising — a failed lookup here
+    must never block the packing/status update that triggered it."""
+    try:
+        _cpr = odoo.read("res.partner", [partner_id], fields=["commercial_partner_id"])
+        company_id = partner_id
+        if _cpr:
+            _cp = _cpr[0].get("commercial_partner_id")
+            if _cp and _cp is not False:
+                company_id = _cp[0]
+
+        company_rows = odoo.read("res.partner", [company_id], fields=["email"])
+        company_email = company_rows[0].get("email") if company_rows else None
+        company_email = company_email if company_email and company_email is not False else None
+
+        contact_ids = odoo.search(
+            "res.partner", [["parent_id", "=", company_id], ["active", "=", True]], limit=50,
+        )
+        other_emails: list = []
+        if contact_ids:
+            raw = odoo.read("res.partner", contact_ids, fields=["email", "type"])
+            for c in raw:
+                email = c.get("email")
+                if email and email is not False and c.get("type") in ("contact", "invoice"):
+                    other_emails.append(email)
+
+        seen = {company_email.lower()} if company_email else set()
+        deduped: list = []
+        for e in other_emails:
+            if e.lower() not in seen:
+                seen.add(e.lower())
+                deduped.append(e)
+        return company_email, deduped
+    except Exception as exc:
+        logger.warning("customer_notification_recipients_failed partner_id=%s error=%s", partner_id, exc)
+        return None, []
+
+
+async def _sync_sales_ticket(
+    order_id: str,
+    outcome: str,
+    reason: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+):
     """
     Phase 8.4 — write an Orders outcome (complete/incomplete/cancelled) back
     to the linked Sales ticket and notify the assigned sales rep. Best-effort
     and silent if no Sales ticket exists for this order — a packing board
     entry can exist without ever having gone through one (e.g. legacy orders
     confirmed before Phase 8, or orders placed without a logged PO/RFQ).
+
+    background_tasks is optional and only used for the ready_for_collection
+    customer-notification email below — callers that don't need it (or that
+    never reach that outcome) can omit it.
     """
     try:
         ticket = await col("tickets").find_one(
@@ -151,8 +207,28 @@ async def _sync_sales_ticket(order_id: str, outcome: str, reason: Optional[str] 
         )
         from services.notification_service import notify_ticket_handoff
         await notify_ticket_handoff(ticket.get("customer_name", ""), outcome, ticket.get("assigned_to"))
+
+        # Notify the actual customer account — main company email plus every
+        # other contact on file — regardless of whether this order was placed
+        # by a reseller (who gets their own separate notification) or
+        # directly by Bassani staff (who today notified nobody outside the
+        # warehouse). Reuses customer_id/customer_company_id already on the
+        # ticket doc rather than a fresh Odoo sale.order read.
+        if outcome == "ready_for_collection" and background_tasks is not None:
+            partner_id = ticket.get("customer_company_id") or ticket.get("customer_id")
+            if partner_id:
+                odoo = get_odoo_client()
+                company_email, other_emails = await _resolve_customer_notification_recipients(odoo, partner_id)
+                if company_email:
+                    background_tasks.add_task(
+                        send_order_ready_for_collection_customer,
+                        customer_email=company_email,
+                        order_ref=str(order_id),
+                        customer_name=ticket.get("customer_name", ""),
+                        cc=other_emails or None,
+                    )
     except Exception as e:
-        print(f"⚠️  Sales ticket sync failed for order {order_id}: {e}")
+        logger.warning("sales_ticket_sync_failed order_id=%s error=%s", order_id, e)
 
 
 # ── WebSocket auth helpers ────────────────────────────────────────────────────
@@ -776,7 +852,10 @@ async def complete_entry(
         user=current_user,
         detail=delivery_result,
     )
-    await _sync_sales_ticket(body.order_id, "partially_fulfilled" if is_partial else "ready_for_collection")
+    await _sync_sales_ticket(
+        body.order_id, "partially_fulfilled" if is_partial else "ready_for_collection",
+        background_tasks=background_tasks,
+    )
 
     _routing = await get_email_routing()
 
@@ -1254,6 +1333,7 @@ async def mark_ready(
 @router.put("/override-status")
 async def override_status(
     body: UpdateStatus,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.manage")),
 ):
     """Admin override — set any status directly (tickets.manage permission required).
@@ -1283,7 +1363,7 @@ async def override_status(
         "collected":  "complete",
     }.get(body.status)
     if _ticket_outcome:
-        await _sync_sales_ticket(body.order_id, _ticket_outcome)
+        await _sync_sales_ticket(body.order_id, _ticket_outcome, background_tasks=background_tasks)
 
     return {"success": True}
 

@@ -173,6 +173,12 @@ const ROUTING_KEYS = [
     label: "Additional recipients (added to supervisor list):",
   },
   {
+    key: "order_ready_customer", group: "orders", icon: Mail, previewOnly: true,
+    title: "Order Ready for Collection (Customer Notice)",
+    description: "Sent when an order passes QA and RP review, directly to the customer account on file: their main company email, cc'd to every other contact Odoo has on record for that account.",
+    note: "This one always goes straight to the customer resolved from Odoo, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
+  },
+  {
     key: "order_cc", group: "orders", icon: Mail,
     title: "Order CC",
     description: "CC'd on order placed and order confirmed emails sent to resellers.",
