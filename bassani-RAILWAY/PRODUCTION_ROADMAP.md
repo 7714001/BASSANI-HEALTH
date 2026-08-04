@@ -4682,10 +4682,10 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `GET /api/monitor/token` (admin): retrieve current token + rotated_at
 - [x] `POST /api/monitor/token` (admin): generate/rotate token via `secrets.token_urlsafe(32)`; stored in `portal_settings._id: "monitor_display_token"`
 - [x] `GET /api/monitor/validate?token=` (public): 200 or 403
-- [x] `GET /api/monitor/data?token=` (public): full KPIs + 5 column card sets — no Odoo calls, all MongoDB
+- [x] `GET /api/monitor/data?token=` (public): full KPIs + column card sets — no Odoo calls, all MongoDB
 - [x] Age tiers: ok (0–33%), warning (33–66%), urgent (66–100%), overdue (>100%) — all relative to 72h deadline (48h for quotes)
 - [x] KPIs: overdue, at_risk, in_pipeline, completed_today, units_today, open_quotes, avg_time_hours, pipeline_value, revenue_today, mtd_revenue
-- [x] Columns: quotes (open/quote status), packing (queued/packing), qa (ready + no qa_approved_at), rp (ready + qa_approved_at set), collection (ready_for_collection)
+- [x] Columns: quotes (open/quote status), packing (queued/packing), qa (ready + no qa_approved_at), rp (ready + qa_approved_at set), collection (ready_for_collection) — **deposit column added 2026-08-04, see follow-up note below**
 - [x] order_value stamped on packing board entry at confirm_order from Odoo `amount_total`
 - [x] order_value added to `BoardEntry` Pydantic model as `Optional[float]`
 - [x] monitor_router registered in `server.py`
@@ -4695,9 +4695,9 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `frontend/src/views/OrderMonitor.js` — full-screen dark theme TV display
   - Token read from `?token=` URL param; validated on mount against `GET /api/monitor/validate`
   - 30-second polling of `GET /api/monitor/data`; 1-second `setInterval` for live countdown badges
-  - KPI strip Row 1: Overdue / At Risk / Compliance Hold / Completed Today (all 5 columns counted, no financials)
-  - KPI strip Row 2: Open Inquiries / In Packing / QA Pending / RP Pending / Awaiting Collection / Oldest Active
-  - 5 Kanban columns: Open Quotes (indigo) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Ready to Collect (amber)
+  - KPI strip Row 1: Overdue / At Risk / Compliance Hold / Completed Today (all columns counted, no financials)
+  - KPI strip Row 2: Open Inquiries / Awaiting Deposit / In Packing / QA Pending / RP Pending / Awaiting Collection / Oldest Active (Awaiting Deposit added 2026-08-04)
+  - Kanban columns: Open Quotes (indigo) · Awaiting Deposit (gold, added 2026-08-04) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Ready to Collect (amber)
   - Cards sorted oldest-first within each column (most urgent at top)
   - Age tier colour coding: ok=green, warning=amber, urgent=orange, overdue=red+animate-pulse
   - RESELLER and SAMPLE pill tags on cards; reseller name in card footer
@@ -4718,3 +4718,10 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] Overdue count KPI pulses red when non-zero
 - [x] Admin can generate, view, copy, and rotate the display URL from Settings → Monitor Display
 - [x] Rotating the token invalidates the old URL immediately
+
+**Follow-up fix (2026-08-04) — the deposit gate (8.47) created an invisible pipeline stage on this board.** 8.47 (reinstated 2026-07-29, after this phase originally shipped) inserted `awaiting_deposit` between `sale_order` and packing-board creation — a packing board entry now only gets created once Finance registers the deposit, not at order confirmation. `monitor_routes.py`'s Quotes-column query (`status in ["open", "quote", "sale_order"]`) was never updated for the new status, and there's no packing board entry yet at this stage either — so a confirmed order sitting on the deposit gate matched **no column at all** and simply vanished from the board between confirmation and deposit registration, despite this being a real bottleneck stage staff specifically wanted visibility into.
+
+- [x] `monitor_routes.py` — new query for `status: "awaiting_deposit"` tickets, reusing `_ticket_card()` (added `"awaiting_deposit": OVERDUE_HOURS` to `_QUOTE_STATUS_DEADLINE` — treated as the 72h "confirmed order" deadline, not the softer 48h quote deadline, since the customer has already committed at this point)
+- [x] New `deposit` column (key `deposit`, gold accent `#eab308`) inserted between Quotes and Packing, matching pipeline order; included in the `all_active` roll-up so it automatically feeds the existing Overdue/At Risk Row-1 KPIs with no separate change needed there
+- [x] New `awaiting_deposit` KPI added to Row 2, between Open Inquiries and In Packing
+- **Design decision:** a dedicated column, not folded into Open Quotes — matches the existing precedent of QA Review and RP Review already being split into two columns rather than one combined "Compliance" column, specifically so each distinct role's action queue (here: Finance) stays unambiguous at a glance on a screen nobody is meant to interact with, only read from across a room.

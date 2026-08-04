@@ -146,10 +146,14 @@ def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str |
 # Ticket statuses shown in the Quotes column, with their deadlines.
 # open/quote = soft 48h (not yet a confirmed order)
 # sale_order = hard 72h (order confirmed, awaiting packing board)
+# awaiting_deposit = hard 72h (order confirmed, customer has committed —
+# arguably more urgent than sale_order, not less, since this is purely a
+# Finance action waiting to happen, not a customer decision)
 _QUOTE_STATUS_DEADLINE = {
-    "open":       QUOTE_HOURS,
-    "quote":      QUOTE_HOURS,
-    "sale_order": OVERDUE_HOURS,
+    "open":              QUOTE_HOURS,
+    "quote":             QUOTE_HOURS,
+    "sale_order":        OVERDUE_HOURS,
+    "awaiting_deposit":  OVERDUE_HOURS,
 }
 
 
@@ -289,6 +293,16 @@ async def get_monitor_data(token: str = Query("")):
         NO_ID,
     ).to_list(length=500)
 
+    # Confirmed orders sitting on the deposit gate (8.47) — a packing board
+    # entry only gets created once Finance registers the deposit, so before
+    # this these tickets matched no column at all and were invisible on the
+    # board despite this being a real bottleneck stage.
+    awaiting_deposit_tickets = await col("tickets").find(
+        {"type": "sales", "status": "awaiting_deposit",
+         "exit_status": None, "orders_ticket_ref": None},
+        NO_ID,
+    ).to_list(length=500)
+
     collection_tickets = await col("tickets").find(
         {"type": "sales", "status": "ready_for_collection",
          "exit_status": None, "payment_confirmed_at": None},
@@ -354,6 +368,7 @@ async def get_monitor_data(token: str = Query("")):
                 rp_col.append(_board_card(entry, assigned_name=a_name))
 
     quotes_col     = [_ticket_card(t) for t in open_quotes]
+    deposit_col    = [_ticket_card(t) for t in awaiting_deposit_tickets]
     collection_col = [
         _collection_card(t, board_coll_map.get(t.get("orders_ticket_ref", ""), {}))
         for t in collection_tickets
@@ -364,11 +379,11 @@ async def get_monitor_data(token: str = Query("")):
     ]
 
     # Sort all columns oldest-first so the most urgent card is always at the top
-    for lst in [quotes_col, packing_col, qa_col, rp_col, collection_col]:
+    for lst in [quotes_col, deposit_col, packing_col, qa_col, rp_col, collection_col]:
         lst.sort(key=lambda x: x["hours_elapsed"], reverse=True)
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
-    all_active    = quotes_col + packing_col + qa_col + rp_col + collection_col
+    all_active    = quotes_col + deposit_col + packing_col + qa_col + rp_col + collection_col
     overdue_count = sum(1 for c in all_active if c["age_tier"] == "overdue")
     at_risk_count = sum(1 for c in all_active if c["age_tier"] == "urgent")
     oldest_hours  = max((c["hours_elapsed"] for c in all_active), default=None)
@@ -380,6 +395,7 @@ async def get_monitor_data(token: str = Query("")):
             "compliance_hold":     len(qa_col) + len(rp_col),
             "completed_today":     completed_today,
             "open_quotes":         len(quotes_col),
+            "awaiting_deposit":    len(deposit_col),
             "in_packing":          len(packing_col),
             "qa_pending":          len(qa_col),
             "rp_pending":          len(rp_col),
@@ -388,6 +404,7 @@ async def get_monitor_data(token: str = Query("")):
         },
         "columns": {
             "quotes":     quotes_col,
+            "deposit":    deposit_col,
             "packing":    packing_col,
             "qa":         qa_col,
             "rp":         rp_col,

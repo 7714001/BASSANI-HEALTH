@@ -8,6 +8,7 @@ const POLL_MS = 30_000;
 
 const COLUMNS = [
   { key: "quotes",     label: "Open Quotes",      abbr: "QUOTES",   accent: "#6366f1" },
+  { key: "deposit",    label: "Awaiting Deposit", abbr: "DEPOSIT",  accent: "#eab308" },
   { key: "packing",    label: "Packing",           abbr: "PACKING",  accent: "#8b5cf6" },
   { key: "qa",         label: "QA Review",         abbr: "QA",       accent: "#06b6d4" },
   { key: "rp",         label: "RP Review",         abbr: "RP",       accent: "#14b8a6" },
@@ -466,8 +467,9 @@ export default function OrderMonitor() {
         </div>
 
         {/* Row 2: Stage breakdown */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginBottom: 16 }}>
           <KpiSmall label="Open Inquiries"      value={kpis.open_quotes}         color="#6366f1" />
+          <KpiSmall label="Awaiting Deposit"    value={kpis.awaiting_deposit}    color={kpis.awaiting_deposit > 0 ? "#eab308" : "#475569"} />
           <KpiSmall label="In Packing"          value={kpis.in_packing}          color="#8b5cf6" />
           <KpiSmall label="QA Pending"          value={kpis.qa_pending}          color={kpis.qa_pending  > 0 ? "#f59e0b" : "#475569"} />
           <KpiSmall label="RP Pending"          value={kpis.rp_pending}          color={kpis.rp_pending  > 0 ? "#f59e0b" : "#475569"} />
