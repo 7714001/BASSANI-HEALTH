@@ -83,6 +83,10 @@ async def log_requests(request: Request, call_next):
         "status_code": response.status_code,
         "duration_ms": duration_ms,
         "user_id": user_id,
+        # Only meaningful once uvicorn is started with --proxy-headers
+        # (railway.toml) — otherwise this is Railway's own proxy IP for
+        # every request, not the real visitor's.
+        "client_ip": request.client.host if request.client else None,
     })
     return response
 

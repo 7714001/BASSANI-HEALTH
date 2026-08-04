@@ -495,6 +495,65 @@ async def list_tickets(
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
 
 
+# ── Literal-path routes — MUST stay before /{ticket_id} ──────────────────────
+# FastAPI/Starlette matches routes in registration order. Any literal single
+# segment under /api/tickets/ (e.g. /payment-journals, /payment-terms) must be
+# registered before GET /{ticket_id} or it gets swallowed by it — the request
+# still "succeeds" as far as routing is concerned, it just calls get_ticket()
+# with the literal segment as ticket_id, which then 400s "Invalid ticket ID"
+# once ObjectId() fails to parse it. Both routes below sat after /{ticket_id}
+# for a long time; the bug was invisible because the frontend caught the
+# error generically instead of surfacing e.response.data.detail — once that
+# was fixed (2026-08-04), this routing bug became visible as "Invalid Ticket
+# Id" on Register Deposit instead of the deeper Odoo error it looked like.
+# (See order_routes.py for the same pattern, already applied there.)
+
+@router.get("/payment-journals")
+async def list_payment_journals(
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Return Odoo bank/cash journals for the deposit registration modal.
+    Builds the same descriptive display_label as the invoices journals endpoint
+    so the finance team sees bank account numbers and company names, not generic
+    'Bank' labels that are indistinguishable in a multi-company setup."""
+    odoo = get_odoo_client()
+    try:
+        journals = odoo.search_read(
+            "account.journal",
+            domain=[["type", "in", ["bank", "cash"]], ["active", "=", True]],
+            fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
+            limit=50,
+            order="company_id asc, type asc, name asc",
+        )
+        company_ids = {j["company_id"][0] for j in journals if j.get("company_id")}
+        multi_company = len(company_ids) > 1
+        for j in journals:
+            bank_account = j.get("bank_account_id")
+            acc_display  = bank_account[1] if bank_account and bank_account is not False else None
+            base         = acc_display or j.get("code") or j["name"]
+            company_name = j["company_id"][1] if j.get("company_id") else None
+            j["display_label"] = f"{base} — {company_name}" if (multi_company and company_name) else base
+        return {"journals": journals}
+    except Exception as e:
+        # Was silently caught and papered over with a 200 + empty list — meant
+        # the deposit modal just looked broken with no payment methods and
+        # nothing landed in Sentry (print() bypasses both the logging module
+        # and Sentry's log capture entirely). Raise for real instead.
+        logger.error("payment_journals_fetch_failed error=%s", e)
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/payment-terms")
+def list_payment_terms(current_user: dict = Depends(require_admin)):
+    """All active Odoo payment terms for the quote builder override dropdown."""
+    odoo = get_odoo_client()
+    terms = odoo.search_read(
+        "account.payment.term",
+        [("active", "=", True)],
+        fields=["id", "name", "note"],
+        limit=100,
+    )
+    return {"payment_terms": terms}
 
 
 @router.get("/{ticket_id}")
@@ -1236,41 +1295,6 @@ async def send_quote(
     if warning:
         result["warning"] = warning
     return result
-
-
-@router.get("/payment-journals")
-async def list_payment_journals(
-    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
-):
-    """Return Odoo bank/cash journals for the deposit registration modal.
-    Builds the same descriptive display_label as the invoices journals endpoint
-    so the finance team sees bank account numbers and company names, not generic
-    'Bank' labels that are indistinguishable in a multi-company setup."""
-    odoo = get_odoo_client()
-    try:
-        journals = odoo.search_read(
-            "account.journal",
-            domain=[["type", "in", ["bank", "cash"]], ["active", "=", True]],
-            fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
-            limit=50,
-            order="company_id asc, type asc, name asc",
-        )
-        company_ids = {j["company_id"][0] for j in journals if j.get("company_id")}
-        multi_company = len(company_ids) > 1
-        for j in journals:
-            bank_account = j.get("bank_account_id")
-            acc_display  = bank_account[1] if bank_account and bank_account is not False else None
-            base         = acc_display or j.get("code") or j["name"]
-            company_name = j["company_id"][1] if j.get("company_id") else None
-            j["display_label"] = f"{base} — {company_name}" if (multi_company and company_name) else base
-        return {"journals": journals}
-    except Exception as e:
-        # Was silently caught and papered over with a 200 + empty list — meant
-        # the deposit modal just looked broken with no payment methods and
-        # nothing landed in Sentry (print() bypasses both the logging module
-        # and Sentry's log capture entirely). Raise for real instead.
-        logger.error("payment_journals_fetch_failed error=%s", e)
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
 @router.post("/{ticket_id}/register-deposit")
@@ -2130,18 +2154,3 @@ async def purge_ticket(
         "purged": deleted,
         "customer_name": ticket.get("customer_name", ""),
     }
-
-
-# ── 8.26 + 8.28 — Lookup endpoints ───────────────────────────────────────────
-
-@router.get("/payment-terms")
-def list_payment_terms(current_user: dict = Depends(require_admin)):
-    """All active Odoo payment terms for the quote builder override dropdown."""
-    odoo = get_odoo_client()
-    terms = odoo.search_read(
-        "account.payment.term",
-        [("active", "=", True)],
-        fields=["id", "name", "note"],
-        limit=100,
-    )
-    return {"payment_terms": terms}
