@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from typing import Optional
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from middleware.audit import audit_log
 from database import col
 from parent_categories import resolve_parent_category_product_ids
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 
@@ -443,26 +445,30 @@ def list_uom_categories(current_user: dict = Depends(get_current_user)):
         )
         return {"uom_categories": cats}
     except Exception as e:
-        print(f"⚠️  uom-categories fetch failed (UOM may be disabled in Odoo): {e}")
+        logger.warning("uom_categories_fetch_failed error=%s", e)
         return {"uom_categories": []}
 
 
 @router.get("/uoms")
 def list_uoms(current_user: dict = Depends(get_current_user)):
     """Available Odoo Units of Measure — populates the UOM dropdown on the product form.
-    Returns empty list when UOM is not enabled in Odoo rather than raising an error."""
+    Returns empty list when UOM is not enabled in Odoo rather than raising an error.
+    fields intentionally omits category_id: this Odoo instance doesn't have that
+    field on uom.uom at all (confirmed live — a newer/reconfigured Odoo schema
+    than the field assumed), and the frontend dropdown only ever reads id/name
+    anyway, so there was nothing depending on it."""
     odoo = get_odoo_client()
     try:
         uoms = odoo.search_read(
             "uom.uom",
             domain=[("active", "=", True)],
-            fields=["id", "name", "category_id"],
+            fields=["id", "name"],
             limit=200,
             order="name asc",
         )
         return {"uoms": uoms}
     except Exception as e:
-        print(f"⚠️  uoms fetch failed (UOM may be disabled in Odoo): {e}")
+        logger.warning("uoms_fetch_failed error=%s", e)
         return {"uoms": []}
 
 
