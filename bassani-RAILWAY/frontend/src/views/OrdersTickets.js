@@ -755,8 +755,13 @@ export default function OrdersTickets() {
                     </div>
                   </div>
 
-                  {/* Role-gated action cards */}
-                  {!isTerminal && (
+                  {/* Role-gated action cards. "complete" is deliberately treated as
+                      non-terminal here even though it's in TERMINAL (which still
+                      correctly locks packer/qty/lot editing above) — it means
+                      "ready for collection," not "done": Mark as Collected, the
+                      collected_at display, and Override Stage all still need to
+                      render at this stage. */}
+                  {(!isTerminal || detail.status === "complete") && (
                     <div className="space-y-3">
 
                       {/* orders_clerk: queued → packing */}
