@@ -1000,8 +1000,13 @@ export default function SalesTickets() {
         amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
         journal_id: journals[0]?.id ? String(journals[0].id) : "",
       }));
-    } catch { toast.error("Failed to load deposit details"); }
-    setDepositModal(true);
+      setDepositModal(true);
+    } catch (e) {
+      // Don't open a modal we just told the user is broken — no payment
+      // methods would show, and the "required field" validation on submit
+      // would be a confusing second error on top of this one.
+      toast.error(e.response?.data?.detail || "Failed to load deposit details");
+    }
   };
 
   const registerDeposit = async () => {

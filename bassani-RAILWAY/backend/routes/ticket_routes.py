@@ -1265,8 +1265,12 @@ async def list_payment_journals(
             j["display_label"] = f"{base} — {company_name}" if (multi_company and company_name) else base
         return {"journals": journals}
     except Exception as e:
-        print(f"⚠️  payment-journals: {e}")
-        return {"journals": []}
+        # Was silently caught and papered over with a 200 + empty list — meant
+        # the deposit modal just looked broken with no payment methods and
+        # nothing landed in Sentry (print() bypasses both the logging module
+        # and Sentry's log capture entirely). Raise for real instead.
+        logger.error("payment_journals_fetch_failed error=%s", e)
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
 @router.post("/{ticket_id}/register-deposit")
