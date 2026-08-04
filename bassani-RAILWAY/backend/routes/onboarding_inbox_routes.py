@@ -154,6 +154,17 @@ async def graph_webhook(
     if validationToken:
         return Response(content=validationToken, media_type="text/plain", status_code=200)
 
+    # This mailbox may have been switched off Graph (or its config cleared)
+    # after Microsoft already had a live subscription pointed at this URL —
+    # subscriptions run for up to ~3 days regardless of what the portal still
+    # knows about them. Recognise that case explicitly instead of falling
+    # through to a client_state mismatch that looks like an unexplained
+    # attack/bug rather than what it actually is.
+    from services.imap_client import get_graph_mailbox_address
+    if not get_graph_mailbox_address(_MAILBOX):
+        logger.info("onboarding_inbox_webhook_ignored_not_graph_configured")
+        return Response(status_code=202)
+
     try:
         body = await request.json()
     except Exception:

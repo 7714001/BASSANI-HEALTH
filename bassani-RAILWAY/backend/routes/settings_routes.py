@@ -301,9 +301,33 @@ async def _save_mailbox_doc(settings_id: str, body: MailboxConfig, mailbox: str)
         if not data["mailbox_address"]:
             data["mailbox_address"] = data["imap_username"]
 
+    # Clean up any live Graph subscription BEFORE load_config_from_db below
+    # switches the runtime credentials over — delete_subscription() still
+    # needs the OLD credentials (via graph_client's currently-loaded token)
+    # to authenticate the call to Microsoft. Otherwise a mailbox switched off
+    # Graph keeps a subscription alive on Microsoft's side for up to ~3 days,
+    # showing up as unexplained "invalid_state" webhook warnings.
+    if existing.get("provider", "imap") == "graph" and body.provider != "graph":
+        from services.graph_subscription import delete_subscription
+        await delete_subscription(mailbox)
+
     await col("portal_settings").update_one(
         {"_id": settings_id}, {"$set": data}, upsert=True,
     )
+    from services.imap_client import load_config_from_db
+    await load_config_from_db(mailbox)
+
+
+async def _clear_mailbox_doc(settings_id: str, mailbox: str) -> None:
+    """Delete mailbox config entirely and reload the in-memory client. Cleans
+    up any live Graph subscription first — see _save_mailbox_doc above for
+    why this has to happen before the config disappears."""
+    existing = await col("portal_settings").find_one({"_id": settings_id})
+    if existing and existing.get("provider") == "graph":
+        from services.graph_subscription import delete_subscription
+        await delete_subscription(mailbox)
+
+    await col("portal_settings").delete_one({"_id": settings_id})
     from services.imap_client import load_config_from_db
     await load_config_from_db(mailbox)
 
@@ -394,9 +418,7 @@ async def save_mailbox_config(body: MailboxConfig, _: dict = Depends(require_per
 
 @router.delete("/mailbox")
 async def clear_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
-    await col("portal_settings").delete_one({"_id": "mailbox_config"})
-    from services.imap_client import load_config_from_db
-    await load_config_from_db()
+    await _clear_mailbox_doc("mailbox_config", "sales")
     return {"success": True}
 
 
@@ -433,9 +455,7 @@ async def save_onboarding_mailbox_config(body: MailboxConfig, _: dict = Depends(
 
 @router.delete("/onboarding-mailbox")
 async def clear_onboarding_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
-    await col("portal_settings").delete_one({"_id": _ONBOARDING_KEY})
-    from services.imap_client import load_config_from_db
-    await load_config_from_db("onboarding")
+    await _clear_mailbox_doc(_ONBOARDING_KEY, "onboarding")
     return {"success": True}
 
 
@@ -471,9 +491,7 @@ async def save_orders_mailbox_config(body: MailboxConfig, _: dict = Depends(requ
 
 @router.delete("/orders-mailbox")
 async def clear_orders_mailbox_config(_: dict = Depends(require_permission("settings.manage"))):
-    await col("portal_settings").delete_one({"_id": _ORDERS_KEY})
-    from services.imap_client import load_config_from_db
-    await load_config_from_db("orders")
+    await _clear_mailbox_doc(_ORDERS_KEY, "orders")
     return {"success": True}
 
 

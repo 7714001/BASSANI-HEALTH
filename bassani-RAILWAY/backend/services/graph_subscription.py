@@ -121,6 +121,50 @@ async def renew_subscription(subscription_id: str, mailbox: str = "sales") -> No
                 mailbox, subscription_id, expiry)
 
 
+async def delete_subscription(mailbox: str = "sales") -> None:
+    """
+    Delete this mailbox's Graph subscription, both on Microsoft's side and in
+    MongoDB. Call whenever a mailbox is reconfigured off Graph (provider
+    switched to imap, or its config cleared entirely) — otherwise Microsoft
+    keeps sending webhook notifications against a subscription the portal no
+    longer has any record of, for as long as its ~3-day natural lifetime,
+    showing up as "invalid_state" warnings with no obvious cause.
+
+    Must be called BEFORE imap_client.load_config_from_db(mailbox) switches
+    the runtime Graph credentials over to the new config — this still needs
+    the OLD credentials (via get_access_token(), which reads whatever
+    graph_client currently has loaded) to authenticate the delete call.
+
+    Safe to call even when no subscription is currently stored (no-op), and
+    treats a 404 from Graph (already gone on their side) as success rather
+    than an error worth logging.
+    """
+    stored = await _get_stored(mailbox)
+    if not stored or not stored.get("subscription_id"):
+        return
+
+    subscription_id = stored["subscription_id"]
+    try:
+        token = await get_access_token()
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.delete(
+                f"{GRAPH_BASE}/subscriptions/{subscription_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if r.status_code not in (204, 404):
+                r.raise_for_status()
+    except Exception as exc:
+        # Still clear our own record below even if the remote delete failed —
+        # a stale local record only helps a subscription we no longer control
+        # masquerade as one we do; better to let it expire untracked than
+        # keep rejecting its notifications forever with a confusing warning.
+        logger.warning("graph_subscription_delete_failed mailbox=%s id=%s error=%s",
+                        mailbox, subscription_id, exc)
+
+    await col("settings").delete_one({"key": _settings_key(mailbox)})
+    logger.info("graph_subscription_deleted mailbox=%s id=%s", mailbox, subscription_id)
+
+
 async def ensure_subscription(mailbox: str = "sales", mailbox_address: str = "") -> None:
     """
     Idempotent — creates or renews the Graph subscription for one mailbox.
