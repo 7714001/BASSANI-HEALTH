@@ -144,7 +144,7 @@ No new external services without an explicit decision. Approved additions: Resen
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Roles, Permissions and Identity Foundation | Complete |
-| 1 | Security Hardening | Complete |
+| 1 | Security Hardening | Complete — 2026-08-05: disabled production frontend source maps (`GENERATE_SOURCEMAP=false` in the Dockerfile's `npm run build` step). Previously `react-scripts build`'s default `.js.map` output was copied verbatim into `/app/static/` and served publicly, letting anyone with browser DevTools open reconstruct the full original frontend source tree (file names, unminified code, comments) — a real information-disclosure gap missed by this phase's original pass. No frontend Sentry integration exists yet to symbolicate minified stack traces as a trade-off; that's a separate, not-yet-scoped piece of future work if readable production crash reports are needed. |
 | 2 | Email Engine | Complete |
 | 3 | Core Odoo Integration | In Progress (2 live VAT verification items outstanding) |
 | 4 | Commission Engine Hardening | Complete |
