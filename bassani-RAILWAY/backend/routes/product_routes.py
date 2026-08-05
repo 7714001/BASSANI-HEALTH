@@ -167,6 +167,7 @@ async def list_products(
     sort_dir:     str           = Query("asc"),
     warehouse_id:  Optional[int] = Query(None),   # explicit override — quote builder passes the quote's warehouse
     in_stock_only: bool          = Query(False),   # filter to products with qty_available > 0
+    incoming_only: bool          = Query(False),   # filter to products with nothing on hand but forecasted stock incoming
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -185,8 +186,25 @@ async def list_products(
     odoo = get_odoo_client()
     domain = [("type", "=", "consu"), ("active", "=", True)]
 
+    warehouse_id = warehouse_id or await resolve_warehouse_id(current_user)
+    company_id = get_company_id(odoo, warehouse_id)
+    warehouse_name = None
+    if warehouse_id:
+        try:
+            wh = odoo.read("stock.warehouse", [warehouse_id], fields=["name"])
+            warehouse_name = wh[0]["name"] if wh else None
+        except Exception:
+            pass
+
     if in_stock_only:
         domain.append(("qty_available", ">", 0))
+
+    if incoming_only:
+        # Nothing physically on the shelf yet, but Odoo is forecasting stock
+        # (an open, confirmed PO or inbound transfer not yet received) — the
+        # "forecasted > on hand" case explained by get_product_incoming below.
+        domain.append(("qty_available", "<=", 0))
+        domain.append(("virtual_available", ">", 0))
 
     if search:
         domain += ["|", ("name", "ilike", search), ("default_code", "ilike", search)]
@@ -203,7 +221,8 @@ async def list_products(
         except ValueError:
             id_list = []
         if not id_list:
-            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+            return {"products": [], "total": 0, "limit": limit, "offset": offset,
+                     "warehouse_id": warehouse_id, "warehouse_name": warehouse_name}
         domain.append(("id", "in", id_list))
 
     # Parent Category filter (portal-only grouping layer, see parent_categories.py) —
@@ -211,7 +230,8 @@ async def list_products(
     if parent_category_id:
         resolved_ids = await resolve_parent_category_product_ids(odoo, parent_category_id)
         if not resolved_ids:
-            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+            return {"products": [], "total": 0, "limit": limit, "offset": offset,
+                     "warehouse_id": warehouse_id, "warehouse_name": warehouse_name}
         domain.append(("id", "in", resolved_ids))
 
     # Resellers only see products explicitly added to the reseller catalog.
@@ -220,11 +240,9 @@ async def list_products(
         catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
         catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
         if not catalog_ids:
-            return {"products": [], "total": 0, "limit": limit, "offset": offset}
+            return {"products": [], "total": 0, "limit": limit, "offset": offset,
+                     "warehouse_id": warehouse_id, "warehouse_name": warehouse_name}
         domain.append(("id", "in", catalog_ids))
-
-    warehouse_id = warehouse_id or await resolve_warehouse_id(current_user)
-    company_id = get_company_id(odoo, warehouse_id)
 
     try:
         # When a search term is active, Odoo v17's ilike uses PostgreSQL trigram
@@ -269,7 +287,10 @@ async def list_products(
             _attach_tax_rates(odoo, products, company_id)
             total = odoo.count("product.product", domain)
         await _apply_pending_gtin_fallback(products)
-        return {"products": products, "total": total, "limit": limit, "offset": offset}
+        return {
+            "products": products, "total": total, "limit": limit, "offset": offset,
+            "warehouse_id": warehouse_id, "warehouse_name": warehouse_name,
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
@@ -864,6 +885,70 @@ async def get_product_reservations(product_id: int, current_user: dict = Depends
         return {
             "reservations": reservations,
             "total_reserved": sum(r["qty_reserved"] for r in reservations),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{product_id}/incoming")
+async def get_product_incoming(product_id: int, current_user: dict = Depends(require_admin)):
+    """
+    The mirror of get_product_reservations: explains the gap when Forecasted
+    is HIGHER than On Hand rather than lower. That direction is driven by
+    incoming stock (an open, confirmed purchase order not yet fully received)
+    rather than a reservation, so this reads purchase.order.line instead of
+    sale.order.line. Only confirmed POs (state "purchase"/"done") are included
+    since a draft/sent PO hasn't generated a stock move yet and therefore
+    doesn't contribute to Odoo's virtual_available figure at all.
+
+    Scoped to the caller's resolved warehouse via the PO's picking_type_id,
+    same convention as get_product_reservations' order_id.warehouse_id.
+    """
+    odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
+
+    domain = [
+        ("product_id", "=", product_id),
+        ("order_id.state", "in", ["purchase", "done"]),
+    ]
+    if warehouse_id:
+        domain.append(("order_id.picking_type_id.warehouse_id", "=", warehouse_id))
+
+    try:
+        lines = odoo.search_read(
+            "purchase.order.line",
+            domain=domain,
+            fields=["order_id", "product_qty", "qty_received", "date_planned"],
+            limit=500,
+        )
+        outstanding = [l for l in lines if l["product_qty"] - l["qty_received"] > 0.001]
+        if not outstanding:
+            return {"incoming": [], "total_incoming": 0}
+
+        order_ids = list({l["order_id"][0] for l in outstanding})
+        orders = odoo.read("purchase.order", order_ids, fields=["name", "partner_id", "date_order", "state"])
+        order_map = {o["id"]: o for o in orders}
+
+        incoming = []
+        for l in outstanding:
+            oid = l["order_id"][0]
+            order = order_map.get(oid)
+            if not order:
+                continue
+            qty_incoming = l["product_qty"] - l["qty_received"]
+            incoming.append({
+                "order_id": oid,
+                "order_name": order["name"],
+                "supplier_name": order["partner_id"][1] if order.get("partner_id") else "",
+                "date_expected": l.get("date_planned"),
+                "state": order["state"],
+                "qty_incoming": qty_incoming,
+            })
+
+        incoming.sort(key=lambda r: r["date_expected"] or "")
+        return {
+            "incoming": incoming,
+            "total_incoming": sum(r["qty_incoming"] for r in incoming),
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")

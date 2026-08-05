@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName } from "../components/UI";
+import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName, WarehouseLabel } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 
 const stockColor = (qty) =>
@@ -32,6 +32,7 @@ export default function ResellerCatalog() {
   const [moq,        setMoq       ] = useState({});
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
+  const [warehouseName, setWarehouseName] = useState(null);
 
   useEffect(() => {
     api.get("/api/parent-categories/")
@@ -54,6 +55,7 @@ export default function ResellerCatalog() {
       const { data } = await api.get("/api/products/", { params });
       setProducts(data.products || []);
       setTotal(data.total || 0);
+      setWarehouseName(data.warehouse_name || null);
     } catch {
       toast.error("Failed to load catalog");
     } finally {
@@ -87,6 +89,7 @@ export default function ResellerCatalog() {
         title="Product Catalog"
         subtitle={`${total} product${total !== 1 ? "s" : ""} available`}
         onRefresh={load}
+        actions={<WarehouseLabel name={warehouseName} />}
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">

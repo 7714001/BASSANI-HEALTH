@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, Layers, Link2, Tag, Printer, AlertTriangle } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -17,6 +17,7 @@ import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
   LoadingState, EmptyState, Badge, ProductThumb, fmtR, fmtDate, parseDisplayName,
+  WarehouseLabel,
 } from "../components/UI";
 import { validateSAID } from "../utils/validators";
 
@@ -91,6 +92,14 @@ export function Products() {
   const [viewingOrder,       setViewingOrder        ] = useState(null);
   const [viewingOrderId,     setViewingOrderId      ] = useState(null); // tracks which row is loading
 
+  // Incoming-stock drill-down — mirrors the reservations drill-down above,
+  // but explains the opposite direction (Forecasted higher than On Hand):
+  // which open purchase order(s) the extra forecasted quantity is coming from.
+  const [incomingModal,   setIncomingModal  ] = useState(false);
+  const [incomingProduct, setIncomingProduct] = useState(null);
+  const [incoming,        setIncoming       ] = useState([]);
+  const [incomingLoading, setIncomingLoading] = useState(false);
+
   const [historyModal,   setHistoryModal  ] = useState(false);
   const [historyProduct, setHistoryProduct] = useState(null);
   const [historyMoves,   setHistoryMoves  ] = useState([]);
@@ -127,6 +136,21 @@ export function Products() {
       setReservations([]);
     } finally {
       setReservationsLoading(false);
+    }
+  };
+
+  const openIncoming = async (p) => {
+    setIncomingProduct(p);
+    setIncomingModal(true);
+    setIncomingLoading(true);
+    try {
+      const r = await api.get(`/api/products/${p.id}/incoming`);
+      setIncoming(r.data.incoming || []);
+    } catch {
+      toast.error("Failed to load incoming stock");
+      setIncoming([]);
+    } finally {
+      setIncomingLoading(false);
     }
   };
 
@@ -189,6 +213,7 @@ export function Products() {
       if (search) params.search = search;
       if (cat !== "all") params.category = cat;
       if (stockFilter === "in_stock") params.in_stock_only = true;
+      else if (stockFilter === "incoming") params.incoming_only = true;
       const r = await api.get("/api/products/", { params });
       setProducts(r.data.products); setTotal(r.data.total);
     } catch { toast.error("Failed to load products"); }
@@ -286,6 +311,11 @@ export function Products() {
                 onClick={() => { setLoading(true); setProducts([]); setStockFilter("all"); setPagination(p => ({...p, pageIndex:0})); }}
                 className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "all" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
               >All</button>
+              <button
+                onClick={() => { setLoading(true); setProducts([]); setStockFilter("incoming"); setPagination(p => ({...p, pageIndex:0})); }}
+                title="Nothing on hand yet, but stock is expected via an open purchase order"
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "incoming" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+              >Incoming</button>
             </div>
           </div>
 
@@ -402,6 +432,7 @@ export function Products() {
               const onHand = p.qty_available ?? 0;
               const forecasted = p.virtual_available ?? 0;
               const tiedUp = onHand - forecasted > 0.001;
+              const arriving = forecasted - onHand > 0.001;
               return (
                 <span className="flex items-center gap-1.5">
                   <span className="text-gray-500">{forecasted}</span>
@@ -409,6 +440,12 @@ export function Products() {
                     <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="See which orders this stock is tied up in"
                       className="text-amber-500 hover:text-amber-600 transition-colors">
                       <PackageSearch size={13} />
+                    </button>
+                  )}
+                  {arriving && (
+                    <button onClick={e=>{e.stopPropagation();openIncoming(p);}} title="See which incoming purchase order this forecasted stock is coming from"
+                      className="text-blue-500 hover:text-blue-600 transition-colors">
+                      <Truck size={13} />
                     </button>
                   )}
                 </span>
@@ -528,6 +565,33 @@ export function Products() {
             </div>
           )}
           <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setReservationsModal(false)}>Close</BtnSecondary></div>
+        </Modal>
+      )}
+      {incomingModal && incomingProduct && (
+        <Modal title={`Incoming Stock — ${incomingProduct.display_name || incomingProduct.name}`} onClose={()=>setIncomingModal(false)}>
+          <p className="text-sm text-gray-500 mb-4">
+            On Hand: <span className="font-semibold text-gray-700">{incomingProduct.qty_available ?? 0}</span>
+            {" · "}Forecasted: <span className="font-semibold text-gray-700">{incomingProduct.virtual_available ?? 0}</span>
+            {" — the difference is expected from these open purchase orders:"}
+          </p>
+          {incomingLoading && <LoadingState />}
+          {!incomingLoading && incoming.length === 0 && (
+            <EmptyState message="No open purchase orders found — the gap may be from an incoming warehouse transfer or a manufacturing order instead of a purchase order." />
+          )}
+          {!incomingLoading && incoming.length > 0 && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              {incoming.map(r => (
+                <div key={`${r.order_id}-${r.date_expected}`} className="flex items-center justify-between px-4 py-2.5">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{r.order_name}</p>
+                    <p className="text-[11px] text-gray-400">{r.supplier_name} · Expected {fmtDate(r.date_expected)}</p>
+                  </div>
+                  <span className="text-sm font-semibold text-blue-600 flex-shrink-0 ml-3">{r.qty_incoming}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end mt-4"><BtnSecondary onClick={()=>setIncomingModal(false)}>Close</BtnSecondary></div>
         </Modal>
       )}
       {historyModal && historyProduct && (
@@ -842,6 +906,7 @@ export function Orders() {
   const [cartCustDropOpen, setCartCustDropOpen] = useState(false);
   const [cartSubmitting,   setCartSubmitting  ] = useState(false);
   const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
+  const [cartWarehouseName, setCartWarehouseName] = useState(null);
 
   const loadCartProducts = useCallback(async () => {
     setCartProdsLoading(true);
@@ -855,6 +920,7 @@ export function Orders() {
       ]);
       setCartProducts(prodR.data.products || []);
       setCartMoq(catR.data.moq || {});
+      setCartWarehouseName(prodR.data.warehouse_name || null);
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
   }, [cartProdCat, cartProdSubCat]);
@@ -1135,12 +1201,15 @@ export function Orders() {
           subtitle={editQuote ? `Revising quote for ${editQuote.customerName}` : "Select a customer and add products"}
           showWarehouseSwitcher
           actions={
-            <BtnSecondary onClick={() => {
-              if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
-              else setView("list");
-            }}>
-              {editQuote || isReseller ? "← Back to My Quotes" : "← Back to Orders"}
-            </BtnSecondary>
+            <>
+              <WarehouseLabel name={cartWarehouseName} />
+              <BtnSecondary onClick={() => {
+                if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
+                else setView("list");
+              }}>
+                {editQuote || isReseller ? "← Back to My Quotes" : "← Back to Orders"}
+              </BtnSecondary>
+            </>
           }
         />
 

@@ -366,6 +366,22 @@ function WarehouseSwitcher() {
   );
 }
 
+// Read-only warehouse indicator for reseller-facing screens, where
+// WarehouseSwitcher is deliberately hidden (resellers have a fixed warehouse,
+// not a picker). Shows resellers/staff which warehouse the stock figures on
+// screen were actually pulled from — takes the warehouse_name the backend
+// already resolved and returned alongside the product list, rather than
+// re-deriving it client-side.
+export function WarehouseLabel({ name }) {
+  if (!name) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600 bg-gray-50">
+      <Warehouse size={13} className="text-gray-400" />
+      Stock shown for <span className="font-medium text-gray-800">{name}</span>
+    </span>
+  );
+}
+
 export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooConnected = true, showWarehouseSwitcher = false }) {
   const { toggle } = useContext(SidebarContext);
   const navigate   = useNavigate();
