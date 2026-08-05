@@ -20,6 +20,7 @@ import {
   WarehouseLabel,
 } from "../components/UI";
 import { validateSAID } from "../utils/validators";
+import { fetchAllProducts } from "../utils/productExport";
 
 const ENTITY_TYPES = [
   { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
@@ -83,6 +84,7 @@ export function Products() {
   const [imageModalProduct, setImageModalProduct] = useState(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
+  const [exportingCatalog, setExportingCatalog] = useState(false);
 
   // Stock reservation drill-down — explains On Hand vs Forecasted gaps
   const [reservationsModal,   setReservationsModal  ] = useState(false);
@@ -292,9 +294,57 @@ export function Products() {
     finally { setArchivingId(null); }
   };
 
+  // Exports the currently-filtered catalog (search/category/stock filter) —
+  // not just the current page — so admin staff get a full, accurate sheet
+  // rather than whatever 25 rows happen to be on screen.
+  const exportCatalog = async () => {
+    setExportingCatalog(true);
+    try {
+      const XLSX = await import("xlsx");
+      const params = {};
+      if (search) params.search = search;
+      if (cat !== "all") params.category = cat;
+      if (stockFilter === "in_stock") params.in_stock_only = true;
+      else if (stockFilter === "incoming") params.incoming_only = true;
+      const { products: rows, warehouseName } = await fetchAllProducts(params);
+      const sheet = rows.map(p => ({
+        SKU: p.default_code || "",
+        Product: p.display_name || p.name,
+        Category: p.categ_id?.[1] || "",
+        "Sale Price (R)": (p.list_price ?? 0).toFixed(2),
+        "Cost (R)": (p.standard_price ?? 0).toFixed(2),
+        "Tax %": p.tax_rate ?? 0,
+        "On Hand": p.qty_available ?? 0,
+        Forecasted: p.virtual_available ?? 0,
+        Barcode: p.barcode || "",
+        "Reseller Catalog": catalog.has(p.id) ? "Yes" : "No",
+        "Min Order Qty": moq[p.id] || "",
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), "Products");
+      const suffix = warehouseName ? ` - ${warehouseName}` : "";
+      XLSX.writeFile(wb, `Bassani Products${suffix} ${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success("Export ready");
+    } catch (e) {
+      toast.error("Export failed");
+      console.error(e);
+    } finally {
+      setExportingCatalog(false);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher />
+      <TopBar title="Products" subtitle={`${total} products synced from Odoo`} onRefresh={load} showWarehouseSwitcher
+        actions={
+          <button onClick={exportCatalog} disabled={exportingCatalog}
+            title="Export the current filtered catalog to Excel"
+            className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors whitespace-nowrap">
+            <Download className="w-3.5 h-3.5" />
+            {exportingCatalog ? "Exporting…" : "Export"}
+          </button>
+        }
+      />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
           {/* Search + compact stock toggle */}

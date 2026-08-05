@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
+import { Download } from "lucide-react";
 import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName, WarehouseLabel } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
+import { fetchAllProducts } from "../utils/productExport";
 
 const stockColor = (qty) =>
   qty <= 0   ? "text-red-600 font-semibold"
@@ -33,6 +35,7 @@ export default function ResellerCatalog() {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "name", desc: false }]);
   const [warehouseName, setWarehouseName] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     api.get("/api/parent-categories/")
@@ -79,6 +82,44 @@ export default function ResellerCatalog() {
     ? products
     : products.filter(p => getVariantLabel(p, variantLabelOpts) === variant);
 
+  // Exports the full filtered catalog (not just the current page) so a
+  // reseller can take the price/stock list offline. Cost and tax are
+  // deliberately left out — the on-screen catalog never shows Bassani's
+  // cost price to resellers, so the export shouldn't leak it either.
+  const exportCatalog = async () => {
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const params = {};
+      if (search) params.search = search;
+      const effectiveCat = subCat !== "all" ? subCat : cat;
+      if (effectiveCat !== "all") params.parent_category_id = effectiveCat;
+      const { products: rows, warehouseName: exportWarehouse } = await fetchAllProducts(params);
+      const filtered = variant === "all"
+        ? rows
+        : rows.filter(p => getVariantLabel(p, variantLabelOpts) === variant);
+      const sheet = filtered.map(p => ({
+        SKU: p.default_code || "",
+        Product: p.display_name || p.name,
+        Category: p.categ_id?.[1] || "",
+        Variant: getVariantLabel(p, variantLabelOpts) || "",
+        "Sale Price (R)": (p.list_price ?? 0).toFixed(2),
+        "Available Stock": p.virtual_available ?? 0,
+        "Min Order Qty": moq[p.id] || "",
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), "Catalog");
+      const suffix = exportWarehouse ? ` - ${exportWarehouse}` : "";
+      XLSX.writeFile(wb, `Bassani Product Catalog${suffix} ${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success("Export ready");
+    } catch (e) {
+      toast.error("Export failed");
+      console.error(e);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const variantOpts = cat === "all"
     ? []
     : Array.from(new Set(products.map(p => getVariantLabel(p, variantLabelOpts)).filter(Boolean))).sort();
@@ -89,7 +130,17 @@ export default function ResellerCatalog() {
         title="Product Catalog"
         subtitle={`${total} product${total !== 1 ? "s" : ""} available`}
         onRefresh={load}
-        actions={<WarehouseLabel name={warehouseName} />}
+        actions={
+          <>
+            <WarehouseLabel name={warehouseName} />
+            <button onClick={exportCatalog} disabled={exporting}
+              title="Export the current filtered catalog to Excel"
+              className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-bassani-600 text-white rounded-lg hover:bg-bassani-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors whitespace-nowrap">
+              <Download className="w-3.5 h-3.5" />
+              {exporting ? "Exporting…" : "Export"}
+            </button>
+          </>
+        }
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
