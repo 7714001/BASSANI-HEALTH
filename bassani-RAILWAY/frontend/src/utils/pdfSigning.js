@@ -67,7 +67,7 @@ export const DOC_CONFIGS = {
       ]},
       { title: "Signatory details", fields: [
         { name: "signatory_full_name",    label: "Full Name",        testDefault: "Test Customer" },
-        { name: "signatory_id_number",    label: "ID Number",        testDefault: "9001010000087" },
+        { name: "signatory_id_number",    label: "ID / Passport Number", testDefault: "9001010000087" },
         { name: "signatory_title",        label: "Title / Position", testDefault: "Director" },
         { name: "primary_contact_number", label: "Phone Number",     testDefault: "+27 11 000 0000" },
         { name: "primary_email_address",  label: "Email Address",    testDefault: "test@example.com" },
@@ -108,7 +108,7 @@ export const DOC_CONFIGS = {
       ]},
       { title: "Authorised signatory", fields: [
         { name: "authorised_full_name", label: "Full Name",        testDefault: "Test Customer" },
-        { name: "authorised_id_number", label: "ID Number",        testDefault: "9001010000087" },
+        { name: "authorised_id_number", label: "ID / Passport Number", testDefault: "9001010000087" },
         { name: "authorised_title",     label: "Title / Position", testDefault: "Director" },
       ]},
       { title: "Contact details", fields: [

@@ -5,7 +5,7 @@ import {
   FileText, Upload, X, Loader2, AlertCircle, PenLine,
 } from "lucide-react";
 import { DOC_CONFIGS, detectFields, generateSignedPdf, buildPrefill } from "../utils/pdfSigning";
-import { validateSAID, validateSAPhone } from "../utils/validators";
+import { validateSAID, validateSAPhone, validatePassport } from "../utils/validators";
 import AddressAutocomplete from "../components/AddressAutocomplete";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -27,6 +27,11 @@ const BUSINESS_CATEGORIES = [
 const SECTION_22C_CATEGORIES = new Set([
   "Pharmacy", "Dispensary", "Medical Clinic", "Licensed Cannabis Producer", "Other",
 ]);
+
+const ID_TYPES = [
+  { value: "sa_id",    label: "South African ID" },
+  { value: "passport", label: "Passport" },
+];
 
 const ENTITY_TYPES = [
   { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
@@ -71,7 +76,7 @@ const UPLOAD_DOCS = {
     { type: "cipc_certificate", label: "CIPC Company Registration Certificate", hint: "Upload your official CIPC certificate (PDF, JPG, or PNG)" },
   ],
   individual: [
-    { type: "id_document",       label: "Copy of ID Document",        hint: "Upload a clear copy of your South African ID (PDF, JPG, or PNG)" },
+    { type: "id_document",       label: "Copy of ID Document",        hint: "Upload a clear copy of your South African ID or passport (PDF, JPG, or PNG)" },
     { type: "section21_outcome", label: "Section 21 Outcome Letter",  hint: "Upload your Section 21 application outcome letter (PDF, JPG, or PNG)" },
   ],
 };
@@ -84,7 +89,7 @@ const BLANK = {
   entity_type: "", entity_type_other: "",
   section22c_licensed: false,
   contact_name: "", contact_position: "", contact_email: "",
-  contact_phone: "", contact_alt_phone: "", signatory_id_number: "",
+  contact_phone: "", contact_alt_phone: "", signatory_id_type: "sa_id", signatory_id_number: "",
   street: "", suburb: "", city: "", province: "",
   postal_code: "", country: "South Africa",
   ordering_volume: "", referral_source: "", notes: "",
@@ -515,10 +520,11 @@ export default function PublicRegister() {
       if (!isIndividual && !form.contact_position.trim())
         errs.contact_position = "Position / title is required";
       const idNum = form.signatory_id_number.trim();
+      const isPassport = form.signatory_id_type === "passport";
       if (!idNum)
-        errs.signatory_id_number = "ID number is required";
-      else if (!validateSAID(idNum))
-        errs.signatory_id_number = "Must be a valid 13-digit South African ID number";
+        errs.signatory_id_number = isPassport ? "Passport number is required" : "ID number is required";
+      else if (isPassport ? !validatePassport(idNum) : !validateSAID(idNum))
+        errs.signatory_id_number = isPassport ? "Enter a valid passport number" : "Must be a valid 13-digit South African ID number";
       if (!form.contact_email.trim())
         errs.contact_email = "Email address is required";
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email.trim()))
@@ -936,9 +942,22 @@ export default function PublicRegister() {
           </Field>
         </div>
       )}
-      <Field label="SA ID Number" required error={errors.signatory_id_number}>
-        <TextInput value={form.signatory_id_number} onChange={upd("signatory_id_number")} placeholder="8001015009087" maxLength={13} error={!!errors.signatory_id_number} />
-      </Field>
+      <div className="grid grid-cols-1 sm:grid-cols-[9rem_1fr] gap-4">
+        <Field label="Document Type" required>
+          <SelectInput value={form.signatory_id_type} onChange={upd("signatory_id_type")}>
+            {ID_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SelectInput>
+        </Field>
+        <Field label={form.signatory_id_type === "passport" ? "Passport Number" : "SA ID Number"} required error={errors.signatory_id_number}>
+          <TextInput
+            value={form.signatory_id_number}
+            onChange={upd("signatory_id_number")}
+            placeholder={form.signatory_id_type === "passport" ? "e.g. A12345678" : "8001015009087"}
+            maxLength={form.signatory_id_type === "passport" ? 15 : 13}
+            error={!!errors.signatory_id_number}
+          />
+        </Field>
+      </div>
       <Field label="Email Address" required error={errors.contact_email}>
         <TextInput type="email" value={form.contact_email} onChange={upd("contact_email")} placeholder="orders@example.co.za" error={!!errors.contact_email} />
       </Field>

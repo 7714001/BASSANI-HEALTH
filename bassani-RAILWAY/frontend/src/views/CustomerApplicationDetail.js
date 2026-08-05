@@ -1468,7 +1468,7 @@ export default function CustomerApplicationDetail() {
               {app.registration_type === "individual" ? (
                 <Card icon={User} title="Registration Details">
                   <Row label="Registration Type" value="Individual (natural person)" />
-                  <Row label="SA ID Number"       value={app.signatory_id_number} mono />
+                  <Row label={app.signatory_id_type === "passport" ? "Passport Number" : "SA ID Number"} value={app.signatory_id_number} mono />
                   {app.diagnosis_indication && (
                     <div className="pt-3 mt-1">
                       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Diagnosis / Indication</p>
@@ -1499,7 +1499,7 @@ export default function CustomerApplicationDetail() {
                 {app.registration_type !== "individual" && (
                   <>
                     <Row label="Position"     value={app.contact_position} />
-                    <Row label="SA ID Number" value={app.signatory_id_number} mono />
+                    <Row label={app.signatory_id_type === "passport" ? "Passport Number" : "SA ID Number"} value={app.signatory_id_number} mono />
                   </>
                 )}
                 <Row label="Email"        value={app.contact_email} />

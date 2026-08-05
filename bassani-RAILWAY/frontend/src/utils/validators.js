@@ -19,3 +19,11 @@ export function validateSAPhone(phone) {
   const stripped = phone.trim().replace(/[\s\-()]/g, "");
   return /^(\+27|0)\d{9}$/.test(stripped);
 }
+
+// Passport numbers are issuing-country-dependent alphanumeric strings with no
+// universal checksum (unlike an SA ID, which is always 13 digits and
+// Luhn-checkable) — this is a length/character sanity check only, not a
+// format guarantee.
+export function validatePassport(passport) {
+  return /^[A-Za-z0-9]{5,15}$/.test(passport.trim());
+}

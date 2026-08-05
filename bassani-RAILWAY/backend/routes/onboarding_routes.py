@@ -83,6 +83,14 @@ def _pre_signing_doc_types(app: dict) -> dict[str, str]:
             if k not in ("nda", "store_onboarding_agreement")}
 
 
+def _signatory_id_label(app: dict) -> str:
+    """The signatory's ID field may hold an SA ID or a passport number
+    (signatory_id_type) — used wherever the value is written into a
+    human-readable note/comment so it isn't mislabelled "SA ID" for a
+    passport holder."""
+    return "Passport" if app.get("signatory_id_type") == "passport" else "SA ID"
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class OnboardingApplication(BaseModel):
@@ -1461,7 +1469,7 @@ async def approve_application(
         # res.partner — the applicant IS the contact, so there is no separate
         # company + child contact structure to build.
         notes_parts = []
-        if app.get("signatory_id_number"): notes_parts.append(f"SA ID: {app['signatory_id_number']}")
+        if app.get("signatory_id_number"): notes_parts.append(f"{_signatory_id_label(app)}: {app['signatory_id_number']}")
         notes_parts.append(f"Onboarded via: {app_id}")
 
         _display_name = app.get("contact_name") or app.get("company_name") or "Individual Customer"
@@ -1539,7 +1547,7 @@ async def approve_application(
         if app.get("contact_position"):    contact_vals["function"] = app["contact_position"]
         if app.get("contact_email"):       contact_vals["email"]    = app["contact_email"]
         if app.get("contact_phone"):       contact_vals["phone"]    = app["contact_phone"]
-        if app.get("signatory_id_number"): contact_vals["comment"]  = f"SA ID: {app['signatory_id_number']}"
+        if app.get("signatory_id_number"): contact_vals["comment"]  = f"{_signatory_id_label(app)}: {app['signatory_id_number']}"
         try:
             odoo.create("res.partner", contact_vals)
         except Exception:
@@ -1758,6 +1766,7 @@ async def generate_signing_docs(
         "contact_email":       app.get("contact_email", ""),
         "contact_phone":       app.get("contact_phone", ""),
         "contact_alt_phone":   app.get("contact_alt_phone", ""),
+        "signatory_id_type":   app.get("signatory_id_type", "sa_id"),
         "signatory_id_number": app.get("signatory_id_number", ""),
         "street":              app.get("street", ""),
         "suburb":              app.get("suburb", ""),

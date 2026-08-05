@@ -19,7 +19,7 @@ import {
   LoadingState, EmptyState, Badge, ProductThumb, fmtR, fmtDate, parseDisplayName,
   WarehouseLabel,
 } from "../components/UI";
-import { validateSAID } from "../utils/validators";
+import { validateSAID, validatePassport } from "../utils/validators";
 import { fetchAllProducts } from "../utils/productExport";
 
 const ENTITY_TYPES = [
@@ -28,6 +28,11 @@ const ENTITY_TYPES = [
   { value: "Sole Proprietor",             label: "Sole Proprietor"             },
   { value: "Partnership",                 label: "Partnership"                 },
   { value: "Other",                       label: "Other"                       },
+];
+
+const ID_TYPES = [
+  { value: "sa_id",    label: "South African ID" },
+  { value: "passport", label: "Passport" },
 ];
 
 
@@ -1635,7 +1640,7 @@ export function Orders() {
 export function Resellers() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", entity_type:"", entity_type_other:"", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", entity_type:"", entity_type_other:"", id_type:"sa_id", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -1650,7 +1655,7 @@ export function Resellers() {
   const [custDropdownOpen,   setCustDropdownOpen  ] = useState(false);
   const [editModal,              setEditModal             ] = useState(false);
   const [editingId,              setEditingId             ] = useState(null);
-  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:null, warehouse_id:"", entity_type:"", entity_type_other:"", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
+  const [editForm,               setEditForm              ] = useState({ name:"", type:"Distributor", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:null, warehouse_id:"", entity_type:"", entity_type_other:"", id_type:"sa_id", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" });
   const [editSelectedCustomer,   setEditSelectedCustomer  ] = useState(null);
   const [saving,                 setSaving                ] = useState(false);
   const [editSaving,             setEditSaving            ] = useState(false);
@@ -1738,7 +1743,7 @@ export function Resellers() {
       commission_eligible: r.commission_eligible !== false,
       odoo_partner_id: r.odoo_partner_id || null,
       warehouse_id: r.warehouse_id || "",
-      entity_type: r.entity_type || "", entity_type_other: r.entity_type_other || "", id_number: r.id_number || "",
+      entity_type: r.entity_type || "", entity_type_other: r.entity_type_other || "", id_type: r.id_type || "sa_id", id_number: r.id_number || "",
       company_reg_number: r.company_reg_number || "",
       vat_registered: r.vat_registered || false, vat_number: r.vat_number || "",
       bank_name: r.bank_name || "", bank_account_holder: r.bank_account_holder || "",
@@ -1780,8 +1785,11 @@ export function Resellers() {
     if (!editForm.name) return toast.error("Name required");
     if (editForm.entity_type === "Other" && !editForm.entity_type_other.trim()) return toast.error("Please specify the entity type");
     if (isEditSoleProp) {
-      if (!editForm.id_number.trim()) return toast.error("ID Number is required for a Sole Proprietor");
-      if (!validateSAID(editForm.id_number.trim())) return toast.error("Must be a valid 13-digit South African ID number");
+      const idNum = editForm.id_number.trim();
+      const isPassport = editForm.id_type === "passport";
+      if (!idNum) return toast.error(isPassport ? "Passport Number is required for a Sole Proprietor" : "ID Number is required for a Sole Proprietor");
+      if (isPassport ? !validatePassport(idNum) : !validateSAID(idNum))
+        return toast.error(isPassport ? "Enter a valid passport number" : "Must be a valid 13-digit South African ID number");
     }
     setEditSaving(true);
     try {
@@ -1801,8 +1809,11 @@ export function Resellers() {
     if (!form.username || !form.password) return toast.error("Username and password are required");
     if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
     if (isSoleProp) {
-      if (!form.id_number.trim()) return toast.error("ID Number is required for a Sole Proprietor");
-      if (!validateSAID(form.id_number.trim())) return toast.error("Must be a valid 13-digit South African ID number");
+      const idNum = form.id_number.trim();
+      const isPassport = form.id_type === "passport";
+      if (!idNum) return toast.error(isPassport ? "Passport Number is required for a Sole Proprietor" : "ID Number is required for a Sole Proprietor");
+      if (isPassport ? !validatePassport(idNum) : !validateSAID(idNum))
+        return toast.error(isPassport ? "Enter a valid passport number" : "Must be a valid 13-digit South African ID number");
     }
     setSaving(true);
     try {
@@ -2062,8 +2073,17 @@ export function Resellers() {
                 <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {isSoleProp ? (
-                    <FormGroup label="ID Number" required>
-                      <Input value={form.id_number} onChange={e=>setForm({...form,id_number:e.target.value})} placeholder="8001015009087" maxLength={13} />
+                    <FormGroup label={form.id_type === "passport" ? "Passport Number" : "ID Number"} required>
+                      <div className="flex gap-2">
+                        <div className="w-32 shrink-0">
+                          <Select value={form.id_type} onChange={e=>setForm({...form,id_type:e.target.value,id_number:""})}>
+                            {ID_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                          </Select>
+                        </div>
+                        <Input value={form.id_number} onChange={e=>setForm({...form,id_number:e.target.value})}
+                          placeholder={form.id_type === "passport" ? "e.g. A12345678" : "8001015009087"}
+                          maxLength={form.id_type === "passport" ? 15 : 13} />
+                      </div>
                     </FormGroup>
                   ) : (
                     <FormGroup label="Company Reg Number">
@@ -2199,8 +2219,17 @@ export function Resellers() {
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             {isEditSoleProp ? (
-              <FormGroup label="ID Number" required>
-                <Input value={editForm.id_number} onChange={e=>setEditForm({...editForm,id_number:e.target.value})} placeholder="8001015009087" maxLength={13} />
+              <FormGroup label={editForm.id_type === "passport" ? "Passport Number" : "ID Number"} required>
+                <div className="flex gap-2">
+                  <div className="w-32 shrink-0">
+                    <Select value={editForm.id_type} onChange={e=>setEditForm({...editForm,id_type:e.target.value,id_number:""})}>
+                      {ID_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </Select>
+                  </div>
+                  <Input value={editForm.id_number} onChange={e=>setEditForm({...editForm,id_number:e.target.value})}
+                    placeholder={editForm.id_type === "passport" ? "e.g. A12345678" : "8001015009087"}
+                    maxLength={editForm.id_type === "passport" ? 15 : 13} />
+                </div>
               </FormGroup>
             ) : (
               <FormGroup label="Company Reg Number">

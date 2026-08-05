@@ -31,7 +31,8 @@ class ResellerCreate(BaseModel):
     password: str                           # Hashed immediately — never stored plain
     entity_type: Optional[str] = ""         # Private Company (Pty) Ltd|Close Corporation (CC)|Sole Proprietor|Partnership|Other
     entity_type_other: Optional[str] = ""
-    id_number: Optional[str] = ""           # SA ID number, Sole Proprietor agents only
+    id_type: Optional[str] = "sa_id"        # sa_id|passport — Sole Proprietor agents only
+    id_number: Optional[str] = ""           # SA ID or passport number, Sole Proprietor agents only
     company_reg_number: Optional[str] = ""
     vat_registered: bool = False
     vat_number: Optional[str] = ""
@@ -55,6 +56,7 @@ class ResellerUpdate(BaseModel):
     warehouse_id: Optional[int] = None
     entity_type: Optional[str] = None
     entity_type_other: Optional[str] = None
+    id_type: Optional[str] = None
     id_number: Optional[str] = None
     company_reg_number: Optional[str] = None
     vat_registered: Optional[bool] = None
@@ -203,6 +205,7 @@ async def create_reseller(
         "user_id": user_id,
         "entity_type": reseller.entity_type or "",
         "entity_type_other": reseller.entity_type_other or "",
+        "id_type": reseller.id_type or "sa_id",
         "id_number": reseller.id_number or "",
         "company_reg_number": reseller.company_reg_number or "",
         "vat_registered": reseller.vat_registered,

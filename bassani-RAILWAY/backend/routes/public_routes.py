@@ -88,6 +88,7 @@ class PublicRegistration(BaseModel):
     contact_email:       str
     contact_phone:       str
     contact_alt_phone:   Optional[str] = ""
+    signatory_id_type:   Optional[str] = "sa_id"    # sa_id|passport
     signatory_id_number: Optional[str] = ""
 
     # Step 3 — Business address
