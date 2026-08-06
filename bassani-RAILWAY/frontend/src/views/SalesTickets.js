@@ -2479,6 +2479,34 @@ export default function SalesTickets() {
             </div>
           </Modal>
         )}
+        {exitConfirm && (
+          <Modal title="Close Ticket" onClose={() => setExitConfirm(null)}>
+            <p className="text-sm text-gray-600">Mark this ticket as <strong>{EXIT_LABEL[exitConfirm]}</strong>? This will close the ticket permanently.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setExitConfirm(null)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={() => doMarkExit(exitConfirm)}>Close Ticket</BtnDanger>
+            </div>
+          </Modal>
+        )}
+        {confirmAnywayMsg && (
+          <Modal title="Credit Limit Exceeded" onClose={() => setConfirmAnywayMsg(null)}>
+            <p className="text-sm text-gray-600 mb-3">{confirmAnywayMsg}</p>
+            <p className="text-sm text-gray-500">Confirm the order anyway?</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setConfirmAnywayMsg(null)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={() => { setConfirmAnywayMsg(null); confirmOrder(true, true); }}>Confirm Anyway</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+        {cancelQuoteOpen && (
+          <Modal title="Cancel Quote" onClose={() => setCancelQuoteOpen(false)}>
+            <p className="text-sm text-gray-600">Cancel this quote? The draft order will be cancelled in Odoo and the ticket will be closed.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setCancelQuoteOpen(false)}>Keep Quote</BtnSecondary>
+              <BtnDanger onClick={doCancelQuote}>Cancel Quote</BtnDanger>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -3012,34 +3040,6 @@ export default function SalesTickets() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCreateModal(false)} disabled={creating}>Cancel</BtnSecondary>
             <BtnPrimary onClick={createTicket} loading={creating}>Create Ticket</BtnPrimary>
-          </div>
-        </Modal>
-      )}
-      {exitConfirm && (
-        <Modal title="Close Ticket" onClose={() => setExitConfirm(null)}>
-          <p className="text-sm text-gray-600">Mark this ticket as <strong>{EXIT_LABEL[exitConfirm]}</strong>? This will close the ticket permanently.</p>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setExitConfirm(null)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={() => doMarkExit(exitConfirm)}>Close Ticket</BtnDanger>
-          </div>
-        </Modal>
-      )}
-      {confirmAnywayMsg && (
-        <Modal title="Credit Limit Exceeded" onClose={() => setConfirmAnywayMsg(null)}>
-          <p className="text-sm text-gray-600 mb-3">{confirmAnywayMsg}</p>
-          <p className="text-sm text-gray-500">Confirm the order anyway?</p>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setConfirmAnywayMsg(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={() => { setConfirmAnywayMsg(null); confirmOrder(true, true); }}>Confirm Anyway</BtnPrimary>
-          </div>
-        </Modal>
-      )}
-      {cancelQuoteOpen && (
-        <Modal title="Cancel Quote" onClose={() => setCancelQuoteOpen(false)}>
-          <p className="text-sm text-gray-600">Cancel this quote? The draft order will be cancelled in Odoo and the ticket will be closed.</p>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setCancelQuoteOpen(false)}>Keep Quote</BtnSecondary>
-            <BtnDanger onClick={doCancelQuote}>Cancel Quote</BtnDanger>
           </div>
         </Modal>
       )}
