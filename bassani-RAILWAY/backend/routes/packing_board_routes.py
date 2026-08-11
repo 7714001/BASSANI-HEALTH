@@ -610,11 +610,18 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
             if qty_overrides:
                 # Apply per-product qty_done values; fill move lines in order,
                 # stopping when the packer-reported qty is reached.
+                # 'quantity' not 'reserved_uom_qty' (2026-08-11, live-verified
+                # against production Odoo 19 — see order_routes.py's
+                # _queue_packing_board for the fuller field-drift writeup):
+                # 'reserved_uom_qty' does not exist on this instance's
+                # stock.move.line at all. 'quantity' holds the reserved-but-
+                # unpicked amount for that specific move line before
+                # completion, confirmed live across real assigned pickings.
                 from collections import defaultdict as _dd
                 move_lines = _odoo.search_read(
                     "stock.move.line",
                     [("picking_id", "=", pid), ("state", "not in", ["done", "cancel"])],
-                    ["id", "product_id", "reserved_uom_qty"],
+                    ["id", "product_id", "quantity"],
                 )
                 product_mls: dict = _dd(list)
                 for ml in move_lines:
@@ -624,7 +631,7 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
                     override = qty_overrides.get(product_id_val)
                     remaining = float(override) if override is not None else None
                     for ml in mls:
-                        reserved = float(ml.get("reserved_uom_qty", 0))
+                        reserved = float(ml.get("quantity", 0))
                         if remaining is None:
                             _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": reserved}])
                         else:

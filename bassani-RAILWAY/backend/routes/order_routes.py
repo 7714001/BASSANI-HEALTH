@@ -283,7 +283,11 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
                     ("origin", "in", sale_names),
                     ("state", "not in", ["done", "cancel"]),
                 ],
-                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "origin", "date_planned_start", "date_planned_finished"],
+                # 'date_start'/'date_finished' not 'date_planned_start'/
+                # 'date_planned_finished' (2026-08-11, live-verified against
+                # production Odoo 19 — see _queue_packing_board for the fuller
+                # field-drift writeup). The old names don't exist here at all.
+                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "origin", "date_start", "date_finished"],
                 limit=500,
             )
             for mo in mrp_orders:
@@ -296,8 +300,8 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
                     "product_name": mo["product_id"][1] if isinstance(mo.get("product_id"), list) else "",
                     "qty":            mo["product_qty"],
                     "qty_producing":  mo.get("qty_producing", 0),
-                    "date":        mo.get("date_planned_start"),
-                    "date_planned_finished": mo.get("date_planned_finished"),
+                    "date":        mo.get("date_start"),
+                    "date_planned_finished": mo.get("date_finished"),
                 })
         except Exception:
             pass  # mrp module may not be installed
@@ -603,12 +607,14 @@ async def get_order_manufacturing_orders(
 
     so_name = orders[0]["name"]
     try:
+        # 'date_start'/'date_finished' — see the field-drift note in
+        # _queue_packing_board (2026-08-11).
         mos = odoo.search_read(
             "mrp.production",
             domain=[("origin", "=", so_name), ("state", "not in", ["done", "cancel"])],
             fields=[
                 "id", "name", "product_id", "product_qty", "qty_producing",
-                "state", "origin", "date_planned_start", "date_planned_finished",
+                "state", "origin", "date_start", "date_finished",
             ],
             limit=100,
         )
@@ -625,8 +631,8 @@ async def get_order_manufacturing_orders(
             "product_name": mo["product_id"][1] if isinstance(mo["product_id"], list) else "",
             "product_qty":         mo.get("product_qty", 0),
             "qty_producing":       mo.get("qty_producing", 0),
-            "date_planned_start":    mo.get("date_planned_start"),
-            "date_planned_finished": mo.get("date_planned_finished"),
+            "date_planned_start":    mo.get("date_start"),
+            "date_planned_finished": mo.get("date_finished"),
         })
 
     return {"manufacturing_orders": result}
@@ -915,10 +921,12 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     if has_backorder:
         try:
             so_name = order["name"]
+            # 'date_finished' — see the field-drift note in
+            # _queue_packing_board (2026-08-11).
             mo_rows = odoo.search_read(
                 "mrp.production",
                 domain=[("origin", "=", so_name), ("state", "not in", ["done", "cancel"])],
-                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "date_planned_finished"],
+                fields=["id", "name", "product_id", "product_qty", "qty_producing", "state", "date_finished"],
                 limit=50,
             )
             for mo in mo_rows:
@@ -929,7 +937,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
                     "product_name": mo["product_id"][1] if isinstance(mo.get("product_id"), list) else "",
                     "product_qty":     mo.get("product_qty", 0),
                     "qty_producing":   mo.get("qty_producing", 0),
-                    "date_planned_finished": mo.get("date_planned_finished"),
+                    "date_planned_finished": mo.get("date_finished"),
                 })
         except Exception:
             pass
