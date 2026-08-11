@@ -543,8 +543,14 @@ async def get_order_deliveries(
     move_by_picking: dict = {}
     if all_move_ids:
         try:
+            # 'quantity' not 'quantity_done' (2026-08-11) — the live Odoo
+            # instance is actually 19.0, not v17; 'quantity_done' does not
+            # exist on stock.move there. 'quantity' holds the done amount once
+            # the move is complete (verified live), which is what this display
+            # wants. See order_routes.py::_queue_packing_board for the fuller
+            # field-semantics writeup.
             moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
-                "id", "product_id", "product_uom_qty", "quantity_done", "picking_id", "state",
+                "id", "product_id", "product_uom_qty", "quantity", "picking_id", "state",
             ]})
             for m in moves:
                 pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
@@ -552,7 +558,7 @@ async def get_order_deliveries(
                     "product_id":   m["product_id"][0] if isinstance(m["product_id"], list) else m["product_id"],
                     "product_name": m["product_id"][1] if isinstance(m["product_id"], list) else "",
                     "qty_ordered":  m["product_uom_qty"],
-                    "qty_done":     m["quantity_done"],
+                    "qty_done":     m["quantity"],
                 })
         except Exception:
             pass  # move lines are informational — non-fatal
@@ -846,8 +852,10 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             all_move_ids = [mid for p in pickings for mid in p.get("move_ids", [])]
             move_by_picking: dict = {}
             if all_move_ids:
+                # 'quantity' not 'quantity_done' — see _queue_packing_board's
+                # field-semantics comment further down this file (2026-08-11).
                 moves = odoo_call("stock.move", "read", [all_move_ids], {"fields": [
-                    "id", "product_id", "product_uom_qty", "quantity_done", "picking_id",
+                    "id", "product_id", "product_uom_qty", "quantity", "picking_id",
                 ]})
                 for m in moves:
                     pid = m["picking_id"][0] if isinstance(m["picking_id"], list) else m["picking_id"]
@@ -855,7 +863,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
                         "product_id":   m["product_id"][0] if isinstance(m["product_id"], list) else m["product_id"],
                         "product_name": m["product_id"][1] if isinstance(m["product_id"], list) else "",
                         "qty_ordered":  m["product_uom_qty"],
-                        "qty_done":     m["quantity_done"],
+                        "qty_done":     m["quantity"],
                     })
 
             _STATE_LABEL = {
@@ -966,13 +974,23 @@ async def stock_check(order_id: int, current_user: dict = Depends(require_permis
         pick_rows = odoo.read("stock.picking", [picking_ids[0]], fields=["move_ids"])
         move_ids = pick_rows[0]["move_ids"] if pick_rows and pick_rows[0].get("move_ids") else []
         if move_ids:
+            # 'quantity' (2026-08-11, verified live via fields_get against
+            # production Odoo — this instance actually runs Odoo 19.0, not the
+            # v17 previously documented) is the modern replacement for the old
+            # Odoo <=16 'reserved_availability' field: before a move is picked
+            # it holds the currently-reserved amount (0 if nothing reserved,
+            # equal to product_uom_qty once fully reserved, in between for a
+            # partial reservation); once picked/done it holds the actual done
+            # quantity. Confirmed against live moves in every relevant state
+            # (waiting/confirmed/assigned/partially_available/done). Do not
+            # revert to 'reserved_availability' — it does not exist here.
             moves = odoo.read(
                 "stock.move", move_ids,
-                fields=["product_id", "product_uom_qty", "reserved_availability"],
+                fields=["product_id", "product_uom_qty", "quantity"],
             )
             for m in moves:
                 ordered = float(m.get("product_uom_qty", 0))
-                reserved = float(m.get("reserved_availability", 0))
+                reserved = float(m.get("quantity", 0))
                 short = ordered - reserved > 0
                 if short:
                     is_partial = True
@@ -1568,13 +1586,15 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
         _pick_for_check = order_data["picking_ids"][0]
         _pick_rows = odoo.read("stock.picking", [_pick_for_check], fields=["move_ids"])
         if _pick_rows and _pick_rows[0].get("move_ids"):
+            # 'quantity' — see the items-loop below for the verified field
+            # semantics (2026-08-11).
             _check_moves = odoo.read(
                 "stock.move", _pick_rows[0]["move_ids"],
-                fields=["product_id", "product_uom_qty", "reserved_availability"],
+                fields=["product_id", "product_uom_qty", "quantity"],
             )
             for _cm in _check_moves:
                 _ordered  = float(_cm.get("product_uom_qty", 0))
-                _reserved = float(_cm.get("reserved_availability", 0))
+                _reserved = float(_cm.get("quantity", 0))
                 if _reserved < _ordered:
                     is_partial = True
                     shortfalls.append({
@@ -1595,9 +1615,15 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
 
     items = []
     if picking.get("move_ids"):
+        # 'quantity' — verified 2026-08-11 via fields_get + live read against
+        # production Odoo (actually 19.0, not the v17 previously documented —
+        # see CLAUDE.md Tech Stack). It's the direct replacement for the old
+        # Odoo <=16 'reserved_availability': reserved-but-not-picked amount
+        # before completion, actual done amount after. 'reserved_availability'
+        # does not exist on this instance at all — do not reintroduce it.
         moves = odoo.read(
             "stock.move", picking["move_ids"],
-            fields=["product_id", "product_uom_qty", "reserved_availability", "product_uom"],
+            fields=["product_id", "product_uom_qty", "product_uom", "quantity"],
         )
         for m in moves:
             pname = m["product_id"][1] if m.get("product_id") else "Unknown"
@@ -1607,7 +1633,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
             )
             sku = prod[0].get("default_code") or str(m["product_id"][0]) if prod else ""
             qty_ordered  = float(m.get("product_uom_qty", 0))
-            qty_reserved = float(m.get("reserved_availability", qty_ordered))
+            qty_reserved = float(m.get("quantity", 0))
             items.append({
                 "name": pname, "sku": sku,
                 "product_id": m["product_id"][0] if m.get("product_id") else None,
