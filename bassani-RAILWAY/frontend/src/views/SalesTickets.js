@@ -983,14 +983,22 @@ export default function SalesTickets() {
   const [depositJournals, setDepositJournals] = useState([]);
   const [depositForm, setDepositForm]       = useState({ invoice_type: "fixed", amount: "", percentage: "", date: "", journal_id: "", note: "" });
   const [depositSaving, setDepositSaving]   = useState(false);
+  // Invoices already on this order in Odoo with real payment against them —
+  // surfaced so Finance isn't misled into creating a redundant new deposit
+  // for an order that was already invoiced/paid outside the portal (e.g. a
+  // historical order linked in via Link Existing Order).
+  const [existingInvoices, setExistingInvoices] = useState([]);
+  const [usingExistingInvoiceId, setUsingExistingInvoiceId] = useState(null);
 
   const openDepositModal = async () => {
     const today = new Date().toISOString().split("T")[0];
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
+    setExistingInvoices([]);
     try {
-      const [journalRes, orderRes] = await Promise.all([
+      const [journalRes, orderRes, existingRes] = await Promise.all([
         api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
         detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
+        api.get(`/api/tickets/${detail.id}/existing-invoices`).catch(() => ({ data: { invoices: [] } })),
       ]);
       const journals = journalRes.data.journals || [];
       setDepositJournals(journals);
@@ -1000,12 +1008,31 @@ export default function SalesTickets() {
         amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
         journal_id: journals[0]?.id ? String(journals[0].id) : "",
       }));
+      setExistingInvoices(existingRes.data.invoices || []);
       setDepositModal(true);
     } catch (e) {
       // Don't open a modal we just told the user is broken — no payment
       // methods would show, and the "required field" validation on submit
       // would be a confusing second error on top of this one.
       toast.error(e.response?.data?.detail || "Failed to load deposit details");
+    }
+  };
+
+  const useExistingInvoice = async (invoiceId) => {
+    setUsingExistingInvoiceId(invoiceId);
+    try {
+      const { data } = await api.post(`/api/tickets/${detail.id}/use-existing-invoice`, { invoice_id: invoiceId });
+      if (data.warning) {
+        toast(data.warning, { icon: "⚠️", duration: 10000 });
+      } else {
+        toast.success("Existing invoice linked — order queued for packing");
+      }
+      setDepositModal(false);
+      refreshDetail(detail.id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to use existing invoice");
+    } finally {
+      setUsingExistingInvoiceId(null);
     }
   };
 
@@ -2362,6 +2389,40 @@ export default function SalesTickets() {
             <p className="text-xs text-gray-500 mb-4">
               Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds.
             </p>
+            {existingInvoices.length > 0 && (
+              <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+                <p className="text-xs font-semibold text-blue-800">
+                  This order already has {existingInvoices.length === 1 ? "an invoice" : "invoices"} in Odoo
+                </p>
+                <p className="text-[11px] text-blue-600 mt-0.5 mb-2">
+                  If this was already paid outside the portal, use it instead of creating a new deposit invoice.
+                </p>
+                <div className="space-y-1.5">
+                  {existingInvoices.map(inv => (
+                    <div key={inv.invoice_id} className="flex items-center justify-between gap-2 bg-white rounded-lg border border-blue-100 px-2.5 py-1.5">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-gray-900 truncate">{inv.invoice_name}</p>
+                        <p className="text-[11px] text-gray-500">
+                          {fmtR(inv.amount_total)}
+                          {" · "}
+                          <span className={inv.payment_state === "paid" ? "text-green-600" : "text-amber-600"}>
+                            {{ paid: "Paid", partial: "Partially Paid", in_payment: "Payment Registered" }[inv.payment_state] || inv.payment_state}
+                          </span>
+                          {inv.amount_residual > 0 && ` · R${inv.amount_residual.toFixed(2)} outstanding`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => useExistingInvoice(inv.invoice_id)}
+                        disabled={usingExistingInvoiceId === inv.invoice_id}
+                        className="shrink-0 text-xs font-medium text-blue-700 hover:underline disabled:opacity-50"
+                      >
+                        {usingExistingInvoiceId === inv.invoice_id ? "Linking…" : "Use This Invoice"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <FormGroup label="Invoice Type" required>
               <div className="space-y-2">
                 {[

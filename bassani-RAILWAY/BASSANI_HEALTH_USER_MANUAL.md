@@ -973,6 +973,8 @@ Finance is involved at **two** points in the order pipeline:
 
 This creates the down payment invoice and records the payment against it in Odoo in one step, and immediately queues the order onto the packing board — this is the only way an order reaches packing. Until this is done, the order simply sits at Awaiting Deposit no matter how long it takes.
 
+**If the order was already invoiced and paid in Odoo before this ticket existed** — most often a historical order attached via **Link Existing Order** — the Register Deposit screen shows a blue panel listing the existing invoice(s) and their payment status, with a **Use This Invoice** button next to each. Clicking it links that invoice as the deposit and queues the order onto the packing board, without creating a second, redundant invoice in Odoo. This only appears when Odoo shows real payment already registered against an invoice on that order — the normal Fixed Amount / Percentage deposit flow is still there and works exactly as before if you'd rather register a fresh deposit.
+
 ### Registering the Balance Payment
 
 1. Open the Sales Ticket (it will be in **Ready for Collection** status)

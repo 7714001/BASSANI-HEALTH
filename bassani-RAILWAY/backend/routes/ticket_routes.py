@@ -225,6 +225,10 @@ class TicketBalancePayment(BaseModel):
     note: Optional[str] = ""
 
 
+class UseExistingInvoiceBody(BaseModel):
+    invoice_id: int
+
+
 class TicketFromOrder(BaseModel):
     order_id: int
 
@@ -1348,6 +1352,193 @@ async def send_quote(
     if warning:
         result["warning"] = warning
     return result
+
+
+@router.get("/{ticket_id}/existing-invoices")
+async def list_existing_invoices(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """
+    Customer invoices already on this ticket's linked order in Odoo with some
+    payment already registered — surfaced in the Register Deposit modal so
+    Finance isn't misled into creating a redundant new deposit invoice for an
+    order that was already invoiced/paid outside the portal (most commonly a
+    historical order confirmed directly in Odoo, later attached to a fresh
+    direct-enquiry ticket via link-order). Read-only; see use_existing_invoice
+    below for the action that actually consumes one of these.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("order_id"):
+        return {"invoices": []}
+
+    odoo = get_odoo_client()
+    try:
+        order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["invoice_ids"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    inv_ids = order_rows[0].get("invoice_ids", []) if order_rows else []
+    if not inv_ids:
+        return {"invoices": []}
+
+    try:
+        invoices = odoo.read(
+            "account.move", inv_ids,
+            fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type", "state"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading invoices: {str(e)}")
+
+    # Only posted customer invoices with some payment already registered are
+    # useful here — a draft or wholly-unpaid invoice confirms nothing.
+    eligible = [
+        i for i in invoices
+        if i.get("move_type") == "out_invoice"
+        and i.get("state") == "posted"
+        and i.get("payment_state") in ("paid", "partial", "in_payment")
+    ]
+    return {
+        "invoices": [
+            {
+                "invoice_id":      i["id"],
+                "invoice_name":    i["name"],
+                "amount_total":    i["amount_total"],
+                "amount_residual": i["amount_residual"],
+                "payment_state":   i["payment_state"],
+            }
+            for i in eligible
+        ],
+    }
+
+
+@router.post("/{ticket_id}/use-existing-invoice")
+async def use_existing_invoice(
+    ticket_id: str,
+    body: UseExistingInvoiceBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """
+    Deliberate alternative to register_deposit for an order that was already
+    invoiced and (at least partially) paid directly in Odoo before ever being
+    tracked in the portal. Links the existing invoice as the ticket's deposit
+    invoice instead of creating a redundant new down-payment invoice, then
+    queues the packing board exactly like a normal deposit would. This is
+    still the same universal 50%-deposit gate (8.47) — it requires a real,
+    already-posted invoice with real payment registered against it in Odoo,
+    never a bare click — it just doesn't have to be a *new* invoice. Every use
+    is audit-logged under its own distinct action (ticket.use_existing_invoice)
+    so it's never confused with a normal deposit registration in the trail.
+    """
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build the quote first")
+    if ticket.get("status") != "awaiting_deposit":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ticket must be awaiting a deposit to do this (current stage: {ticket.get('status')})",
+        )
+    if ticket.get("payment_confirmed_at"):
+        raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+
+    order_id = ticket["order_id"]
+    odoo = get_odoo_client()
+    try:
+        order_rows = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not order_rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    inv_ids = order_rows[0].get("invoice_ids", [])
+    if body.invoice_id not in inv_ids:
+        raise HTTPException(status_code=400, detail="That invoice does not belong to this ticket's linked order")
+
+    try:
+        inv_rows = odoo.read(
+            "account.move", [body.invoice_id],
+            fields=["name", "amount_total", "amount_residual", "payment_state", "move_type", "state"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error reading invoice: {str(e)}")
+    if not inv_rows:
+        raise HTTPException(status_code=404, detail="Invoice not found in Odoo")
+    inv = inv_rows[0]
+    if inv.get("move_type") != "out_invoice" or inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Only a posted customer invoice can be used this way")
+    if inv.get("payment_state") not in ("paid", "partial", "in_payment"):
+        raise HTTPException(status_code=400, detail="This invoice has no payment registered against it in Odoo")
+
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_confirmed_by": current_user["id"],
+                "payment_confirmed_at": now,
+                "invoice_id": body.invoice_id,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": now,
+                "note": f"Used existing Odoo invoice {inv['name']} ({inv['payment_state']}) in place of a new deposit",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.use_existing_invoice", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        detail={
+            "invoice_id": body.invoice_id, "invoice_name": inv["name"], "payment_state": inv["payment_state"],
+            "amount_total": inv["amount_total"], "amount_residual": inv["amount_residual"],
+        },
+    )
+
+    # Same non-blocking packing-board-queue behavior as register_deposit —
+    # the invoice link above is already committed, a queueing hiccup here
+    # must never be reported back as if linking the invoice failed.
+    packing_board_warning = None
+    try:
+        await _queue_packing_board(order_id, background_tasks)
+    except Exception as e:
+        packing_board_warning = str(e)
+        logger.warning("queue_packing_board_after_existing_invoice_failed",
+                       extra={"ticket_id": ticket_id, "order_id": order_id, "error": packing_board_warning})
+        await col("tickets").update_one(
+            {"_id": oid},
+            {"$set": {"packing_board_queue_error": packing_board_warning, "packing_board_queue_failed_at": now}},
+        )
+        await audit_log(
+            "ticket.packing_board_queue_failed", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"order_id": order_id, "error": packing_board_warning},
+        )
+
+    rid = ticket.get("reseller_id")
+    await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
+    resp = {"success": True, "invoice_id": body.invoice_id}
+    if packing_board_warning:
+        resp["warning"] = (
+            f"Invoice linked successfully, but the order could not be queued for packing: "
+            f"{packing_board_warning}. Use Admin Override once resolved to retry."
+        )
+    return resp
 
 
 @router.post("/{ticket_id}/register-deposit")

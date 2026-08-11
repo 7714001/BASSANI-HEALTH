@@ -2077,6 +2077,26 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.53 — Use Existing Odoo Invoice Instead of a Redundant Deposit — Complete 2026-08-11
+
+**Goal:** When a ticket's linked sale order already has a posted, paid (or partially paid) customer invoice in Odoo — most commonly a historical order that was confirmed and invoiced directly in Odoo before ever being tracked in the portal, then attached to a fresh direct-enquiry ticket via **Link Existing Order** — Register Deposit should not force the creation of a second, redundant down-payment invoice against it.
+
+**Context:** Raised while reviewing the Link Existing Order flow: linking never creates a packing board entry regardless of the order's invoice status (`link_existing_order` only maps Odoo state → ticket stage, at most `awaiting_deposit`), so the order still has to go through Register Deposit like any other — but `register_deposit` had no awareness that money might already be sitting against this order in Odoo. Two designs were considered — purely informational display vs. a deliberate action that consumes the existing invoice — the product owner chose the latter.
+
+- [x] `backend/routes/ticket_routes.py` — `GET /{ticket_id}/existing-invoices` (read-only): returns the linked order's Odoo invoices filtered to `move_type="out_invoice"`, `state="posted"`, `payment_state` in `paid`/`partial`/`in_payment` — a draft or wholly-unpaid invoice confirms nothing and is excluded.
+- [x] `backend/routes/ticket_routes.py` — `POST /{ticket_id}/use-existing-invoice` (`UseExistingInvoiceBody{invoice_id}`, `tickets.finance_confirm`): validates the same preconditions as `register_deposit` (ticket `awaiting_deposit`, not already deposited) plus that the given invoice genuinely belongs to the order and is posted with real payment against it, then stamps `payment_confirmed_by`/`payment_confirmed_at`/`invoice_id` and calls `_queue_packing_board()` — same universal 50%-deposit gate as a normal deposit (8.47), still one explicit staff click, just skipping the redundant new-invoice creation. Shares `register_deposit`'s non-blocking `packing_board_queue_error` surfacing (2026-08-11) rather than a bare `logger.warning()`. Audit-logged under its own `ticket.use_existing_invoice` action, kept distinct from `ticket.register_deposit` in the trail.
+- [x] `frontend/src/views/SalesTickets.js` — Register Deposit modal fetches `existing-invoices` alongside its usual journal/order data on open; when any exist, a blue card lists them (name, amount, payment status, outstanding balance) each with a **Use This Invoice** button, above the normal Fixed/Percentage deposit form (which stays fully available regardless — this is an alternative, not a replacement).
+
+**Key decision:** deliberately **not** automatic. Even when a qualifying invoice exists, Finance must still explicitly click to use it — consistent with the "no exceptions, no silent bypass" spirit of the 8.47 deposit gate; this only removes the need to create a *second* invoice when suitable payment is already provably on record in Odoo, it does not weaken what counts as proof of payment.
+
+### Definition of Done
+- [x] Linking an existing, already-invoiced-and-paid order into a new ticket and opening Register Deposit shows the existing invoice(s) with correct amount/status
+- [x] Clicking "Use This Invoice" links it as the ticket's deposit invoice, queues the packing board, and never creates a new Odoo invoice
+- [x] The normal Fixed Amount / Percentage deposit flow is unaffected and still available on the same modal
+- [x] The action is audit-logged distinctly from a normal deposit registration
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.
