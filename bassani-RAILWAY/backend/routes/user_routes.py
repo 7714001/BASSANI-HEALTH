@@ -162,6 +162,16 @@ async def create_user(
     if await col("users").find_one({"username": body.username}):
         raise HTTPException(status_code=400, detail=f"Username '{body.username}' is already taken")
 
+    # Login lookup (authenticate_user) falls back to matching by email when the
+    # entered username contains "@" — a duplicate email makes that lookup
+    # ambiguous (find_one returns whichever document matches first), so a user
+    # could reset one account's password and have the OTHER account's login
+    # keep rejecting it. Block duplicates here rather than let them happen.
+    if body.email:
+        _email_norm = body.email.lower().strip()
+        if await col("users").find_one({"email": _email_norm}):
+            raise HTTPException(status_code=400, detail=f"Email '{_email_norm}' is already in use by another account")
+
     doc = {
         "username": body.username,
         "password": hash_password(body.password),
@@ -231,7 +241,10 @@ async def update_user(
     if body.name is not None:
         updates["name"] = body.name
     if body.email is not None:
-        updates["email"] = body.email.lower().strip()
+        _email_norm = body.email.lower().strip()
+        if _email_norm and await col("users").find_one({"email": _email_norm, "_id": {"$ne": oid}}):
+            raise HTTPException(status_code=400, detail=f"Email '{_email_norm}' is already in use by another account")
+        updates["email"] = _email_norm
     if body.display_name is not None:
         updates["display_name"] = body.display_name
     if body.active is not None:
@@ -299,11 +312,17 @@ async def reset_password(
 
     plain = body.new_password if (body and body.new_password) else generate_password()
 
+    # Bump token_version to invalidate every existing session for this user —
+    # matches the self-service /api/auth/reset-password flow. Without this, a
+    # session that was already logged in (e.g. on a compromised device) keeps
+    # working right through the reset, defeating the point of it.
+    new_version = (target.get("token_version") or 0) + 1
     await col("users").update_one(
         {"_id": oid},
         {"$set": {
             "password": hash_password(plain),
             "must_change_password": True,
+            "token_version": new_version,
             "updated_at": datetime.now(timezone.utc),
         }},
     )

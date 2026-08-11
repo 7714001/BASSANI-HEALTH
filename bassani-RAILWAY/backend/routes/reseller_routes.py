@@ -167,6 +167,14 @@ async def create_reseller(
         raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a sales agent")
     if await col("users").find_one({"username": reseller.username}):
         raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
+    # Login lookup (auth.py::authenticate_user) falls back to matching by email
+    # when the entered username contains "@" — a duplicate email makes that
+    # lookup ambiguous, since find_one returns whichever account matches first
+    # rather than necessarily the one an admin just reset. Block it here.
+    if reseller.email:
+        _email_norm = reseller.email.lower().strip()
+        if await col("users").find_one({"email": _email_norm}):
+            raise HTTPException(status_code=400, detail=f"Email '{_email_norm}' is already in use by another account")
 
     now = datetime.now(timezone.utc)
     reseller_id = f"reseller_{reseller.seller_code.lower()}"
@@ -184,7 +192,10 @@ async def create_reseller(
         "must_change_password": True,
     }
     if reseller.email:
-        user_doc["email"] = reseller.email
+        # Normalized the same way create_user/update_user store it, and the
+        # same way authenticate_user's email-login fallback queries it — an
+        # un-normalized email here would never match that lookup at all.
+        user_doc["email"] = reseller.email.lower().strip()
     user_result = await col("users").insert_one(user_doc)
     user_id = str(user_result.inserted_id)
 

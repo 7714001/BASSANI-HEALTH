@@ -754,7 +754,40 @@ async def update_ticket_stage(
 
     now = datetime.now(timezone.utc)
     updates: dict = {"updated_at": now}
-    if body.status:
+
+    # Moving a ticket to confirmed_wip ("In Fulfilment") is how an order
+    # reaches the packing board — normally done automatically by
+    # register_deposit once a deposit is registered (order_routes.py's
+    # _queue_packing_board). If that step failed (e.g. Odoo hadn't generated
+    # the delivery yet at the time), the ticket can get stuck here with no
+    # packing_board entry at all. Rather than let this override just relabel
+    # the ticket with nothing behind it, create the entry now via the same
+    # canonical path — but only if one doesn't already exist: re-running it
+    # against an order already mid-pack would overwrite the packer's
+    # progress, item ticks, and QA/RP sign-off with a fresh "queued" doc.
+    packing_board_queued = False
+    if body.status == "confirmed_wip":
+        _target_order_id = body.order_id if body.order_id is not None else ticket.get("order_id")
+        if not _target_order_id:
+            raise HTTPException(status_code=400, detail="Cannot move to In Fulfilment: ticket has no linked order")
+        if not await col("packing_board").find_one({"order_id": str(_target_order_id)}):
+            # The 50% deposit gate (8.47) is a hard, non-bypassable requirement —
+            # this override may only ever RETRY queueing after a deposit (or the
+            # sample-order exemption) already genuinely happened; it must never
+            # become a second way to reach the packing board without one.
+            if not ticket.get("payment_confirmed_at") and not ticket.get("is_sample"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="A 50% deposit must be registered before this order can reach the packing board. "
+                           "Use Register Deposit — Admin Override cannot skip this gate.",
+                )
+            try:
+                await _queue_packing_board(_target_order_id, background_tasks)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not queue packing board: {str(e)}")
+            packing_board_queued = True  # status + its own stage_history entry already written
+
+    if body.status and not packing_board_queued:
         updates["status"] = body.status
     if body.exit_status:
         updates["exit_status"] = body.exit_status
@@ -780,7 +813,9 @@ async def update_ticket_stage(
 
     mongo_ops: dict = {"$set": updates}
     # Only append to stage timeline for actual stage changes, not silent assignment
-    if body.status or body.exit_status or body.note:
+    # (skipped for the confirmed_wip/packing-board-queued case above — that
+    # already pushed its own stage_history entry).
+    if (body.status and not packing_board_queued) or body.exit_status or body.note:
         mongo_ops["$push"] = {"stage_history": {
             "status": body.status or ticket["status"],
             "exit_status": body.exit_status,
@@ -794,6 +829,7 @@ async def update_ticket_stage(
         user=current_user,
         before={"status": ticket["status"], "exit_status": ticket.get("exit_status")},
         after={"status": body.status, "exit_status": body.exit_status},
+        detail={"packing_board_queued": True} if packing_board_queued else None,
     )
     await broadcast_monitor_refresh()
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
@@ -1516,15 +1552,38 @@ async def register_deposit(
     )
 
     # Gate enforcement point — nothing reaches the packing board without this.
+    # The deposit above is already committed in Odoo and must never be rolled
+    # back or reported as failed because of a problem here (most commonly:
+    # Odoo hasn't generated the order's delivery yet). Instead, persist the
+    # failure on the ticket so it stays visible until someone retries it — via
+    # the Admin Override "Stage" action, which re-queues the packing board
+    # when moving a ticket to confirmed_wip with none created yet.
+    packing_board_warning = None
     try:
         await _queue_packing_board(order_id, background_tasks)
     except Exception as e:
+        packing_board_warning = str(e)
         logger.warning("queue_packing_board_after_deposit_failed",
-                       extra={"ticket_id": ticket_id, "order_id": order_id, "error": str(e)})
+                       extra={"ticket_id": ticket_id, "order_id": order_id, "error": packing_board_warning})
+        await col("tickets").update_one(
+            {"_id": oid},
+            {"$set": {"packing_board_queue_error": packing_board_warning, "packing_board_queue_failed_at": now}},
+        )
+        await audit_log(
+            "ticket.packing_board_queue_failed", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"order_id": order_id, "error": packing_board_warning},
+        )
 
     rid = ticket.get("reseller_id")
     await ticket_manager.broadcast(ticket_id, str(rid) if rid else None)
-    return {"success": True, "invoice_id": invoice_id}
+    resp = {"success": True, "invoice_id": invoice_id}
+    if packing_board_warning:
+        resp["warning"] = (
+            f"Deposit registered successfully, but the order could not be queued for packing: "
+            f"{packing_board_warning}. Use Admin Override once resolved to retry."
+        )
+    return resp
 
 
 @router.get("/{ticket_id}/invoice-balance")

@@ -1021,8 +1021,12 @@ export default function SalesTickets() {
     if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
     if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
     try {
-      await api.post(`/api/tickets/${tid}/register-deposit`, body);
-      toast.success("Deposit registered — order queued for packing");
+      const { data } = await api.post(`/api/tickets/${tid}/register-deposit`, body);
+      if (data.warning) {
+        toast(data.warning, { icon: "⚠️", duration: 10000 });
+      } else {
+        toast.success("Deposit registered — order queued for packing");
+      }
       setDepositModal(false);
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
@@ -1528,6 +1532,19 @@ export default function SalesTickets() {
                         )
                       )}
                     </div>
+                    {detail.packing_board_queue_error && (
+                      <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-2.5 py-2">
+                        <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold">Not yet queued for packing</p>
+                          <p className="mt-0.5">{detail.packing_board_queue_error}</p>
+                          <p className="text-red-400 mt-0.5">
+                            Failed {fmtDate(detail.packing_board_queue_failed_at)}
+                            {canManage && " — retry from Admin Override below by selecting In Fulfilment and saving."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                     {detail.is_sample && (
                       <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                         <span className="font-semibold">Sample order</span>
@@ -2925,11 +2942,16 @@ export default function SalesTickets() {
               { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
                 t.exit_status
                   ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
-                  : t.odoo_order_state === "cancel"
+                  : (t.odoo_order_state === "cancel" || t.packing_board_queue_error)
                     ? (
                       <div className="flex flex-col gap-0.5">
                         <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
-                        <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
+                        {t.odoo_order_state === "cancel" && (
+                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
+                        )}
+                        {t.packing_board_queue_error && (
+                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Not Queued</Badge>
+                        )}
                       </div>
                     )
                     : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>

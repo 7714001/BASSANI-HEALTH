@@ -2097,6 +2097,9 @@ The Signing Authority card is visible only to staff who have been granted the `s
 **Q: An order is stuck — how do I move it forward?**  
 Every stage in the pipeline can be overridden by someone with `tickets.manage` permission (typically the super admin or a senior admin). In the Orders Ticket detail, the **Override Stage** dropdown is available to that role and allows setting any status directly. This is the escape hatch for edge cases — use it carefully, as it is audit-logged.
 
+**Q: A deposit was registered but the order never appeared on the packing board (Sales Ticket is stuck at "Awaiting Deposit" with a payment already showing).**  
+This happens if Odoo hadn't yet generated the order's delivery record at the moment the deposit was registered — the deposit itself is unaffected (it's already posted and paid in Odoo), but the packing board card couldn't be created. The ticket shows a red "Not yet queued for packing" notice on its detail page (and a "Not Queued" badge on the Sales Tickets list) explaining why. Once the delivery exists in Odoo, an admin with `tickets.manage` can retry from the Sales Ticket's own **Admin Override** panel: select **In Fulfilment** in the Stage dropdown and save — this re-attempts queueing the packing board rather than just relabelling the ticket. This retry is only available once a deposit has genuinely been registered (or the order is a sample) — it cannot be used to skip the deposit requirement.
+
 **Q: A reseller's commission statement shows the wrong amount.**  
 Resellers can raise a dispute (see Commission section above). Admins should also check the Audit Trail for the generate statement event to see exactly which orders were included in the calculation. Cancelled orders are automatically excluded.
 

@@ -1398,7 +1398,12 @@ async def _confirm_order_core(
         try:
             await _queue_packing_board(order_id, background_tasks)
         except Exception as e:
-            warnings.append(f"Could not queue sample order for packing: {str(e)}")
+            _pb_error = str(e)
+            warnings.append(f"Could not queue sample order for packing: {_pb_error}")
+            await col("tickets").update_one(
+                {"_id": _sales_ticket["_id"]},
+                {"$set": {"packing_board_queue_error": _pb_error, "packing_board_queue_failed_at": datetime.now(timezone.utc)}},
+            )
     elif _sales_ticket:
         try:
             _now_c = datetime.now(timezone.utc)
@@ -1519,11 +1524,17 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     once a 50% deposit has been registered (register-deposit, ticket_routes.py)
     — a confirmed order sits at awaiting_deposit until then. Stock reservations
     are re-read fresh here rather than reused from confirm time, since a deposit
-    can take days to arrive and reservations can shift in that window. Failures
-    are logged and swallowed (non-fatal) — the deposit itself is already
-    registered in Odoo by the time this runs, so a packing-board hiccup here
-    shouldn't be reported back as a failed deposit registration; staff can
-    recover manually via the existing auto-sync path if needed.
+    can take days to arrive and reservations can shift in that window.
+
+    Raises RuntimeError (or lets an Odoo exception propagate) on any failure —
+    most commonly Odoo not having generated the order's delivery yet. Callers
+    must not swallow this silently: register_deposit (ticket_routes.py) keeps
+    the deposit itself successful regardless (it's already committed in Odoo
+    by the time this runs) but persists the failure on the ticket
+    (packing_board_queue_error) so it's visible until someone retries — via
+    the Admin Override "Stage" action (update_ticket_stage, ticket_routes.py),
+    which re-calls this function when moving a ticket to confirmed_wip with no
+    existing packing_board entry for its order.
     """
     odoo = get_odoo_client()
     try:
@@ -1532,11 +1543,12 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
             fields=["name", "partner_id", "picking_ids", "note", "warehouse_id", "amount_total"],
         )
     except Exception as e:
-        logger.warning("queue_packing_board_read_failed", extra={"order_id": order_id, "error": str(e)})
-        return
+        raise RuntimeError(f"Could not read order from Odoo: {e}")
     order_data = rows[0] if rows else None
-    if not order_data or not order_data.get("picking_ids"):
-        return
+    if not order_data:
+        raise RuntimeError("Order not found in Odoo")
+    if not order_data.get("picking_ids"):
+        raise RuntimeError("Odoo has not generated a delivery for this order yet")
 
     sales_ticket = await col("tickets").find_one(
         {"type": "sales", "order_id": order_id, "exit_status": None}
@@ -1574,7 +1586,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     pickings = odoo.read("stock.picking", [picking_id], fields=["name", "origin", "move_ids"])
     picking = pickings[0] if pickings else None
     if not picking:
-        return
+        raise RuntimeError("Delivery record not found in Odoo")
 
     items = []
     if picking.get("move_ids"):
@@ -1656,7 +1668,10 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
         await col("tickets").update_one(
             {"_id": sales_ticket["_id"]},
             {
-                "$set": {"status": "confirmed_wip", "orders_ticket_ref": str(order_id), "updated_at": now},
+                "$set": {
+                    "status": "confirmed_wip", "orders_ticket_ref": str(order_id), "updated_at": now,
+                    "packing_board_queue_error": None, "packing_board_queue_failed_at": None,
+                },
                 "$push": {"stage_history": {
                     "status": "confirmed_wip", "exit_status": None,
                     "actor_id": None, "actor_name": "system",
