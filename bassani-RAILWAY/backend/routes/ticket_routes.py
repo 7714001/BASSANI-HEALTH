@@ -210,7 +210,7 @@ class TicketOrderUpdate(BaseModel):
 
 
 class TicketDepositRegister(BaseModel):
-    invoice_type: str = "fixed"   # 'fixed' | 'percentage' | 'delivered'
+    invoice_type: str = "fixed"   # 'fixed' | 'percentage' — see register_deposit for why 'delivered' was removed (2026-08-11)
     amount: Optional[float] = None   # required for 'fixed'
     percentage: Optional[float] = None  # required for 'percentage', 0 < x <= 100
     date: str           # YYYY-MM-DD
@@ -1391,8 +1391,15 @@ async def register_deposit(
         raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
 
     invoice_type = body.invoice_type or "fixed"
-    if invoice_type not in ("fixed", "percentage", "delivered"):
-        raise HTTPException(status_code=400, detail="invoice_type must be 'fixed', 'percentage', or 'delivered'")
+    if invoice_type not in ("fixed", "percentage"):
+        # 'delivered' (Odoo's advance_payment_method "Regular invoice" — invoice
+        # per the order's own invoice policy) was removed 2026-08-11: every
+        # Bassani product is invoice_policy='delivery', and nothing has been
+        # delivered yet at deposit-registration time (deposit happens before
+        # the order even reaches the packing board) — Odoo can never produce
+        # an invoice for this case, it isn't a portal bug. A customer paying
+        # the full order upfront should use 'fixed' with the full order total.
+        raise HTTPException(status_code=400, detail="invoice_type must be 'fixed' or 'percentage'")
     if invoice_type == "fixed":
         if not body.amount or body.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be positive for a fixed invoice")
@@ -1457,6 +1464,22 @@ async def register_deposit(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
 
+    # Capture invoice_ids before the call so a genuine failure can be told
+    # apart from create_invoices' known XML-RPC response-serialization quirk
+    # (2026-08-11 fix): the action dict it returns can contain None values
+    # the marshaller rejects even though the invoice really was created, but
+    # a real Odoo-side failure (e.g. nothing to invoice yet) also raises here
+    # and previously looked identical — the old code assumed every exception
+    # was the harmless quirk and went hunting for "the new invoice" by
+    # grabbing the highest invoice_id on the order, which on a real failure
+    # meant grabbing an unrelated, already-posted invoice and trying (and
+    # failing) to post it again.
+    try:
+        _before_rows = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+        _invoice_ids_before = set(_before_rows[0].get("invoice_ids", [])) if _before_rows else set()
+    except Exception:
+        _invoice_ids_before = set()
+
     try:
         odoo_call(
             "sale.advance.payment.inv", "create_invoices",
@@ -1464,19 +1487,28 @@ async def register_deposit(
             {"context": ctx},
         )
     except Exception as e:
-        # create_invoices returns an Odoo action dict that may contain None values,
-        # which Odoo's own XML-RPC marshaller rejects. The invoice is still created —
-        # we verify it exists by reading invoice_ids below rather than trusting the return value.
         logger.warning("deposit_create_invoices_response_error",
                        extra={"wizard_id": wizard_id, "error": str(e)})
+        try:
+            _after_rows = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+            _new_ids = set(_after_rows[0].get("invoice_ids", [])) - _invoice_ids_before if _after_rows else set()
+        except Exception:
+            _new_ids = set()
+        if not _new_ids:
+            # No new invoice actually appeared — this was a real failure, not
+            # the serialization quirk. Surface Odoo's real message.
+            raise HTTPException(status_code=502, detail=f"Failed to create deposit invoice in Odoo: {str(e)}")
 
-    # Resolve the new invoice (highest ID among this order's invoices)
+    # Resolve the new invoice — must be one that wasn't already on the order
+    # before this call, never just "the highest ID" (which could be a stale,
+    # already-posted, unrelated invoice).
     try:
         order_data = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
         inv_ids = order_data[0].get("invoice_ids", []) if order_data else []
-        if not inv_ids:
+        new_inv_ids = [i for i in inv_ids if i not in _invoice_ids_before]
+        if not new_inv_ids:
             raise HTTPException(status_code=502, detail="Deposit invoice was not created in Odoo — check Odoo configuration")
-        invoice_id = max(inv_ids)
+        invoice_id = max(new_inv_ids)
         odoo.execute("account.move", "action_post", [invoice_id])
     except HTTPException:
         raise

@@ -2365,9 +2365,8 @@ export default function SalesTickets() {
             <FormGroup label="Invoice Type" required>
               <div className="space-y-2">
                 {[
-                  { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount" },
+                  { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount — use the full order total here if the customer paid in full upfront" },
                   { value: "percentage",label: "Percentage",          desc: "Down payment as % of order total" },
-                  { value: "delivered", label: "Regular Invoice",     desc: "Full invoice for delivered quantities" },
                 ].map(opt => (
                   <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${depositForm.invoice_type === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
                     <input type="radio" name="invoice_type" value={opt.value} checked={depositForm.invoice_type === opt.value}

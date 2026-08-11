@@ -967,7 +967,7 @@ Finance is involved at **two** points in the order pipeline:
 
 1. Open the Sales Ticket (it will be in **Awaiting Deposit** status)
 2. Click **Register Deposit** in the right sidebar
-3. Choose the invoice type — usually **Fixed Amount**, pre-filled at 50% of the order total, but you can enter a different amount if needed
+3. Choose the invoice type — usually **Fixed Amount**, pre-filled at 50% of the order total, but you can enter a different amount if needed (if the customer paid the full order upfront rather than a deposit, use **Fixed Amount** and enter the full order total)
 4. Select the payment journal (which bank account the funds arrived in) and the payment date
 5. Click **Register in Odoo**
 
