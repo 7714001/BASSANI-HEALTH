@@ -3,7 +3,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_permission, ADMIN_ROLES
+from auth import get_current_user, require_permission, ADMIN_ROLES, TICKET_ROLES
 from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
 from database import col, NO_ID
 from middleware.audit import audit_log
@@ -1261,7 +1261,12 @@ async def _require_confirm_access(current_user: dict = Depends(get_current_user)
         return current_user
     if current_user.get("role") == "reseller":
         return current_user
-    if current_user.get("role") not in ADMIN_ROLES:
+    # Matches require_permission()'s role membership check (auth.py) — admin-tier
+    # AND the narrow ticketing roles (sales, etc.) are eligible for the granular
+    # permission check below. This previously checked ADMIN_ROLES alone, which
+    # meant a "sales" user could never confirm an order even with orders.confirm
+    # explicitly granted, since "sales" isn't an admin-tier role.
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
         raise HTTPException(status_code=403, detail="Access denied")
     perms = current_user.get("permissions") or {}
     if perms.get("orders", {}).get("confirm"):
