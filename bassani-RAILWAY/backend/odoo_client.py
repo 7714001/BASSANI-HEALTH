@@ -2,6 +2,9 @@ import xmlrpc.client
 import threading
 import logging
 import time
+import json
+import urllib.parse
+import httpx
 from config import get_settings
 
 settings = get_settings()
@@ -10,6 +13,79 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _uid = None
 _models = None
+
+# ── Report PDF fetch (session-based HTTP, not XML-RPC) ────────────────────
+# Odoo's XML-RPC dispatcher rejects calls to "private" (underscore-prefixed)
+# methods — e.g. ir.actions.report._render_qweb_pdf — with "Private methods
+# ... cannot be called remotely" (hit live 2026-08-14). This was never
+# officially supported; it only ever worked because older Odoo XML-RPC
+# didn't enforce the public/private boundary. There is no public XML-RPC
+# equivalent for fetching a rendered report's PDF bytes — Odoo's own web
+# client fetches reports via a plain authenticated HTTP GET on
+# /report/pdf/<report>/<ids>, which is what this replicates. Kept as a
+# separate session (cookie-based, JSON-RPC login) from the XML-RPC uid used
+# everywhere else in this module.
+_report_session_id = None
+_report_allowed_company_ids = None
+
+def _report_web_authenticate() -> tuple:
+    """Log in via Odoo's web session endpoint and return (session_id,
+    allowed_company_ids). A fresh session's default company context is just
+    the user's single primary company — on this multi-company instance,
+    fetching a report for a record in any other company 403s ("doesn't have
+    'read' access ... multi-company issue") unless every allowed company is
+    explicitly passed back in on each request (see fetch_report_pdf). This is
+    unrelated to the XML-RPC uid's own access rights, which are already
+    correctly multi-company scoped for every other call in this module."""
+    url = settings.odoo_url.rstrip("/")
+    resp = httpx.post(
+        f"{url}/web/session/authenticate",
+        json={
+            "jsonrpc": "2.0", "method": "call",
+            "params": {"db": settings.odoo_db, "login": settings.odoo_username, "password": settings.odoo_password},
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    session_id = resp.cookies.get("session_id")
+    if body.get("error") or not session_id:
+        raise RuntimeError(f"Odoo web session authentication failed: {body.get('error')}")
+    allowed_ids = [int(cid) for cid in (body.get("result") or {}).get("user_companies", {}).get("allowed_companies", {})]
+    return session_id, allowed_ids
+
+def fetch_report_pdf(report_name: str, res_ids: list) -> bytes:
+    """Fetch a QWeb report as PDF bytes via Odoo's report controller.
+    report_name is the report's technical name (ir.actions.report.report_name,
+    e.g. 'sale.report_saleorder_pro_forma') — verify it directly against
+    ir.actions.report if unsure, these have drifted before (2026-08-14: the
+    pro-forma invoice report's name changed from the previously-documented
+    'sale.report_saleorder_pro_forma_invoice' to 'sale.report_saleorder_pro_forma')."""
+    global _report_session_id, _report_allowed_company_ids
+    url = settings.odoo_url.rstrip("/")
+    ids_str = ",".join(str(i) for i in res_ids)
+    ctx = urllib.parse.quote(json.dumps({"allowed_company_ids": _report_allowed_company_ids or []}))
+    report_url = f"{url}/report/pdf/{report_name}/{ids_str}?context={ctx}"
+
+    def _fetch():
+        return httpx.get(report_url, cookies={"session_id": _report_session_id}, timeout=60, follow_redirects=True)
+
+    with _lock:
+        if _report_session_id is None:
+            _report_session_id, _report_allowed_company_ids = _report_web_authenticate()
+        resp = _fetch()
+        if "pdf" not in resp.headers.get("content-type", "").lower():
+            # Session likely expired, or was never valid for this request —
+            # re-authenticate once and retry before giving up.
+            _report_session_id, _report_allowed_company_ids = _report_web_authenticate()
+            resp = _fetch()
+
+    if "pdf" not in resp.headers.get("content-type", "").lower():
+        raise RuntimeError(
+            f"Odoo did not return a PDF report (status {resp.status_code}, "
+            f"content-type {resp.headers.get('content-type')})"
+        )
+    return resp.content
 
 def _connect():
     global _uid, _models

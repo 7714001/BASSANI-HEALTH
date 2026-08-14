@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+import io
 
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type, datetime, timezone
 from auth import get_current_user, require_admin, require_permission
-from odoo_client import get_odoo_client, odoo as odoo_call
+from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
 
@@ -288,6 +290,32 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{invoice_id}/pdf")
+def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_user)):
+    """Odoo's own rendered Invoice PDF (its real template, with payment status),
+    not the portal's own in-browser InvoiceView rendering — for anyone who
+    needs the exact document Odoo itself would produce. Uses
+    account.report_invoice_with_payments, Odoo's default invoice print
+    action for account.move."""
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read("account.move", [invoice_id], fields=["name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    try:
+        pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch invoice PDF from Odoo: {str(e)}")
+    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.post("/")

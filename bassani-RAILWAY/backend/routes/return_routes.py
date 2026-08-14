@@ -5,7 +5,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from auth import require_admin, get_current_user
 from database import col, NO_ID
-from odoo_client import odoo_execute_kw
+from odoo_client import odoo_execute_kw, odoo_search_read, odoo_write, odoo_create
 import uuid
 
 router = APIRouter(prefix="/api/returns", tags=["returns"])
@@ -90,9 +90,28 @@ async def approve_return(return_id: str, current_user: dict = Depends(require_ad
         location_id = _resolve_restock_location(ret["original_order_id"])
         for line in ret["lines"]:
             try:
-                odoo_execute_kw("stock.quant","_update_available_quantity",[[]],{
-                    "product_id": line["product_id"], "location_id": location_id,
-                    "quantity": line["qty_returned"]})
+                # 'stock.quant._update_available_quantity' is a private Odoo
+                # method — blocked from remote calls as of 2026-08-14 ("Private
+                # methods ... cannot be called remotely"), same root cause as
+                # the proforma-invoice fix (odoo_client.py). Same public
+                # pattern product_routes.py's manual stock adjustment already
+                # uses: read (or create) the quant, write the new counted
+                # total, then apply it via the public action_apply_inventory.
+                existing = odoo_search_read(
+                    "stock.quant",
+                    domain=[["product_id", "=", line["product_id"]], ["location_id", "=", location_id]],
+                    fields=["id", "quantity"], limit=1,
+                )
+                new_total = line["qty_returned"] + (existing[0]["quantity"] if existing else 0)
+                if existing:
+                    quant_id = existing[0]["id"]
+                    odoo_write("stock.quant", [quant_id], {"inventory_quantity": new_total})
+                else:
+                    quant_id = odoo_create("stock.quant", {
+                        "product_id": line["product_id"], "location_id": location_id,
+                        "inventory_quantity": new_total,
+                    })
+                odoo_execute_kw("stock.quant", "action_apply_inventory", [[quant_id]])
             except Exception as e:
                 print(f"Stock restore failed for {line['product_name']}: {e}")
 

@@ -12,7 +12,7 @@ import {
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
-  Layers, Archive, PackageCheck, FolderTree, Repeat,
+  Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -741,6 +741,72 @@ export function Modal({ title, onClose, children, width = "max-w-lg" }) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
         <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Full-screen viewer for a PDF fetched live from Odoo (the actual report
+// Odoo itself would print — invoice, quote, delivery slip — not a portal-
+// built rendering). `url` is the backend endpoint to GET as a blob; the
+// component owns its own fetch/loading/error state so callers just render
+// it when a document should be shown. Mirrors DocumentTemplates.js's local
+// PdfViewerModal shape, promoted here since order/invoice views need the
+// same thing for genuinely different documents.
+export function OdooPdfViewerModal({ url, title, onClose }) {
+  const [objectUrl, setObjectUrl] = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(null);
+
+  useEffect(() => {
+    let blobUrl;
+    api.get(url, { responseType: "blob" })
+      .then(r => {
+        blobUrl = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+        setObjectUrl(blobUrl);
+      })
+      .catch(async e => {
+        // axios blob error responses arrive as a Blob, not parsed JSON —
+        // read it back to text to surface the real backend detail message.
+        let detail = "Could not load this document from Odoo.";
+        try {
+          const text = await e.response?.data?.text?.();
+          if (text) detail = JSON.parse(text).detail || detail;
+        } catch { /* keep the generic message */ }
+        setError(detail);
+      })
+      .finally(() => setLoading(false));
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [url]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
+      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2">
+          <FileText size={16} className="text-bassani-600" />
+          <span className="text-sm font-semibold text-gray-800">{title}</span>
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+          <X size={18} />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 p-4">
+        {loading && (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 size={28} className="animate-spin text-bassani-500" />
+          </div>
+        )}
+        {error && (
+          <div className="flex items-center justify-center h-full">
+            <div className="bg-white rounded-xl p-6 text-center shadow max-w-sm">
+              <AlertTriangle size={24} className="text-amber-400 mx-auto mb-2" />
+              <p className="text-sm text-gray-700">{error}</p>
+            </div>
+          </div>
+        )}
+        {objectUrl && (
+          <iframe src={objectUrl} title={title} className="w-full h-full rounded-xl border border-gray-200 bg-white" />
+        )}
       </div>
     </div>
   );

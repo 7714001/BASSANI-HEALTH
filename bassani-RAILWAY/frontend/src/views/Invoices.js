@@ -4,11 +4,12 @@ import bwipjs from "bwip-js";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2 } from "lucide-react";
+import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow,
   Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger,
+  OdooPdfViewerModal,
   fmtR, fmtDate,
 } from "../components/UI";
 
@@ -81,6 +82,7 @@ function BarcodeImg({ text, style }) {
 
 function InvoiceView({ invoice, onClose }) {
   const printRef = useRef();
+  const [odooPdfOpen, setOdooPdfOpen] = useState(false);
 
   const print = () => {
     const content = printRef.current?.innerHTML;
@@ -122,6 +124,10 @@ function InvoiceView({ invoice, onClose }) {
           <p className="text-xs text-gray-400">{invoice.partner_id?.[1]}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setOdooPdfOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg transition-colors">
+            <FileSearch size={13} /> View Original (Odoo)
+          </button>
           <button onClick={print}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-bassani-600 hover:bg-bassani-700 text-white text-xs font-semibold rounded-lg transition-colors">
             <Printer size={13} /> Print / Save PDF
@@ -132,6 +138,13 @@ function InvoiceView({ invoice, onClose }) {
           </button>
         </div>
       </div>
+      {odooPdfOpen && (
+        <OdooPdfViewerModal
+          url={`/api/invoices/${invoice.id}/pdf`}
+          title={`${invoice.name || "Invoice"} — Odoo original`}
+          onClose={() => setOdooPdfOpen(false)}
+        />
+      )}
       <div className="flex-1 overflow-y-auto py-8 px-4">
         <div ref={printRef} className="bg-white shadow-lg mx-auto"
           style={{ width: 794, minHeight: 1123, padding: "48px 48px 40px", fontFamily: "system-ui, sans-serif", fontSize: 12, color: "#111", display: "flex", flexDirection: "column" }}>

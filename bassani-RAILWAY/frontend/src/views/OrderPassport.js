@@ -4,12 +4,12 @@ import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import {
-  ChevronLeft, Package, FileText, Truck,
+  ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, Modal,
-  FormGroup, Input, Select, LoadingState,
+  FormGroup, Input, Select, LoadingState, OdooPdfViewerModal,
 } from "../components/UI";
 
 const fmtR = (n) =>
@@ -247,6 +247,10 @@ export default function OrderPassport() {
   const [data,    setData   ] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Odoo-native PDF viewer — one shared modal for whichever document (quote,
+  // a specific delivery slip) was last requested.
+  const [pdfView, setPdfView] = useState(null); // {url, title} | null
+
   // Create ticket
   const [creatingTicket,      setCreatingTicket     ] = useState(false);
   const [ticketPreflightModal, setTicketPreflightModal] = useState(null);
@@ -426,9 +430,14 @@ export default function OrderPassport() {
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
           <ChevronLeft size={14} />Back
         </button>
-        <BtnSecondary onClick={load}>
-          <RefreshCw size={13} />Refresh
-        </BtnSecondary>
+        <div className="flex items-center gap-2">
+          <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Odoo quote` })}>
+            <FileSearch size={13} />View Quote (Odoo)
+          </BtnSecondary>
+          <BtnSecondary onClick={load}>
+            <RefreshCw size={13} />Refresh
+          </BtnSecondary>
+        </div>
       </div>
 
       {/* Body */}
@@ -707,6 +716,12 @@ export default function OrderPassport() {
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${colour}`}>
                           {d.state_label}
                         </span>
+                        <button
+                          onClick={() => setPdfView({ url: `/api/orders/${orderId}/deliveries/${d.id}/pdf`, title: `${d.name} — Odoo delivery slip` })}
+                          className="flex items-center gap-1 text-[10px] font-semibold text-bassani-600 hover:text-bassani-700"
+                        >
+                          <FileSearch size={11} />Slip
+                        </button>
                         {d.date_done && (
                           <span className="text-xs text-gray-400 ml-auto">Delivered {fmtDate(d.date_done)}</span>
                         )}
@@ -927,6 +942,9 @@ export default function OrderPassport() {
             </>
           )}
         </Modal>
+      )}
+      {pdfView && (
+        <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
       )}
     </div>
   );

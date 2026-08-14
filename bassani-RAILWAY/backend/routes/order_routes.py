@@ -1,10 +1,12 @@
 import logging
+import io
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from auth import get_current_user, require_permission, ADMIN_ROLES, TICKET_ROLES
-from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call
+from odoo_client import get_odoo_client, OdooClient, odoo as odoo_call, fetch_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, company_context
@@ -589,6 +591,65 @@ async def get_order_deliveries(
         })
 
     return {"deliveries": result, "has_backorder": has_backorder, "count": len(result)}
+
+
+@router.get("/{order_id}/quote-pdf")
+async def get_order_quote_pdf(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Odoo's own rendered Quotation/Sale Order PDF (its real template) —
+    uses sale.report_saleorder, Odoo's default "PDF Quote" print action for
+    sale.order. Accepts an Odoo integer ID or a sale.order name (e.g. S00602),
+    same as /deliveries above."""
+    odoo = get_odoo_client()
+    try:
+        resolved_id = _order_int_id(odoo, order_id)
+        rows = odoo.read("sale.order", [resolved_id], fields=["name"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    try:
+        pdf_bytes = fetch_report_pdf("sale.report_saleorder", [resolved_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch quote PDF from Odoo: {str(e)}")
+    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/{order_id}/deliveries/{picking_id}/pdf")
+async def get_delivery_pdf(order_id: str, picking_id: int, current_user: dict = Depends(get_current_user)):
+    """Odoo's own rendered Delivery Slip PDF for one picking on this order —
+    uses stock.report_deliveryslip, Odoo's default delivery print action for
+    stock.picking. order_id is only used to confirm the picking actually
+    belongs to this order, so a stray picking_id can't be probed directly."""
+    odoo = get_odoo_client()
+    try:
+        resolved_id = _order_int_id(odoo, order_id)
+        rows = odoo.read("stock.picking", [picking_id], fields=["name", "sale_id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+    _sale_id = rows[0].get("sale_id")
+    if not _sale_id or _sale_id[0] != resolved_id:
+        raise HTTPException(status_code=404, detail="That delivery does not belong to this order")
+    try:
+        pdf_bytes = fetch_report_pdf("stock.report_deliveryslip", [picking_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch delivery slip PDF from Odoo: {str(e)}")
+    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.get("/{order_id}/manufacturing-orders")
@@ -1516,13 +1577,13 @@ async def _confirm_order_core(
             if not _customer_email:
                 warnings.append("Customer has no email on file — proforma invoice was not sent")
             else:
-                _pdf_result = odoo.execute(
-                    "ir.actions.report", "_render_qweb_pdf",
-                    "sale.report_saleorder_pro_forma_invoice", [order_id],
-                )
-                _pdf_bytes = _pdf_result[0]
-                if hasattr(_pdf_bytes, "data"):
-                    _pdf_bytes = _pdf_bytes.data
+                # 'sale.report_saleorder_pro_forma' — NOT '..._pro_forma_invoice'
+                # (2026-08-14, live-verified: the report's own technical name
+                # changed on this Odoo version). Fetched via fetch_report_pdf's
+                # session-based HTTP path, not XML-RPC — Odoo now rejects
+                # calling ir.actions.report._render_qweb_pdf (a private method)
+                # remotely; see odoo_client.py for the full writeup.
+                _pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [order_id])
                 _reseller_email_cc = None
                 if _ticket_reseller_id:
                     _res_email_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, {"email": 1, "_id": 0})
