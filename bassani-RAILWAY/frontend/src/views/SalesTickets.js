@@ -2612,6 +2612,9 @@ export default function SalesTickets() {
             </div>
           </Modal>
         )}
+        {pdfView && (
+          <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
+        )}
       </div>
     );
   }
@@ -3152,9 +3155,6 @@ export default function SalesTickets() {
             <BtnPrimary onClick={createTicket} loading={creating}>Create Ticket</BtnPrimary>
           </div>
         </Modal>
-      )}
-      {pdfView && (
-        <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
       )}
     </div>
   );
