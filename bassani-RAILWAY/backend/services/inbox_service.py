@@ -3,12 +3,14 @@ Shared inbox logic — parameterised by collection name and mailbox slug.
 Used by both sales_inbox and onboarding_inbox routes so they share
 identical ingest, thread-grouping, and read-state logic without duplication.
 """
+import asyncio
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 from bson import Binary as BsonBinary, ObjectId
 
 from database import col
@@ -170,6 +172,30 @@ def build_list_pipeline(match: dict, skip: int, limit: int) -> list:
 
 # ── Graph message ingest ──────────────────────────────────────────────────────
 
+async def _fetch_message_with_404_retry(fetch_fn, graph_message_id: str, mailbox_address: str):
+    """A message-created webhook can fire before Microsoft Graph's own backend
+    has finished indexing the message for GET-by-ID — a real, observed race
+    (2026-08-14: inbox_graph_fetch_failed 404-ing on brand-new messages,
+    permanently dropping them since the old code never retried at all). Only
+    404 is retried here, with backoff; anything else (auth, 5xx, genuinely
+    deleted) still fails immediately. Safe to take a few seconds — this only
+    ever runs inside a FastAPI background task, after the webhook's required
+    fast ack has already been sent. The periodic reconciliation sweep would
+    eventually catch a message lost here anyway, but only up to 30 minutes
+    later; this keeps near-real-time delivery working for the common case."""
+    delays = (2, 5, 10)
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            return await fetch_fn(graph_message_id, mailbox_address=mailbox_address)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is None or exc.response.status_code != 404:
+                raise
+            logger.warning("inbox_graph_fetch_404_retry gid=%s attempt=%d/%d",
+                           graph_message_id, attempt, len(delays) + 1)
+            await asyncio.sleep(delay)
+    return await fetch_fn(graph_message_id, mailbox_address=mailbox_address)  # final attempt — let it raise
+
+
 async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: str) -> None:
     """Fetch one Graph message and persist it to the given collection. Idempotent."""
     from services.graph_client import get_message, list_attachments, get_attachment_content, mark_as_read
@@ -190,7 +216,7 @@ async def ingest_graph_message(collection: str, mailbox: str, graph_message_id: 
         return
 
     try:
-        msg = await get_message(graph_message_id, mailbox_address=mailbox_address)
+        msg = await _fetch_message_with_404_retry(get_message, graph_message_id, mailbox_address)
     except Exception as exc:
         logger.error("inbox_graph_fetch_failed mailbox=%s gid=%s error=%s",
                      mailbox, graph_message_id, exc)

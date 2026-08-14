@@ -2852,6 +2852,11 @@ Three architectural gaps identified after Graph API went live:
 - [x] Graph poll and startup catchup changed from `isRead eq false` to `receivedDateTime ge {72h_cutoff}` — matching IMAP's 72-hour window so full history syncs on first connect
 - [x] `mailbox_address` returned by both `list_inbox` endpoints and displayed in TopBar subtitle of SalesInbox and OnboardingInbox
 
+**11.4.4 — Retry the webhook-triggered message fetch on 404 (2026-08-14)** — *Complete*
+- [x] Found via a live Sentry error (`inbox_graph_fetch_failed mailbox=sales ... 404 Not Found`) on a message that genuinely existed — the `created` webhook had fired before Microsoft Graph's own backend had finished indexing the message for `GET /messages/{id}`, a documented Graph race condition. `ingest_graph_message()`'s fetch previously caught *any* exception and just logged + dropped the message permanently, with no retry at all.
+- [x] `inbox_service.py`: new `_fetch_message_with_404_retry()` — retries specifically on a 404 response (2s/5s/10s backoff, ~4 attempts total), re-raises immediately for anything else (auth failure, 5xx, a message genuinely deleted before ingest). Confirmed safe to spend a few seconds here: `ingest_graph_message()` only ever runs inside a FastAPI `background_tasks` call, dispatched *after* the webhook handler has already sent Microsoft's required fast `202` ack — verified by reading the actual request flow in `inbox_routes.py`, not assumed.
+- [x] Applies to all three mailboxes (Sales, Onboarding, Orders) automatically, since all three share this one ingest function. Without this fix, a message lost to the race was only ever rescued by the 30-minute periodic reconciliation sweep (11.4's catch-up window) — this closes the gap for the common case instead of relying on that as the only safety net.
+
 ---
 
 ### 11.5 — Sales Ticket Integration
