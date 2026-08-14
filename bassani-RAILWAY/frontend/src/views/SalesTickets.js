@@ -15,12 +15,12 @@ import {
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
-  Download, RotateCcw, FileX, ReceiptText, Repeat,
+  Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
-  SearchBar, ChipRow, FilterPill, parseDisplayName,
+  SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -142,6 +142,12 @@ export default function SalesTickets() {
   const canFinance      = can("tickets.finance_confirm");
   const canManage       = can("tickets.manage");
   const canConfirmOrder = can("orders.confirm") || isReseller;
+
+  // Odoo-native PDF viewer — one shared modal for whichever document (the
+  // real Odoo SO/quote, the real Odoo invoice) was last requested. Staff
+  // only — invoice detail is already hidden from resellers elsewhere on
+  // this page, kept consistent here.
+  const [pdfView, setPdfView] = useState(null); // {url, title} | null
 
   // ── List state ────────────────────────────────────────────────────────────
   const [view, setView]       = useState("list"); // "list" | "detail" | "quote-builder"
@@ -1641,8 +1647,30 @@ export default function SalesTickets() {
                           )}
                         </>
                       )}
-                      {detail.order_id   && <p className="text-xs text-gray-400">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</p>}
-                      {!isReseller && detail.invoice_id && <p className="text-xs text-gray-400">Invoice #{detail.invoice_id}</p>}
+                      {detail.order_id && (
+                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                          {isReseller ? "Order" : "Odoo SO"} #{detail.order_id}
+                          {!isReseller && (
+                            <button
+                              onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `SO #${detail.order_id} — Odoo original` })}
+                              className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-medium"
+                            >
+                              <FileSearch size={10} />View
+                            </button>
+                          )}
+                        </p>
+                      )}
+                      {!isReseller && detail.invoice_id && (
+                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                          Invoice #{detail.invoice_id}
+                          <button
+                            onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
+                            className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-medium"
+                          >
+                            <FileSearch size={10} />View
+                          </button>
+                        </p>
+                      )}
                       {!isReseller && detail.credit_note_name && (
                         <p className="text-xs text-orange-600 flex items-center gap-1.5">
                           <FileX size={11} />Credit note {detail.credit_note_name}
@@ -3124,6 +3152,9 @@ export default function SalesTickets() {
             <BtnPrimary onClick={createTicket} loading={creating}>Create Ticket</BtnPrimary>
           </div>
         </Modal>
+      )}
+      {pdfView && (
+        <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
       )}
     </div>
   );

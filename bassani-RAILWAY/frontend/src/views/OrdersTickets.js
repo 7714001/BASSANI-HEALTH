@@ -13,11 +13,12 @@ import toast from "react-hot-toast";
 import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
+  OdooPdfViewerModal,
 } from "../components/UI";
 
 // canvas → PNG data URL so the barcode survives innerHTML → new window print copy
@@ -82,6 +83,7 @@ export default function OrdersTickets() {
   // ── Detail state ────────────────────────────────────────────────────────────
   const [detail, setDetail]               = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [pdfView, setPdfView]             = useState(null); // {url, title} | null — Odoo-native PDF viewer
   const [busyId, setBusyId]               = useState(null);
   const [incompleteModal, setIncompleteModal]   = useState(false);
   const [incompleteReason, setIncompleteReason] = useState("");
@@ -464,7 +466,17 @@ export default function OrdersTickets() {
                           <h2 className="text-2xl font-bold tracking-tight text-gray-900">
                             {(STATUS_LABEL[detail.status] || detail.status).toUpperCase()}
                           </h2>
-                          <p className="text-sm font-mono text-gray-400 mt-0.5">{detail.ps_num}</p>
+                          <p className="text-sm font-mono text-gray-400 mt-0.5 flex items-center gap-2">
+                            {detail.ps_num}
+                            {detail.order_id && (
+                              <button
+                                onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `${detail.ps_num} — Odoo original` })}
+                                className="flex items-center gap-0.5 text-[11px] font-sans font-semibold text-bassani-600 hover:text-bassani-700"
+                              >
+                                <FileSearch size={11} />View
+                              </button>
+                            )}
+                          </p>
                         </div>
                         <div className="text-right">
                           <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>
@@ -486,15 +498,35 @@ export default function OrdersTickets() {
                         </div>
                         <div className="space-y-1.5">
                           {detail.inv_num && (
-                            <div className="flex justify-between text-xs">
+                            <div className="flex justify-between items-center text-xs">
                               <span className="text-gray-400 uppercase font-semibold tracking-wide">Invoice</span>
-                              <span className="font-mono text-gray-700">{detail.inv_num}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-mono text-gray-700">{detail.inv_num}</span>
+                                {detail.invoice_id && (
+                                  <button
+                                    onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `${detail.inv_num} — Odoo original` })}
+                                    className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-semibold"
+                                  >
+                                    <FileSearch size={11} />View
+                                  </button>
+                                )}
+                              </span>
                             </div>
                           )}
                           {detail.dn_num && (
-                            <div className="flex justify-between text-xs">
+                            <div className="flex justify-between items-center text-xs">
                               <span className="text-gray-400 uppercase font-semibold tracking-wide">DN</span>
-                              <span className="font-mono text-gray-700">{detail.dn_num}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-mono text-gray-700">{detail.dn_num}</span>
+                                {detail.order_id && detail.odoo_picking_id && (
+                                  <button
+                                    onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/deliveries/${detail.odoo_picking_id}/pdf`, title: `${detail.dn_num} — Odoo original` })}
+                                    className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-semibold"
+                                  >
+                                    <FileSearch size={11} />View
+                                  </button>
+                                )}
+                              </span>
                             </div>
                           )}
                           <div className="flex justify-between items-center text-xs gap-2">
@@ -1038,6 +1070,9 @@ export default function OrdersTickets() {
               <BtnDanger onClick={doPurgeOrder}>Permanently Delete</BtnDanger>
             </div>
           </Modal>
+        )}
+        {pdfView && (
+          <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
         )}
       </div>
     );
