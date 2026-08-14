@@ -312,98 +312,6 @@ export default function OrdersTickets() {
   };
 
 
-  // ── Packing slip print ──────────────────────────────────────────────────────
-  // Generates barcode inline (no DOM ref / timing dependency) by calling bwip-js
-  // directly and converting the canvas to a data URL before writing the window.
-  // Async so we can fetch lot/batch assignments from Odoo before rendering.
-  const printSlip = async () => {
-    if (!detail) return;
-
-    let barcodeHtml = "";
-    if (detail.ps_num) {
-      const canvas = document.createElement("canvas");
-      try {
-        bwipjs.toCanvas(canvas, {
-          bcid: "code128", text: detail.ps_num, scale: 2, height: 12,
-          includetext: true, textxalign: "center", padding: 2, backgroundcolor: "ffffff",
-        });
-        barcodeHtml = `<img src="${canvas.toDataURL("image/png")}" alt="${detail.ps_num}" style="display:block;max-height:52px;margin-left:auto" />`;
-      } catch {}
-    }
-
-    // Fetch lot/batch assignments — best-effort, non-blocking on failure
-    let lotMap = {};
-    if (detail.order_id) {
-      try {
-        const { data } = await api.get(`/api/orders/${detail.order_id}`);
-        lotMap = data.lot_map || {};
-      } catch {}
-    }
-
-    const itemRows = (detail.items || []).map(item => {
-      const lots = item.product_id && lotMap[item.product_id] ? lotMap[item.product_id] : [];
-      const lotHtml = lots.length > 0
-        ? `<div style="font-size:9.5px;color:#6b7280;font-family:monospace;margin-top:2px">Batch: ${lots.join(", ")}</div>`
-        : "";
-      return `
-      <tr>
-        <td>${item.name || item.sku || ""}${lotHtml}</td>
-        <td style="font-size:10px;color:#888;font-family:monospace">${item.sku || ""}</td>
-        <td class="r">${item.qty_ordered ?? item.qty ?? "—"}</td>
-        <td class="r">${item.qty_reserved ?? "—"}</td>
-        <td class="r">${detail.item_ticks?.[item.sku] ? "✓" : ""}</td>
-      </tr>`;
-    }).join("");
-
-    const metaRows = [
-      ["Order Ref", detail.ps_num],
-      ["Invoice", detail.inv_num || "—"],
-      ["Delivery Note", detail.dn_num || "—"],
-      ["Warehouse", detail.warehouse_name || "—"],
-      ["Packer", detail.packer_name || "Unassigned"],
-      ["Status", STATUS_LABEL[detail.status] || detail.status],
-    ].map(([k, v]) => `<div style="margin-bottom:4px"><span style="font-size:9px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px">${k}</span><br/><span style="font-size:12px;font-weight:600">${v}</span></div>`).join("");
-
-    const win = window.open("", "_blank", "width=900,height=1200");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
-      <title>Packing Slip ${detail.ps_num || ""}</title>
-      <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:12px;color:#111;background:#fff}.page{width:794px;min-height:1123px;margin:0 auto;padding:48px;display:flex;flex-direction:column}table{width:100%;border-collapse:collapse}thead th{font-size:10px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid #e5e7eb;text-align:left}thead th.r,td.r{text-align:center}tbody td{padding:9px 6px;border-bottom:1px solid #f3f4f6;font-size:11.5px;color:#333}</style>
-      </head><body><div class="page">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px">
-          <div>
-            <img src="/logo.png" alt="Bassani Health" style="height:40px" onerror="this.style.display='none';this.nextSibling.style.display='block'" /><div style="display:none;font-size:20px;font-weight:800;color:#0f6e56">BASSANI HEALTH</div>
-            <div style="margin-top:8px"><p style="font-size:12px;font-weight:700">Bassani Health (PTY) LTD</p><p style="font-size:11px;color:#666">VAT NO: 4430323131</p></div>
-          </div>
-          <div style="text-align:right">
-            <p style="font-size:20px;font-weight:800;margin-bottom:8px">PACKING SLIP</p>
-            ${barcodeHtml}
-          </div>
-        </div>
-        <div style="margin-bottom:24px">
-          <p style="font-size:9px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.5px;margin-bottom:4px">Customer</p>
-          <p style="font-size:16px;font-weight:700">${detail.customer_name || "—"}</p>
-          ${detail.reseller_name ? `<p style="font-size:11px;color:#6d28d9">via ${detail.reseller_name}</p>` : ""}
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:12px 0;margin-bottom:28px">${metaRows}</div>
-        <table>
-          <thead><tr>
-            <th>Description</th>
-            <th>SKU</th>
-            <th class="r">Ordered</th>
-            <th class="r">Reserved</th>
-            <th class="r">Packed ✓</th>
-          </tr></thead>
-          <tbody>${itemRows}</tbody>
-        </table>
-        <div style="margin-top:auto;padding-top:24px;border-top:1px solid #e5e7eb;font-size:10px;color:#888">
-          <p>Payment is due upon collection. &nbsp; 4 days to collect orders once ready.</p>
-        </div>
-      </div></body></html>`);
-    win.document.close();
-    win.focus();
-    setTimeout(() => { win.print(); win.close(); }, 400);
-  };
-
   const doPurgeOrder = async () => {
     setPurgeConfirm(false);
     setPurging(true);
@@ -436,8 +344,10 @@ export default function OrdersTickets() {
                   {purging ? "Purging…" : "Purge Test Data"}
                 </BtnDanger>
               )}
-              {detail && (
-                <BtnSecondary onClick={printSlip}>
+              {detail && detail.order_id && detail.odoo_picking_id && (
+                <BtnSecondary
+                  onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/deliveries/${detail.odoo_picking_id}/pdf`, title: `${detail.dn_num || detail.ps_num} — Odoo original` })}
+                >
                   <Printer size={14} /> Print Packing Slip
                 </BtnSecondary>
               )}
