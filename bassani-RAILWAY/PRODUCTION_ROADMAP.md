@@ -2125,6 +2125,32 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.55 — Merge Approve + Send Welcome Pack, Fix Attachment Preview — Complete 2026-08-18
+
+**Goal:** Once NDA + SOA are both countersigned, approving the application (creating the Odoo customer) and sending the welcome pack email were two separate manual actions/clicks. Product owner asked for a single **Approve & Send Welcome Pack** action that does both. Separately, the welcome pack compose modal's attachment preview was misleading — it only ever showed the two countersigned Bassani-sig docs plus one fake "Bassani Health Welcome Pack.pdf" placeholder line, never the CIF/CIPC/ID+S21 docs or the real per-slot welcome-pack filenames the backend actually attaches.
+
+**Context:** The two actions were already gated on the identical precondition (all Bassani-sig docs countersigned), so there was no real reason for them to be separate clicks in the normal flow. Inbox-sourced (`awaiting_docs`) applications never go through the portal welcome-pack flow at all (their docs arrive by email) and keep their own plain approve action, unaffected by this change.
+
+- [x] `backend/routes/onboarding_routes.py` — `approve_application` and `send_welcome_pack` route bodies extracted into `_approve_application_impl()` / `_send_welcome_pack_impl()`, called by thin `@router.put`/`@router.post` wrappers so the two original standalone endpoints behave identically to before.
+- [x] `backend/routes/onboarding_routes.py` — new `PUT /{app_id}/approve-and-send-welcome-pack` (`ApproveAndSendWelcomePackBody{company_name?, message, subject?}`): runs approval first (the harder-to-reverse step — creates the Odoo customer + `customer_ownership` record), then the welcome pack send. If the send fails after approval succeeded, the exception is caught and returned as `{success, odoo_partner_id, welcome_pack_sent: false, welcome_pack_error}` rather than raising — the approval is **not** rolled back (same non-blocking-failure convention as `_queue_packing_board`'s `packing_board_queue_error`).
+- [x] `backend/routes/onboarding_routes.py` — new shared `_welcome_pack_doc_attachments(app)` helper (every onboarding doc with an `r2_key`, with resolved label) used by both the real send and the new preview endpoint, so they can never diverge.
+- [x] `backend/routes/onboarding_routes.py` — new `GET /{app_id}/welcome-pack-preview`: returns the exact documents list (label, filename, countersigned status) plus the real active welcome-pack bundle filenames (`get_active_bundle_files("welcome_pack")`) — the true attachment list, not a client-side guess.
+- [x] `frontend/src/views/CustomerApplicationDetail.js` — `WelcomePackModal` takes a `mode` prop (`"approve"` merged action / `"send"` retry-only), fetches `GET /welcome-pack-preview` on open and renders the real documents + bundle-file list (with a loading state and an empty-state warning if nothing resolves), instead of the old `BASSANI_SIG_TYPES`-filtered guess. In `"approve"` mode it also shows the reseller-linkage/commission blurb that used to live in a separate "Confirm Approval" modal — that modal is now only used for the plain-approve paths (inbox-sourced apps, and legacy in-flight apps where the pack was already sent under the old separate-steps order).
+- [x] `frontend/src/views/CustomerApplicationDetail.js` — `ActionsCard`'s actionable section now shows a single **Approve & Send Welcome Pack** button once signing is complete and countersigned (replacing the old separate "Approve & Create Customer" + "Send Welcome Pack" buttons), calling the merged endpoint via the compose modal. The "Decision" card (shown once approved) gained a **Send Welcome Pack** retry button for the one failure case: approved, still countersigned, but `welcome_pack_sent_at` unset.
+- [x] `frontend/src/views/CustomerApplicationDetail.js` — the Decision card also gained a **View Customer Profile** button (`navigate('/customers/{odoo_partner_id}')`, same route/param `PartnerDirectory.js`/`Views.js`'s Customers table already link through) for any approved application, so staff can jump straight to the customer 360 profile the approval created instead of navigating to Customers and searching by name. Both approve paths (`approve()` for the plain/legacy flow, `sendWelcomePack()`'s `"approve"` mode for the merged flow) now store `odoo_partner_id` from the approval response onto local `app` state so the button appears immediately without a page refresh.
+
+**Key decision:** approval runs before the send, not after, because it's the harder-to-reverse and more load-bearing of the two (it creates the live Odoo customer record) — a failed welcome pack send is recoverable via the retry button, whereas rolling back a just-created Odoo customer to retry in a different order is not something the portal attempts.
+
+### Definition of Done
+- [x] With NDA + SOA countersigned, a single **Approve & Send Welcome Pack** button creates the Odoo customer and sends the welcome pack email in one action
+- [x] If the welcome pack send fails after approval succeeds, the application is left approved (not rolled back) with a visible retry action
+- [x] Inbox-sourced (`awaiting_docs`) applications keep the plain **Approve & Create Customer** action, unaffected by the merge
+- [x] The compose-modal attachment preview shows every document and welcome-pack file the backend will actually attach — CIF, supporting ID/CIPC doc(s), countersigned NDA/SOA, and the real slot filenames — sourced from the same backend call the real send uses
+- [x] The two original standalone endpoints (`/approve`, `/send-welcome-pack`) are unchanged in behaviour, now implemented via shared `_impl` functions
+- [x] An approved application's Decision card shows a **View Customer Profile** button linking directly to `/customers/{odoo_partner_id}`
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.

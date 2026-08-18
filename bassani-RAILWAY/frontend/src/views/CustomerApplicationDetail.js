@@ -814,16 +814,32 @@ function TimelineCard({ app, docs, signingSession }) {
 
 // ── Welcome pack compose modal ─────────────────────────────────────────────────
 
-function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
-  const companyName   = app.company_name || app.contact_name || "Customer";
+// mode: "approve" — merged Approve & Send Welcome Pack (application not yet approved)
+//       "send"    — welcome pack only (already approved, e.g. a retry after a prior failed send)
+function WelcomePackModal({ app, mode = "send", onSend, sending, onClose }) {
   const defaultSubject = "Welcome to Bassani Health";
   const defaultBody    = `Dear Valued Partner,\n\nThank you for onboarding with Bassani Health. You will find attached:\n\n- A Help Me Budget spreadsheet to work out your order\n- Your welcome letter\n- Our latest price list\n- Our product brochure\n\nLooking forward to a successful and prosperous business partnership.\n\nBest regards,\nThe Bassani Sales Team`;
-  const [subject, setSubject] = useState(defaultSubject);
-  const [message, setMessage] = useState(defaultBody);
+  const [subject, setSubject]           = useState(defaultSubject);
+  const [message, setMessage]           = useState(defaultBody);
+  const [preview, setPreview]           = useState(null); // { documents, bundle_files }
+  const [previewLoading, setPreviewLoading] = useState(true);
 
-  const countersignedDocs = (docs || []).filter(
-    d => d.signed_in_portal && BASSANI_SIG_TYPES.has(d.doc_type) && d.countersigned_at
-  );
+  const isApproveMode = mode === "approve";
+  const actionLabel   = isApproveMode ? "Approve & Send Welcome Pack" : "Send Welcome Pack";
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewLoading(true);
+    api.get(`/api/onboarding/${app.id}/welcome-pack-preview`)
+      .then(r => { if (!cancelled) setPreview(r.data); })
+      .catch(() => { if (!cancelled) setPreview(null); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [app.id]);
+
+  const documents   = preview?.documents || [];
+  const bundleFiles = preview?.bundle_files || [];
+  const totalCount  = documents.length + bundleFiles.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -833,7 +849,7 @@ function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-2">
             <Send size={15} className="text-teal-600" />
-            <span className="text-sm font-bold text-gray-900">Send Welcome Pack</span>
+            <span className="text-sm font-bold text-gray-900">{actionLabel}</span>
           </div>
           <button onClick={onClose} disabled={sending} className="text-gray-400 hover:text-gray-700 transition-colors">
             <X size={18} />
@@ -843,10 +859,33 @@ function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
         {/* Compose fields */}
         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
 
+          {isApproveMode && (
+            <div className="px-5 py-3">
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Sending will create a customer account for{" "}
+                <strong>{app.company_name || app.contact_name || "this applicant"}</strong> in the system, then
+                immediately send the welcome pack below.
+              </p>
+              {app.reseller_name ? (
+                <div className="mt-2.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-blue-800">Reseller-referred application</p>
+                  <p className="text-[11px] text-blue-700">
+                    This customer will be linked to the <strong>{app.reseller_name}</strong> reseller account, and
+                    commission statements (if enabled) will be generated automatically from this customer's order turnover.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-2.5 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+                  <p className="text-[11px] text-gray-500">Direct application — no reseller is linked.</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* From */}
           <div className="flex items-center gap-4 px-5 py-3">
             <span className="text-xs font-semibold text-gray-400 w-14 shrink-0 text-right">From</span>
-            <span className="text-sm text-gray-500 truncate">{user?.name || "Bassani Health"} via Bassani Health onboarding</span>
+            <span className="text-sm text-gray-500 truncate">Bassani Health onboarding</span>
           </div>
 
           {/* To */}
@@ -876,26 +915,44 @@ function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
             placeholder="Write your message to the customer…"
           />
 
-          {/* Attachments */}
+          {/* Attachments — the exact list the backend will attach, fetched live so this can never drift from reality */}
           <div className="px-5 py-4 bg-gray-50">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
-              Attachments ({countersignedDocs.length + 1})
+              Attachments {!previewLoading && `(${totalCount})`}
             </p>
-            <div className="space-y-1.5">
-              {countersignedDocs.map(d => (
-                <div key={d.doc_type} className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
-                  <FileText size={13} className="text-bassani-500 shrink-0" />
-                  <span className="text-xs font-medium text-gray-700 flex-1">{d.label || d.doc_type}</span>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 rounded px-1.5 py-0.5">
-                    <CheckCircle size={9} /> Countersigned
-                  </span>
-                </div>
-              ))}
-              <div className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
-                <FileText size={13} className="text-teal-500 shrink-0" />
-                <span className="text-xs font-medium text-gray-700">Bassani Health Welcome Pack.pdf</span>
+            {previewLoading ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                <Loader2 size={13} className="animate-spin" /> Loading attachment list…
               </div>
-            </div>
+            ) : totalCount === 0 ? (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+                <AlertTriangle size={13} className="text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-700">
+                  No attachments could be resolved. Check that onboarding documents and an active welcome pack
+                  template are in place before sending.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {documents.map(d => (
+                  <div key={d.doc_type} className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+                    <FileText size={13} className="text-bassani-500 shrink-0" />
+                    <span className="text-xs font-medium text-gray-700 flex-1">{d.label || d.doc_type}</span>
+                    {d.countersigned_at && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 rounded px-1.5 py-0.5">
+                        <CheckCircle size={9} /> Countersigned
+                      </span>
+                    )}
+                  </div>
+                ))}
+                {bundleFiles.map((f, i) => (
+                  <div key={`bundle-${i}`} className="flex items-center gap-2.5 bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+                    <FileText size={13} className="text-teal-500 shrink-0" />
+                    <span className="text-xs font-medium text-gray-700">{f.filename}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -904,11 +961,11 @@ function WelcomePackModal({ app, docs, user, onSend, sending, onClose }) {
           <BtnSecondary onClick={onClose} disabled={sending}>Cancel</BtnSecondary>
           <button
             onClick={() => onSend(subject, message)}
-            disabled={sending || !message.trim()}
+            disabled={sending || !message.trim() || previewLoading || totalCount === 0}
             className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
           >
             {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            Send Welcome Pack
+            {actionLabel}
           </button>
         </div>
       </div>
@@ -949,17 +1006,44 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
   const sessionGenerated = signingSession && !signingSession.expired && signingSession.status === "generated";
   const sessionActive    = sessionSent || sessionGenerated;
 
+  // Once approved, docs remain countersigned — if the welcome pack somehow
+  // never went out (e.g. the merged action's send step failed), offer a
+  // retry rather than leaving no path back to it.
+  const canRetryWelcomePack = canApprove && app.status === "approved" && allCountersigned && !app.welcome_pack_sent_at;
+
   if (!isActionable) {
     return (
       <Card title="Decision">
         <MetaRow label="Outcome"     value={STATUS_CFG[deriveStatus(app, docs, signingSession)]?.label} />
         <MetaRow label="Reviewed by" value={app.reviewed_by} />
         <MetaRow label="Reviewed on" value={app.reviewed_at ? fmtDate(app.reviewed_at) : null} />
+        {app.status === "approved" && app.odoo_partner_id && (
+          <button onClick={() => navigate(`/customers/${app.odoo_partner_id}`)}
+            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-bassani-50 hover:bg-bassani-100 text-bassani-700 text-sm font-semibold rounded-xl transition-colors border border-bassani-200">
+            <User size={14} />
+            View Customer Profile
+          </button>
+        )}
         {app.rejection_reason && (
           <div className="mt-3 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
             <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1">Rejection Reason</p>
             <p className="text-xs text-red-700">{app.rejection_reason}</p>
           </div>
+        )}
+        {app.welcome_pack_sent_at && (
+          <div className="mt-3 flex items-center gap-2 bg-green-50 border border-green-100 rounded-xl px-3 py-2">
+            <CheckCircle size={13} className="text-green-600 shrink-0" />
+            <p className="text-xs text-green-700 font-medium">
+              Welcome pack sent{app.welcome_pack_sent_by ? ` by ${app.welcome_pack_sent_by}` : ""}
+            </p>
+          </div>
+        )}
+        {canRetryWelcomePack && (
+          <button onClick={() => onSendWelcomePack("send")}
+            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl transition-colors">
+            <Send size={14} />
+            Send Welcome Pack
+          </button>
         )}
       </Card>
     );
@@ -1148,7 +1232,10 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
                 <p className="text-xs text-gray-500">Awaiting signing documents to be sent to customer.</p>
               </div>
             )
-          ) : canApprove && (
+          ) : canApprove && (isAwaitingDocs || app.welcome_pack_sent_at) ? (
+            // Plain approve: either an inbox-sourced app (no portal welcome-pack
+            // flow at all) or a legacy in-flight app where the welcome pack was
+            // already sent under the old separate-steps order — nothing left to merge.
             <button
               onClick={() => setApproveConfirm(true)}
               disabled={loading || needsCountersign || (isAwaitingDocs && !companyName.trim())}
@@ -1157,23 +1244,15 @@ function ActionsCard({ app, docs, canApprove, canReject, onApprove, onReject, on
               {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
               Approve &amp; Create Customer
             </button>
-          )}
-
-          {canApprove && allCountersigned && !app.welcome_pack_sent_at && (
-            <button onClick={onSendWelcomePack} disabled={loading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl transition-colors">
+          ) : canApprove && (
+            <button
+              onClick={() => onSendWelcomePack("approve")}
+              disabled={needsCountersign}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
               <Send size={14} />
-              Send Welcome Pack
+              Approve &amp; Send Welcome Pack
             </button>
-          )}
-
-          {canApprove && app.welcome_pack_sent_at && (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-xl px-3 py-2">
-              <CheckCircle size={13} className="text-green-600 shrink-0" />
-              <p className="text-xs text-green-700 font-medium">
-                Welcome pack sent{app.welcome_pack_sent_by ? ` by ${app.welcome_pack_sent_by}` : ""}
-              </p>
-            </div>
           )}
 
           {!(app.inbox_thread_ids || []).length && canApprove && (
@@ -1253,6 +1332,7 @@ export default function CustomerApplicationDetail() {
   const [generatingSignDocs, setGeneratingSignDocs] = useState(false);
   const [sendingSignLink,    setSendingSignLink   ] = useState(false);
   const [welcomePackModal,   setWelcomePackModal  ] = useState(false);
+  const [welcomePackMode,    setWelcomePackMode   ] = useState("send"); // "approve" | "send"
   const [sendingWelcomePack, setSendingWelcomePack] = useState(false);
 
   useEffect(() => {
@@ -1327,13 +1407,32 @@ export default function CustomerApplicationDetail() {
   const sendWelcomePack = async (subject, message) => {
     setSendingWelcomePack(true);
     try {
-      const r = await api.post(`/api/onboarding/${id}/send-welcome-pack`, {
-        subject: subject.trim(),
-        message: message.trim(),
-      });
-      toast.success("Welcome pack sent");
+      if (welcomePackMode === "approve") {
+        const r = await api.put(`/api/onboarding/${id}/approve-and-send-welcome-pack`, {
+          message: message.trim(),
+          subject: subject.trim(),
+        });
+        setApp(prev => ({
+          ...prev,
+          status:            "approved",
+          odoo_partner_id:   r.data.odoo_partner_id,
+          welcome_pack_sent_at: r.data.welcome_pack_sent ? new Date().toISOString() : prev.welcome_pack_sent_at,
+          inbox_thread_ids:  r.data.thread_id ? [...(prev.inbox_thread_ids || []), r.data.thread_id] : prev.inbox_thread_ids,
+        }));
+        if (r.data.welcome_pack_sent) {
+          toast.success("Customer approved and welcome pack sent");
+        } else {
+          toast.error(`Customer approved, but the welcome pack failed to send: ${r.data.welcome_pack_error || "unknown error"}. Retry from Actions.`);
+        }
+      } else {
+        const r = await api.post(`/api/onboarding/${id}/send-welcome-pack`, {
+          subject: subject.trim(),
+          message: message.trim(),
+        });
+        toast.success("Welcome pack sent");
+        updateApp({ inbox_thread_ids: [...(app.inbox_thread_ids || []), r.data.thread_id], welcome_pack_sent_at: new Date().toISOString() });
+      }
       setWelcomePackModal(false);
-      updateApp({ inbox_thread_ids: [...(app.inbox_thread_ids || []), r.data.thread_id], welcome_pack_sent_at: new Date().toISOString() });
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send welcome pack");
     } finally {
@@ -1357,12 +1456,13 @@ export default function CustomerApplicationDetail() {
   const approve = async (companyName) => {
     try {
       const body = companyName ? { company_name: companyName } : {};
-      await api.put(`/api/onboarding/${id}/approve`, body);
+      const r = await api.put(`/api/onboarding/${id}/approve`, body);
       toast.success("Customer approved and created");
       setApp(prev => ({
         ...prev,
         status: "approved",
         company_name: companyName || prev.company_name,
+        odoo_partner_id: r.data.odoo_partner_id,
       }));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Approval failed");
@@ -1620,7 +1720,7 @@ export default function CustomerApplicationDetail() {
                 onSendSigningLink={sendSigningLink}
                 sendingSignLink={sendingSignLink}
                 canSendDocs={can("customers.approve_onboarding") && ["pending", "awaiting_docs"].includes(app?.status)}
-                onSendWelcomePack={() => setWelcomePackModal(true)}
+                onSendWelcomePack={(mode) => { setWelcomePackMode(mode); setWelcomePackModal(true); }}
               />
 
               <TimelineCard
@@ -1646,8 +1746,7 @@ export default function CustomerApplicationDetail() {
       {welcomePackModal && (
         <WelcomePackModal
           app={app}
-          docs={docs}
-          user={user}
+          mode={welcomePackMode}
           onSend={sendWelcomePack}
           sending={sendingWelcomePack}
           onClose={() => setWelcomePackModal(false)}

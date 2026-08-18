@@ -159,6 +159,12 @@ class SendWelcomePackBody(BaseModel):
     subject: Optional[str] = None
 
 
+class ApproveAndSendWelcomePackBody(BaseModel):
+    company_name: Optional[str] = None  # required for inbox-sourced apps that have no company_name yet
+    message:      str
+    subject:      Optional[str] = None
+
+
 class UpdateApplicationBody(BaseModel):
     company_name:        Optional[str] = None
     trading_name:        Optional[str] = None
@@ -1142,17 +1148,73 @@ async def countersign_document(
     }
 
 
-@router.post("/{app_id}/send-welcome-pack")
-async def send_welcome_pack(
+def _file_ext(filename: str) -> str:
+    return ("." + filename.rsplit(".", 1)[-1].lower()) if filename and "." in filename else ".pdf"
+
+
+def _welcome_pack_doc_attachments(app: dict) -> list[dict]:
+    """
+    Onboarding documents that will be attached to the welcome pack email — every
+    uploaded doc with an r2_key (CIF, the CIPC/ID+S21 supporting doc(s),
+    countersigned NDA, countersigned SOA). Countersigning overwrites the same R2
+    key in place, so r2_key on NDA/SOA already points at the countersigned version.
+    Shared by the real send and its preview endpoint so the preview can never
+    show a different attachment list than what actually goes out.
+    """
+    result = []
+    for doc in (app.get("documents") or []):
+        if not doc.get("r2_key"):
+            continue
+        result.append({
+            "doc_type":         doc.get("doc_type"),
+            "label":            ALL_DOC_TYPES.get(doc.get("doc_type", ""), "Document"),
+            "filename":         doc.get("filename", ""),
+            "r2_key":           doc["r2_key"],
+            "countersigned_at": doc.get("countersigned_at"),
+        })
+    return result
+
+
+@router.get("/{app_id}/welcome-pack-preview")
+async def welcome_pack_preview(
     app_id: str,
-    body: SendWelcomePackBody,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("customers.approve_onboarding")),
 ):
     """
+    Exactly what /send-welcome-pack (and /approve-and-send-welcome-pack) will
+    attach — computed from the same _welcome_pack_doc_attachments() +
+    get_active_bundle_files() calls the real send uses, so the compose-modal
+    preview can never drift from what actually gets emailed.
+    """
+    app = await col("customer_onboarding").find_one({"id": app_id}, NO_ID)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    documents = [
+        {k: v for k, v in d.items() if k != "r2_key"}
+        for d in _welcome_pack_doc_attachments(app)
+    ]
+
+    from routes.doc_template_routes import get_active_bundle_files
+    bundle_files = await get_active_bundle_files("welcome_pack")
+
+    return {
+        "documents":    documents,
+        "bundle_files": [{"filename": f["filename"]} for f in bundle_files],
+    }
+
+
+async def _send_welcome_pack_impl(
+    app_id: str,
+    body: SendWelcomePackBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict,
+) -> dict:
+    """
     Send the welcome pack email to the customer.
-    Attaches all four onboarding documents (CIF, CIPC, countersigned NDA, countersigned SOA)
-    plus all four active welcome pack slot files (budget, letter, price list, brochure).
+    Attaches all onboarding documents (CIF, CIPC/ID+S21 supporting doc(s),
+    countersigned NDA, countersigned SOA) plus all four active welcome pack
+    slot files (budget, letter, price list, brochure).
     Email footer uses the sender's signing_name and signing_title from their profile.
     Creates an outgoing inbox thread so the send is traceable in the onboarding inbox.
     """
@@ -1179,22 +1241,12 @@ async def send_welcome_pack(
     if not bundle_files:
         raise HTTPException(status_code=404, detail="No active welcome pack template has been uploaded. Upload one under Settings > Document Templates.")
 
-    # Attach all onboarding documents: CIF, CIPC, countersigned NDA, countersigned SOA.
-    # Countersigning overwrites the same R2 key, so r2_key on NDA/SOA already points
-    # to the countersigned version.
-    def _file_ext(filename: str) -> str:
-        return ("." + filename.rsplit(".", 1)[-1].lower()) if filename and "." in filename else ".pdf"
-
     attachments = []
-    for doc in docs:
-        key = doc.get("r2_key")
-        if not key:
-            continue
-        file_bytes = await r2_get(key)
+    for doc_meta in _welcome_pack_doc_attachments(app):
+        file_bytes = await r2_get(doc_meta["r2_key"])
         if file_bytes:
-            label = ALL_DOC_TYPES.get(doc.get("doc_type", ""), "Document")
-            ext = _file_ext(doc.get("filename", ""))
-            attachments.append({"filename": f"{label}{ext}", "content": list(file_bytes)})
+            ext = _file_ext(doc_meta["filename"])
+            attachments.append({"filename": f"{doc_meta['label']}{ext}", "content": list(file_bytes)})
 
     # Attach every file in the welcome pack bundle (budget, letter, price_list, brochure)
     for f in bundle_files:
@@ -1299,13 +1351,22 @@ async def send_welcome_pack(
     return {"success": True, "thread_id": thread_id}
 
 
-@router.put("/{app_id}/approve")
-async def approve_application(
+@router.post("/{app_id}/send-welcome-pack")
+async def send_welcome_pack(
     app_id: str,
+    body: SendWelcomePackBody,
     background_tasks: BackgroundTasks,
-    body: ApproveBody = None,
     current_user: dict = Depends(require_permission("customers.approve_onboarding")),
 ):
+    return await _send_welcome_pack_impl(app_id, body, background_tasks, current_user)
+
+
+async def _approve_application_impl(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    body: Optional[ApproveBody],
+    current_user: dict,
+) -> dict:
     """
     Approve an onboarding application:
     1. Verify all 5 required documents are present (skipped for inbox-sourced apps)
@@ -1642,7 +1703,67 @@ async def approve_application(
             customer_contact_email=app.get("contact_email"),
         )
 
-    return {"success": True, "odoo_partner_id": partner_id}
+    return {"success": True, "odoo_partner_id": partner_id, "display_name": _display_name}
+
+
+@router.put("/{app_id}/approve")
+async def approve_application(
+    app_id: str,
+    background_tasks: BackgroundTasks,
+    body: ApproveBody = None,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    result = await _approve_application_impl(app_id, background_tasks, body, current_user)
+    return {"success": result["success"], "odoo_partner_id": result["odoo_partner_id"]}
+
+
+@router.put("/{app_id}/approve-and-send-welcome-pack")
+async def approve_and_send_welcome_pack(
+    app_id: str,
+    body: ApproveAndSendWelcomePackBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.approve_onboarding")),
+):
+    """
+    Single combined action: approve the application (create the Odoo customer)
+    and immediately send the welcome pack email — the normal path now that
+    both are gated on the exact same "all Bassani-sig docs countersigned"
+    requirement, so there's no real reason to make them two separate clicks.
+
+    Approval runs first since it's the harder-to-reverse, load-bearing step
+    (it creates the live Odoo customer and customer_ownership record). If the
+    welcome pack send then fails (e.g. no active template uploaded, or a
+    transient email error), the approval is deliberately NOT rolled back —
+    same non-blocking-failure convention used elsewhere in onboarding
+    (e.g. _queue_packing_board's packing_board_queue_error). The application
+    is left approved with welcome_pack_sent_at unset; the detail page shows a
+    retry "Send Welcome Pack" button for exactly this state.
+    """
+    approve_result = await _approve_application_impl(
+        app_id, background_tasks, ApproveBody(company_name=body.company_name), current_user,
+    )
+
+    try:
+        wp_result = await _send_welcome_pack_impl(
+            app_id,
+            SendWelcomePackBody(message=body.message, subject=body.subject),
+            background_tasks,
+            current_user,
+        )
+    except HTTPException as e:
+        return {
+            "success":            True,
+            "odoo_partner_id":    approve_result["odoo_partner_id"],
+            "welcome_pack_sent":  False,
+            "welcome_pack_error": e.detail if isinstance(e.detail, str) else "Failed to send welcome pack",
+        }
+
+    return {
+        "success":           True,
+        "odoo_partner_id":   approve_result["odoo_partner_id"],
+        "welcome_pack_sent": True,
+        "thread_id":         wp_result["thread_id"],
+    }
 
 
 @router.put("/{app_id}/approve-link")

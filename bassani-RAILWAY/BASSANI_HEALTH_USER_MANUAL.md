@@ -1378,7 +1378,7 @@ Go to **Customers** to see all active Odoo accounts — companies and individual
 Customers are not created manually through the portal. All new customers follow the onboarding flow:
 
 - Click **Onboard Customer** to send a registration invitation email to a prospective customer. They complete the self-service `/apply` wizard (Business Details, Primary Contact, Address, Additional Info, Sign CIF + upload CIPC) and submit their application.
-- Admin reviews the application, generates and sends signing documents (NDA + SOA), countersigns, sends the Welcome Pack, and approves — which creates the customer in Odoo.
+- Admin reviews the application, generates and sends signing documents (NDA + SOA), countersigns, then clicks **Approve & Send Welcome Pack** — one action that creates the customer in Odoo and sends the Welcome Pack email together.
 - If a customer exists in Odoo but has not yet placed an order, they are visible in the Customers list without toggling "Has Orders".
 
 > If an emergency manual creation is needed, it must be done directly in Odoo by a super admin.
@@ -1627,30 +1627,25 @@ Once the customer has signed both documents, they appear in the Documents sectio
 
 When both are countersigned, a notification email is sent automatically to the recipients configured under **Settings > Email Notifications > Onboarding & Applications > Onboarding: Documents Countersigned** (typically Kashi and Dean). Before that, once the customer has submitted both signed documents, a separate **Countersigning Needed** notification already alerted signing authorities that this step was waiting on them.
 
-**Step 4 — Send Welcome Pack** *(requires `customers.approve_onboarding`)*:
+**Step 4 — Approve & Send Welcome Pack** *(requires `customers.approve_onboarding`)*:
 
-After countersigning is complete, the **Send Welcome Pack** button appears in the right sidebar.
+Once countersigning is complete, approving the application and sending the Welcome Pack are done together as a single action — there is no separate "send" step first.
 
-1. Click **Send Welcome Pack**
-2. Review the pre-populated subject and message (edit if needed)
-3. The email automatically attaches all four onboarding documents (Signed CIF, CIPC Certificate, countersigned NDA, countersigned Store Agreement) plus the active version of each Welcome Pack document (Help Me Budget, Welcome Letter, Price List, Product Brochure) — eight files in total
-4. Click **Send**
-5. The customer receives the email with all eight files attached. Your name and title appear as the email footer
-5. A "Welcome pack sent by [your name]" badge appears on the application
+1. Click **Approve & Send Welcome Pack** in the right sidebar
+2. A compose window opens showing the customer's email, a pre-populated subject and message (edit if needed), and the full list of attachments the email will actually send — this list is pulled live from the system, so what you see is exactly what the customer will receive: the Signed CIF, supporting business/ID document(s), countersigned NDA, countersigned Store Agreement, plus the active version of each Welcome Pack document (Help Me Budget, Welcome Letter, Price List, Product Brochure)
+3. Click **Approve & Send Welcome Pack** to confirm
+4. The system creates the customer in Odoo, links them to the reseller's account, and sends the Welcome Pack email in the same step. Your name and title appear as the email footer
+5. The reseller receives a separate approval email
+6. The application status updates to **Approved**, and a "Welcome pack sent by [your name]" badge appears on the page — no navigation away required
+7. A **View Customer Profile** button also appears on the page — click it to jump straight to the new customer's profile in the Customers section
 
-**Approving an application** *(requires `customers.approve_onboarding`)*:
-1. Open the application
-2. Confirm all 4 documents are present (CIF + CIPC + NDA + SOA) and NDA + SOA are countersigned
-3. Click **Approve & Create Customer** in the right sidebar
-4. The system creates the customer in Odoo automatically and links them to the reseller's account
-5. The reseller receives an approval email
-6. The application status updates to **Approved** on the page — no navigation away required
+> If any of the 4 documents are missing, or the NDA/SOA have not been countersigned, the action is blocked with a specific error before anything is created.
 
-> If any of the 4 documents are missing, or the NDA/SOA have not been countersigned, the approval button will be blocked with a specific error.
+**If the Welcome Pack email fails to send after the customer has already been approved** (for example, no active Welcome Pack template is configured): the customer account is still created — that step is not undone — and a **Send Welcome Pack** retry button appears on the application's Decision card once approved. Use it to retry the send on its own once the underlying issue (e.g. missing template) is resolved.
 
 **If approval is blocked by a duplicate customer:**
 
-When you click **Approve & Create Customer**, the system checks Odoo for a customer with a matching email or VAT before creating anything. If a match is found, the approval is blocked with a message identifying the existing customer.
+When you click **Approve & Send Welcome Pack**, the system checks Odoo for a customer with a matching email or VAT before creating anything. If a match is found, the approval is blocked with a message identifying the existing customer.
 
 This means the customer already exists in Odoo — possibly created directly in Odoo before the portal existed, or via a previous admin-created entry. In this case you have two options:
 
