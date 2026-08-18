@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-table";
 import { useAuth } from "../AuthContext";
 import api from "../api";
+import toast from "react-hot-toast";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, Users, ShoppingCart,
@@ -299,9 +300,7 @@ function GlobalSearch() {
       inputRef.current?.blur();
       navigate(data.navigate_to, { state: data.state || {} });
     } catch (err) {
-      const msg = err.response?.data?.detail || "No match found";
-      // dynamic import keeps react-hot-toast out of the non-toast code path
-      import("react-hot-toast").then(({ default: toast }) => toast.error(msg));
+      toast.error(err.response?.data?.detail || "No match found");
     } finally {
       setLoading(false);
     }
@@ -743,6 +742,76 @@ export function Modal({ title, onClose, children, width = "max-w-lg" }) {
         <div className="px-6 py-5">{children}</div>
       </div>
     </div>
+  );
+}
+
+// "Onboard Customer" button + modal — send a prospective customer the
+// self-service `/apply` registration link (copy link, or email an invite).
+// Shared across every screen that touches customer onboarding (Customers,
+// Customer Applications, Onboarding Inbox) so the flow and copy stay in
+// one place instead of being reimplemented per screen.
+export function OnboardCustomerButton() {
+  const [open, setOpen]       = useState(false);
+  const [email, setEmail]     = useState("");
+  const [sending, setSending] = useState(false);
+
+  const sendInvite = async () => {
+    if (!email.trim()) return toast.error("Enter the customer's email address");
+    setSending(true);
+    try {
+      await api.post("/api/onboarding/invite", {
+        to_email:         email.trim(),
+        registration_url: `${window.location.origin}/apply`,
+      });
+      toast.success(`Invitation sent to ${email.trim()}`);
+      setEmail("");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send invitation");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      <BtnPrimary onClick={() => { setEmail(""); setOpen(true); }}>
+        <Mail size={14} className="mr-1" />Onboard Customer
+      </BtnPrimary>
+      {open && (
+        <Modal title="Onboard Customer" onClose={() => setOpen(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              Send the customer a link to the self-service registration page. They will complete their own details and upload their documents.
+            </p>
+            <div className="flex gap-2 items-center">
+              <span className="text-[10px] text-gray-400 font-mono bg-gray-50 border border-gray-200 rounded px-2 py-1 truncate flex-1">{window.location.origin}/apply</span>
+              <button
+                onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/apply`); toast.success("Link copied"); }}
+                className="shrink-0 text-xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-200 rounded transition-colors">
+                Copy
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && sendInvite()}
+                placeholder="customer@example.co.za"
+                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
+              />
+              <button
+                onClick={sendInvite}
+                disabled={sending || !email.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
+                {sending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                Send Invitation
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 

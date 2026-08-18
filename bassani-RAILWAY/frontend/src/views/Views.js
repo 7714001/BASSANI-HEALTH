@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Mail, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -17,7 +17,7 @@ import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
   LoadingState, EmptyState, Badge, ProductThumb, fmtR, fmtDate, parseDisplayName,
-  WarehouseLabel,
+  WarehouseLabel, OnboardCustomerButton,
 } from "../components/UI";
 import { validateSAID, validatePassport } from "../utils/validators";
 import { fetchAllProducts } from "../utils/productExport";
@@ -775,25 +775,6 @@ export function Customers() {
   const [custSort,  setCustSort ] = useState([{ id: "name", desc: false }]);
   const [hasOrders, setHasOrders] = useState(false);
 
-  // Onboarding invite modal state
-  const [showOnboardingDocs,   setShowOnboardingDocs  ] = useState(false);
-  const [obInviteEmail,        setObInviteEmail       ] = useState("");
-  const [obInviteSending,      setObInviteSending     ] = useState(false);
-
-  const sendObInvite = async () => {
-    if (!obInviteEmail.trim()) return toast.error("Enter the customer's email address");
-    setObInviteSending(true);
-    try {
-      await api.post("/api/onboarding/invite", {
-        to_email:         obInviteEmail.trim(),
-        registration_url: `${window.location.origin}/apply`,
-      });
-      toast.success(`Invitation sent to ${obInviteEmail.trim()}`);
-      setObInviteEmail("");
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed to send invitation"); }
-    finally { setObInviteSending(false); }
-  };
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -820,9 +801,7 @@ export function Customers() {
         onRefresh={load}
         actions={isReseller
           ? <BtnPrimary onClick={() => navigate("/onboarding-docs")}><Link2 size={14}/>Send Registration Link</BtnPrimary>
-          : <BtnPrimary onClick={() => { setObInviteEmail(""); setShowOnboardingDocs(true); }}>
-              <Mail size={14} className="mr-1" />Onboard Customer
-            </BtnPrimary>
+          : <OnboardCustomerButton />
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
@@ -873,41 +852,6 @@ export function Customers() {
           manualPagination manualSorting
         />
       </main>
-      {showOnboardingDocs && (
-        <Modal title="Onboard Customer" onClose={() => setShowOnboardingDocs(false)}>
-          <div className="space-y-4">
-            <p className="text-sm text-gray-500">
-              Send the customer a link to the self-service registration page. They will complete their own details and upload their documents.
-            </p>
-            <div className="flex gap-2 items-center">
-              <span className="text-[10px] text-gray-400 font-mono bg-gray-50 border border-gray-200 rounded px-2 py-1 truncate flex-1">{window.location.origin}/apply</span>
-              <button
-                onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/apply`); toast.success("Link copied"); }}
-                className="shrink-0 text-xs font-semibold text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-200 rounded transition-colors">
-                Copy
-              </button>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={obInviteEmail}
-                onChange={e => setObInviteEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendObInvite()}
-                placeholder="customer@example.co.za"
-                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-white placeholder-gray-400"
-              />
-              <button
-                onClick={sendObInvite}
-                disabled={obInviteSending || !obInviteEmail.trim()}
-                className="flex items-center gap-1.5 px-4 py-2 bg-bassani-600 hover:bg-bassani-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap">
-                {obInviteSending ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
-                Send Invitation
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
     </div>
   );
 }

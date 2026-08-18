@@ -1381,6 +1381,8 @@ Customers are not created manually through the portal. All new customers follow 
 - Admin reviews the application, generates and sends signing documents (NDA + SOA), countersigns, then clicks **Approve & Send Welcome Pack** — one action that creates the customer in Odoo and sends the Welcome Pack email together.
 - If a customer exists in Odoo but has not yet placed an order, they are visible in the Customers list without toggling "Has Orders".
 
+> The **Onboard Customer** button (top right) is not limited to the Customers page — it appears in the same place on **Customer Applications** and **Onboarding Inbox**, so you can start onboarding a new customer from whichever of those three screens you're already working in.
+
 > If an emergency manual creation is needed, it must be done directly in Odoo by a super admin.
 
 ---

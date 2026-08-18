@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import {
   TopBar, Badge, BtnPrimary, BtnSecondary,
-  Modal, FormGroup, Input,
+  Modal, FormGroup, Input, OnboardCustomerButton,
 } from "../components/UI";
 
 const API = "/api/onboarding-inbox";
@@ -779,6 +779,7 @@ export default function OnboardingInbox() {
             <BtnSecondary onClick={() => loadList()} disabled={loading}>
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
             </BtnSecondary>
+            <OnboardCustomerButton />
           </div>
         }
       />

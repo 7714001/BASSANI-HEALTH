@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck, UserCheck } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate } from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate, OnboardCustomerButton } from "../components/UI";
 
 // ── Derived status ─────────────────────────────────────────────────────────────
 
@@ -128,6 +128,7 @@ export default function CustomerApplications() {
         title="Customer Applications"
         subtitle={subtitle}
         onRefresh={load}
+        actions={<OnboardCustomerButton />}
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 flex items-center justify-between gap-4 flex-wrap">
