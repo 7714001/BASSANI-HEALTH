@@ -234,9 +234,11 @@ async def list_products(
                      "warehouse_id": warehouse_id, "warehouse_name": warehouse_name}
         domain.append(("id", "in", resolved_ids))
 
-    # Resellers only see products explicitly added to the reseller catalog.
-    # Admins and other roles see everything (no domain restriction added).
-    if current_user.get("role") == "reseller":
+    # Reseller and customer (Phase 25) are both external self-service roles,
+    # restricted to only products explicitly added to the reseller catalog —
+    # a customer must abide by the exact same product visibility rules as a
+    # reseller. Admins and other roles see everything (no domain restriction).
+    if current_user.get("role") in ("reseller", "customer"):
         catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
         catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
         if not catalog_ids:
@@ -307,7 +309,10 @@ async def list_categories(
     that have at least one product with qty_available > 0 in the active warehouse."""
     odoo = get_odoo_client()
 
-    if current_user.get("role") == "reseller":
+    # Reseller and customer (Phase 25) are both external self-service roles
+    # restricted to the curated reseller catalog — a customer must abide by
+    # the exact same product visibility rules as a reseller.
+    if current_user.get("role") in ("reseller", "customer"):
         catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
         catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
         if not catalog_ids:
@@ -552,7 +557,10 @@ async def get_product_by_barcode(barcode_value: str, current_user: dict = Depend
     company_id = get_company_id(odoo, warehouse_id)
 
     barcode_domain = [("barcode", "=", barcode_value), ("active", "=", True)]
-    if current_user.get("role") == "reseller":
+    # Reseller and customer (Phase 25) are both external self-service roles
+    # restricted to the curated reseller catalog — a customer must abide by
+    # the exact same product visibility rules as a reseller.
+    if current_user.get("role") in ("reseller", "customer"):
         catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
         catalog_ids = catalog_doc.get("product_ids", []) if catalog_doc else []
         if not catalog_ids:

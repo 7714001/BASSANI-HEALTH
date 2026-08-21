@@ -1031,10 +1031,43 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     }
 
 
+async def _require_confirm_access(current_user: dict = Depends(get_current_user)) -> dict:
+    """Allow staff with orders.confirm permission OR resellers/customers (ownership checked in endpoint)."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") in ("reseller", "customer"):
+        return current_user
+    # Matches require_permission()'s role membership check (auth.py) — admin-tier
+    # AND the narrow ticketing roles (sales, etc.) are eligible for the granular
+    # permission check below. This previously checked ADMIN_ROLES alone, which
+    # meant a "sales" user could never confirm an order even with orders.confirm
+    # explicitly granted, since "sales" isn't an admin-tier role.
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("orders", {}).get("confirm"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
 @router.get("/{order_id}/stock-check")
-async def stock_check(order_id: int, current_user: dict = Depends(require_permission("orders.read"))):
+async def stock_check(order_id: int, current_user: dict = Depends(_require_confirm_access)):
     """Return per-line stock availability for a confirmed Odoo SO (before packing board entry is created).
-    Used by the reseller pre-confirm modal so they see what will ship vs be backordered."""
+    Used by the reseller/customer pre-confirm modal so they see what will ship vs be backordered.
+
+    **Fixed 2026-08-21:** was gated by `require_permission("orders.read")` —
+    "orders.read" isn't a real permission key (the `orders` domain only has
+    `view`/`confirm`/`cancel`/`recurring_manage`), and `require_permission`
+    rejects any role outside admin-tier/ticket-role sets outright, which
+    includes reseller and customer. So this endpoint 403'd for every
+    reseller (and, once the customer role existed, every customer) that
+    ever called it — the frontend's `catch` silently swallowed the failure
+    and skipped straight to confirming with no stock-check modal shown at
+    all, so the bug was invisible rather than a visible error. Reusing
+    `_require_confirm_access` (moved above this endpoint so it can) matches
+    the actual population that ever calls this — it's only ever invoked
+    immediately before confirming the same order.
+    """
     odoo = get_odoo_client()
     try:
         order_rows = odoo.read("sale.order", [order_id], fields=["name", "state", "picking_ids", "partner_id", "amount_total"])
@@ -1044,6 +1077,21 @@ async def stock_check(order_id: int, current_user: dict = Depends(require_permis
         raise HTTPException(status_code=404, detail="Order not found in Odoo")
 
     order = order_rows[0]
+
+    # Ownership check — mirrors _confirm_order_core's, since this is always
+    # called immediately before confirming and should never leak another
+    # customer's/reseller's stock split.
+    if current_user.get("role") == "reseller":
+        _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
+        _my_rid = _res_doc["id"] if _res_doc else None
+        _partner = order.get("partner_id")
+        if not _partner or not await is_partner_owned_by(_my_rid, _partner[0]):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user.get("role") == "customer":
+        _partner = order.get("partner_id")
+        if not _partner or _partner[0] != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
     if order["state"] not in ("draft", "sent", "sale"):
         raise HTTPException(status_code=400, detail="Order is not in a quotable state")
 
@@ -1364,25 +1412,6 @@ async def create_order(
     return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning}
 
 
-async def _require_confirm_access(current_user: dict = Depends(get_current_user)) -> dict:
-    """Allow staff with orders.confirm permission OR resellers (ownership checked in endpoint)."""
-    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
-        return current_user
-    if current_user.get("role") == "reseller":
-        return current_user
-    # Matches require_permission()'s role membership check (auth.py) — admin-tier
-    # AND the narrow ticketing roles (sales, etc.) are eligible for the granular
-    # permission check below. This previously checked ADMIN_ROLES alone, which
-    # meant a "sales" user could never confirm an order even with orders.confirm
-    # explicitly granted, since "sales" isn't an admin-tier role.
-    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
-        raise HTTPException(status_code=403, detail="Access denied")
-    perms = current_user.get("permissions") or {}
-    if perms.get("orders", {}).get("confirm"):
-        return current_user
-    raise HTTPException(status_code=403, detail="Access denied")
-
-
 @router.put("/{order_id}/confirm")
 async def confirm_order(
     order_id: int,
@@ -1412,10 +1441,10 @@ async def _confirm_order_core(
     Steps 2-3 are non-fatal: failures are returned as warnings so the admin can
     resolve them manually in Odoo without needing to re-confirm.
 
-    current_user's role gates the reseller-ownership check below — a synthetic
-    system actor (role not "reseller") skips it, since the recurring-order
-    accept path already confirmed the order belongs to an already-linked
-    customer at setup time.
+    current_user's role gates the reseller/customer ownership check below — a
+    synthetic system actor (role not "reseller"/"customer") skips it, since
+    the recurring-order accept path already confirmed the order belongs to
+    an already-linked customer at setup time.
     """
     odoo = get_odoo_client()
     warnings: List[str] = []
@@ -1436,12 +1465,18 @@ async def _confirm_order_core(
     # not just quotes they personally placed. _sales_ticket is still fetched here
     # (for is_sample and, further below, packing-board/traceability display).
     _sales_ticket = await col("tickets").find_one(
-        {"type": "sales", "order_id": order_id, "exit_status": None}, {"reseller_id": 1, "is_sample": 1}
+        {"type": "sales", "order_id": order_id, "exit_status": None}, {"is_sample": 1}
     )
     if current_user.get("role") == "reseller":
         _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
         _my_rid = _res_doc["id"] if _res_doc else None
         if not partner or not await is_partner_owned_by(_my_rid, partner[0]):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user.get("role") == "customer":
+        # A customer may only confirm orders against their own company —
+        # single fixed-id equality, same simplification used everywhere else
+        # a customer branch parallels a reseller one (Phase 25).
+        if not partner or partner[0] != current_user.get("customer_company_partner_id"):
             raise HTTPException(status_code=403, detail="Access denied")
 
     # ── Credit check — hard gate unless explicitly overridden ──────────────────
@@ -1487,9 +1522,6 @@ async def _confirm_order_core(
         except Exception:
             raise HTTPException(status_code=400, detail=f"Could not confirm order: {str(e)}")
 
-    # Resolve reseller ID early — needed by the ticket handoff, proforma CC, and
-    # commission steps below.
-    _ticket_reseller_id = _sales_ticket.get("reseller_id") if _sales_ticket else None
     _order_ref_str = pre_rows[0].get("name", f"#{order_id}") if pre_rows else f"#{order_id}"
 
     # ── Ticket handoff — advance to awaiting_deposit ───────────────────────────
@@ -1538,8 +1570,8 @@ async def _confirm_order_core(
     # ── Commission record ─────────────────────────────────────────────────────
     # Phase 7.13: credited to whichever reseller the order's customer is
     # currently linked to (customer_ownership), NOT to whoever physically
-    # placed the order (_ticket_reseller_id — still used above for the
-    # packing-board/traceability display only, never for commission credit).
+    # placed the order — `sales_ticket.reseller_id` ("who placed this") is
+    # only ever used for the packing-board/traceability display, never here.
     # Resolved fresh right here, at confirm time — the same "resolve now, gate
     # the insert, never revisit" pattern already used for commission_eligible
     # below, which is what makes this non-retroactive with zero extra code:
@@ -1584,8 +1616,15 @@ async def _confirm_order_core(
     # ── Proforma invoice — automatic, tells the customer what to pay ──────────
     # Phase 8.47: Odoo's native Pro-Forma Invoice report (must be enabled in
     # Odoo's Sales settings — group_proforma_sales) is fetched live via XML-RPC
-    # and emailed straight to the customer, with the reseller CC'd if this is a
-    # reseller-placed order, so nobody has to open Odoo to produce this document.
+    # and emailed straight to the customer, with the owning reseller CC'd, so
+    # nobody has to open Odoo to produce this document.
+    # **2026-08-21:** CC now keyed on `_owning_reseller_id` (customer_ownership,
+    # same lookup the commission block above already uses), not
+    # `_ticket_reseller_id` ("who placed this"). A customer-role self-placed
+    # order never sets reseller_id on the ticket, so the old check silently
+    # never CC'd a linked reseller on their own customer's proforma even though
+    # that reseller still earns commission on it — same "ownership, not who
+    # placed it" principle as everywhere else in this function.
     # Non-fatal: a missing/disabled report degrades to a warning, not a failed
     # confirm — the order is already confirmed in Odoo at this point regardless.
     # Skipped for sample orders — every line is priced at R0.00, so there is no
@@ -1607,8 +1646,8 @@ async def _confirm_order_core(
                 # remotely; see odoo_client.py for the full writeup.
                 _pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [order_id])
                 _reseller_email_cc = None
-                if _ticket_reseller_id:
-                    _res_email_doc = await col("resellers").find_one({"id": _ticket_reseller_id}, {"email": 1, "_id": 0})
+                if _owning_reseller_id:
+                    _res_email_doc = await col("resellers").find_one({"id": _owning_reseller_id}, {"email": 1, "_id": 0})
                     _reseller_email_cc = _res_email_doc.get("email") if _res_email_doc else None
                 background_tasks.add_task(
                     send_deposit_due_proforma,

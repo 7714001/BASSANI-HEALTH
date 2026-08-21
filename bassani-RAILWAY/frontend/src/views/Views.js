@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -885,6 +885,16 @@ export function Orders() {
   const [creatingTicket,        setCreatingTicket       ] = useState(new Set());
   const [ticketPreflightModal,  setTicketPreflightModal ] = useState(null); // { orderId, orderName, has_linked_ticket, existing_ticket_id, unlinked_tickets }
 
+  // ── Customer self-service order confirm (Phase 25) ──────────────────────
+  // Staff/reseller confirm from the Sales Ticket pipeline (SalesTickets.js);
+  // a customer has no access to that internal-facing page, so this is a
+  // smaller, self-contained equivalent — same stock-check-first API calls,
+  // no credit-override affordance (a customer can't self-authorise past
+  // their own credit block, unlike the staff/reseller "Confirm Anyway" flow).
+  const [confirming,       setConfirming      ] = useState(false);
+  const [stockCheckModal,  setStockCheckModal ] = useState(false);
+  const [stockCheckData,   setStockCheckData  ] = useState(null);
+
   // ── Reseller order cart (place a new order) ──────────────────────────────
   // Resellers only — staff use the Sales Ticket quote builder instead (they
   // know product names/SKUs and type-search; resellers need to browse a
@@ -1137,6 +1147,44 @@ export function Orders() {
     } catch { /* keep showing basic data */ }
   };
 
+  // ── Customer self-service confirm (Phase 25) — mirrors the stock-check-
+  // first flow SalesTickets.js uses for staff/resellers, but simplified: no
+  // credit-override retry (a customer over their credit limit is told to
+  // contact Bassani, not offered a self-override).
+  const doConfirmOrder = async (skipStockCheck = false) => {
+    if (!detail?.id) return;
+    if (!skipStockCheck) {
+      setConfirming(true);
+      try {
+        const { data } = await api.get(`/api/orders/${detail.id}/stock-check`);
+        setStockCheckData(data);
+        setStockCheckModal(true);
+      } catch {
+        setStockCheckModal(false);
+        await doConfirmOrder(true);
+        return;
+      } finally {
+        setConfirming(false);
+      }
+      return;
+    }
+    setConfirming(true);
+    try {
+      await api.put(`/api/orders/${detail.id}/confirm`);
+      toast.success("Order confirmed. You'll receive an email shortly with your 50% deposit invoice.");
+      setStockCheckModal(false);
+      await openDetail(detail);
+    } catch (e) {
+      if (e.response?.status === 402) {
+        toast.error(e.response.data.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
+      } else {
+        toast.error(e.response?.data?.detail || "Failed to confirm order");
+      }
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   // ── Create a Sales Ticket for an existing Odoo order ────────────────────
   const createTicketFromOrder = async (orderId) => {
     setCreatingTicket(s => new Set(s).add(orderId));
@@ -1196,13 +1244,98 @@ export function Orders() {
   // ── Detail / order view ───────────────────────────────────────────────────
   if (view === "detail" && detail) {
     return (
-      <OrderView
-        order={detail}
-        isAdmin={!isReseller && !isCustomer}
-        canConfirmOrder={false}
-        canCancelOrder={false}
-        onClose={() => { setView("list"); setDetail(null); }}
-      />
+      <>
+        <OrderView
+          order={detail}
+          isAdmin={isCustomer}
+          canConfirmOrder={isCustomer}
+          canCancelOrder={false}
+          onConfirm={() => doConfirmOrder(false)}
+          confirming={confirming}
+          onClose={() => { setView("list"); setDetail(null); }}
+        />
+        {stockCheckModal && stockCheckData && (
+          <Modal title="Confirm Order" onClose={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+            {stockCheckData.is_partial ? (
+              <>
+                {stockCheckData.invoice_policy_block && (
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
+                    <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
+                      <p className="text-xs text-red-700 mt-1">
+                        This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
+                  <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-3 mb-4">
+                  {stockCheckData.lines.filter(l => !l.will_backorder).length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Ships now</p>
+                      <div className="space-y-1">
+                        {stockCheckData.lines.filter(l => !l.will_backorder).map((l, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-green-50 rounded-lg px-3 py-1.5">
+                            <span className="text-gray-700">{l.name}</span>
+                            <span className="font-medium text-green-700">{l.qty_available} units</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {stockCheckData.lines.filter(l => l.will_backorder).length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Backordered</p>
+                      <div className="space-y-1">
+                        {stockCheckData.lines.filter(l => l.will_backorder).map((l, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-amber-50 rounded-lg px-3 py-1.5">
+                            <span className="text-gray-700">{l.name}</span>
+                            <span className="font-medium text-amber-700">{l.qty_available} of {l.qty_ordered} in stock</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                    Cancel
+                  </BtnSecondary>
+                  {!stockCheckData.invoice_policy_block && (
+                    <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
+                      Confirm — Create Backorder
+                    </BtnPrimary>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
+                  <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-green-800">All items are in stock. This order will be fulfilled in full.</p>
+                </div>
+                <div className="flex gap-2">
+                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                    Cancel
+                  </BtnSecondary>
+                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
+                    Confirm Order
+                  </BtnPrimary>
+                </div>
+              </>
+            )}
+          </Modal>
+        )}
+      </>
     );
   }
 
