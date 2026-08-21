@@ -1111,6 +1111,29 @@ export function Orders() {
     );
   };
 
+  // Shared between the "All categories" grouped view and the single-category
+  // sub-grouped view (2026-08-21 follow-up) — a category's own products (not
+  // under any Brand/Grade child) plus a sub-heading per child with products.
+  const renderGroupBody = (group) => (
+    <div className="space-y-5">
+      {group.ownProducts.length > 0 && (
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+          {group.ownProducts.map(p => renderCartProductCard(p))}
+        </div>
+      )}
+      {group.children.map(child => (
+        <div key={child.id}>
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 pl-1">
+            <span className="text-gray-400 font-medium">{group.name} /</span> {child.name} <span className="text-gray-400 font-normal normal-case">({child.products.length})</span>
+          </h4>
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+            {child.products.map(p => renderCartProductCard(p))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   const submitCart = async () => {
     if (cart.length === 0) return toast.error("Add at least one product");
     if (!cartSelectedCust) return toast.error("Select a customer first");
@@ -1203,37 +1226,54 @@ export function Orders() {
     return a.name.localeCompare(b.name);
   };
   const cartFilteredProducts = cartProducts.filter(cartMatchesFilter).sort(cartSortInStockFirst);
-  // Category-grouped browsing (2026-08-21) — only when "All categories" is
-  // selected (a specific category already narrows to one group, so there's
-  // nothing to group) and the membership data has loaded. In-stock sort is
-  // applied per group, not globally, so an out-of-stock item still surfaces
-  // under its own category heading rather than being buried at the very
-  // bottom of the whole page.
+  // Two-level grouping (2026-08-21, extended same day to also apply once a
+  // single top-level category is selected): within a category's section,
+  // products that also belong to a Brand/Grade child category (e.g.
+  // Pre-Rolls's Indoor/Exotic/Greendoor/Greenhouse/Budget) get their own
+  // sub-heading; anything on the top-level category directly (no child)
+  // renders with no redundant single sub-section. A top-level category with
+  // no children at all (a flat one, no grade tiers) is unaffected — no
+  // sub-headings, just its products. Shared by both the "All categories"
+  // grouped view and the single-category-selected view below, so a buyer
+  // filtering down to just "Flower" still sees it split by grade instead of
+  // one mixed grid.
+  const cartBuildGroupView = (g) => {
+    const childSets = (g.children || []).map(c => ({ id: c.id, name: c.name, ids: new Set(c.product_ids) }));
+    const allChildIds = new Set(childSets.flatMap(c => [...c.ids]));
+    const topIds = new Set(g.product_ids);
+    const ownProducts = cartProducts
+      .filter(p => topIds.has(p.id) && !allChildIds.has(p.id) && cartMatchesFilter(p))
+      .sort(cartSortInStockFirst);
+    const children = childSets
+      .map(c => ({ id: c.id, name: c.name, products: cartProducts.filter(p => c.ids.has(p.id) && cartMatchesFilter(p)).sort(cartSortInStockFirst) }))
+      .filter(c => c.products.length > 0);
+    return { id: g.id, name: g.name, ownProducts, children };
+  };
+
+  // "All categories" — every top-level section, each collapsible. In-stock
+  // sort is applied per group/sub-group, not globally, so an out-of-stock
+  // item still surfaces under its own category rather than being buried at
+  // the very bottom of the whole page.
   const cartIsGroupedView = cartProdCat === "all" && cartProdSubCat === "all"
     && Array.isArray(cartProductGroups) && cartProductGroups.length > 0;
-  // Two-level grouping (2026-08-21): within each top-level section, products
-  // that also belong to a Brand/Grade child category (e.g. Pre-Rolls's
-  // Indoor/Exotic/Greendoor/Greenhouse/Budget) get their own sub-heading;
-  // anything on the top-level category directly (no child) renders under
-  // the top-level heading with no redundant single sub-section. A top-level
-  // category with no children at all (a flat one, no grade tiers) behaves
-  // exactly as before — everything is "own" products, no sub-headings.
   const cartGroupedProducts = cartIsGroupedView
-    ? cartProductGroups
-        .map(g => {
-          const childSets = (g.children || []).map(c => ({ id: c.id, name: c.name, ids: new Set(c.product_ids) }));
-          const allChildIds = new Set(childSets.flatMap(c => [...c.ids]));
-          const topIds = new Set(g.product_ids);
-          const ownProducts = cartProducts
-            .filter(p => topIds.has(p.id) && !allChildIds.has(p.id) && cartMatchesFilter(p))
-            .sort(cartSortInStockFirst);
-          const children = childSets
-            .map(c => ({ id: c.id, name: c.name, products: cartProducts.filter(p => c.ids.has(p.id) && cartMatchesFilter(p)).sort(cartSortInStockFirst) }))
-            .filter(c => c.products.length > 0);
-          return { id: g.id, name: g.name, ownProducts, children };
-        })
-        .filter(g => g.ownProducts.length > 0 || g.children.length > 0)
+    ? cartProductGroups.map(cartBuildGroupView).filter(g => g.ownProducts.length > 0 || g.children.length > 0)
     : null;
+
+  // A specific top-level category is selected via the dropdown (Brand/Grade
+  // still "all") — no top-level heading needed (the dropdown already shows
+  // it), but the Brand/Grade sub-headings are still worth keeping so a
+  // multi-grade category doesn't dump every grade into one grid. Falls back
+  // to null (flat list) if the category has no children to sub-group by, or
+  // its membership data hasn't resolved.
+  const cartSelectedCategoryGroup = (() => {
+    if (cartIsGroupedView || cartProdCat === "all" || cartProdSubCat !== "all" || !Array.isArray(cartProductGroups)) return null;
+    const raw = cartProductGroups.find(g => g.id === cartProdCat);
+    if (!raw) return null;
+    const built = cartBuildGroupView(raw);
+    return built.children.length > 0 ? built : null;
+  })();
+  const cartIsSubGroupedView = cartSelectedCategoryGroup !== null;
   // VAT computed per line from each product's real Odoo tax configuration
   // (resolved server-side via _attach_tax_rates), not a flat assumption.
   const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
@@ -1533,7 +1573,10 @@ export function Orders() {
             <div className="flex-1 overflow-y-auto p-6">
               {cartProdsLoading && <LoadingState />}
               {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
-              {!cartProdsLoading && !cartIsGroupedView && cartFilteredProducts.length === 0 && <EmptyState />}
+              {!cartProdsLoading && cartIsSubGroupedView
+                && cartSelectedCategoryGroup.ownProducts.length === 0
+                && cartSelectedCategoryGroup.children.length === 0 && <EmptyState />}
+              {!cartProdsLoading && !cartIsGroupedView && !cartIsSubGroupedView && cartFilteredProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && cartIsGroupedView && (
                 <div className="space-y-6">
                   {cartGroupedProducts.map(group => {
@@ -1553,33 +1596,17 @@ export function Orders() {
                             {group.name} <span className="text-gray-400 font-normal">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
                           </h3>
                         </button>
-                        {!collapsed && (
-                          <div className="space-y-5">
-                            {/* Products on the top-level category itself, not under any Brand/Grade child */}
-                            {group.ownProducts.length > 0 && (
-                              <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                                {group.ownProducts.map(p => renderCartProductCard(p))}
-                              </div>
-                            )}
-                            {/* Brand/Grade sub-sections (2026-08-21) — e.g. Pre-Rolls -> Indoor/Exotic/Greendoor/Greenhouse/Budget */}
-                            {group.children.map(child => (
-                              <div key={child.id}>
-                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 pl-1">
-                                  {child.name} <span className="text-gray-400 font-normal normal-case">({child.products.length})</span>
-                                </h4>
-                                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                                  {child.products.map(p => renderCartProductCard(p))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        {!collapsed && renderGroupBody(group)}
                       </div>
                     );
                   })}
                 </div>
               )}
-              {!cartProdsLoading && !cartIsGroupedView && (
+              {/* A single top-level category is selected via the dropdown — still
+                  split by Brand/Grade if it has children, just without repeating
+                  the category name as a heading (the dropdown already shows it). */}
+              {!cartProdsLoading && cartIsSubGroupedView && renderGroupBody(cartSelectedCategoryGroup)}
+              {!cartProdsLoading && !cartIsGroupedView && !cartIsSubGroupedView && (
                 <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
                   {cartFilteredProducts.map(p => renderCartProductCard(p))}
                 </div>
