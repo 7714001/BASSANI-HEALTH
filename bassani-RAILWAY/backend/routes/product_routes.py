@@ -787,6 +787,30 @@ async def remove_product_image(
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
 
 
+@router.get("/{product_id}/image")
+async def get_product_image(product_id: int, current_user: dict = Depends(get_current_user)):
+    """Larger on-demand image for a product's click-to-expand lightbox
+    (2026-08-21) — every list/read endpoint deliberately only ever returns
+    image_128 (kept small, see PRODUCT_FIELDS note above) so a bigger size is
+    fetched lazily here, only once someone actually opens the lightbox, not
+    eagerly for every row in a list. Reads image_1024 off product.product,
+    which reads through to the template-level image the same way image_128
+    already does — Odoo auto-derives every size whenever image_1920 is set
+    (see upload_product_image above). Open to any authenticated role, same
+    as get_product — a product photo isn't the kind of figure Bassani
+    restricts to the reseller_catalog allowlist."""
+    odoo = get_odoo_client()
+    try:
+        records = odoo.read("product.product", [product_id], fields=["image_1024"])
+        if not records:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return {"image": records[0].get("image_1024") or None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
 @router.delete("/{product_id}")
 async def archive_product(
     product_id: int,

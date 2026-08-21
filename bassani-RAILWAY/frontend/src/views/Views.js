@@ -16,7 +16,7 @@ import { SearchableSelect } from "../components/ProductPickerDrawer";
 import {
   TopBar, Table, Tr, Td, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, SearchBar, FilterPill, ChipRow,
-  LoadingState, EmptyState, Badge, ProductThumb, fmtR, fmtDate, parseDisplayName,
+  LoadingState, EmptyState, Badge, ProductThumb, ProductImageLightbox, fmtR, fmtDate, parseDisplayName,
   WarehouseLabel, OnboardCustomerButton,
 } from "../components/UI";
 import { validateSAID, validatePassport } from "../utils/validators";
@@ -924,6 +924,8 @@ export function Orders() {
   const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
   const [cartWarehouseName, setCartWarehouseName] = useState(null);
   const [cartClearConfirm, setCartClearConfirm] = useState(false);
+  // Click-to-expand product image (2026-08-21) — { id, name } | null
+  const [cartImageLightbox, setCartImageLightbox] = useState(null);
   // Mobile layout (2026-08-21) — below lg, the always-visible filter row and
   // the persistent 288px cart sidebar left almost no room to actually see
   // products. Category/Brand/Variant/Stock filters move behind a "Filters"
@@ -1224,7 +1226,16 @@ export function Orders() {
       <div key={p.id}
         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
         <div className="flex-1 flex items-start gap-3">
-          <ProductThumb product={p} size="lg" />
+          {/* Click to expand (2026-08-21) — only when a real image is
+              uploaded; a placeholder icon has nothing worth expanding. */}
+          {p.image_128 ? (
+            <button type="button" onClick={() => setCartImageLightbox({ id: p.id, name: p.display_name || p.name })}
+              className="shrink-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300">
+              <ProductThumb product={p} size="lg" />
+            </button>
+          ) : (
+            <ProductThumb product={p} size="lg" />
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
@@ -2479,6 +2490,13 @@ export function Orders() {
             <BtnDanger onClick={() => { doClearCart(); setCartClearConfirm(false); }}>Clear Cart</BtnDanger>
           </div>
         </Modal>
+      )}
+      {cartImageLightbox && (
+        <ProductImageLightbox
+          productId={cartImageLightbox.id}
+          name={cartImageLightbox.name}
+          onClose={() => setCartImageLightbox(null)}
+        />
       )}
       </>
     );

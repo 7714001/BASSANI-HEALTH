@@ -1039,6 +1039,58 @@ export function ProductThumb({ product, size = "sm", className = "" }) {
   );
 }
 
+// Click-to-expand product image (2026-08-21) — full-screen overlay showing a
+// genuinely larger image, not just the existing image_128 thumbnail scaled
+// up (which would look blurry). Fetches image_1024 lazily on open via
+// GET /api/products/{id}/image, mirroring OdooPdfViewerModal's fetch-on-open
+// shape for an on-demand larger asset. Callers are responsible for only
+// opening this when a real image exists (image_128 truthy) — there's
+// nothing meaningful to expand for a placeholder.
+export function ProductImageLightbox({ productId, name, onClose }) {
+  const [image,   setImage  ] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [failed,  setFailed ] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    api.get(`/api/products/${productId}/image`)
+      .then(r => { if (!cancelled) setImage(r.data.image || null); })
+      .catch(() => { if (!cancelled) setFailed(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [productId]);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6"
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="relative max-w-2xl w-full">
+        <button onClick={onClose} aria-label="Close"
+          className="absolute -top-10 right-0 text-white/80 hover:text-white text-sm flex items-center gap-1.5">
+          <X size={18} /> Close
+        </button>
+        <div className="bg-white rounded-2xl overflow-hidden shadow-2xl">
+          {loading && (
+            <div className="aspect-square flex items-center justify-center">
+              <Loader2 size={28} className="animate-spin text-gray-300" />
+            </div>
+          )}
+          {!loading && (failed || !image) && (
+            <div className="aspect-square flex items-center justify-center text-sm text-gray-400">
+              Couldn't load image
+            </div>
+          )}
+          {!loading && !failed && image && (
+            <img src={`data:image/png;base64,${image}`} alt={name || ""} className="w-full h-auto object-contain" />
+          )}
+        </div>
+        {name && <p className="text-center text-white/90 text-sm mt-3">{name}</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 export function StatCard({ label, value, sub, accent }) {
   return (

@@ -2102,6 +2102,7 @@ Either way, the order exists the moment either button is clicked — cancelling 
 
 ### Other things a customer can do
 
+- **View a larger product photo.** Where a product has a photo uploaded, tapping its thumbnail in the catalogue opens a bigger version. Products without a photo just show the usual placeholder icon and aren't clickable.
 - **Order items that are out of stock.** The catalogue only ever shows "In Stock" or "Out of Stock" — never an exact quantity. An out-of-stock item can still be added to the order; it ships as a backorder once restocked, and the cart shows a note explaining that.
 - **Choose a delivery address.** If the customer's account has more than one saved address, a "Deliver To" dropdown appears in the cart, defaulting to their main registered address.
 - **Reorder.** A "Reorder" button on any past order's page fills a fresh cart with the same items, at current prices, ready to review and submit again — quicker than rebuilding a large order from scratch.
