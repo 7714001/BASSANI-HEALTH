@@ -309,6 +309,16 @@ async def initialise_users():
     await col("customer_ownership").create_index([("reseller_id", 1)])
     await col("tickets").create_index([("customer_id", 1)])
 
+    # Customer self-service portal logins (Phase 25) — one login per Odoo
+    # contact. Partial index: reseller/staff user docs never carry
+    # odoo_partner_id at all, so a bare unique index would treat every one
+    # of those missing-field docs as colliding nulls.
+    await col("users").create_index(
+        [("odoo_partner_id", 1)],
+        unique=True,
+        partialFilterExpression={"role": "customer"},
+    )
+
 
 def _make_inbox_indexes(collection: str):
     """Return the standard index list for any inbox collection."""

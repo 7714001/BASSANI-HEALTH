@@ -1,16 +1,18 @@
 import os
+import secrets
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from auth import get_current_user, require_admin, require_permission
+from auth import get_current_user, require_admin, require_permission, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
 from services.r2_client import r2_put, r2_delete, r2_presign
 from middleware.audit import audit_log
 from routes.ticket_routes import ticket_manager
+from routes.auth_routes import create_password_reset_token
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -79,6 +81,12 @@ class CustomerTypeUpdate(BaseModel):
 
 class LinkCompanyBody(BaseModel):
     company_id: int
+
+class PortalAccessGrantBody(BaseModel):
+    contact_ids: list[int]
+
+class CustomerWarehouseBody(BaseModel):
+    warehouse_id: Optional[int] = None
 
 # ── Shared fields ─────────────────────────────────────────────────────────────
 
@@ -315,6 +323,7 @@ async def customer_profile(
 
     meta = await col("customer_metadata").find_one({"odoo_partner_id": customer_id}, {"_id": 0})
     samples_account = bool(meta.get("samples_account")) if meta else False
+    warehouse_id = meta.get("warehouse_id") if meta else None
 
     return {
         "customer":             customer,
@@ -324,6 +333,7 @@ async def customer_profile(
         "outstanding_invoices": invoices,
         "ownership":            ownership,
         "samples_account":      samples_account,
+        "warehouse_id":         warehouse_id,
     }
 
 
@@ -872,6 +882,232 @@ def create_customer_contact(
         return {"success": True, "contact_id": contact_id}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{customer_id}/portal-access")
+async def get_portal_access(
+    customer_id: int,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    """
+    Portal-login state for a customer company. For a business (is_company),
+    lists every active Odoo child contact with its provisioning status. For
+    an individual, returns a single synthetic row for the partner itself —
+    individuals have no child contacts, so one enable/disable toggle covers
+    them (Phase 25.0's multi-login model is a per-company concept, not a
+    per-partner one).
+    """
+    odoo = get_odoo_client()
+    try:
+        partner = odoo.read("res.partner", [customer_id], fields=["id", "name", "is_company", "email", "phone"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    partner = partner[0]
+    is_company = bool(partner.get("is_company"))
+
+    if is_company:
+        contact_ids = odoo.search(
+            "res.partner",
+            [["parent_id", "=", customer_id], ["active", "=", True]],
+            limit=200,
+        )
+        raw_contacts = odoo.read("res.partner", contact_ids, fields=["id", "name", "email", "phone", "function"]) if contact_ids else []
+        contacts = [{k: (v if v is not False else None) for k, v in c.items()} for c in raw_contacts]
+    else:
+        contacts = [{
+            "id": partner["id"], "name": partner["name"],
+            "email": partner.get("email") or None, "phone": partner.get("phone") or None,
+            "function": None,
+        }]
+
+    contact_ids_list = [c["id"] for c in contacts]
+    users_map = {}
+    if contact_ids_list:
+        async for u in col("users").find(
+            {"role": "customer", "customer_company_partner_id": customer_id, "odoo_partner_id": {"$in": contact_ids_list}},
+            {"odoo_partner_id": 1, "active": 1, "_id": 0},
+        ):
+            users_map[u["odoo_partner_id"]] = u
+
+    for c in contacts:
+        u = users_map.get(c["id"])
+        if not u:
+            c["portal_status"] = "not_provisioned"
+        else:
+            c["portal_status"] = "active" if u.get("active", True) else "deactivated"
+
+    return {
+        "is_company": is_company,
+        "contacts": contacts,
+        "has_no_contacts": is_company and not contacts,
+    }
+
+
+@router.post("/{customer_id}/portal-access")
+async def grant_portal_access(
+    customer_id: int,
+    body: PortalAccessGrantBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    """
+    Bulk-enable portal logins for one or more contacts under a customer
+    company (or the partner itself, for an individual). Idempotent —
+    already-active contacts are skipped, not errored, so re-running after
+    adding a new Odoo contact is safe. Each newly provisioned login gets a
+    random, never-surfaced password and an emailed set-password invite
+    (reusing the same token mechanism as self-service forgot-password).
+    """
+    odoo = get_odoo_client()
+    try:
+        partner = odoo.read("res.partner", [customer_id], fields=["id", "name", "is_company"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    partner = partner[0]
+    company_name = partner["name"]
+
+    if partner.get("is_company"):
+        child_ids = odoo.search("res.partner", [["parent_id", "=", customer_id], ["active", "=", True]], limit=200)
+        valid_ids = set(child_ids)
+    else:
+        valid_ids = {customer_id}
+
+    granted, skipped_existing, errors = [], [], []
+    for contact_id in body.contact_ids:
+        if contact_id not in valid_ids:
+            errors.append({"contact_id": contact_id, "detail": "Not a contact of this company"})
+            continue
+
+        existing = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id})
+        if existing:
+            skipped_existing.append(contact_id)
+            continue
+
+        contact_records = odoo.read("res.partner", [contact_id], fields=["id", "name", "email"])
+        contact = contact_records[0] if contact_records else None
+        if not contact or not contact.get("email"):
+            errors.append({
+                "contact_id": contact_id,
+                "detail": "This contact has no email address on file. Add one to the contact in Odoo before granting portal access.",
+            })
+            continue
+
+        username = contact["email"].strip().lower()
+        if await col("users").find_one({"username": username}):
+            errors.append({"contact_id": contact_id, "detail": f"An account already exists for {username}"})
+            continue
+
+        user_doc = {
+            "username": username,
+            "email": username,
+            "password": hash_password(secrets.token_urlsafe(32)),
+            "role": "customer",
+            "name": contact["name"],
+            "odoo_partner_id": contact_id,
+            "customer_company_partner_id": customer_id,
+            "commission_eligible": False,
+            "active": True,
+            "must_change_password": True,
+            "created_at": datetime.now(timezone.utc),
+        }
+        result = await col("users").insert_one(user_doc)
+
+        token = await create_password_reset_token(username)
+        from config import get_settings as _gs
+        invite_url = f"{_gs().portal_url}/reset-password?token={token}"
+        from services.email_service import send_customer_portal_invite
+        background_tasks.add_task(
+            send_customer_portal_invite,
+            contact["email"], contact["name"], company_name, invite_url,
+        )
+
+        await audit_log(
+            "customer.portal_access_granted", "customer_portal_access", str(result.inserted_id),
+            entity_label=f"{contact['name']} ({company_name})",
+            user=current_user,
+            after={"odoo_partner_id": contact_id, "customer_company_partner_id": customer_id},
+        )
+        granted.append(contact_id)
+
+    return {"success": True, "granted": granted, "skipped_existing": skipped_existing, "errors": errors}
+
+
+@router.post("/{customer_id}/portal-access/{contact_id}/deactivate")
+async def deactivate_portal_access(
+    customer_id: int,
+    contact_id: int,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    user = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id, "customer_company_partner_id": customer_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="No portal login found for this contact")
+    await col("users").update_one({"_id": user["_id"]}, {"$set": {"active": False}})
+    await audit_log(
+        "customer.portal_access_deactivated", "customer_portal_access", str(user["_id"]),
+        entity_label=user.get("name") or user.get("username"),
+        user=current_user,
+    )
+    return {"success": True}
+
+
+@router.post("/{customer_id}/portal-access/{contact_id}/reactivate")
+async def reactivate_portal_access(
+    customer_id: int,
+    contact_id: int,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    user = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id, "customer_company_partner_id": customer_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="No portal login found for this contact")
+    await col("users").update_one({"_id": user["_id"]}, {"$set": {"active": True}})
+    await audit_log(
+        "customer.portal_access_reactivated", "customer_portal_access", str(user["_id"]),
+        entity_label=user.get("name") or user.get("username"),
+        user=current_user,
+    )
+    return {"success": True}
+
+
+@router.put("/{customer_id}/warehouse")
+async def set_customer_warehouse(
+    customer_id: int,
+    body: CustomerWarehouseBody,
+    current_user: dict = Depends(require_permission("customers.manage")),
+):
+    """
+    Admin-pinned warehouse override for a customer company, read by
+    warehouse_context.py::resolve_warehouse_id for role "customer". Falls
+    back to the global admin default when unset — same shape as the
+    existing samples_account toggle on customer_metadata.
+    """
+    odoo = get_odoo_client()
+    try:
+        partner = odoo.read("res.partner", [customer_id], fields=["id", "name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": customer_id}, {"_id": 0})
+    before_val = meta.get("warehouse_id") if meta else None
+
+    await col("customer_metadata").update_one(
+        {"odoo_partner_id": customer_id},
+        {"$set": {"warehouse_id": body.warehouse_id}},
+        upsert=True,
+    )
+    await audit_log(
+        "customer.warehouse_change", "customer", customer_id,
+        entity_label=partner[0]["name"],
+        user=current_user,
+        before={"warehouse_id": before_val},
+        after={"warehouse_id": body.warehouse_id},
+    )
+    return {"success": True, "warehouse_id": body.warehouse_id}
 
 
 @router.delete("/{customer_id}")

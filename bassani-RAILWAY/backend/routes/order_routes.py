@@ -91,6 +91,11 @@ async def list_orders(
         domain.append(("warehouse_id", "=", warehouse_id))
     if current_user.get("role") == "reseller":
         domain.append(("commercial_partner_id", "in", list(owned_partner_ids)))
+    elif current_user.get("role") == "customer":
+        # Company-level sharing (Phase 25): every login under one company
+        # sees the same order history, scoped to a single fixed partner id
+        # rather than an owned-set lookup.
+        domain.append(("commercial_partner_id", "=", current_user.get("customer_company_partner_id")))
     if status and status != "all":
         domain.append(("state", "=", status))
     if partner_id:
@@ -363,6 +368,10 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
             reseller_id = reseller["id"] if reseller else None
             partner = order.get("partner_id")
             if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
+                raise HTTPException(status_code=403, detail="Access denied")
+        elif current_user.get("role") == "customer":
+            partner = order.get("partner_id")
+            if not partner or partner[0] != current_user.get("customer_company_partner_id"):
                 raise HTTPException(status_code=403, detail="Access denied")
 
         # Fetch partner address + VAT for order view header
@@ -790,6 +799,10 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         partner = order.get("partner_id")
         if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
             raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user.get("role") == "customer":
+        partner = order.get("partner_id")
+        if not partner or partner[0] != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
 
     # Partner detail
     if order.get("partner_id"):
@@ -1188,6 +1201,15 @@ async def create_order(
     if current_user.get("role") == "reseller":
         if not await is_partner_owned_by(reseller_profile["id"], effective_partner_id):
             raise HTTPException(status_code=403, detail="You can only place orders for your own customers")
+
+    # A customer account only ever orders for itself (Phase 25) — no
+    # "place order for..." picker exists, so this is purely an
+    # authorization guard against a direct/forged API call, not a
+    # data-shaping step. Checked post commercial_partner_id resolution,
+    # same as the reseller check above.
+    if current_user.get("role") == "customer":
+        if effective_partner_id != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="You can only place orders for your own account")
 
     # Stock check — block the whole order if any line exceeds what's actually
     # available to promise (on-hand minus what's already reserved by other

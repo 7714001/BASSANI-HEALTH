@@ -121,7 +121,7 @@ function AuthRequired({ children }) {
   return children;
 }
 
-function ProtectedRoute({ children, adminOnly, permission }) {
+function ProtectedRoute({ children, adminOnly, permission, allowRoles }) {
   const { user, loading, isAdmin, can } = useAuth();
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
@@ -132,7 +132,12 @@ function ProtectedRoute({ children, adminOnly, permission }) {
   if (user.must_change_password) return <Navigate to="/change-password" replace />;
   if (PACKING_FLOOR_ROLES.has(user.role)) return <PackingFloorScreen />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
-  if (permission && !can(permission)) return <Navigate to="/" replace />;
+  // allowRoles lets a self-service external role (reseller, customer) reach
+  // a permission-gated route even though can() always denies them — those
+  // roles are hand-scoped server-side to their own data, not via the staff
+  // permissions object.
+  const roleAllowed = allowRoles && user.role && allowRoles.includes(user.role);
+  if (permission && !roleAllowed && !can(permission)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -199,7 +204,7 @@ export default function App() {
         <Route path="/products" element={
           <ProtectedRoute>
             <AppLayout>
-              {user?.role === "reseller" ? <ResellerCatalog /> : <Products />}
+              {(user?.role === "reseller" || user?.role === "customer") ? <ResellerCatalog /> : <Products />}
             </AppLayout>
           </ProtectedRoute>
         } />
@@ -246,7 +251,7 @@ export default function App() {
           <ProtectedRoute><AppLayout><Commission /></AppLayout></ProtectedRoute>
         } />
         <Route path="/invoices" element={
-          <ProtectedRoute permission="invoices.view"><AppLayout><Invoices /></AppLayout></ProtectedRoute>
+          <ProtectedRoute permission="invoices.view" allowRoles={["reseller", "customer"]}><AppLayout><Invoices /></AppLayout></ProtectedRoute>
         } />
         <Route path="/finance/bank-recon" element={
           <ProtectedRoute permission="finance.bank_reconciliation"><AppLayout><BankReconciliation /></AppLayout></ProtectedRoute>

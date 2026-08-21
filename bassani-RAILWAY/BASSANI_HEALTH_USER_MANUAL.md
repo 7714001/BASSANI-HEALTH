@@ -2052,6 +2052,40 @@ If your order is being delivered in multiple shipments (backorder), you will see
 
 ---
 
+## Customer Self-Service Portal
+
+**Access:** `customer` role — an already-approved Bassani customer given their own portal login.
+
+Some customers can log into the portal directly rather than ordering through a Sales Agent or by phone/email. A customer login can place its own orders, view its own order status, and view its own invoices — the same real pipeline every other order goes through. A customer account never earns commission. If the customer's business is linked to a Sales Agent, that agent still earns commission on everything the customer orders, exactly as before — nothing changes on the commission side.
+
+### Granting a customer portal access (Admin)
+
+Portal access is never automatic — an admin must turn it on for a specific customer.
+
+1. Go to **Customers** and open the customer's profile.
+2. Scroll to the **Portal Access** section (only visible if you have the "Grant & revoke customer portal logins" permission).
+3. For a business, you'll see every contact on file for that company, each with a checkbox and a status: **Not provisioned**, **Active**, or **Deactivated**. Tick the box next to each person who should get their own login, then click **Grant Access**. You can come back at any time and enable more contacts as needed — nothing is locked in.
+4. For an individual customer (a named patient, not a company), there's a single enable toggle instead of a list.
+5. Each newly granted contact receives an email inviting them to set their own password. The link expires after 15 minutes — if it's expired, they can use "Forgot password" on the sign-in page to request a new one.
+6. To turn off a login (e.g. someone has left the business), click **Deactivate** next to their name. This only disables their login — it does not touch their contact record in the customer's account.
+
+If a contact has no email address on file, they can't be granted a login until one is added — use **Add contact** in the Contacts section above, or edit the existing contact, to add one first.
+
+**Default warehouse:** Also on the customer profile, the **Default Warehouse** field lets you pin which warehouse a customer's orders and product catalogue draw from. Leave it blank to use the standard admin default.
+
+### What a customer sees once logged in
+
+A customer's portal is deliberately simple — four items in the sidebar:
+
+- **Dashboard** — a summary of their own recent orders and account status. They never see business-wide figures, other customers' data, or anything reseller- or staff-facing.
+- **Products** — the same browsable catalogue a Sales Agent's customers see: search, filter by category, add to cart.
+- **My Orders** — every order placed on the account, whether they placed it themselves, a colleague at the same company placed it, or Bassani staff placed it on their behalf. Clicking an order opens the same Order Passport view staff use to track its progress.
+- **Invoices** — every invoice for the account, with the same PDF download available elsewhere in the portal.
+
+If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
+
+---
+
 ## My Profile
 
 **Access:** All authenticated users (all roles)
@@ -2164,6 +2198,8 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Create a direct inquiry ticket | Merveille (sales) |
 | Build or edit a quote (staff — internal quote builder) | Merveille (sales) |
 | Build or edit a quote (reseller — cart view) | Any reseller |
+| Place an order directly (customer self-service) | Any customer with portal access |
+| Grant or revoke a customer's portal login | Admin with `customers.manage_portal_access` |
 | Send quote to customer | Merveille (sales) or any reseller |
 | Register a 50% deposit | Kashi or Ragini (finance) |
 | Register balance (final) payment | Kashi or Ragini (finance) |

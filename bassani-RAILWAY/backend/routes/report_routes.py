@@ -171,6 +171,70 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 "low_stock_products": low_stock_products,
             }
 
+        # ── Customer dashboard (Phase 25 self-service) ─────────────────────────
+        # Previously fell through to the full admin dashboard below — a real
+        # data-exposure gap (business-wide revenue/order counts) once the
+        # customer role could log in at all. Scoped to the customer's own
+        # company, same shape as the reseller branch above minus commission.
+        if current_user.get("role") == "customer":
+            company_partner_id = current_user.get("customer_company_partner_id")
+            empty_response = {
+                "products": {"total": total_products, "low_stock": low_stock},
+                "orders": {"total": 0, "this_month": 0, "month_revenue": 0.0},
+                "customers": {"active": 0},
+                "invoices": {"unpaid": 0, "overdue_amount": 0.0},
+                "recent_orders": [],
+                "low_stock_products": low_stock_products,
+            }
+            if not company_partner_id:
+                return empty_response
+
+            order_domain = [("commercial_partner_id", "=", company_partner_id), ("state", "not in", ["cancel"])]
+            all_orders = odoo.search_read(
+                "sale.order", domain=order_domain,
+                fields=["id", "amount_total", "state", "date_order"],
+                limit=5000,
+            )
+            confirmed = [o for o in all_orders if o["state"] in ("sale", "done")]
+            month_orders_c = [
+                o for o in confirmed
+                if month_start <= (o.get("date_order") or "") <= month_end
+            ]
+
+            unpaid_invoices = 0
+            overdue_amount = 0.0
+            try:
+                invoice_domain = [
+                    ("move_type", "=", "out_invoice"),
+                    ("payment_state", "in", ["not_paid", "partial"]),
+                    ("state", "=", "posted"),
+                    ("commercial_partner_id", "=", company_partner_id),
+                ]
+                unpaid_invoices = odoo.count("account.move", invoice_domain)
+                invoice_data = odoo.search_read("account.move", domain=invoice_domain, fields=["amount_residual"], limit=500)
+                overdue_amount = sum(i["amount_residual"] for i in invoice_data)
+            except Exception:
+                pass
+
+            recent_orders = odoo.search_read(
+                "sale.order", domain=order_domain,
+                fields=["id", "name", "partner_id", "amount_total", "state", "date_order"],
+                limit=5, order="date_order desc",
+            )
+
+            return {
+                "products": {"total": total_products, "low_stock": low_stock},
+                "orders": {
+                    "total": len(confirmed),
+                    "this_month": len(month_orders_c),
+                    "month_revenue": sum(o["amount_total"] for o in month_orders_c),
+                },
+                "customers": {"active": 0},
+                "invoices": {"unpaid": unpaid_invoices, "overdue_amount": overdue_amount},
+                "recent_orders": recent_orders,
+                "low_stock_products": low_stock_products,
+            }
+
         # ── Admin dashboard ───────────────────────────────────────────────────
         tomorrow = today + timedelta(days=1)
         today_str    = today.strftime("%Y-%m-%d")

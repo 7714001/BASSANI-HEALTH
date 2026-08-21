@@ -7,6 +7,13 @@ levels, orders, order/packing-board creation):
   - reseller           — external role, no self-service switcher. Fixed to
                           `warehouse_id` on their reseller profile, falling
                           back to the global admin-set default.
+  - customer           — external role (Phase 25), no self-service switcher.
+                          Fixed to an admin-pinned `warehouse_id` on
+                          `customer_metadata` (keyed by the customer's
+                          `customer_company_partner_id`, not any one login),
+                          falling back to the global admin-set default.
+                          Deliberately does not inherit a linked reseller's
+                          warehouse — the two are independent pins.
   - every internal role — self-service `active_warehouse_id` selected in the
                           top-nav switcher (2026-08-04: opened up from
                           admin/super_admin-only to every internal role).
@@ -61,6 +68,18 @@ async def resolve_warehouse_id(current_user: dict) -> Optional[int]:
             {"user_id": current_user.get("id")}, {"_id": 0, "warehouse_id": 1}
         )
         wh_id = reseller.get("warehouse_id") if reseller else None
+        return wh_id or await _get_global_default_warehouse_id()
+
+    # Customer: external role, no self-service switcher — fixed to an
+    # admin-pinned warehouse on the company's customer_metadata doc (shared
+    # by every login under that company), falling back to the global default.
+    # No reseller-derived fallback even if the company is linked to one.
+    if role == "customer":
+        meta = await col("customer_metadata").find_one(
+            {"odoo_partner_id": current_user.get("customer_company_partner_id")},
+            {"_id": 0, "warehouse_id": 1},
+        )
+        wh_id = meta.get("warehouse_id") if meta else None
         return wh_id or await _get_global_default_warehouse_id()
 
     # Every internal role: the top-nav switcher is the self-service

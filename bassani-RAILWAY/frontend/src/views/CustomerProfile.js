@@ -471,6 +471,18 @@ export default function CustomerProfile() {
   const [samplesEnableConfirm,   setSamplesEnableConfirm  ] = useState(false);
   const [samplesDisableConfirm,  setSamplesDisableConfirm ] = useState(false);
 
+  // ── Default warehouse (Phase 25 — pinned override for self-service orders) ─
+  const [warehouseOptions, setWarehouseOptions] = useState([]);
+  const [customerWarehouseId, setCustomerWarehouseId] = useState("");
+  const [warehouseSaving,  setWarehouseSaving ] = useState(false);
+
+  // ── Portal Access (Phase 25) ─────────────────────────────────────────────
+  const [portalAccess,        setPortalAccess       ] = useState(null); // { is_company, contacts, has_no_contacts }
+  const [portalAccessLoading, setPortalAccessLoading] = useState(false);
+  const [portalSelected,      setPortalSelected     ] = useState(new Set());
+  const [portalGranting,      setPortalGranting     ] = useState(false);
+  const [portalTogglingId,    setPortalTogglingId   ] = useState(null);
+
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
   const [reqModalOpen,         setReqModalOpen        ] = useState(false);
@@ -481,10 +493,29 @@ export default function CustomerProfile() {
 
   useEffect(() => {
     api.get(`/api/customers/${id}/profile`)
-      .then(r => { setData(r.data); setSamplesAccount(!!r.data.samples_account); })
+      .then(r => {
+        setData(r.data);
+        setSamplesAccount(!!r.data.samples_account);
+        setCustomerWarehouseId(r.data.warehouse_id ?? "");
+      })
       .catch(() => { toast.error("Failed to load customer profile"); navigate("/customers"); })
       .finally(() => setLoading(false));
   }, [id, navigate]);
+
+  useEffect(() => {
+    if (!can("customers.manage")) return;
+    api.get("/api/warehouses/").then(r => setWarehouseOptions(r.data.warehouses || [])).catch(() => {});
+  }, [id]); // eslint-disable-line
+
+  const loadPortalAccess = () => {
+    if (!can("customers.manage_portal_access")) return;
+    setPortalAccessLoading(true);
+    api.get(`/api/customers/${id}/portal-access`)
+      .then(r => { setPortalAccess(r.data); setPortalSelected(new Set()); })
+      .catch(() => {})
+      .finally(() => setPortalAccessLoading(false));
+  };
+  useEffect(loadPortalAccess, [id]); // eslint-disable-line
 
   useEffect(() => {
     if (!can("onboarding.inbox")) return;
@@ -697,6 +728,56 @@ export default function CustomerProfile() {
       toast.error(e.response?.data?.detail || "Failed to add contact");
     } finally {
       setAddContactSaving(false);
+    }
+  };
+
+  const doSaveWarehouse = async (value) => {
+    const warehouseId = value === "" ? null : Number(value);
+    setWarehouseSaving(true);
+    try {
+      await api.put(`/api/customers/${id}/warehouse`, { warehouse_id: warehouseId });
+      setCustomerWarehouseId(value);
+      toast.success(warehouseId ? "Default warehouse updated" : "Default warehouse cleared — will use the admin default");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update default warehouse");
+    } finally {
+      setWarehouseSaving(false);
+    }
+  };
+
+  const togglePortalContact = (contactId) => {
+    setPortalSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(contactId)) next.delete(contactId); else next.add(contactId);
+      return next;
+    });
+  };
+
+  const doGrantPortalAccess = async () => {
+    if (portalSelected.size === 0) return;
+    setPortalGranting(true);
+    try {
+      const { data: res } = await api.post(`/api/customers/${id}/portal-access`, { contact_ids: [...portalSelected] });
+      if (res.granted?.length) toast.success(`Portal access granted to ${res.granted.length} contact${res.granted.length > 1 ? "s" : ""}`);
+      if (res.errors?.length) res.errors.forEach(e => toast.error(e.detail));
+      loadPortalAccess();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to grant portal access");
+    } finally {
+      setPortalGranting(false);
+    }
+  };
+
+  const doTogglePortalStatus = async (contactId, action) => {
+    setPortalTogglingId(contactId);
+    try {
+      await api.post(`/api/customers/${id}/portal-access/${contactId}/${action}`);
+      toast.success(action === "deactivate" ? "Login deactivated" : "Login reactivated");
+      loadPortalAccess();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update login");
+    } finally {
+      setPortalTogglingId(null);
     }
   };
 
@@ -968,6 +1049,118 @@ export default function CustomerProfile() {
                   </div>
                 </div>
               </div>
+            </Section>
+          )}
+
+          {/* Default Warehouse — pins which warehouse this customer's own
+              self-service orders/stock are scoped to (Phase 25). Falls back
+              to the admin-set global default when unset. */}
+          {can("customers.manage") && (
+            <Section title="Default Warehouse">
+              <div className="px-5 py-4">
+                <p className="text-xs text-gray-500 mb-3">
+                  Only relevant if this customer has self-service portal access. Their orders and product
+                  catalogue draw from this warehouse. Leave unset to use the admin-set default.
+                </p>
+                <div className="max-w-xs">
+                  <Select
+                    value={customerWarehouseId}
+                    onChange={e => doSaveWarehouse(e.target.value)}
+                    disabled={warehouseSaving}
+                  >
+                    <option value="">Use admin default</option>
+                    {warehouseOptions.map(w => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+            </Section>
+          )}
+
+          {/* Portal Access — grant/revoke self-service logins (Phase 25) */}
+          {can("customers.manage_portal_access") && (
+            <Section title="Portal Access">
+              {portalAccessLoading ? (
+                <p className="px-5 py-4 text-sm text-gray-400">Loading…</p>
+              ) : !portalAccess ? (
+                <p className="px-5 py-4 text-sm text-gray-400">Could not load portal access status.</p>
+              ) : portalAccess.has_no_contacts ? (
+                <p className="px-5 py-4 text-sm text-gray-400">
+                  This company has no contacts on file yet. Add a contact above before granting portal access.
+                </p>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                        <tr>
+                          <th className="w-8" />
+                          <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                          <th className="text-left px-5 py-2.5 font-medium">Email</th>
+                          <th className="text-left px-5 py-2.5 font-medium">Status</th>
+                          <th className="w-32" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {portalAccess.contacts.map(ct => (
+                          <tr key={ct.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                            <td className="px-5 py-3">
+                              {ct.portal_status === "not_provisioned" && (
+                                <input
+                                  type="checkbox"
+                                  checked={portalSelected.has(ct.id)}
+                                  onChange={() => togglePortalContact(ct.id)}
+                                  disabled={!ct.email}
+                                />
+                              )}
+                            </td>
+                            <td className="px-5 py-3 font-medium text-gray-900">{ct.name}</td>
+                            <td className="px-5 py-3 text-gray-500">
+                              {ct.email || <span className="text-red-400">No email on file</span>}
+                            </td>
+                            <td className="px-5 py-3">
+                              {ct.portal_status === "active" && <Badge color="green">Active</Badge>}
+                              {ct.portal_status === "deactivated" && <Badge color="gray">Deactivated</Badge>}
+                              {ct.portal_status === "not_provisioned" && <Badge color="gray">Not provisioned</Badge>}
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              {ct.portal_status === "active" && (
+                                <button
+                                  onClick={() => doTogglePortalStatus(ct.id, "deactivate")}
+                                  disabled={portalTogglingId === ct.id}
+                                  className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                                >
+                                  {portalTogglingId === ct.id ? "Working…" : "Deactivate"}
+                                </button>
+                              )}
+                              {ct.portal_status === "deactivated" && (
+                                <button
+                                  onClick={() => doTogglePortalStatus(ct.id, "reactivate")}
+                                  disabled={portalTogglingId === ct.id}
+                                  className="text-xs font-medium text-bassani-700 hover:text-bassani-800 disabled:opacity-50"
+                                >
+                                  {portalTogglingId === ct.id ? "Working…" : "Reactivate"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {portalAccess.contacts.some(ct => ct.portal_status === "not_provisioned") && (
+                    <div className="px-5 py-3 border-t border-gray-50 flex items-center justify-between">
+                      <p className="text-xs text-gray-400">
+                        Select one or more contacts to send them a portal login invite.
+                      </p>
+                      <BtnPrimary onClick={doGrantPortalAccess} loading={portalGranting} disabled={portalGranting || portalSelected.size === 0}>
+                        Grant Access ({portalSelected.size})
+                      </BtnPrimary>
+                    </div>
+                  )}
+                </>
+              )}
             </Section>
           )}
 

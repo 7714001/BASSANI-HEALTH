@@ -86,6 +86,16 @@ const RESELLER_NAV = [
   { label: "Invite Customer", path: "/onboarding-docs",  icon: Link2,         section: "Customers" },
 ];
 
+// Phase 25 — self-service customer login. No commission, no "my customers"
+// (a customer account only ever represents itself), no My Applications /
+// Invite Customer (those are reseller-only referral tools).
+const CUSTOMER_NAV = [
+  { label: "Dashboard", path: "/",         icon: LayoutDashboard, section: "Main" },
+  { label: "Products",  path: "/products", icon: Package,         section: "Main" },
+  { label: "My Orders", path: "/orders",   icon: Ticket,          section: "Orders" },
+  { label: "Invoices",  path: "/invoices", icon: FileText,        section: "Orders" },
+];
+
 export function Sidebar() {
   const { user, logout, isAdmin, can } = useAuth();
   const navigate = useNavigate();
@@ -129,13 +139,15 @@ export function Sidebar() {
   }, [isAdmin]);
 
   const isReseller = user?.role === "reseller";
-  const rawItems   = isReseller ? RESELLER_NAV : NAV;
+  const isCustomer = user?.role === "customer";
+  const rawItems   = isReseller ? RESELLER_NAV : isCustomer ? CUSTOMER_NAV : NAV;
   const items      = rawItems.filter(i => {
     if (i.adminOnly && !isAdmin) return false;
     if (i.requiresCommission && user?.commission_eligible === false) return false;
     if (i.children) return true; // NavGroup filters its own children
     // Permission-gated items apply to admin-tier AND ticketing-role accounts
-    // (resellers never reach here — they use RESELLER_NAV, which has none).
+    // (resellers/customers never reach here — they use their own NAV arrays,
+    // which have none).
     if (i.permissions) return i.permissions.some(p => can(p));
     if (i.permission) return can(i.permission);
     return true;
@@ -332,15 +344,15 @@ function WarehouseSwitcher() {
   const [defaultWarehouseId, setDefaultWarehouseId] = useState(null);
 
   useEffect(() => {
-    if (user?.role === "reseller") return;
+    if (user?.role === "reseller" || user?.role === "customer") return;
     api.get("/api/warehouses/").then((r) => {
       setWarehouses(r.data.warehouses || []);
       setDefaultWarehouseId(r.data.default_warehouse_id || null);
     }).catch(() => {});
   }, [user?.role]);
 
-  // Resellers have a fixed warehouse — picker is not shown
-  if (user?.role === "reseller") return null;
+  // Resellers and customers have a fixed warehouse — picker is not shown
+  if (user?.role === "reseller" || user?.role === "customer") return null;
   if (warehouses.length === 0) return null;
 
   // null = user explicitly chose "All warehouses"; undefined = never set (show global default as hint)

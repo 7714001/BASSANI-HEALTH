@@ -9,6 +9,7 @@ from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
+from ownership import is_partner_owned_by
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -77,6 +78,14 @@ async def list_invoices(
         if not odoo_partner_id:
             return {"invoices": [], "total": 0}
         domain.append(("partner_id", "=", odoo_partner_id))
+    elif current_user.get("role") == "customer":
+        # Company-level sharing (Phase 25): every login under one company
+        # sees the same invoice list, via commercial_partner_id (not
+        # partner_id) so an invoice billed to a specific contact still shows.
+        company_partner_id = current_user.get("customer_company_partner_id")
+        if not company_partner_id:
+            return {"invoices": [], "total": 0}
+        domain.append(("commercial_partner_id", "=", company_partner_id))
 
     try:
         invoices = odoo.search_read(
@@ -195,8 +204,35 @@ def list_payment_journals(current_user: dict = Depends(require_admin)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+async def _assert_invoice_owned_by_external_role(odoo, current_user: dict, partner_field) -> None:
+    """Ownership guard for the two self-service external roles (reseller,
+    customer) on a single-invoice fetch — previously missing entirely, so
+    any authenticated user could fetch any invoice by guessing its id.
+    Resolves the invoice partner to its commercial (company) partner first,
+    same as order_routes.py's create_order normalization, so an invoice
+    billed to a specific contact still matches company-level ownership."""
+    role = current_user.get("role")
+    if role not in ("reseller", "customer") or not partner_field:
+        return
+    commercial_id = partner_field[0]
+    try:
+        _pr = odoo.read("res.partner", [commercial_id], fields=["commercial_partner_id"])
+        if _pr and _pr[0].get("commercial_partner_id"):
+            commercial_id = _pr[0]["commercial_partner_id"][0]
+    except Exception:
+        pass
+    if role == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        reseller_id = reseller["id"] if reseller else None
+        if not await is_partner_owned_by(reseller_id, commercial_id):
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        if commercial_id != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+
 @router.get("/{invoice_id}")
-def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
+async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single invoice with line items, partner details, and tax breakdown."""
     odoo = get_odoo_client()
     try:
@@ -211,6 +247,7 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
         if not records:
             raise HTTPException(status_code=404, detail="Invoice not found")
         invoice = records[0]
+        await _assert_invoice_owned_by_external_role(odoo, current_user, invoice.get("partner_id"))
 
         # Fetch partner address + VAT for invoice header
         if invoice.get("partner_id"):
@@ -293,7 +330,7 @@ def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user))
 
 
 @router.get("/{invoice_id}/pdf")
-def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_user)):
+async def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_user)):
     """Odoo's own rendered Invoice PDF (its real template, with payment status),
     not the portal's own in-browser InvoiceView rendering — for anyone who
     needs the exact document Odoo itself would produce. Uses
@@ -301,11 +338,12 @@ def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_current_us
     action for account.move."""
     odoo = get_odoo_client()
     try:
-        rows = odoo.read("account.move", [invoice_id], fields=["name"])
+        rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not rows:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    await _assert_invoice_owned_by_external_role(odoo, current_user, rows[0].get("partner_id"))
     try:
         pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
     except Exception as e:

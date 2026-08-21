@@ -26,6 +26,11 @@ ALL_ROLES = {
     # permission-gate model as ticket roles, but kept in their own set so
     # commercial-pipeline logic keyed on TICKET_ROLES never picks them up.
     "vault_custodian",
+    # Phase 25 — external self-service customer login. Same shape as
+    # reseller (outside require_permission's gate entirely, hand-checked
+    # per-route on role) but pinned to a single company account rather than
+    # a portfolio of owned customers.
+    "customer",
 }
 ADMIN_ROLES = {"super_admin", "admin"}  # roles that access the main React portal
 TICKET_ROLES = {"sales", "orders_clerk", "finance", "qa_manager", "responsible_pharmacist"}
@@ -35,7 +40,7 @@ PRODUCTION_ROLES = {"vault_custodian"}
 DEFAULT_ADMIN_PERMISSIONS: dict = {
     "products":    {"manage": False},
     "orders":      {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-    "customers":   {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+    "customers":   {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
     "commission":  {"view": True,  "generate_statements": False, "mark_paid": False, "configure_tiers": False},
     "resellers":   {"view": True,  "manage": False},
     "invoices":    {"view": True,  "record_payment": False},
@@ -60,7 +65,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
 FULL_PERMISSIONS: dict = {
     "products":    {"manage": True},
     "orders":      {"view": True,  "confirm": True,  "cancel": True,  "recurring_manage": True},
-    "customers":   {"view": True,  "manage": True,   "approve_onboarding": True,  "reject_onboarding": True},
+    "customers":   {"view": True,  "manage": True,   "approve_onboarding": True,  "reject_onboarding": True,  "manage_portal_access": True},
     "commission":  {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": True},
     "resellers":   {"view": True,  "manage": True},
     "invoices":    {"view": True,  "record_payment": True},
@@ -90,7 +95,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "sales": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": True,  "manage": True,   "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": True,  "manage": True,   "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -113,7 +118,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "orders_clerk": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -136,7 +141,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "finance": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": False},
         "resellers":  {"view": True,  "manage": False},
         "invoices":   {"view": True,  "record_payment": True},
@@ -159,7 +164,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "qa_manager": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -182,7 +187,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "responsible_pharmacist": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -210,7 +215,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "vault_custodian": {
         "products":   {"manage": False},
         "orders":     {"view": False, "confirm": False, "cancel": False, "recurring_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},

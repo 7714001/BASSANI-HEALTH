@@ -864,6 +864,10 @@ export function Orders() {
   const navigate   = useNavigate();
   const location   = useLocation();
   const isReseller = user?.role === "reseller";
+  // Phase 25 — self-service customer login. Shares the same cart/checkout UI
+  // as a reseller placing an order, but always orders for itself: no
+  // "place order for..." picker, no My Quotes / Sales Tickets destination.
+  const isCustomer = user?.role === "customer";
 
   // ── List view state ───────────────────────────────────────────────────────
   const [view,        setView       ] = useState(
@@ -927,11 +931,11 @@ export function Orders() {
   // Parent-category chips for the cart's product browser (portal-only grouping,
   // see ParentCategories.js) — fetched once, independent of the selected filter.
   useEffect(() => {
-    if (!isReseller) return;
+    if (!isReseller && !isCustomer) return;
     api.get("/api/parent-categories/")
       .then(r => setCartParentCategories(r.data.categories || []))
       .catch(() => {});
-  }, [isReseller]);
+  }, [isReseller, isCustomer]);
 
   // Re-fetch products whenever the cart is open and the selected parent
   // category changes — parent-category membership isn't a field on the
@@ -976,6 +980,14 @@ export function Orders() {
     }, delay);
     return () => clearTimeout(t);
   }, [cartCustSearch, cartCustDropOpen]);
+
+  // A customer account only ever orders for itself — pre-select its own
+  // company instead of showing the reseller's "which customer" picker.
+  useEffect(() => {
+    if (isCustomer && view === "new" && !editQuote && !cartSelectedCust && user?.customer_company_partner_id) {
+      setCartSelectedCust({ id: user.customer_company_partner_id, name: user.name });
+    }
+  }, [isCustomer, view, editQuote, cartSelectedCust, user]);
 
   const openNewOrder = () => {
     setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartProdVariant("all"); setCartStockFilter("all"); setCartNote("");
@@ -1051,7 +1063,10 @@ export function Orders() {
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: cartNote,
       });
-      toast.success(isReseller ? "Quote created — view and manage it in My Quotes" : "Order placed — it's now in the Sales queue for processing");
+      const successMsg = isReseller ? "Quote created — view and manage it in My Quotes"
+        : isCustomer ? "Order placed — you can track its progress in My Orders"
+        : "Order placed — it's now in the Sales queue for processing";
+      toast.success(successMsg);
       if (data.credit_warning) {
         toast(`⚠️ ${cartSelectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
           { duration: 10000 });
@@ -1183,7 +1198,7 @@ export function Orders() {
     return (
       <OrderView
         order={detail}
-        isAdmin={!isReseller}
+        isAdmin={!isReseller && !isCustomer}
         canConfirmOrder={false}
         canCancelOrder={false}
         onClose={() => { setView("list"); setDetail(null); }}
@@ -1191,8 +1206,8 @@ export function Orders() {
     );
   }
 
-  // ── New order (reseller cart) ────────────────────────────────────────────
-  if (view === "new" && isReseller) {
+  // ── New order (reseller / customer cart) ─────────────────────────────────
+  if (view === "new" && (isReseller || isCustomer)) {
     return (
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar
@@ -1358,8 +1373,11 @@ export function Orders() {
                   <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
                     <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
                     <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{cartSelectedCust.name}</p>
-                    <button onClick={() => { setCartSelectedCust(null); setCartCustSearch(""); setCartCustDropOpen(true); }}
-                      className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                    {/* A customer account always orders for itself — no reassigning */}
+                    {!isCustomer && (
+                      <button onClick={() => { setCartSelectedCust(null); setCartCustSearch(""); setCartCustDropOpen(true); }}
+                        className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -1469,9 +1487,9 @@ export function Orders() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar title="Orders" subtitle={`${orderTotal} orders`} onRefresh={load} showWarehouseSwitcher
-        actions={isReseller && <BtnPrimary onClick={openNewOrder}><Plus size={14} />New Order</BtnPrimary>} />
+        actions={(isReseller || isCustomer) && <BtnPrimary onClick={openNewOrder}><Plus size={14} />New Order</BtnPrimary>} />
       <main className="flex-1 overflow-y-auto p-6">
-        {!isReseller && (
+        {!isReseller && !isCustomer && (
           <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">
             <span className="font-semibold shrink-0">New orders:</span>
             <span>All orders — whether placed through the portal or created directly in Odoo — must flow through the <strong>Sales Tickets</strong> pipeline. Use <em>Create Sales Ticket</em> to bring any unlinked order into the pipeline. Finance must confirm payment before an order reaches the packing board.</span>
@@ -1492,7 +1510,7 @@ export function Orders() {
             { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
             { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
             { id:"invoice", header:"Payment", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
-            ...(!isReseller?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
+            ...(!isReseller && !isCustomer?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const t = o.linked_ticket;
               if (!t) return <span className="text-xs text-gray-300">—</span>;
               const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
@@ -1503,14 +1521,14 @@ export function Orders() {
                 ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                 : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
             }}]:[]),
-            ...(!isReseller?[{ id:"packing", header:"Packing", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
+            ...(!isReseller && !isCustomer?[{ id:"packing", header:"Packing", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
               const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready", complete:"Complete", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
               if (o.state === "sale") return <span className="text-[10px] text-gray-400 italic">Not queued</span>;
               return <span className="text-xs text-gray-200">—</span>;
             }}]:[]),
-            ...(!isReseller?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
+            ...(!isReseller && !isCustomer?[{ id:"actions", header:"", enableSorting:false, cell:({row:{original:o}})=>(
               <div className="flex gap-1.5" onClick={e=>e.stopPropagation()}>
                 {!o.linked_ticket && !o.packing_status && o.state !== "done" && o.state !== "cancel" && can("tickets.sales") && (
                   <BtnPrimary size="sm" onClick={()=>createTicketFromOrder(o.id)} loading={creatingTicket.has(o.id)} disabled={creatingTicket.has(o.id)}>Create Sales Ticket</BtnPrimary>

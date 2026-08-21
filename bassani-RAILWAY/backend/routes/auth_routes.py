@@ -40,10 +40,12 @@ def _user_payload(user: dict) -> dict:
     return {
         "id":            user["id"],
         "username":      user["username"],
-        "role":          user.get("role", "reseller"),
+        "role":          user.get("role"),
         "name":          user.get("name", ""),
         "display_name":  user.get("display_name", ""),
         "reseller_id":   user.get("reseller_id"),
+        "odoo_partner_id":            user.get("odoo_partner_id"),
+        "customer_company_partner_id": user.get("customer_company_partner_id"),
         "is_super_admin": bool(user.get("is_super_admin", False)),
         "permissions":   user.get("permissions") or {},
         "warehouse_id":        user.get("warehouse_id"),
@@ -51,6 +53,24 @@ def _user_payload(user: dict) -> dict:
         "must_change_password": bool(user.get("must_change_password", False)),
         "commission_eligible": bool(user.get("commission_eligible", True)),
     }
+
+
+async def create_password_reset_token(username: str, ttl_minutes: int = 15) -> str:
+    """Generate a single-use password-set/reset token for a user.
+
+    Shared by the self-service forgot-password flow and any admin-initiated
+    invite flow (e.g. customer portal-access provisioning) so token
+    generation/hashing/storage lives in exactly one place.
+    """
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await col("password_reset_tokens").insert_one({
+        "token_hash": token_hash,
+        "username":   username,
+        "created_at": datetime.now(timezone.utc),
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes),
+    })
+    return token
 
 
 @router.post("/login", response_model=Token)
@@ -190,14 +210,7 @@ async def forgot_password(
     )
     if user and not user.get("is_super_admin") and user.get("role") != "super_admin":
         user["id"] = str(user.pop("_id"))
-        token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        await col("password_reset_tokens").insert_one({
-            "token_hash": token_hash,
-            "username":   user["username"],
-            "created_at": datetime.now(timezone.utc),
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
-        })
+        token = await create_password_reset_token(user["username"])
         from config import get_settings as _gs
         _s = _gs()
         reset_url = f"{_s.portal_url}/reset-password?token={token}"

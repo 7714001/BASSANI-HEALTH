@@ -763,6 +763,31 @@ def send_password_reset_email(email: str, name: str, reset_url: str) -> None:
     _send(email, "Reset your Bassani Health password", _wrap(body))
 
 
+def send_customer_portal_invite(email: str, name: str, company_name: str, invite_url: str) -> None:
+    """Sent when an admin grants a customer contact self-service portal
+    access. Takes a pre-built URL, same shape as send_password_reset_email,
+    rather than hardcoding the bare portal URL the way send_welcome_email
+    does — the link carries a single-use set-password token."""
+    body = (
+        _h1("Your account is ready")
+        + _p(f"Hi {name},")
+        + _p(
+            f"You now have your own login for {company_name}'s Bassani Health account. "
+            "Once you set your password, you'll be able to place orders, track their "
+            "progress, and view your invoices at any time."
+        )
+        + _button("Set your password", invite_url)
+        + _divider()
+        + _p(
+            "This link expires in <strong>15 minutes</strong> and can only be used once. "
+            "If it has expired, use the \"Forgot password\" link on the sign-in page to "
+            "request a new one.",
+            muted=True,
+        )
+    )
+    _send(email, "Your Bassani Health portal account is ready", _wrap(body))
+
+
 def send_otp_email(email: str, name: str, otp: str) -> None:
     """Sent when a staff member's login triggers the email OTP 2FA step."""
     body = (

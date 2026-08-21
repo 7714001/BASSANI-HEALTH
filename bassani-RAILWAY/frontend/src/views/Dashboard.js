@@ -6,7 +6,10 @@ import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const isReseller = user?.role === "reseller";
+  // Reseller and customer (Phase 25) share the same simplified, self-scoped
+  // dashboard view — the backend's /api/reports/dashboard has a matching
+  // branch for each so neither ever sees business-wide admin KPIs.
+  const isExternal = user?.role === "reseller" || user?.role === "customer";
   const navigate = useNavigate();
   const [data,   setData  ] = useState(null);
   const [loading,setLoading] = useState(true);
@@ -38,7 +41,7 @@ export default function Dashboard() {
           <div className="space-y-5">
 
             {/* Reseller KPI row — admins skip this and go straight to Channel Performance */}
-            {isReseller && (
+            {isExternal && (
               <div className={`grid grid-cols-2 gap-4 ${user?.commission_eligible !== false ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
                 <StatCard label="Orders This Month" value={data.orders.this_month} sub={fmtR(data.orders.month_revenue)} />
                 <StatCard label="All-Time Orders" value={data.orders.total} />
@@ -55,7 +58,7 @@ export default function Dashboard() {
             )}
 
             {/* Channel Performance — first section for admins */}
-            {!isReseller && data.channel_kpis && (
+            {!isExternal && data.channel_kpis && (
               <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-gray-800">Channel Performance</h3>
@@ -141,7 +144,7 @@ export default function Dashboard() {
                       </div>
                     </div>
                   );
-                })() : !isReseller && (
+                })() : !isExternal && (
                   <div className="mt-4 pt-4 border-t border-gray-50">
                     <button onClick={() => navigate("/targets")}
                       className="text-xs text-bassani-600 hover:text-bassani-700 hover:underline transition-colors">
@@ -153,7 +156,7 @@ export default function Dashboard() {
             )}
 
             {/* Admin-only pipeline overview */}
-            {!isReseller && data.pipeline && (
+            {!isExternal && data.pipeline && (
               <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-gray-800">Active Pipeline</h3>
@@ -181,7 +184,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {isReseller ? (
+            {isExternal ? (
               /* Reseller — full-width recent orders */
               <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-50">

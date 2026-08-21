@@ -25,7 +25,7 @@
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🟡 In Progress — 13.0 built | 13.0 Vault Movement Module (Track A starter) built 2026-07-24 in staged mode: batch ID generator + registry, vault movement logbook (Patricia replacement), vault ledger, readiness probe, `vault_custodian` role. Live Odoo writes gated on `GACP_ODOO_WRITES=on` + GACP access confirmation + sub-location setup. Track B still gated on Odoo BoMs. SAHPRA reporting requirements not yet obtained. |
-| 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Two modes: WooCommerce sync (preferred — Green Clouds) + direct REST. Compliance flag outstanding before order endpoint |
+| 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Three modes: WooCommerce sync (preferred — Green Clouds) + direct REST + Integration Partner API (multi-tenant, Cannaverse first). Compliance flag outstanding before 14.6/14.7 order endpoints — does not block the partner path (14.10–14.17) |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.4 complete — 2026-07-16 |
 | 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07; 17.6 Welcome Pack slot-based management — 2026-07-14 |
@@ -34,6 +34,8 @@
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
 | 23 | Operations Monitor | 🟢 Complete | 23.0 complete — 2026-07-15 |
+| 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
+| 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -3889,8 +3891,8 @@ On top of the compliance foundation, the yield band system provides operational 
 
 ## Phase 14 — External Ecommerce API
 
-**Goal:** Expose a secure, warehouse-scoped API that allows external systems to read Bassani's product catalogue and real-time stock levels, with two integration modes: a WooCommerce sync mode (portal pushes products and stock to WC; WC fires order webhooks back) and a direct REST mode for systems with REST client capability. The first integration target is Green Clouds Pharmacy's WooCommerce store.  
-**Estimate:** 3–4 weeks  
+**Goal:** Expose a secure, warehouse-scoped API that allows external systems to read Bassani's product catalogue and real-time stock levels, with three integration modes: a WooCommerce sync mode (portal pushes products and stock to WC; WC fires order webhooks back), a direct REST mode for systems with REST client capability, and a general-purpose **Integration Partner API** for any POS platform whose users are themselves Stores under the existing reseller model — one Sales Agent account per platform, with every connected store an owned customer under it. The first integration target for WooCommerce is Green Clouds Pharmacy's WooCommerce store; the first Integration Partner is Nick's own Cannaverse Production Flutter app (the dispensary POS/management app stores use — see 14.10 below), with the explicit intent that other POS vendors integrate the same way later.  
+**Estimate:** 3–4 weeks (WooCommerce + direct REST) + 4–5 weeks (Integration Partner API, 14.10–14.17 — larger than originally scoped once partner governance, sandbox mode, and reliability were factored in; see Notes)  
 **Status:** 🔵 Concept — Needs Scoping  
 **Completed:** —
 
@@ -3900,7 +3902,9 @@ Green Clouds Pharmacy is building a WooCommerce ecommerce site to sell Bassani's
 
 A **direct REST mode** is documented alongside it for future integrations where the consuming system has its own REST client and does not need WooCommerce.
 
-**Compliance flag — must be resolved before building any order endpoint (14.6, 14.7):** Confirm with Green Clouds whether customers purchasing on the WP site are named patients (requiring a SAHPRA Section 21 Authorisation Letter per order, per medicine) or licensed dispensaries (who manage their own scripts and authorisations). Named patients require the portal to validate a Section 21 Authorisation before creating each `sale.order` in Odoo — this changes the architecture of the order intake endpoint materially. Do not scope or build 14.6 or 14.7 until this is answered in writing.
+**Compliance flag — must be resolved before building the WooCommerce/direct-REST order endpoints (14.6, 14.7):** Confirm with Green Clouds whether customers purchasing on the WP site are named patients (requiring a SAHPRA Section 21 Authorisation Letter per order, per medicine) or licensed dispensaries (who manage their own scripts and authorisations). Named patients require the portal to validate a Section 21 Authorisation before creating each `sale.order` in Odoo — this changes the architecture of the order intake endpoint materially. Do not scope or build 14.6 or 14.7 until this is answered in writing. **This flag does not block 14.10–14.13** — Cannaverse stores ordering via the Reseller Link API are themselves Section 21 "Stores" under Bassani's existing Store Onboarding Agreement (the same legal category as every reseller onboarded through the portal today), placing ordinary B2B stock-replenishment orders, not per-patient purchases.
+
+**Why a third mode, not just 14.7/14.8 reused:** the WooCommerce/direct-REST modes were scoped around an anonymous storefront customer — `POST /customers` (14.8) takes just `{email, name}`, auto-creates an Odoo partner, and has no identity verification at all. That's the right amount of friction for a patient checking out on a WordPress site, and the wrong amount for a business partner: no per-store order attribution, no reuse of the existing onboarding/document-signing/admin-review flow, no commission tracking, and — most importantly — email-only matching is not safe for linking a request to an *existing* Bassani customer record (a bad actor claiming to be an established store could otherwise hijack that store's pricing and order history). Cannaverse stores map naturally onto the existing `reseller` role and `customer_ownership` model (see "Reseller model" and "Customer onboarding" in `CLAUDE.md`) — the Reseller Link API's job is to let a store securely attach itself to that existing infrastructure over an API instead of through the portal's own UI.
 
 ---
 
@@ -4020,7 +4024,102 @@ Closes the loop: when the portal ticket status changes, push the update back to 
 
 ---
 
+### 14.10 — Integration Partner Model (Data Model)
+
+**Reframed 2026-08-19 — see Notes.** This is not a Cannaverse-specific feature. Any POS platform that wants to sell Bassani stock through its own stores becomes an **Integration Partner**: one Sales Agent (reseller) account, held by the platform itself, under which every one of the platform's connected stores becomes an owned customer via the existing `customer_ownership` model (7.13) — exactly as if a human sales agent had onboarded and now manages a large portfolio of customers. No new commercial/ledger logic: the existing `resellers` collection, `customer_ownership`, `order_commissions`, and tier-band commission statement engine (Phase 20) already do the job. What's missing is purely the API-driven access layer. Cannaverse is the first Integration Partner onboarded, not a special case in the code — every field and endpoint below is partner-agnostic (`integration_partner_id`, `external_store_ref`), never `cannaverse_*`.
+
+- [ ] `resellers` collection gains `channel: "portal" | "api_partner"` (default `"portal"`) — an `api_partner` reseller is still a normal reseller/Sales Agent everywhere else (commission, statements, `commission_eligible`), just flagged so it's filterable into its own admin view instead of cluttering the human Sales Agents list
+- [ ] `api_clients` (from 14.0) gains `integration_partner_id` (→ the partner's `reseller_id`), `client_type: "partner_platform" | "partner_store"`, and `parent_client_id` (set on `partner_store` keys, pointing at the partner's platform-level key) — a credential hierarchy, not a flat list
+- [ ] A **platform-level key** (`client_type: partner_platform`) is scoped to catalog reads (14.1–14.3) and the linking endpoints (14.11–14.12) only — it can never place an order directly
+- [ ] A **store-level key** (`client_type: partner_store`, issued per 14.12) is scoped to its own linked `odoo_partner_id` only, but every order it places credits commission to the parent `integration_partner_id`'s `reseller_id` — identical to how a human sales agent's customer orders already work
+
+---
+
+### 14.11 — Store Linking: Existing Bassani Account (Lookup + OTP)
+
+For a connecting store that may already have a Bassani account **not** currently owned by this Integration Partner (e.g. a store that ordered from Bassani directly, pre-dating the integration).
+
+- [ ] `POST /api/external/v1/partner/link/lookup` — body: `{ trading_name, registration_number, vat_number, contact_email, contact_phone, external_store_ref }`. Matches Odoo `res.partner` primarily on `vat`/registration number — never on name or email alone, both spoofable. Returns `{ match_found: bool, link_request_id }` only — never the matched partner's name, address, or any other Odoo data back to the calling platform
+- [ ] On a match, an OTP is sent to the **contact email/phone already on file on the matched Odoo partner** — never to the address submitted in the lookup call. This is the actual security property: proving control of a channel Bassani already trusts, not one just typed into a form
+- [ ] `pending_partner_links` collection: `{ id, integration_partner_id, external_store_ref, odoo_partner_id, otp_hash, otp_expires_at, otp_attempts, verified_at, status: pending_otp/pending_admin_approval/approved/rejected/expired, created_at }`
+- [ ] `POST /api/external/v1/partner/link/{link_request_id}/verify-otp` — body: `{ code }`. Rate-limited (`slowapi`, same pattern as existing OTP endpoints), max attempts before the request must restart from lookup. Success moves status to `pending_admin_approval` — verifying the OTP does **not** itself grant a credential; every link still passes through 14.13
+- [ ] No match found → `match_found: false`, no OTP flow; the caller falls through to 14.12 (new account)
+
+---
+
+### 14.12 — Store Linking: New Bassani Account (Referral Link Reuse)
+
+For a store with no existing Bassani account. **No new onboarding endpoint needed** — every `api_partner` reseller already has a working self-service referral link from Phase 16.2 (`{origin}/apply?ref={user.id}` — `GET /api/public/referral/{code}` validates it, and submission/approval already auto-links the resulting customer to that reseller). The only gap is correlating the resulting application back to which store, on the platform's side, initiated it — so the platform can flip that store's connection state once approved.
+
+- [ ] `PublicRegistration` (the `/apply` submission model) gains an optional `external_store_ref` field, carried via a query param on the existing referral link: `{origin}/apply?ref={user.id}&partner_ref={external_store_ref}` — stored on the application, no other change to the 5-step self-registration wizard, CIF signing, or admin review queue (Phase 16/17/18 flows are untouched; the connecting store completes the *same* Bassani-hosted onboarding every other new customer does, including their own NDA + Store Onboarding Agreement — confirmed 2026-08-19: an Integration Partner's own vetting of a store never substitutes for Bassani's direct compliance record on that store)
+- [ ] The platform opens this URL in an in-app webview — no new UI or signing logic needed on the platform side
+- [ ] On `approve_application` for an application carrying `external_store_ref`, the existing approval flow (Odoo customer created, linked to reseller per the referral code) additionally creates an **already-approved** `pending_partner_links` record (skips 14.11's OTP step — identity was already established through document signing) and proceeds straight to 14.13's credential issuance, with `external_store_ref` carried through to the outbound webhook so the platform can match it back to the right store
+
+---
+
+### 14.13 — Admin Approval + Credential Issuance
+
+Every link — via OTP (14.11) or new-account approval (14.12) — passes through one explicit admin step before a store can place an order. Mirrors the existing onboarding review queue rather than a second, differently-shaped approval surface, and is where Bassani retains final control over every store that gets to trade under a partner's umbrella.
+
+- [ ] New admin section — **Integration Partners** (Settings), distinct from the existing Sales Agents list (`channel: api_partner` resellers only) — lists each partner, its connected-store count, monthly order volume, and a drill-down per store; not a tab bolted onto the existing "External API" settings page, since partner management and raw API-key CRUD are different concerns for different audiences
+- [ ] Queue of `pending_partner_links` at `pending_admin_approval` within a partner's detail page — store name/ref, matched or newly-created Odoo partner, link method (OTP / new account)
+- [ ] `POST /api/external/v1/admin/partner-links/{link_request_id}/approve` — `resellers.manage`-gated. Issues a `partner_store` API key (same `secrets.token_urlsafe(32)` + SHA-256-hash pattern as 14.0), pinned to `odoo_partner_id`, `integration_partner_id`, and `warehouse_id` (resolved from the partner reseller's warehouse). Key returned once, in the approval response — the platform's backend stores it; it must never reach the store's own client app
+- [ ] `POST .../reject` — `resellers.manage`-gated, requires a reason; no credential issued
+- [ ] Every approve/reject audit-logged (`partner_link.approved` / `partner_link.rejected`), threading `reseller_id` (the partner) per the existing audit convention
+- [ ] Outbound signed webhook (`POST` to the partner's registered callback URL, `BackgroundTask`, HMAC-SHA256 — same construction as 14.6's inbound WooCommerce signature) fires on approval/rejection carrying `external_store_ref` so the platform's own backend can flip that store's connection state without polling, then mint/store the credential itself
+- [ ] Instant **revoke** action per store-level key and per whole partner (`active: false` on the `api_clients` doc) — independent of the softer key-rotation flow in 14.0, this is the incident-response path: one click, immediate effect, no window
+
+---
+
+### 14.14 — Sandbox Mode
+
+Lets a new Integration Partner build and test against the API without ever touching live Odoo — required if this is going to onboard platforms Bassani doesn't already trust operationally. Reuses the staged-write pattern already proven in the Vault module (`vault_odoo.py`'s `GACP_ODOO_WRITES=off`, 13.0) rather than inventing a second sandbox mechanism.
+
+- [ ] `api_clients.sandbox: bool` (settable on a `partner_platform` key at creation, inherited by every `partner_store` key issued under it)
+- [ ] In sandbox mode, 14.13's order-placement path stages the exact intended `sale.order` payload to an `external_orders` doc (`odoo_sync: "staged"`) instead of executing it — mirrors `VaultOdooWriter`'s outbox shape exactly, including a synthetic order id/reference returned to the caller
+- [ ] Catalog/stock reads (14.1–14.3) in sandbox mode are read-only against the real catalogue (no reason to fake product data) but tagged in the response so a partner's dev environment can visibly confirm it's in sandbox
+- [ ] A sandbox partner cannot be promoted to a live `partner_platform` key by itself — going live is an explicit admin action on the Integration Partners page (14.13), the same trust boundary as approving any other link
+
+---
+
+### 14.15 — Partner-Scoped Order Endpoint
+
+Distinct from 14.7: orders placed here flow through the **real** reseller order path — `order_routes.py`'s existing create/confirm logic, `customer_ownership` (7.13), commission crediting, and the standard Sales → Orders → QA/RP → Finance ticket pipeline — not a bespoke intake shim. A `partner_store` key (from 14.13) identifies its `reseller_id`/`odoo_partner_id` directly, so there is no per-request customer token to resolve.
+
+- [ ] `GET /api/external/v1/products`, `/categories`, `/stock` (14.1–14.3) reused unchanged — already warehouse-scoped, no compliance dependency
+- [ ] `POST /api/external/v1/partner-orders` — body: `{ line_items[{ product_id, qty }], external_reference, notes }`. Calls the same order-creation path a reseller placing an order through the portal UI hits, with `current_user` synthesized from the key's pinned `reseller_id` (same synthetic-actor pattern already used by `public_routes.py`'s recurring-order accept endpoint, 8.46)
+- [ ] Enforces the existing server-side rule that a reseller may only order for customers linked to their own profile — no new authorization logic, just the existing check applied to an API-originated request
+- [ ] `GET /api/external/v1/partner-orders/{order_id}` — status, mapped from the linked ticket's stage (reuses 14.9's state-mapping table)
+- [ ] Ticket stage changes push to the partner via the signed webhook mechanism (14.13/14.16), `BackgroundTask`-only, never blocking the portal-side transition
+- [ ] Not gated on the Green Clouds compliance flag (see Context) — built and shipped independently of 14.6/14.7. Billing stays exactly as it is for any reseller's customer today: **the store is invoiced and pays Bassani directly** (confirmed 2026-08-19) — the Integration Partner earns commission on the volume but is never a billing counterparty, so no new invoicing/collections logic is needed anywhere in this phase
+
+---
+
+### 14.16 — Partner Governance & Reliability
+
+The pieces that turn 14.10–14.15 from three working endpoints into something Bassani can safely run as a real multi-tenant platform, protecting the single Odoo XML-RPC connection every request ultimately goes through.
+
+- [ ] Per-partner and per-store rate limiting (`slowapi`, keyed by API key rather than IP) on catalog reads and order creation — a runaway or buggy integration must not be able to degrade Odoo for the portal's own staff
+- [ ] `webhook_deliveries` collection — every outbound webhook (14.13 link-status, 14.15 order-status, 14.9 WC pushback) logs payload, signature, attempt count, last status, next retry time. Retried with backoff (e.g. 3 attempts); a permanently-failed delivery is surfaced in the partner's admin detail page with a manual **Resend** action — 14.6/14.9/14.13 as scoped are fire-and-forget `BackgroundTask`s with no record, which silently drops order-status updates on any transient outage at the receiving end
+- [ ] Sentry error tagging by `integration_partner_id` on every `/api/external/v1/` route, so a broken integration's errors are visibly attributable rather than lost in general noise
+- [ ] Integration Partners admin page (14.13) surfaces basic health per partner: `last_used_at` (already in 14.0), request volume, error rate over the last 24h — extends the existing `last_used_at` field rather than a parallel metrics system
+- [ ] Global kill switch (`portal_settings._id: "external_api_enabled"`, super-admin only) — pauses **all** external order intake across every partner in one action, standard incident-response tooling for anything writing into Odoo on Bassani's behalf
+
+---
+
+### 14.17 — Partner Integration Agreement
+
+A platform must accept Bassani's terms before it can even request a `partner_platform` key — reuses the existing versioned document-template + hosted e-signing system built for the NDA/Store Onboarding Agreement (Phases 17–19) rather than building anything new.
+
+- [ ] New managed template type: **API Integration Partner Agreement**, versioned the same way as the existing three (`DocumentTemplates.js`, `DocTypeCard`)
+- [ ] Signed once per Integration Partner (not per store — stores still sign their own Store Onboarding Agreement individually via 14.12) through the existing `/sign/:token` flow before their `partner_platform` key is issued
+- [ ] Countersigned by a Bassani signing authority exactly like every other Bassani-signature-bearing document today — no new signing model
+
+---
+
 ### Notes
+
+> **2026-08-19 — Reframed from a Cannaverse-specific "Reseller Link API" to a general Integration Partner model, following a deeper planning conversation with Nick.** Original scoping (single session) treated each connecting store as linking to its own independent Bassani account. Corrected model: an Integration Partner (a POS platform — Cannaverse first, but the architecture is explicitly not Cannaverse-specific, since Bassani intends to onboard other POS platforms later) holds **one** Sales Agent/reseller account, and every store that connects through it becomes one of that reseller's owned customers via the existing `customer_ownership` model — the same mechanism a human sales agent's customer portfolio already uses. This means commission, tier-band statements, and ownership needed zero new logic; only the API access layer (14.10, 14.13, 14.16) is genuinely new. Also discovered the new-account path (14.12) needs no new onboarding endpoint at all — Phase 16.2's existing reseller referral link (`/apply?ref={user.id}`) already does exactly this; the only addition is an `external_store_ref` correlation param so a platform can match an approved application back to its own store record. Three decisions locked in: (1) every connecting store still individually signs Bassani's own NDA + Store Onboarding Agreement regardless of how the partner vetted them — Bassani keeps an independent compliance record on every store, not just on the partner; (2) the store is billed and pays Bassani directly — the Integration Partner earns commission but is never a billing/collections counterparty, so 14.15 needed no new invoicing logic; (3) OTP verification alone is not sufficient trust for the existing-account path — every link, OTP-verified or onboarding-approved, still passes through an explicit admin approval step (14.13) before a credential is issued. Field/endpoint naming was deliberately genericized (`integration_partner_id`, `external_store_ref`, `/partner/...`) rather than `cannaverse_*` — Cannaverse is the first row of data in `resellers`/`api_clients`, not a special code path; being first to integrate is a contractual/sequencing lever with Bassani, not something the platform architecture itself should encode. On the Cannaverse side: the partner-store API key must be held server-side (a Cloud Function proxy, never the Flutter client, since it's a long-lived secret in a distributable app binary) — that function is the natural receiver for the 14.13/14.15/14.16 webhooks, fanned out to store staff via Cannaverse's existing FCM/notification infrastructure. Cannaverse-side entities for this (a supplier-connection record, a supplier-order record) are deliberately separate from the unrelated existing `WholesalerEntity` (an in-app seller with a manually-curated catalog) and `StockRequestEntity` (internal store-to-manager stock requests) — neither models an external supply link.
 
 > **2026-07-06 — Phase scoped following conversations with Nick (product owner) and Green Clouds Pharmacy WP developer.** Developer is experienced with WP/WooCommerce but not REST API client code or Odoo — confirmed preference is the WooCommerce sync route (14.4–14.6) so they can use native WC features for storefront, cart, and checkout without writing custom integration code. Direct REST mode (14.7) documented for future integrations. Green Clouds' warehouse already exists as an Odoo company in the current portal. Compliance flag raised: whether WP purchasers are named patients or licensed dispensaries must be confirmed in writing before 14.6 or 14.7 order intake can be built — this is not an edge case, it is the architectural fork for the order endpoint. Product sync and stock sync (14.4, 14.5) and the catalogue/stock read endpoints (14.1–14.3) have no compliance dependency and can proceed independently.
 
@@ -4851,3 +4950,212 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] New `deposit` column (key `deposit`, gold accent `#eab308`) inserted between Quotes and Packing, matching pipeline order; included in the `all_active` roll-up so it automatically feeds the existing Overdue/At Risk Row-1 KPIs with no separate change needed there
 - [x] New `awaiting_deposit` KPI added to Row 2, between Open Inquiries and In Packing
 - **Design decision:** a dedicated column, not folded into Open Quotes — matches the existing precedent of QA Review and RP Review already being split into two columns rather than one combined "Compliance" column, specifically so each distinct role's action queue (here: Finance) stays unambiguous at a glance on a screen nobody is meant to interact with, only read from across a room.
+
+---
+
+## Phase 24 — Named Patient & Section 21 Compliance Archive (Cannati)
+
+**Goal:** Give Bassani a durable, structured, read-only compliance archive of named-patient Section 21 applications and scripts originating from Cannati (a store on the Cannaverse platform that Bassani itself operates), closing the "Named Patient → Script → SAHPRA Section 21 Authorisation" gap at the end of the batch traceability chain (Phase 13) that the existing `s21script` flat-string check was already flagged as too thin to satisfy.  
+**Estimate:** 2 weeks  
+**Status:** 🔵 Concept — Needs Scoping  
+**Completed:** —  
+**Depends on:** Phase 14.10–14.13 (Cannati must exist as a linked, credentialed store under the Integration Partner model before it can push anything)
+
+### Context
+
+Cannati is a store Nick is building on the Cannaverse platform, registered and operated by Bassani, used for patients to work through the Section 21 process (doctor consultation → clinical assessment → submission to CuraScript, a separate third party Cannaverse already has a paid referral relationship with for the actual SAHPRA processing → outcome → script). Cannati buys its dispensing stock from Bassani like any other connected store (Phase 14). Bassani wants a copy of the patient/application/script data this generates.
+
+**Why, precisely, matters for the design:** Bassani doesn't sell to the patient — it sells to Cannati. Its own Store Onboarding Agreement (Section 10.3) treats its own order records as the legal proof of lawful supply to a Store, with a volume mismatch treated as prima facie evidence of illicit sourcing. This phase isn't a patient CRM for Bassani — it's the evidentiary record that lets Bassani show, if ever asked, that the stock volume it supplied Cannati is backed by genuine named-patient Section 21 authorisations. That framing drives three structural decisions:
+
+1. **One-way archive, not a second source of truth.** Cannaverse owns the clinical workflow (doctor review, CuraScript submission, status transitions) end to end. Bassani receives a mirror of key checkpoints; nothing here is ever edited from the Bassani side, and no field pushed here is ever fed back into Cannaverse.
+2. **MongoDB only — no Odoo writes.** Per the existing architecture principle (financial records in Odoo, portal-layer/non-financial data in MongoDB), and because Bassani's actual Odoo customer is Cannati (the store), not the patient — creating a `res.partner` per patient would misrepresent the commercial relationship and pollute Odoo with non-buying contacts. This is a genuine departure from the existing individual (natural-person) self-registration pattern (8.50, which *does* create a `res.partner`) — that pattern is for a patient buying directly from Bassani, which is not this case.
+3. **Auth reuses the Phase 14 store link, with an extra scope bit.** Cannati is just one connected store under the Cannaverse Integration Partner. No other integrating store should be able to push clinical data by default — only the one store Bassani directly operates and trusts for this purpose.
+
+---
+
+### 24.0 — Data Model & Storage
+
+- [ ] Three new MongoDB collections, mirroring Cannaverse's own entity shapes closely enough that no lossy re-modelling happens in transit: `external_patients`, `external_s21_applications`, `external_scripts` — each keyed by `external_id` (Cannaverse's own document id) + `integration_partner_id` + `external_store_ref` (same generic fields introduced in Phase 14, not Cannati-specific names)
+- [ ] `external_patients`: name, contact details, ID/passport number, linked `external_store_ref` — no Odoo partner created, ever
+- [ ] `external_s21_applications`: mirrors the clinically-relevant fields of `Section21ApplicationEntity` (diagnosis/ICD-11 code, clinical justification, recommended medicine/strength/dosage/quantity, `sahpraReferenceNumber`, status, key timestamps) plus `bassani_certificate_r2_key` — Bassani fetches and stores its own copy of the SAHPRA certificate and signed patient consent PDF in Cloudflare R2 on ingest (already an approved service, same as onboarding documents), rather than keeping only a reference into Cannaverse's storage — the audit trail must not depend on Cannaverse's storage remaining available years later during a regulator inquiry
+- [ ] `external_scripts`: mirrors `ScriptEntity` — script number, line items (product/dosage/quantity/dispensing period/repeat count), issue/expiry dates, status
+- [ ] All three collections are upserted by `external_id` on every push — never appended as a new row per update
+
+---
+
+### 24.1 — Auth: Clinical Intake Scope
+
+- [ ] `api_clients` (Phase 14.10) gains `clinical_intake_enabled: bool` (default `false`) — settable only by a Bassani super admin on a specific `partner_store` key's detail page, not something a connecting platform can self-enable. Cannati's key is the first (and for now, only) one with this flag set
+- [ ] New Bassani permission `clinical_data.view` — gates the new admin surface (24.5); granted to `responsible_pharmacist`, `qa_manager`, and `admin`/`super_admin` roles. Not granted to `sales`, `orders_clerk`, `finance`, `reseller`, or `vault_custodian` — no compliance reason for those roles to see patient health data
+- [ ] `POST /api/external/v1/clinical/*` endpoints (24.2–24.4) require both a valid `partner_store` key **and** `clinical_intake_enabled: true` on that key — a 403, not a silent no-op, if a store without the flag attempts to call these
+
+---
+
+### 24.2 — Patient Intake Endpoint
+
+- [ ] `POST /api/external/v1/clinical/patients` — upserts one `external_patients` record. Fired once, on patient creation at Cannati (registration is the only event here — patients don't have a workflow state machine the way applications and scripts do)
+
+---
+
+### 24.3 — Section 21 Application Intake Endpoint
+
+- [ ] `POST /api/external/v1/clinical/s21-applications` — upserts one `external_s21_applications` record. Fired only at the checkpoints that matter for the compliance record, not on every `Section21ApplicationStatus` transition: **doctor-approved, submitted-to-SAHPRA, approved, rejected**. Intermediate workflow noise (consultation booked, changes requested, patient uploading) is deliberately not pushed — Bassani's archive is for outcomes, not Cannaverse's internal workflow history
+- [ ] On a push carrying a `certificateUrl` or `patientConsentSignatureUrl`, the endpoint fetches the file server-side and stores it in R2, recording the resulting key on the archive record (`BackgroundTask` — never blocks the response to Cannaverse)
+
+---
+
+### 24.4 — Script Intake Endpoint
+
+- [ ] `POST /api/external/v1/clinical/scripts` — upserts one `external_scripts` record. Fired on issuance, renewal, and cancellation (`ScriptStatus` transitions to `active`/`renewed`/`cancelled`) — not on every field edit
+
+---
+
+### 24.5 — Compliance Archive Admin View
+
+- [ ] New read-only admin page (`clinical_data.view`-gated) — searchable by patient name/ID, store, or date range; shows the S21 application and any linked script(s) for a patient, with a direct link to view the stored certificate/consent PDF from Bassani's own R2 copy
+- [ ] No edit actions anywhere on this page — if a correction is needed, it happens in Cannaverse and re-pushes on the next checkpoint, consistent with the one-way-archive principle in the Context above
+- [ ] Deliberately does **not** attempt automated volume reconciliation against Odoo `sale.order` data in this phase — that (matching supplied stock volume against valid authorisations) is a meaningful follow-on feature but a separate body of work; this phase only gets the raw compliance data into Bassani's hands
+
+---
+
+### 24.6 — Retention Policy (Flagged, Not Built)
+
+- [ ] Not scoped in this phase, but flagged so it isn't forgotten: the Store Onboarding Agreement's existing 5-year retention figure for dispensing records is the likely precedent for this collection too, but health data (POPIA "special personal information") may carry its own retention/minimisation obligations distinct from ordinary dispensing records — confirm with Nick/compliance before this archive has been live long enough for it to matter, and before building any deletion job
+
+---
+
+### Definition of Done
+
+- [ ] Cannati can push a patient, an S21 application at each of its four compliance checkpoints, and a script, and each lands correctly in the corresponding Bassani collection with the certificate/consent documents copied into Bassani's own R2
+- [ ] A store without `clinical_intake_enabled` gets a clear 403 attempting any `/clinical/*` endpoint
+- [ ] `responsible_pharmacist`, `qa_manager`, and `admin` can view the archive; `sales`, `orders_clerk`, `finance`, and `reseller` cannot
+- [ ] No Odoo writes occur anywhere in this phase
+- [ ] Re-pushing the same `external_id` updates the existing record rather than creating a duplicate
+
+### Notes
+
+> **2026-08-19 — Phase scoped following a planning conversation with Nick about Cannati, a Bassani-operated store on the Cannaverse platform used for Section 21 patient workflows.** Reframed from "sync patient data" to "one-way compliance archive" once the actual motivation became clear: Bassani's audit exposure is about proving supplied stock volume is backed by genuine named-patient authorisations (Store Onboarding Agreement §10.3), not about needing a patient relationship-management system. This directly closes a gap the roadmap already flagged under Phase 8 hardening — the existing `s21script` check is a flat string; this gives Bassani the actual structured SAHPRA-shaped data Cannaverse already collects. Three decisions locked in: (1) Bassani stores its own copy of certificates/consent documents in R2 rather than only a reference URL, so the audit trail doesn't depend on Cannaverse's storage remaining available indefinitely; (2) only key compliance checkpoints push, not every workflow status change, keeping the archive focused on outcomes; (3) access is broader than just the responsible pharmacist — RP, QA, and admin all get visibility, not RP alone. Deliberately did not create Odoo `res.partner` records per patient — Bassani's Odoo customer is Cannati, not the patient, and the existing individual self-registration pattern (8.50) is for a different relationship (patient buying directly from Bassani) that doesn't apply here. Auth reuses Phase 14's `partner_store` credential rather than a separate credential system, with one new scope bit (`clinical_intake_enabled`) that only Cannati has — every other Integration Partner's connected stores get none of this by default. Automated reconciliation against Odoo supply volume was considered and explicitly deferred — this phase is the data pipe, not the audit tool.
+
+---
+
+## Phase 25 — Customer Self-Service Portal Accounts & WhatsApp Bot API
+
+**Goal:** Let an existing Bassani customer log into the portal directly — to view/download their own invoices, track their own orders, update their own contact/delivery details, and place their own orders through the real sales pipeline — and expose an API that a WhatsApp chatbot (ManyChat or equivalent) can call to identify the customer, browse the catalogue, build and submit an order request, and deliver a generated quotation, without the bot ever being able to directly create a financial transaction itself.  
+**Estimate:** 2–3 weeks  
+**Status:** 🟡 In Progress — 25.0/25.1 (customer role + self-service portal UI) complete; 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping  
+**Completed:** 25.0, 25.1 — 2026-08-21
+
+### Context
+
+Today, customers are Odoo partners, not portal users — only staff and resellers can log in. Bassani's requirements for the bot (2026-08-19) turned out to map almost entirely onto workflow the portal already runs — this phase is mostly about exposing an API surface onto existing infrastructure, not building new business logic:
+
+| Bassani requirement | How it's met |
+|---|---|
+| Automatically identify existing customers | 25.2/25.3 lookup, matched against the Odoo partner phone on file |
+| Identify the correct company/store for an order | 25.4 — same "one contact, multiple branches" pattern already handled in onboarding (see `CLAUDE.md`'s "Same contact, multiple branches" note) |
+| Access to the current product catalogue | 25.3 — reuses the Phase 14.1–14.3 read endpoints, scoped to whichever company was identified |
+| Facilitate the ordering process | 25.3 — bot builds a draft request conversationally; submitting it creates a Sales Ticket at `inquiry`/`quote` stage exactly like a staff-created one, tagged `channel: whatsapp` |
+| Receive completed order documentation | The submitted draft request itself — no separate document-upload mechanism needed |
+| Deliver generated quotations to customers | 25.3 — reuses the existing quote-PDF generation (8.54, `sale.report_saleorder`) once staff (or the existing pricing logic, where no negotiation is needed) issues the quote |
+| Capture quotation approval | **Still the magic link, not a chat reply** — see below |
+| Pass customer actions back to the ERP | Handled entirely by the existing order-confirm pipeline once the magic link is used — the bot never calls it directly |
+| Facilitate repeat/recurring-order requests | 25.5 — the existing recurring-order accept/decline flow (8.46, `/recurring/{token}`) already does this; WhatsApp just becomes an additional delivery channel for that link |
+| Access to selected account services | 25.3 — invoices, order status, detail-change requests |
+| Route sales/support/complaint requests to the right team | 25.6 — extends the existing `EmailRoutingConfig` pattern (`portal_settings.email_routing`) with new WhatsApp-sourced routing keys |
+
+**The one point that needed a decision rather than a mapping:** "capture quotation approval" could mean the bot processes a chat reply like "yes" as the approval. Confirmed 2026-08-19 this is explicitly **not** the design — the bot's job stops at generating and delivering the magic link; the customer's tap on that link (landing them in the authenticated portal, 2FA and all) is what actually captures approval and passes it to the ERP. Everything upstream of that — identifying the customer, browsing the catalogue, building the request, receiving the quote — can genuinely happen inside WhatsApp. The commitment step can't. This is the same boundary as every other money-adjacent action in Phases 14/24/25: the bot facilitates, it never authorises.
+
+This is conceptually the reseller model applied to a single company: a `customer` role is a "reseller" whose only linked account is its own company (potentially shared by several logins, one per contact), ordering into the exact same Sales → Orders → QA/RP → Finance pipeline everything else already flows through. See 25.0 for why it ended up company-level rather than a single pinned partner.
+
+---
+
+### 25.0 — Customer Role & Permission Model ✅ Complete (2026-08-21)
+
+Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a single-partner pin, but a company-level model matching how Bassani's customers are actually structured (a company can have several contacts, each of whom may need their own login; individuals are a single partner). The WhatsApp-bot-driven pinned-partner sketch below has been replaced by this shipped design; 25.2–25.6 (WhatsApp bot) now build on top of it rather than defining their own activation/account model.
+
+- [x] New role `customer` in `auth.py`'s `ALL_ROLES` — kept outside `require_permission`'s gate entirely, same as `reseller` (access is hand-checked per-route on role, not the staff permissions object)
+- [x] **Company-level sharing, not a single pinned partner:** `users` gains `odoo_partner_id` (the specific Odoo contact this login is, or the individual's own partner id) and `customer_company_partner_id` (the commercial/company partner every order, invoice, and stock view is scoped to). Multiple logins under one company share the same order/invoice history — two contacts at the same pharmacy see and can act on the same orders
+- [x] **Provisioning is opt-in and admin-initiated**, not automatic at onboarding approval. New `customers.manage_portal_access` permission (off by default for every role including `sales`, which already has `customers.manage`) gates a dedicated "Enable Portal Access" flow on the customer profile page: for a business, lists every Odoo child contact with its provisioning status (not provisioned / active / deactivated) and lets the admin select/deselect who gets a login, revisitable any time; for an individual, one enable/disable toggle on the partner itself
+- [x] `GET/POST /api/customers/{customer_id}/portal-access` (+ `/{contact_id}/deactivate`, `/reactivate`) in `customer_routes.py` — bulk-enable is idempotent, rejects contacts with no email (invite delivery depends on it), never touches the underlying Odoo contact on deactivate
+- [x] Provisioning reuses the existing self-service password-reset token mechanism (`create_password_reset_token()`, extracted from `auth_routes.py::forgot_password` into a shared helper) rather than a new invite/token system — a newly granted login gets a random never-surfaced password plus an emailed set-password link
+- [x] Commission: **zero new code required.** `customer_ownership`-based crediting at order-confirm time (`order_routes.py::confirm_order`, `get_owning_reseller_id`) was already independent of who placed the order, so a customer self-ordering against their own linked company account credits the linked reseller exactly as before. A `customer`-role user never has a `resellers` doc, which structurally guarantees they're never themselves commission-eligible
+- [x] Server-side enforcement mirrors the reseller "only your own data" check (7.13) but simpler — a single fixed `customer_company_partner_id` equality check rather than an owned-partner-id set — applied to `order_routes.py` (`create_order`, `list_orders`, `get_order`, `get_order_passport`), `invoice_routes.py` (`list_invoices`, plus a new ownership check on `get_invoice`/`get_invoice_pdf` that closed a pre-existing gap affecting resellers too — see file notes), and `report_routes.py`'s dashboard endpoint (previously fell through to full admin-wide KPIs for any non-reseller role, a real exposure gap the moment a second self-service role could log in)
+- [x] Warehouse scoping: admin-set global default unless explicitly overridden per customer company (`PUT /{customer_id}/warehouse`, stored on `customer_metadata.warehouse_id`, same collection/pattern as the existing `samples_account` flag) — deliberately does not inherit a linked reseller's warehouse, the two pins are independent
+
+---
+
+### 25.1 — Customer Self-Service Portal UI ✅ Complete (2026-08-21)
+
+- [x] Order placement screen — reuses `ResellerCatalog.js` and the reseller order cart in `Views.js::Orders()` unchanged, parametrized on `role === "customer"` alongside the existing `role === "reseller"` checks. No "place order for..." picker — a customer's own company is pre-selected and the picker UI is hidden entirely, since a customer account only ever orders for itself
+- [x] My Orders — the same `Orders()` list/detail view staff and resellers use, scoped server-side to the customer's own company; internal-only columns (Sales Ticket status, Packing status, Create Sales Ticket action) are hidden for both reseller and customer roles
+- [x] My Invoices — reuses `invoice_routes.py`'s existing invoice list/detail/PDF endpoints and `Invoices.js`/`OrderPassport.js` views unchanged, scoped to the customer's own company
+- [x] Dashboard — reuses the existing simplified reseller dashboard view and its matching scoped backend branch (`report_routes.py::dashboard_stats`), rather than the full admin dashboard
+- [x] `CUSTOMER_NAV` in `UI.js` (Dashboard, Products, My Orders, Invoices — no Commission, My Customers, Invite Customer, or My Applications, all reseller-only referral tools)
+- [ ] My Details (update own phone/delivery address) and the Quote review/approve screen for WhatsApp-originated drafts are still scoped to 25.3's bot flow, not yet built — tracked there, not here
+
+---
+
+### 25.2 — Account Activation Flow
+
+**Needs reconciliation with 25.0 before building:** this was written when a `customer` account was assumed to be created lazily on first WhatsApp contact. Since 25.0 shipped provisioning as an explicit, admin-initiated, per-contact action (a `customer` login only ever exists because an admin granted it on the customer profile page), this flow can no longer "create the account first time" itself — at most it can activate/surface a login an admin has already provisioned, or prompt the bot to tell an unprovisioned contact to ask Bassani for portal access. Revisit the steps below with that constraint before implementing.
+
+- [ ] `pending_customer_activations` collection: `{ id, odoo_partner_id, matched_phone, activation_token, status: pending/activated/expired, created_at }`
+- [ ] The WhatsApp bot's lookup call (25.3) matches the inbound WhatsApp number against the phone already on file on the Odoo partner. On a match, an activation link is sent to the **email already on file** — never the WhatsApp number itself, and never anything the customer typed into the chat — same "prove control of a channel Bassani already trusts" principle used for the Phase 14 reseller-link OTP flow
+- [ ] Clicking the link logs into the existing `customer` login for that contact (provisioned per 25.0). **Reaching the portal via the link does not bypass 2FA** — the portal's existing email-OTP 2FA still applies before an order can be placed, consistent with every other login path into a system that handles controlled-substance orders and financial data. The magic link solves discovery/first-touch, not authentication strength
+- [ ] No phone match, or a phone match with no provisioned login yet → the bot is told "new customer" / "ask Bassani to enable your portal access" and directs them to the existing public `/apply` self-registration flow (Phase 16) where relevant — no new endpoint needed, pure reuse
+
+---
+
+### 25.3 — WhatsApp Bot API
+
+New `client_type: "whatsapp_bot"` on `api_clients` (Phase 14's credential system, reused for its mechanism, not its commercial model — a chatbot isn't a reseller or an Integration Partner).
+
+- [ ] `POST /api/external/v1/whatsapp/lookup-customer` — body: `{ whatsapp_number }`. Returns `{ known: bool, accounts: [{ account_id, display_name }] }` — more than one entry when the contact is signatory across multiple company/store accounts (25.4); triggers 25.2's activation email on a match. Never returns a raw name/address/partner ID beyond the minimal `display_name` needed to disambiguate
+- [ ] `GET /api/external/v1/whatsapp/customers/{customer_token}/catalogue` — reuses the Phase 14.1–14.3 product/category/stock endpoints unchanged, scoped to whichever `account_id` the conversation has selected (25.4)
+- [ ] `POST /api/external/v1/whatsapp/customers/{customer_token}/draft-request` — body: `{ account_id, line_items[{ product_id, qty }], notes }`. Creates a Sales Ticket at `inquiry`/`quote` stage via the existing ticket-creation path, tagged `channel: "whatsapp"` for traceability (same convention as the existing RESELLER/SAMPLE pill tags on the Operations Monitor) — this is "facilitate the ordering process" and "receive completed order documentation" together; it is **not** an order yet, just a ticket entering the same pipeline a staff-created inquiry would
+- [ ] `GET /api/external/v1/whatsapp/customers/{customer_token}/quotes/{ticket_id}` — once staff (or auto-pricing, where no negotiation is needed) issues a quote against that ticket, returns the quote summary plus a signed magic link into 25.1's review/approve screen — this is "deliver generated quotations to customers." The bot's role ends at delivering that link
+- [ ] `GET /api/external/v1/whatsapp/customers/{customer_token}/invoices` — sanitised list (number, date, amount, status) plus a short-lived signed URL per invoice PDF, not a raw portal deep link requiring separate auth
+- [ ] `GET /api/external/v1/whatsapp/customers/{customer_token}/orders` — order/ticket status summary for their recent orders (pipeline stage only, matching the language already used elsewhere for customer-facing status — never internal stage names)
+- [ ] `POST /api/external/v1/whatsapp/customers/{customer_token}/request-detail-change` — body: `{ field: "phone" | "delivery_address", new_value }`. **Does not write to Odoo.** Creates a `pending_customer_detail_changes` record and sends a confirmation link to the customer's on-file email (reusing 25.2's activation-link mechanism) — a WhatsApp conversation alone is not sufficient grounds to change where a controlled medicine gets delivered; the customer's own OTP-gated confirmation is required before it's applied
+- [ ] `POST /api/external/v1/whatsapp/customers/{customer_token}/request-callback` — body: `{ intent: "sales" | "support" | "complaint", message }`. Routes per 25.6, doesn't touch Odoo
+- [ ] **Hard 403, not just omission, on anything that confirms an order or moves money** — a `whatsapp_bot` key attempting to call any order-confirm, `/partner-orders`, `/reseller-orders`, or payment endpoint is rejected at the auth-dependency level, the same layer that resolves `client_type`. Building the draft request (above) is explicitly allowed; confirming it is not
+- [ ] `customer_token`/`account_id` are opaque to the bot, never the raw `odoo_partner_id` — same pattern as the existing external customer-token design (14.8)
+- [ ] Rate-limited per key (`slowapi`) — a chat platform retrying aggressively on a slow response must not be able to degrade the same shared Odoo connection everything else depends on
+
+---
+
+### 25.4 — Multi-Company / Branch Identification
+
+- [ ] Reuses an already-confirmed real-world pattern (`CLAUDE.md`'s "Same contact, multiple branches" note under Customer onboarding): one person can legitimately be the signatory/contact on more than one Odoo partner (separate legal entities, or separate branches of one entity). The bot's lookup (25.3) must surface all of them, not silently pick one
+- [ ] When `lookup-customer` returns more than one account, the bot conversation must resolve which one an order/invoice/detail-change request applies to before calling any account-scoped endpoint — a required `account_id` on every subsequent call, not an optional one, so there's no default-to-first-match failure mode
+- [ ] Single-account customers (the overwhelming majority) never see this step — `accounts` has exactly one entry and the bot can proceed straight through
+
+---
+
+### 25.5 — Recurring Orders via WhatsApp
+
+- [ ] No new backend logic — the existing recurring-order engine (8.46: `generate_recurring_notices`, `expire_unaccepted_occurrences`, the public `/recurring/{token}` review/accept page) is untouched
+- [ ] Add WhatsApp as an additional delivery channel for the existing recurring-order notice, alongside email — a small addition to the existing dispatch step, not a new workflow. The link delivered is the same `/recurring/{token}` link `RecurringOrderReview.js` already serves
+
+---
+
+### 25.6 — Sales / Support / Complaint Routing
+
+- [ ] Extends the existing `EmailRoutingConfig` / `portal_settings.email_routing` pattern (`settings_routes.py`) with new configurable keys for WhatsApp-sourced requests (e.g. `whatsapp_sales_inquiry`, `whatsapp_support_request`, `whatsapp_complaint`) rather than building separate routing infrastructure
+- [ ] `request-callback`'s `intent` field (25.3) selects which routing key fires — same "one new field in `EmailRoutingConfig`, one new `ROUTING_KEYS` entry" pattern the codebase already uses for every other notification type
+
+---
+
+### Definition of Done
+
+- [ ] An existing customer messaging the WhatsApp number is recognised (including being asked to pick an account, if they have more than one), can browse the catalogue, and can submit a draft order request that becomes a ticket
+- [ ] A generated quote is deliverable back through the bot as a magic link, and tapping it lands the customer in an authenticated (2FA'd) portal session where accepting it runs through the standard order-confirm pipeline — the bot itself never calls that pipeline
+- [ ] A non-customer messaging the bot is routed to `/apply`
+- [ ] A `whatsapp_bot` API key cannot successfully call any order-confirmation or payment endpoint under any circumstance, even though it can create draft requests
+- [ ] A detail-change request from WhatsApp never writes to Odoo until the customer confirms it via their own on-file email
+- [ ] Recurring-order notices can be delivered via WhatsApp using the existing 8.46 mechanism, unmodified
+- [ ] Sales/support/complaint requests route to the correct configured Bassani team
+
+### Notes
+
+> **2026-08-19 — Phase rescoped after Nick shared Bassani's actual requirements list for the bot.** The original scope (bot is purely read-only, hands off to the portal for everything else) undersold what was actually being asked for — most of the list (catalogue browsing, building an order request, quote delivery, recurring orders, request routing) turned out to already exist in some form (the ticket pipeline, 8.54's quote-PDF generation, 8.46's recurring-order accept flow, the email-routing config pattern) and just needed a WhatsApp-facing API surface, not new business logic. The one genuine decision was "capture quotation approval" — confirmed explicitly that the bot facilitates and delivers, but the magic-link tap (into the authenticated, 2FA'd portal) is still what actually captures approval and passes it to the ERP, preserving the same boundary used everywhere else in Phases 14/24/25: a chat reply is not a strong enough proof of intent for a controlled-substance order, no matter how conversational the surrounding experience is. Also added multi-company/branch identification (25.4) once "identify the correct company/store associated with an order" surfaced the existing "one contact, several branches" pattern already handled elsewhere in onboarding — the bot has to ask, not assume, when a contact maps to more than one account.
