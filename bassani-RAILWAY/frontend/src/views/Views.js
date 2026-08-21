@@ -908,6 +908,7 @@ export function Orders() {
   const [cartProdCat,      setCartProdCat     ] = useState("all"); // selected top-level parent-category id, or "all"
   const [cartProdSubCat,   setCartProdSubCat  ] = useState("all"); // selected child (brand/grade) id, or "all"
   const [cartParentCategories, setCartParentCategories] = useState([]);
+  const [cartProductGroups,    setCartProductGroups   ] = useState(null); // [{id, name, product_ids}] — category-grouped browsing when "All categories" is selected
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,             setCart            ] = useState([]);
@@ -940,11 +941,21 @@ export function Orders() {
 
   // Parent-category chips for the cart's product browser (portal-only grouping,
   // see ParentCategories.js) — fetched once, independent of the selected filter.
+  // product-groups powers the "All categories" grouped-by-category browsing
+  // view (2026-08-21) — id-only membership sets, matched client-side against
+  // the already-loaded cartProducts list rather than fetched per category.
   useEffect(() => {
     if (!isReseller && !isCustomer) return;
     api.get("/api/parent-categories/")
       .then(r => setCartParentCategories(r.data.categories || []))
       .catch(() => {});
+    api.get("/api/parent-categories/product-groups")
+      .then(r => {
+        const groups = r.data.groups || [];
+        const uncategorised = r.data.uncategorised_ids || [];
+        setCartProductGroups(uncategorised.length ? [...groups, { id: "uncategorised", name: "Uncategorised", product_ids: uncategorised }] : groups);
+      })
+      .catch(() => setCartProductGroups([]));
   }, [isReseller, isCustomer]);
 
   // Re-fetch products whenever the cart is open and the selected parent
@@ -1031,6 +1042,66 @@ export function Orders() {
   };
   const cartItemFor = (product) => cart.find(i => i.product_id === product.id) || null;
 
+  // Shared by the flat product grid and every category section in the
+  // grouped view (2026-08-21) — same card, just rendered under different
+  // parents, so it's pulled out once rather than duplicated.
+  const renderCartProductCard = (p) => {
+    const item       = cartItemFor(p);
+    const outOfStock = (p.virtual_available ?? 0) <= 0;
+    const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
+    const minQty     = cartMoq[p.id] || 0;
+    const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
+    // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
+    // is selected, repeating its code as a chip on every card is just noise.
+    const groups = (cartProdSubCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
+    return (
+      <div key={p.id}
+        className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
+        <div className="flex-1 flex items-start gap-3">
+          <ProductThumb product={p} size="lg" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
+              {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
+            </div>
+            {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              {groups.map((g, i) => (
+                <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
+              ))}
+              {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
+              {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
+            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
+          </span>
+        </div>
+        {item ? (
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
+              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
+            <input type="number" min={Math.max(1, minQty)} max={item._stock} value={item.product_uom_qty}
+              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
+              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
+              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
+            <button onClick={() => removeFromCart(item.product_id)}
+              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
+          </div>
+        ) : (
+          <button onClick={() => !outOfStock && addToCart(p)}
+            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
+            {outOfStock ? "Out of stock" : "+ Add to Order"}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const submitCart = async () => {
     if (cart.length === 0) return toast.error("Add at least one product");
     if (!cartSelectedCust) return toast.error("Select a customer first");
@@ -1101,21 +1172,41 @@ export function Orders() {
   const cartVariantLabelOpts  = { stripLeadingGroup: cartProdSubCat !== "all" };
   const cartVariantOptions    = cartProdCat === "all" ? [] :
     Array.from(new Set(cartProducts.map(p => getVariantLabel(p, cartVariantLabelOpts)).filter(Boolean))).sort();
-  const cartFilteredProducts  = cartProducts
-    .filter(p => {
-      const q          = cartProdSearch.toLowerCase();
-      const inStock     = (p.virtual_available ?? 0) > 0;
-      const matchQ      = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
-      const matchVariant = cartProdVariant === "all" || getVariantLabel(p, cartVariantLabelOpts) === cartProdVariant;
-      const matchStock  = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
-      return matchQ && matchVariant && matchStock;
-    })
-    .sort((a, b) => {
-      const aIn = (a.virtual_available ?? 0) > 0;
-      const bIn = (b.virtual_available ?? 0) > 0;
-      if (aIn !== bIn) return aIn ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  // Shared by the flat view and every category group below — a product's
+  // in-stock/out-of-stock status is never used to hide it, only to order it
+  // (industry-standard catalog behaviour: an out-of-stock item stays visible
+  // in context so a buyer knows it exists, just sorted after what's available).
+  const cartMatchesFilter = (p) => {
+    const q           = cartProdSearch.toLowerCase();
+    const inStock      = (p.virtual_available ?? 0) > 0;
+    const matchQ       = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
+    const matchVariant = cartProdVariant === "all" || getVariantLabel(p, cartVariantLabelOpts) === cartProdVariant;
+    const matchStock   = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
+    return matchQ && matchVariant && matchStock;
+  };
+  const cartSortInStockFirst = (a, b) => {
+    const aIn = (a.virtual_available ?? 0) > 0;
+    const bIn = (b.virtual_available ?? 0) > 0;
+    if (aIn !== bIn) return aIn ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  };
+  const cartFilteredProducts = cartProducts.filter(cartMatchesFilter).sort(cartSortInStockFirst);
+  // Category-grouped browsing (2026-08-21) — only when "All categories" is
+  // selected (a specific category already narrows to one group, so there's
+  // nothing to group) and the membership data has loaded. In-stock sort is
+  // applied per group, not globally, so an out-of-stock item still surfaces
+  // under its own category heading rather than being buried at the very
+  // bottom of the whole page.
+  const cartIsGroupedView = cartProdCat === "all" && cartProdSubCat === "all"
+    && Array.isArray(cartProductGroups) && cartProductGroups.length > 0;
+  const cartGroupedProducts = cartIsGroupedView
+    ? cartProductGroups
+        .map(g => {
+          const ids = new Set(g.product_ids);
+          return { id: g.id, name: g.name, products: cartProducts.filter(p => ids.has(p.id) && cartMatchesFilter(p)).sort(cartSortInStockFirst) };
+        })
+        .filter(g => g.products.length > 0)
+    : null;
   // VAT computed per line from each product's real Odoo tax configuration
   // (resolved server-side via _attach_tax_rates), not a flat assumption.
   const cartSubtotal = cart.reduce((s, i) => s + i.product_uom_qty * i.price_unit, 0);
@@ -1414,65 +1505,25 @@ export function Orders() {
             </div>
             <div className="flex-1 overflow-y-auto p-6">
               {cartProdsLoading && <LoadingState />}
-              {!cartProdsLoading && cartFilteredProducts.length === 0 && <EmptyState />}
-              {!cartProdsLoading && (
-                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                  {cartFilteredProducts.map(p => {
-                    const item       = cartItemFor(p);
-                    const outOfStock = (p.virtual_available ?? 0) <= 0;
-                    const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
-                    const minQty     = cartMoq[p.id] || 0;
-                    const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
-                    // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
-                    // is selected, repeating its code as a chip on every card is just noise.
-                    const groups = (cartProdSubCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
-                    return (
-                      <div key={p.id}
-                        className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
-                        <div className="flex-1 flex items-start gap-3">
-                          <ProductThumb product={p} size="lg" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
-                              {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
-                            </div>
-                            {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
-                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                              {groups.map((g, i) => (
-                                <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
-                              ))}
-                              {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
-                              {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
-                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
-                            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
-                          </span>
-                        </div>
-                        {item ? (
-                          <div className="flex items-center gap-1.5">
-                            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
-                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-                            <input type="number" min={Math.max(1, minQty)} max={item._stock} value={item.product_uom_qty}
-                              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
-                              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
-                              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
-                            <button onClick={() => removeFromCart(item.product_id)}
-                              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => !outOfStock && addToCart(p)}
-                            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
-                            {outOfStock ? "Out of stock" : "+ Add to Order"}
-                          </button>
-                        )}
+              {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
+              {!cartProdsLoading && !cartIsGroupedView && cartFilteredProducts.length === 0 && <EmptyState />}
+              {!cartProdsLoading && cartIsGroupedView && (
+                <div className="space-y-8">
+                  {cartGroupedProducts.map(group => (
+                    <div key={group.id}>
+                      <h3 className="text-sm font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">
+                        {group.name} <span className="text-gray-400 font-normal">({group.products.length})</span>
+                      </h3>
+                      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                        {group.products.map(p => renderCartProductCard(p))}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!cartProdsLoading && !cartIsGroupedView && (
+                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                  {cartFilteredProducts.map(p => renderCartProductCard(p))}
                 </div>
               )}
             </div>

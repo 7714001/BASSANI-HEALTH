@@ -36,6 +36,7 @@ from parent_categories import (
     UNCATEGORISED,
     has_uncategorised_products,
     resolve_membership_ids,
+    resolve_parent_category_product_ids,
     sync_reseller_catalog_additions,
 )
 
@@ -115,12 +116,19 @@ async def _validate_parent_id(parent_id: Optional[str], self_id: Optional[str] =
 @router.get("/")
 async def list_parent_categories(current_user: dict = Depends(get_current_user)):
     """Admin/staff see every doc (incl. inactive) for management purposes.
-    Resellers see only active docs, trimmed to id/name/sort_order, plus a
-    synthetic 'Uncategorised' bucket so a catalog-visible product can never
-    silently disappear just because nobody's grouped its category yet."""
+    Resellers and customers (Phase 25) see only active docs, trimmed to
+    id/name/sort_order, plus a synthetic 'Uncategorised' bucket so a
+    catalog-visible product can never silently disappear just because
+    nobody's grouped its category yet.
+
+    **Fixed 2026-08-21:** this was keyed literally on `role == "reseller"`,
+    the same latent-bug pattern found and fixed elsewhere for the customer
+    role — a `customer` login fell through to the admin/staff branch below
+    and got the full untrimmed payload (raw `odoo_category_ids`/`product_ids`,
+    inactive draft categories, `created_by`/`updated_by` usernames)."""
     docs = await col("parent_categories").find({}).sort([("sort_order", 1), ("name", 1)]).to_list(None)
 
-    if current_user.get("role") == "reseller":
+    if current_user.get("role") in ("reseller", "customer"):
         active = [d for d in docs if d.get("active", True)]
         result = [
             {"id": str(d["_id"]), "name": d.get("name", ""), "sort_order": d.get("sort_order", 0), "parent_id": d.get("parent_id")}
@@ -132,6 +140,37 @@ async def list_parent_categories(current_user: dict = Depends(get_current_user))
         return {"categories": result}
 
     return {"categories": [_serialize(d) for d in docs]}
+
+
+@router.get("/product-groups")
+async def get_parent_category_product_groups(current_user: dict = Depends(get_current_user)):
+    """
+    Product-id membership per top-level active parent category, plus the
+    'Uncategorised' bucket — powers the reseller/customer order cart's
+    grouped-by-category browsing view (2026-08-21). IDs only, not full
+    product data — the cart already has the full product list loaded from
+    GET /api/products/ and groups it client-side against these id sets,
+    so this stays a cheap, cacheable-later lookup rather than duplicating
+    the product read.
+
+    Only top-level categories are returned as groups (never their children
+    individually) — resolve_parent_category_product_ids already folds a
+    top-level id's children into its own membership, matching how selecting
+    that top-level category in the filter dropdown behaves.
+    """
+    odoo = get_odoo_client()
+    docs = await col("parent_categories").find({"active": True}).sort([("sort_order", 1), ("name", 1)]).to_list(None)
+    top_level = [d for d in docs if not d.get("parent_id")]
+
+    groups = []
+    for d in top_level:
+        product_ids = await resolve_parent_category_product_ids(odoo, str(d["_id"]))
+        if product_ids:
+            groups.append({"id": str(d["_id"]), "name": d.get("name", ""), "product_ids": product_ids})
+
+    uncategorised_ids = await resolve_parent_category_product_ids(odoo, UNCATEGORISED)
+
+    return {"groups": groups, "uncategorised_ids": uncategorised_ids}
 
 
 @router.post("/preview")
