@@ -1248,10 +1248,22 @@ export function Orders() {
                 outright — this card is only ever seen already grouped under
                 its own category heading (or with Category actively
                 filtered), so repeating it here was pure noise. */}
+            {/* Split onto its own labelled line rather than folded into Qty
+                (2026-08-21 follow-up) — pre-rolls carry a second variant
+                attribute beyond size (pack count, e.g. "1 per tube"), which
+                previously ran on together as "1G · 1 per tube" under one
+                Qty label and read as one confusing value instead of two
+                distinct, individually meaningful ones. */}
             {groups.length > 0 && (
               <p className="text-xs mt-0.5 truncate">
                 <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-1">Qty</span>
-                <span className="font-semibold text-bassani-700">{groups.join(" · ")}</span>
+                <span className="font-semibold text-bassani-700">{groups[0]}</span>
+              </p>
+            )}
+            {groups.length > 1 && (
+              <p className="text-xs mt-0.5 truncate">
+                <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-1">Pack</span>
+                <span className="font-semibold text-bassani-700">{groups.slice(1).join(" · ")}</span>
               </p>
             )}
             {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
