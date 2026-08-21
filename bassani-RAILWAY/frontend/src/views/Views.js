@@ -2018,17 +2018,25 @@ export function Orders() {
           showWarehouseSwitcher
           actions={
             <>
-              <WarehouseLabel name={cartWarehouseName} />
-              {/* Icon-only on mobile, icon+text from sm up (2026-08-21) — the
-                  full-text version ran off the edge of a phone-width app bar
-                  alongside the company switcher. */}
-              <BtnSecondary onClick={() => {
-                if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
-                else setView("list");
-              }}>
-                <ChevronLeft size={14} className="shrink-0" />
-                <span className="hidden sm:inline">{editQuote || isReseller ? "Back to My Quotes" : "Back to Orders"}</span>
-              </BtnSecondary>
+              {/* Not shown to a customer login (2026-08-21, explicit request)
+                  — the company switcher already tells them which account
+                  they're ordering under; which warehouse fulfils it is an
+                  internal fulfilment detail. Still shown to resellers. */}
+              {!isCustomer && <WarehouseLabel name={cartWarehouseName} />}
+              {/* Hidden below sm entirely (2026-08-21) — on mobile the
+                  hamburger menu already reaches every other page, and the
+                  company switcher is the priority thing the app bar should
+                  show there; this button was still competing for the same
+                  cramped row even icon-only. */}
+              <div className="hidden sm:block">
+                <BtnSecondary onClick={() => {
+                  if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
+                  else setView("list");
+                }}>
+                  <ChevronLeft size={14} className="shrink-0" />
+                  {editQuote || isReseller ? "Back to My Quotes" : "Back to Orders"}
+                </BtnSecondary>
+              </div>
             </>
           }
         />

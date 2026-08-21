@@ -434,6 +434,7 @@ export function WarehouseLabel({ name }) {
 
 export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooConnected = true, showWarehouseSwitcher = false }) {
   const { toggle } = useContext(SidebarContext);
+  const { user }   = useAuth();
   const navigate   = useNavigate();
   return (
     <header className="bg-white border-b border-gray-100 px-4 sm:px-6 py-3.5 flex items-center justify-between flex-shrink-0 gap-3">
@@ -451,10 +452,16 @@ export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooCo
       <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
         {showWarehouseSwitcher && <WarehouseSwitcher />}
         <CompanySwitcher />
-        <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${odooConnected ? "bg-bassani-50 text-bassani-700" : "bg-red-50 text-red-600"}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
-          {odooConnected ? "Odoo synced" : "Odoo offline"}
-        </span>
+        {/* Internal sync status — hidden from a customer login (2026-08-21,
+            explicit request). Still shown to resellers today; that's the
+            same "never expose Odoo to external roles" rule this violates,
+            just not touched in this pass since it wasn't asked for. */}
+        {user?.role !== "customer" && (
+          <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${odooConnected ? "bg-bassani-50 text-bassani-700" : "bg-red-50 text-red-600"}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
+            {odooConnected ? "Odoo synced" : "Odoo offline"}
+          </span>
+        )}
         <GlobalSearch />
         {onRefresh && (
           <button onClick={onRefresh} className="p-1.5 rounded-md border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all">
