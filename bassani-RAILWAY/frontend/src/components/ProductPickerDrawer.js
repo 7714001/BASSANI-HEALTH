@@ -65,12 +65,17 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
           {selectedLabel ?? placeholder}
         </span>
         {value != null ? (
+          // inline-flex items-center (2026-08-21 fix) — as a plain <span>,
+          // this sized itself off the inline text line-height around its
+          // SVG child rather than hugging the icon's own 11px, making the
+          // button a few pixels taller than the unselected/ChevronDown state
+          // right beside it. As a flex container it now matches exactly.
           <span
             role="button"
             tabIndex={0}
             onClick={(e) => { e.stopPropagation(); onChange(null); }}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onChange(null); } }}
-            className="ml-0.5 text-bassani-400 hover:text-bassani-700 transition-colors cursor-pointer shrink-0"
+            className="inline-flex items-center ml-0.5 text-bassani-400 hover:text-bassani-700 transition-colors cursor-pointer shrink-0"
             aria-label="Clear selection"
           >
             <X size={11} />

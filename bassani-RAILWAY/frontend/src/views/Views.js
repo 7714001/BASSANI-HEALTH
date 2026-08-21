@@ -1211,9 +1211,15 @@ export function Orders() {
     // isn't. The excess is now surfaced as a live inline note instead.
     const backorderQty = item ? Math.max(0, item.product_uom_qty - item._stock) : 0;
     const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
-    // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
-    // is selected, repeating its code as a chip on every card is just noise.
-    const groups = (cartProdSubCat !== "all" && rawGroups.length > 1) ? rawGroups.slice(1) : rawGroups;
+    // rawGroups[0] is the Brand/Grade code (e.g. "EXO") — always stripped now
+    // (2026-08-21 follow-up), not just once a Brand/Grade filter is active:
+    // every card is already shown either under its own Brand/Grade
+    // sub-heading (grouped view) or with Brand/Grade actively filtered, so
+    // repeating the code on the card itself was redundant either way, same
+    // reasoning as the removed category badge. What's left (rawGroups[1],
+    // typically the size/weight — "1G", "3G") is the one thing that still
+    // varies card to card and is worth a label of its own below.
+    const groups = rawGroups.length > 1 ? rawGroups.slice(1) : rawGroups;
     return (
       <div key={p.id}
         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
@@ -1232,7 +1238,10 @@ export function Orders() {
                 its own category heading (or with Category actively
                 filtered), so repeating it here was pure noise. */}
             {groups.length > 0 && (
-              <p className="text-xs font-semibold text-bassani-700 mt-0.5 truncate">{groups.join(" · ")}</p>
+              <p className="text-xs mt-0.5 truncate">
+                <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-1">Qty</span>
+                <span className="font-semibold text-bassani-700">{groups.join(" · ")}</span>
+              </p>
             )}
             {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
             {minQty > 0 && (
@@ -1890,13 +1899,30 @@ export function Orders() {
             </div>
           ) : (
             <div className="space-y-2">
-              {cart.map(item => (
-                <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
+              {cart.map(item => {
+                // Same condition as the product card's inline note (2026-08-21)
+                // — surfaced here too since the cart panel is where a buyer
+                // actually reviews what they're about to submit, and a
+                // backordered line further down a long cart is easy to miss
+                // otherwise. Icon-only with a title tooltip rather than
+                // repeating the full sentence on every line, to keep the list
+                // compact; the exact stock figure still isn't disclosed here
+                // either, same policy as everywhere else in this cart.
+                const isBackordered = item.product_uom_qty > item._stock;
+                return (
+                <div key={item.product_id} className={`border rounded-xl p-3 ${isBackordered ? "border-amber-200 bg-amber-50/40" : "border-gray-100"}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-start gap-2 min-w-0">
                       <ProductThumb product={{ image_128: item._image128 }} size="xs" className="mt-0.5" />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
+                        <p className="text-xs font-semibold text-gray-900 leading-snug flex items-center gap-1">
+                          <span className="truncate">{item.name}</span>
+                          {isBackordered && (
+                            <span title="Part of this quantity will ship as a backorder" className="shrink-0">
+                              <AlertTriangle size={11} className="text-amber-500" />
+                            </span>
+                          )}
+                        </p>
                         {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
                       </div>
                     </div>
@@ -1907,8 +1933,14 @@ export function Orders() {
                     <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
                       <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
                         className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
-                      <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
-                        onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
+                      {/* No max/clamp against _stock (2026-08-21 fix) — this
+                          input was the one place in the cart still silently
+                          capping quantity to stock on hand; the +/- buttons
+                          beside it and the product card's own stepper never
+                          did, an inconsistency from before backorder ordering
+                          was supported everywhere else in this cart. */}
+                      <input type="number" min={1} value={item.product_uom_qty}
+                        onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, v); }}
                         className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                       <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
                         className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
@@ -1917,7 +1949,8 @@ export function Orders() {
                     <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
