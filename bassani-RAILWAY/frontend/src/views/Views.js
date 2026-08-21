@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle, ShoppingCart, SlidersHorizontal } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -924,6 +924,14 @@ export function Orders() {
   const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
   const [cartWarehouseName, setCartWarehouseName] = useState(null);
   const [cartClearConfirm, setCartClearConfirm] = useState(false);
+  // Mobile layout (2026-08-21) — below lg, the always-visible filter row and
+  // the persistent 288px cart sidebar left almost no room to actually see
+  // products. Category/Brand/Variant/Stock filters move behind a "Filters"
+  // sheet, and the cart becomes a floating summary bar that opens a
+  // full-screen sheet on tap (the standard mobile commerce pattern — Amazon,
+  // Takealot, Uber Eats all do this rather than a persistent sidebar).
+  const [cartFilterSheetOpen, setCartFilterSheetOpen] = useState(false);
+  const [cartSheetOpen,       setCartSheetOpen      ] = useState(false);
   // Delivery address picker (2026-08-21) — defaults to the customer's own
   // registered/primary address (shippingAddressId "") unless a saved child
   // address is explicitly chosen.
@@ -1293,6 +1301,7 @@ export function Orders() {
           note: cartNote || undefined,
         });
         toast.success("Quote updated");
+        setCartSheetOpen(false);
         setEditQuote(null);
         navigate("/tickets/sales");
       } catch (e) {
@@ -1335,6 +1344,7 @@ export function Orders() {
         toast(`⚠️ ${data.stock_warning}`, { duration: 10000 });
       }
       if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
+      setCartSheetOpen(false);
       if (isReseller) { navigate("/tickets/sales"); return; }
       setView("list");
       load();
@@ -1355,6 +1365,7 @@ export function Orders() {
   const cartVariantLabelOpts  = { stripLeadingGroup: cartProdSubCat !== "all" };
   const cartVariantOptions    = cartProdCat === "all" ? [] :
     Array.from(new Set(cartProducts.map(p => getVariantLabel(p, cartVariantLabelOpts)).filter(Boolean))).sort();
+  const cartActiveFilterCount = [cartProdCat !== "all", cartProdSubCat !== "all", cartProdVariant !== "all", cartStockFilter !== "all"].filter(Boolean).length;
   // Shared by the flat view and every category group below — a product's
   // in-stock/out-of-stock status is never used to hide it, only to order it
   // (industry-standard catalog behaviour: an out-of-stock item stays visible
@@ -1653,6 +1664,171 @@ export function Orders() {
 
   // ── New order (reseller / customer cart) ─────────────────────────────────
   if (view === "new" && (isReseller || isCustomer)) {
+    // Shared cart panel content — rendered as the persistent sidebar at lg+
+    // and inside the mobile full-screen sheet below lg (2026-08-21 mobile
+    // pass). One copy of the markup, two mount points; each mount reads the
+    // same lifted state so both always agree, and only one is ever visible
+    // at a time thanks to hidden lg:flex / lg:hidden on their wrappers.
+    const cartPanel = (
+      <>
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <div>
+            <h3 className="font-semibold text-gray-900">Your Order</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {cart.length > 0 && !editQuote && (
+              <button onClick={() => setCartClearConfirm(true)}
+                className="text-[11px] font-medium text-gray-400 hover:text-red-500 transition-colors">Clear</button>
+            )}
+            {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+            <button onClick={() => setCartSheetOpen(false)}
+              className="lg:hidden text-gray-400 hover:text-gray-600 text-xl leading-none ml-1" aria-label="Close">×</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+          {/* Customer selector */}
+          <div>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+              Ordering For (Customer) <span className="text-red-400">*</span>
+            </p>
+            {editQuote ? (
+              /* In edit mode the customer is locked — resellers cannot change the customer on an existing quote */
+              <div className="flex items-center gap-2 border border-gray-200 bg-gray-50 rounded-xl px-3 py-2">
+                <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0"/>
+                <p className="text-sm font-semibold text-gray-700 flex-1 truncate">{editQuote.customerName}</p>
+                <span className="text-[10px] text-gray-400 shrink-0">Locked</span>
+              </div>
+            ) : cartSelectedCust ? (
+              <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
+                <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
+                <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{cartSelectedCust.name}</p>
+                {/* A customer account always orders for itself — no reassigning */}
+                {!isCustomer && (
+                  <button onClick={() => { setCartSelectedCust(null); setCartCustSearch(""); setCartCustDropOpen(true); }}
+                    className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
+                )}
+              </div>
+            ) : (
+              <>
+              <div className="relative">
+                <Input value={cartCustSearch} onChange={e => setCartCustSearch(e.target.value)}
+                  onFocus={() => setCartCustDropOpen(true)}
+                  onBlur={() => setTimeout(() => setCartCustDropOpen(false), 150)}
+                  placeholder="Search your customers…" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                  <ChevronDown size={14} />
+                </span>
+                {cartCustDropOpen && (
+                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
+                    {cartCustLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
+                    {!cartCustLoading && cartCustResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
+                    {cartCustResults.map(c => (
+                      <button key={c.id} onMouseDown={() => { setCartSelectedCust(c); setCartCustSearch(c.name); setCartCustDropOpen(false); setCartCustResults([]); }}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
+                        <span className="font-medium">{c.name}</span>
+                        {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
+              </>
+            )}
+          </div>
+
+          {/* Delivery address (2026-08-21) — only shown once the customer has at
+              least one saved address beyond their registered/primary one; defaults
+              to that primary address, matching order behaviour before this existed. */}
+          {cartSelectedCust && cartAddresses.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Deliver To</p>
+              <Select value={cartShippingAddressId} onChange={e => setCartShippingAddressId(e.target.value)}>
+                <option value="">Registered address (default)</option>
+                {cartAddresses.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}{a.city ? ` · ${a.city}` : ""}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
+          {/* Cart items */}
+          {cart.length === 0 ? (
+            <div className="py-10 text-center">
+              <p className="text-sm text-gray-400">No products added yet</p>
+              <p className="text-xs text-gray-300 mt-1">Click "+ Add to Order" on a product card</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {cart.map(item => (
+                <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <ProductThumb product={{ image_128: item._image128 }} size="xs" className="mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
+                        {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
+                      </div>
+                    </div>
+                    <button onClick={() => removeFromCart(item.product_id)}
+                      className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
+                      <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
+                        className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
+                      <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
+                        onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
+                        className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
+                        className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
+                    </div>
+                    <span className="text-xs text-gray-400 flex-1 truncate">× {fmtR(item.price_unit)}</span>
+                    <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer: totals + notes + actions */}
+        <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white shrink-0">
+          {cart.length > 0 && (
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between text-gray-500">
+                <span>Subtotal (excl. VAT)</span>
+                <span>{fmtR(cartSubtotal)}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>VAT</span>
+                <span>{fmtR(cartVat)}</span>
+              </div>
+              <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
+                <span className="text-gray-900">Total</span>
+                <span className="text-bassani-700">{fmtR(cartTotal)}</span>
+              </div>
+            </div>
+          )}
+          <Textarea value={cartNote} onChange={e => setCartNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
+          <div className="flex gap-2">
+            <BtnSecondary onClick={() => {
+              if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
+              else setView("list");
+            }} className="flex-1">Cancel</BtnSecondary>
+            <BtnPrimary onClick={submitCart} loading={cartSubmitting} disabled={cartSubmitting || cart.length === 0} className="flex-1">
+              {cartSubmitting ? (editQuote ? "Saving…" : "Placing…") : (editQuote ? "Save Quote" : "Place Order")}
+            </BtnPrimary>
+          </div>
+        </div>
+      </>
+    );
+
     return (
       <>
       <div className="flex flex-col flex-1 overflow-hidden">
@@ -1684,7 +1860,11 @@ export function Orders() {
                 placeholder="Search by product name or SKU…"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-bassani-300 bg-gray-50 placeholder-gray-400"
               />
-              <div className="flex flex-wrap gap-3 items-end">
+              {/* Desktop/tablet: full inline filter row. Below lg this wraps into
+                  3-4 rows and eats most of the screen before a single product
+                  is visible, so mobile gets a compact "Filters" sheet trigger
+                  instead — see the lg:hidden row right after this one. */}
+              <div className="hidden lg:flex flex-wrap gap-3 items-end">
                 <div>
                   <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
                   <SearchableSelect
@@ -1741,6 +1921,30 @@ export function Orders() {
                   </select>
                 </div>
               </div>
+              {/* Mobile: Category/Brand/Variant/Stock collapse behind a sheet;
+                  Sort stays inline since it's a single native <select>, cheap
+                  on vertical space and commonly reached for. */}
+              <div className="flex lg:hidden items-center gap-2">
+                <button
+                  onClick={() => setCartFilterSheetOpen(true)}
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-gray-300 transition-colors shrink-0"
+                >
+                  <SlidersHorizontal size={13} />
+                  Filters
+                  {cartActiveFilterCount > 0 && (
+                    <span className="bg-bassani-600 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">{cartActiveFilterCount}</span>
+                  )}
+                </button>
+                <select
+                  value={cartSortBy}
+                  onChange={e => setCartSortBy(e.target.value)}
+                  className="flex-1 min-w-0 text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none focus:border-bassani-600"
+                >
+                  <option value="name">Sort: Name (A to Z)</option>
+                  <option value="price_asc">Sort: Price (Low to High)</option>
+                  <option value="price_desc">Sort: Price (High to Low)</option>
+                </select>
+              </div>
             </div>
             {/* Top spacing moved off the scrolling element itself (px-6 pb-6 here,
                 pt-6 on the inner wrapper below) — 2026-08-21 fix: with pt-6 on the
@@ -1750,7 +1954,11 @@ export function Orders() {
                 gap above every stuck header. Padding on a non-scrolling inner wrapper
                 is just normal flow spacing — it scrolls away like any other content,
                 so once a header is stuck at true top:0 there's nothing behind it. */}
-            <div className="flex-1 overflow-y-auto px-6 pb-6">
+            {/* pb-32 on mobile clears the fixed floating cart bar (lg:hidden,
+                see the right panel below) plus safe-area-inset-bottom on
+                notched phones, so the last row of products is never hidden
+                behind it; not needed once the sidebar cart takes over at lg. */}
+            <div className="flex-1 overflow-y-auto px-6 pb-32 lg:pb-6">
             {/* No top padding when a sticky heading is present (2026-08-21 fix) —
                 otherwise the heading sat 24px down from the top on initial load,
                 with plain white space above it, then abruptly snapped flush the
@@ -1813,163 +2021,94 @@ export function Orders() {
           </div>
 
           {/* ── Right panel: cart ──────────────────────────────────────── */}
-          <div className="h-72 lg:h-auto w-full lg:w-80 xl:w-96 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-gray-100 shrink-0">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">Your Order</h3>
-                <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                {cart.length > 0 && !editQuote && (
-                  <button onClick={() => setCartClearConfirm(true)}
-                    className="text-[11px] font-medium text-gray-400 hover:text-red-500 transition-colors">Clear</button>
-                )}
-                {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-
-              {/* Customer selector */}
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
-                  Ordering For (Customer) <span className="text-red-400">*</span>
-                </p>
-                {editQuote ? (
-                  /* In edit mode the customer is locked — resellers cannot change the customer on an existing quote */
-                  <div className="flex items-center gap-2 border border-gray-200 bg-gray-50 rounded-xl px-3 py-2">
-                    <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0"/>
-                    <p className="text-sm font-semibold text-gray-700 flex-1 truncate">{editQuote.customerName}</p>
-                    <span className="text-[10px] text-gray-400 shrink-0">Locked</span>
-                  </div>
-                ) : cartSelectedCust ? (
-                  <div className="flex items-center gap-2 border border-bassani-300 bg-bassani-50 rounded-xl px-3 py-2">
-                    <span className="w-2 h-2 rounded-full bg-bassani-500 shrink-0"/>
-                    <p className="text-sm font-semibold text-bassani-800 flex-1 truncate">{cartSelectedCust.name}</p>
-                    {/* A customer account always orders for itself — no reassigning */}
-                    {!isCustomer && (
-                      <button onClick={() => { setCartSelectedCust(null); setCartCustSearch(""); setCartCustDropOpen(true); }}
-                        className="text-gray-400 hover:text-red-500 text-xl leading-none shrink-0">×</button>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                  <div className="relative">
-                    <Input value={cartCustSearch} onChange={e => setCartCustSearch(e.target.value)}
-                      onFocus={() => setCartCustDropOpen(true)}
-                      onBlur={() => setTimeout(() => setCartCustDropOpen(false), 150)}
-                      placeholder="Search your customers…" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                      <ChevronDown size={14} />
-                    </span>
-                    {cartCustDropOpen && (
-                      <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-44 overflow-y-auto">
-                        {cartCustLoading && <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>}
-                        {!cartCustLoading && cartCustResults.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No customers found</p>}
-                        {cartCustResults.map(c => (
-                          <button key={c.id} onMouseDown={() => { setCartSelectedCust(c); setCartCustSearch(c.name); setCartCustDropOpen(false); setCartCustResults([]); }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0">
-                            <span className="font-medium">{c.name}</span>
-                            {c.city && <span className="text-gray-400 text-xs ml-1.5">{c.city}</span>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-1.5">Only your own customers appear here.</p>
-                  </>
-                )}
-              </div>
-
-              {/* Delivery address (2026-08-21) — only shown once the customer has at
-                  least one saved address beyond their registered/primary one; defaults
-                  to that primary address, matching order behaviour before this existed. */}
-              {cartSelectedCust && cartAddresses.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Deliver To</p>
-                  <Select value={cartShippingAddressId} onChange={e => setCartShippingAddressId(e.target.value)}>
-                    <option value="">Registered address (default)</option>
-                    {cartAddresses.map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}{a.city ? ` · ${a.city}` : ""}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
-
-              {/* Cart items */}
-              {cart.length === 0 ? (
-                <div className="py-10 text-center">
-                  <p className="text-sm text-gray-400">No products added yet</p>
-                  <p className="text-xs text-gray-300 mt-1">Click "+ Add to Order" on a product card</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {cart.map(item => (
-                    <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-start gap-2 min-w-0">
-                          <ProductThumb product={{ image_128: item._image128 }} size="xs" className="mt-0.5" />
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-gray-900 leading-snug">{item.name}</p>
-                            {item._sku && <p className="font-mono text-[10px] text-gray-400">{item._sku}</p>}
-                          </div>
-                        </div>
-                        <button onClick={() => removeFromCart(item.product_id)}
-                          className="text-gray-300 hover:text-red-500 transition-colors text-xl leading-none shrink-0">×</button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
-                          <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
-                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">−</button>
-                          <input type="number" min={1} max={item._stock} value={item.product_uom_qty}
-                            onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
-                            className="w-20 text-center text-sm font-bold text-gray-800 bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                          <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
-                            className="w-7 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-50 font-semibold text-sm">+</button>
-                        </div>
-                        <span className="text-xs text-gray-400 flex-1 truncate">× {fmtR(item.price_unit)}</span>
-                        <span className="text-sm font-bold text-gray-800 shrink-0">{fmtR(item.product_uom_qty * item.price_unit)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Footer: totals + notes + actions */}
-            <div className="border-t border-gray-100 px-5 py-4 space-y-3 bg-white">
-              {cart.length > 0 && (
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between text-gray-500">
-                    <span>Subtotal (excl. VAT)</span>
-                    <span>{fmtR(cartSubtotal)}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-500">
-                    <span>VAT</span>
-                    <span>{fmtR(cartVat)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-base pt-1.5 border-t border-gray-100">
-                    <span className="text-gray-900">Total</span>
-                    <span className="text-bassani-700">{fmtR(cartTotal)}</span>
-                  </div>
-                </div>
-              )}
-              <Textarea value={cartNote} onChange={e => setCartNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
-              <div className="flex gap-2">
-                <BtnSecondary onClick={() => {
-                  if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
-                  else setView("list");
-                }} className="flex-1">Cancel</BtnSecondary>
-                <BtnPrimary onClick={submitCart} loading={cartSubmitting} disabled={cartSubmitting || cart.length === 0} className="flex-1">
-                  {cartSubmitting ? (editQuote ? "Saving…" : "Placing…") : (editQuote ? "Save Quote" : "Place Order")}
-                </BtnPrimary>
-              </div>
-            </div>
+          {/* Desktop/tablet: persistent sidebar, unchanged from before.
+              Mobile (below lg): replaced by a floating summary bar + a
+              full-screen sheet on tap — a persistent 288px cart box left
+              almost no room to see products (2026-08-21 mobile pass). */}
+          <div className="hidden lg:flex lg:w-80 xl:w-96 flex-col bg-white border-l border-gray-100 shrink-0">
+            {cartPanel}
           </div>
         </div>
       </div>
+
+      {/* Mobile floating cart bar (2026-08-21) — standard mobile-commerce
+          pattern (Amazon, Takealot, Uber Eats): a slim always-visible summary
+          replaces the persistent sidebar, expanding into a full-screen sheet
+          only when the shopper actually wants to review the cart. */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center gap-3"
+        style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] text-gray-400 leading-none">{cart.length === 0 ? "Your order" : `${cart.length} item${cart.length > 1 ? "s" : ""}`}</p>
+          <p className="text-base font-bold text-gray-900 leading-tight mt-0.5 truncate">{fmtR(cartTotal)}</p>
+        </div>
+        <BtnPrimary onClick={() => setCartSheetOpen(true)} className="shrink-0">
+          <ShoppingCart size={15} /> {cart.length === 0 ? "View Order" : `View Order (${cart.length})`}
+        </BtnPrimary>
+      </div>
+      {cartSheetOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/40 flex items-end" onClick={e => e.target === e.currentTarget && setCartSheetOpen(false)}>
+          <div className="bg-white rounded-t-2xl shadow-2xl w-full max-h-[88vh] flex flex-col">
+            {cartPanel}
+          </div>
+        </div>
+      )}
+      {cartFilterSheetOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/40 flex items-end" onClick={e => e.target === e.currentTarget && setCartFilterSheetOpen(false)}>
+          <div className="bg-white rounded-t-2xl shadow-2xl w-full max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+              <h2 className="text-base font-semibold text-gray-900">Filters</h2>
+              <button onClick={() => setCartFilterSheetOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none" aria-label="Close">×</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
+                <SearchableSelect
+                  value={cartProdCat === "all" ? null : cartProdCat}
+                  onChange={v => { setCartProdCat(v ?? "all"); setCartProdSubCat("all"); setCartProdVariant("all"); }}
+                  options={cartTopLevelCategories.map(c => ({ value: c.id, label: c.name }))}
+                  placeholder="All categories"
+                  searchPlaceholder="Search categories…"
+                />
+              </div>
+              {cartChildCategories.length > 0 && (
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Brand / Grade</label>
+                  <SearchableSelect
+                    value={cartProdSubCat === "all" ? null : cartProdSubCat}
+                    onChange={v => { setCartProdSubCat(v ?? "all"); setCartProdVariant("all"); }}
+                    options={cartChildCategories.map(c => ({ value: c.id, label: c.name }))}
+                    placeholder={`All ${cartParentCategories.find(x => x.id === cartProdCat)?.name || ""}`}
+                    searchPlaceholder="Search…"
+                  />
+                </div>
+              )}
+              {cartProdCat !== "all" && cartVariantOptions.length > 0 && (
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Variant</label>
+                  <SearchableSelect
+                    value={cartProdVariant === "all" ? null : cartProdVariant}
+                    onChange={v => setCartProdVariant(v ?? "all")}
+                    options={cartVariantOptions.map(v => ({ value: v, label: v }))}
+                    placeholder="All variants"
+                    searchPlaceholder="Search…"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Stock</label>
+                <div className="flex gap-2">
+                  <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
+                  <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-gray-100 px-5 py-4 flex gap-2 shrink-0">
+              <BtnSecondary onClick={() => { setCartProdCat("all"); setCartProdSubCat("all"); setCartProdVariant("all"); setCartStockFilter("all"); }} className="flex-1">Clear All</BtnSecondary>
+              <BtnPrimary onClick={() => setCartFilterSheetOpen(false)} className="flex-1">Show Results</BtnPrimary>
+            </div>
+          </div>
+        </div>
+      )}
       {cartClearConfirm && (
         <Modal title="Clear Cart" onClose={() => setCartClearConfirm(false)}>
           <p className="text-sm text-gray-600 mb-4">

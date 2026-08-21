@@ -2092,6 +2092,7 @@ If more than one person at a company has portal access, they all see the exact s
 - **Reorder.** A "Reorder" button on any past order's page fills a fresh cart with the same items, at current prices, ready to review and submit again — quicker than rebuilding a large order from scratch.
 - **Set an order to repeat automatically.** A "Make Recurring" button on any confirmed order sets it up to repeat weekly, every two weeks, or monthly — the same feature a Sales Agent already has, just reachable from the customer's own order page instead of the internal ticket screen.
 - **Clear the cart.** A "Clear" link next to the order summary empties it in one step, with a confirmation prompt first since it can't be undone.
+- **Order comfortably from a phone.** On a phone or narrow tablet, the catalogue filters tuck behind a "Filters" button and the order summary becomes a slim bar pinned to the bottom of the screen showing the item count and total — tap it to review the full order, change quantities, or submit. This is the same cart as on a laptop, just laid out to fit a smaller screen; nothing about placing an order works differently.
 
 ---
 
