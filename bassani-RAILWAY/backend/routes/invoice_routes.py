@@ -80,12 +80,31 @@ async def list_invoices(
         domain.append(("partner_id", "=", odoo_partner_id))
     elif current_user.get("role") == "customer":
         # Company-level sharing (Phase 25): every login under one company
-        # sees the same invoice list, via commercial_partner_id (not
-        # partner_id) so an invoice billed to a specific contact still shows.
+        # sees the same invoice list, including invoices billed to a
+        # specific contact rather than the company itself.
+        #
+        # Fixed 2026-08-21 (found live — a customer saw zero invoices even
+        # though the same company had outstanding ones visible on the admin
+        # Customer 360 page): originally filtered account.move by
+        # commercial_partner_id directly. That field/model combination was
+        # never live-verified anywhere in this codebase — every other
+        # commercial_partner_id usage is either on sale.order (long-proven,
+        # e.g. the reseller order-list branch) or a plain field READ on
+        # res.partner, never a domain SEARCH on account.move. Given this
+        # codebase's history of exactly this kind of Odoo-field assumption
+        # turning out wrong on this instance (see the 2026-08-11
+        # reserved_availability/quantity note elsewhere), replaced with an
+        # explicit partner_id IN [company, its child contacts] filter —
+        # partner_id is definitely valid here, it's already used one branch
+        # above for the reseller case.
         company_partner_id = current_user.get("customer_company_partner_id")
         if not company_partner_id:
             return {"invoices": [], "total": 0}
-        domain.append(("commercial_partner_id", "=", company_partner_id))
+        try:
+            child_ids = odoo.search("res.partner", [["parent_id", "=", company_partner_id]], limit=200)
+        except Exception:
+            child_ids = []
+        domain.append(("partner_id", "in", [company_partner_id] + list(child_ids)))
 
     try:
         invoices = odoo.search_read(

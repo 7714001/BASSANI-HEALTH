@@ -204,11 +204,18 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
             unpaid_invoices = 0
             overdue_amount = 0.0
             try:
+                # partner_id IN [company + child contacts], not a
+                # commercial_partner_id domain search on account.move — see
+                # invoice_routes.py::list_invoices for why (2026-08-21 fix,
+                # that field/model combination was never live-verified and
+                # this exact try/except was silently swallowing the failure,
+                # showing "0 unpaid invoices" with no visible error).
+                child_ids = odoo.search("res.partner", [["parent_id", "=", company_partner_id]], limit=200)
                 invoice_domain = [
                     ("move_type", "=", "out_invoice"),
                     ("payment_state", "in", ["not_paid", "partial"]),
                     ("state", "=", "posted"),
-                    ("commercial_partner_id", "=", company_partner_id),
+                    ("partner_id", "in", [company_partner_id] + list(child_ids)),
                 ]
                 unpaid_invoices = odoo.count("account.move", invoice_domain)
                 invoice_data = odoo.search_read("account.move", domain=invoice_domain, fields=["amount_residual"], limit=500)

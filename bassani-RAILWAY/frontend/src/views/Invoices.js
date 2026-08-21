@@ -253,7 +253,13 @@ export default function Invoices() {
   const canRecordPayment = can("invoices.record_payment");
   const location   = useLocation();
   const navigate   = useNavigate();
-  const initialFilter = location.state?.filter || "unpaid";
+  // A customer/reseller landing on their own invoice history wants to see
+  // everything by default, not just what's currently outstanding — "unpaid"
+  // is the right default for staff (who care about what needs action), but
+  // for a customer whose invoices happen to all be paid it meant landing on
+  // an empty list every time (2026-08-21 fix).
+  const isExternalRole = user?.role === "reseller" || user?.role === "customer";
+  const initialFilter = location.state?.filter || (isExternalRole ? "all" : "unpaid");
 
   const [invoices,   setInvoices  ] = useState([]);
   const [total,      setTotal     ] = useState(0);

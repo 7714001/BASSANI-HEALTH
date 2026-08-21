@@ -1253,8 +1253,15 @@ export function Orders() {
       )}
       {group.children.map(child => (
         <div key={child.id}>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 pl-1">
-            <span className="text-gray-400 font-medium">{group.name} /</span> {child.name} <span className="text-gray-400 font-normal normal-case">({child.products.length})</span>
+          {/* Sub-heading (2026-08-21 revision) — a small coloured accent bar plus
+              stronger contrast on the grade name itself so it doesn't blend into
+              the page while scrolling past it; parent name stays muted since
+              it's secondary context, not the primary label. */}
+          <h4 className="flex items-center gap-2 mb-2.5 pl-1">
+            <span className="w-1 h-3.5 bg-bassani-500 rounded-full shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{group.name} /</span>
+            <span className="text-sm font-bold text-gray-800">{child.name}</span>
+            <span className="text-xs font-normal text-gray-400">({child.products.length})</span>
           </h4>
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
             {child.products.map(p => renderCartProductCard(p))}
@@ -1707,13 +1714,22 @@ export function Orders() {
                   <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
                   <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
                 </div>
-                <div className="pb-0.5">
+                {/* Right-aligned within the row (ml-auto) and styled to match
+                    SearchableSelect's trigger exactly (text-xs, same padding,
+                    same w-44 width) rather than UI.js's shared Select component,
+                    which hardcodes its own text-sm styling and ignores any
+                    className passed to it. */}
+                <div className="pb-0.5 ml-auto">
                   <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Sort</label>
-                  <Select value={cartSortBy} onChange={e => setCartSortBy(e.target.value)} className="text-sm">
+                  <select
+                    value={cartSortBy}
+                    onChange={e => setCartSortBy(e.target.value)}
+                    className="w-44 text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-gray-300 transition-colors focus:outline-none focus:border-bassani-600"
+                  >
                     <option value="name">Name (A to Z)</option>
                     <option value="price_asc">Price (Low to High)</option>
                     <option value="price_desc">Price (High to Low)</option>
-                  </Select>
+                  </select>
                 </div>
               </div>
             </div>
@@ -1730,17 +1746,24 @@ export function Orders() {
                     const collapsed = cartCollapsedGroups.has(group.id);
                     return (
                       <div key={group.id}>
+                        {/* Sticky section heading (2026-08-21 revision) — previously
+                            plain small text that was easy to lose track of while
+                            scrolling through a long category. Sticks to the top of
+                            the scroll area (each section's own header takes over as
+                            you scroll into it, standard "pinned section list" pattern)
+                            with a solid band + shadow so it reads clearly over the
+                            product grid scrolling underneath it. */}
                         <button
                           onClick={() => setCartCollapsedGroups(prev => {
                             const next = new Set(prev);
                             if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
                             return next;
                           })}
-                          className="w-full flex items-center gap-2 mb-3 pb-2 border-b border-gray-100 text-left"
+                          className="w-full flex items-center gap-2.5 -mx-6 px-6 mb-3 py-2.5 sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-sm text-left"
                         >
-                          <ChevronDown size={15} className={`text-gray-400 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
-                          <h3 className="text-sm font-bold text-gray-800">
-                            {group.name} <span className="text-gray-400 font-normal">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
+                          <ChevronDown size={16} className={`text-bassani-600 transition-transform shrink-0 ${collapsed ? "-rotate-90" : ""}`} />
+                          <h3 className="text-base font-bold text-gray-900 tracking-tight">
+                            {group.name} <span className="text-gray-400 font-medium text-sm">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
                           </h3>
                         </button>
                         {!collapsed && renderGroupBody(group)}
