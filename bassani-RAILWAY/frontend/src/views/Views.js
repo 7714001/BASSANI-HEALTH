@@ -1211,13 +1211,28 @@ export function Orders() {
   // bottom of the whole page.
   const cartIsGroupedView = cartProdCat === "all" && cartProdSubCat === "all"
     && Array.isArray(cartProductGroups) && cartProductGroups.length > 0;
+  // Two-level grouping (2026-08-21): within each top-level section, products
+  // that also belong to a Brand/Grade child category (e.g. Pre-Rolls's
+  // Indoor/Exotic/Greendoor/Greenhouse/Budget) get their own sub-heading;
+  // anything on the top-level category directly (no child) renders under
+  // the top-level heading with no redundant single sub-section. A top-level
+  // category with no children at all (a flat one, no grade tiers) behaves
+  // exactly as before — everything is "own" products, no sub-headings.
   const cartGroupedProducts = cartIsGroupedView
     ? cartProductGroups
         .map(g => {
-          const ids = new Set(g.product_ids);
-          return { id: g.id, name: g.name, products: cartProducts.filter(p => ids.has(p.id) && cartMatchesFilter(p)).sort(cartSortInStockFirst) };
+          const childSets = (g.children || []).map(c => ({ id: c.id, name: c.name, ids: new Set(c.product_ids) }));
+          const allChildIds = new Set(childSets.flatMap(c => [...c.ids]));
+          const topIds = new Set(g.product_ids);
+          const ownProducts = cartProducts
+            .filter(p => topIds.has(p.id) && !allChildIds.has(p.id) && cartMatchesFilter(p))
+            .sort(cartSortInStockFirst);
+          const children = childSets
+            .map(c => ({ id: c.id, name: c.name, products: cartProducts.filter(p => c.ids.has(p.id) && cartMatchesFilter(p)).sort(cartSortInStockFirst) }))
+            .filter(c => c.products.length > 0);
+          return { id: g.id, name: g.name, ownProducts, children };
         })
-        .filter(g => g.products.length > 0)
+        .filter(g => g.ownProducts.length > 0 || g.children.length > 0)
     : null;
   // VAT computed per line from each product's real Odoo tax configuration
   // (resolved server-side via _attach_tax_rates), not a flat assumption.
@@ -1535,12 +1550,28 @@ export function Orders() {
                         >
                           <ChevronDown size={15} className={`text-gray-400 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
                           <h3 className="text-sm font-bold text-gray-800">
-                            {group.name} <span className="text-gray-400 font-normal">({group.products.length})</span>
+                            {group.name} <span className="text-gray-400 font-normal">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
                           </h3>
                         </button>
                         {!collapsed && (
-                          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                            {group.products.map(p => renderCartProductCard(p))}
+                          <div className="space-y-5">
+                            {/* Products on the top-level category itself, not under any Brand/Grade child */}
+                            {group.ownProducts.length > 0 && (
+                              <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                                {group.ownProducts.map(p => renderCartProductCard(p))}
+                              </div>
+                            )}
+                            {/* Brand/Grade sub-sections (2026-08-21) — e.g. Pre-Rolls -> Indoor/Exotic/Greendoor/Greenhouse/Budget */}
+                            {group.children.map(child => (
+                              <div key={child.id}>
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 pl-1">
+                                  {child.name} <span className="text-gray-400 font-normal normal-case">({child.products.length})</span>
+                                </h4>
+                                <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                                  {child.products.map(p => renderCartProductCard(p))}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>

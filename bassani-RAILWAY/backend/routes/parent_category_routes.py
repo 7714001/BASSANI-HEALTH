@@ -153,10 +153,16 @@ async def get_parent_category_product_groups(current_user: dict = Depends(get_cu
     so this stays a cheap, cacheable-later lookup rather than duplicating
     the product read.
 
-    Only top-level categories are returned as groups (never their children
-    individually) — resolve_parent_category_product_ids already folds a
-    top-level id's children into its own membership, matching how selecting
-    that top-level category in the filter dropdown behaves.
+    Each top-level group's `product_ids` is the full union (itself + every
+    child folded in, via resolve_parent_category_product_ids) — unchanged
+    behaviour, matching how selecting that top-level category in the filter
+    dropdown behaves. Each group also carries its own `children` — Brand/
+    Grade sub-categories (e.g. Pre-Rolls -> Indoor/Exotic/Greendoor/
+    Greenhouse/Budget) with their own independently-resolved membership
+    (2026-08-21) — powering a second-level sub-heading within each top-level
+    cart section. A top-level category with no children returns an empty
+    `children` list; the cart renders its products directly under the
+    top-level heading in that case rather than a redundant single sub-section.
     """
     odoo = get_odoo_client()
     docs = await col("parent_categories").find({"active": True}).sort([("sort_order", 1), ("name", 1)]).to_list(None)
@@ -164,9 +170,18 @@ async def get_parent_category_product_groups(current_user: dict = Depends(get_cu
 
     groups = []
     for d in top_level:
-        product_ids = await resolve_parent_category_product_ids(odoo, str(d["_id"]))
-        if product_ids:
-            groups.append({"id": str(d["_id"]), "name": d.get("name", ""), "product_ids": product_ids})
+        top_id = str(d["_id"])
+        product_ids = await resolve_parent_category_product_ids(odoo, top_id)
+        if not product_ids:
+            continue
+        children = []
+        for c in docs:
+            if c.get("parent_id") != top_id:
+                continue
+            child_ids = await resolve_parent_category_product_ids(odoo, str(c["_id"]))
+            if child_ids:
+                children.append({"id": str(c["_id"]), "name": c.get("name", ""), "product_ids": child_ids})
+        groups.append({"id": top_id, "name": d.get("name", ""), "product_ids": product_ids, "children": children})
 
     uncategorised_ids = await resolve_parent_category_product_ids(odoo, UNCATEGORISED)
 
