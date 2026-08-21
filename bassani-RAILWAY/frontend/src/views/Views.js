@@ -1213,15 +1213,27 @@ export function Orders() {
     // isn't. The excess is now surfaced as a live inline note instead.
     const backorderQty = item ? Math.max(0, item.product_uom_qty - item._stock) : 0;
     const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
-    // rawGroups[0] is the Brand/Grade code (e.g. "EXO") — always stripped now
-    // (2026-08-21 follow-up), not just once a Brand/Grade filter is active:
-    // every card is already shown either under its own Brand/Grade
-    // sub-heading (grouped view) or with Brand/Grade actively filtered, so
-    // repeating the code on the card itself was redundant either way, same
-    // reasoning as the removed category badge. What's left (rawGroups[1],
-    // typically the size/weight — "1G", "3G") is the one thing that still
-    // varies card to card and is worth a label of its own below.
+    // rawGroups[0] is the Brand/Grade code (e.g. "Indoor") when a product has
+    // more than one variant attribute — stripped from the Qty line itself
+    // (shown instead as part of the eyebrow line below) so it isn't repeated
+    // twice on the same card. What's left is the size/pack value verbatim,
+    // exactly as Odoo has it — e.g. "1G, 1 in a tube" for a pre-roll is a
+    // single attribute value with a comma baked into it on the Odoo side,
+    // not two separate attributes, so it isn't split further here (an
+    // earlier attempt to split it into separate Qty/Pack lines assumed it
+    // was two values and was reverted once that assumption turned out wrong
+    // for this product family — a real fix would mean cleaning up that
+    // attribute's naming in Odoo, not something to work around client-side).
     const groups = rawGroups.length > 1 ? rawGroups.slice(1) : rawGroups;
+    const brandGrade = rawGroups.length > 1 ? rawGroups[0] : null;
+    // Eyebrow line (2026-08-21, third follow-up) — category badge came back,
+    // paired with Brand/Grade, after removing it outright turned out to
+    // under-inform a card viewed outside its grouped-heading context (a flat
+    // search/filtered result, or just glancing at one card without reading
+    // the section above it). Plain small text above the name, not another
+    // pill/badge — a pill was the exact "clutter" complaint that got the
+    // original category badge removed in the first place.
+    const eyebrow = [p.categ_id?.[1], brandGrade].filter(Boolean).join(" · ");
     return (
       <div key={p.id}
         className={`bg-white border rounded-xl p-4 flex flex-col gap-3 transition-all ${item ? "border-bassani-300 ring-1 ring-bassani-100 shadow-sm" : "border-gray-100 hover:border-gray-200 hover:shadow-sm"}`}>
@@ -1237,33 +1249,19 @@ export function Orders() {
             <ProductThumb product={p} size="lg" />
           )}
           <div className="flex-1 min-w-0">
+            {eyebrow && <p className="text-[10px] font-medium text-gray-400 truncate">{eyebrow}</p>}
             <div className="flex items-start justify-between gap-2">
               <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
               {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
             </div>
             {/* Variant promoted to a real subtitle line (2026-08-21) — for a
-                cannabis buyer, grade/size is a purchasing decision, not a
+                cannabis buyer, size is a purchasing decision, not a
                 footnote, so it reads as proper text now rather than a tiny
-                pill easy to miss. The category badge (categ_id) is gone
-                outright — this card is only ever seen already grouped under
-                its own category heading (or with Category actively
-                filtered), so repeating it here was pure noise. */}
-            {/* Split onto its own labelled line rather than folded into Qty
-                (2026-08-21 follow-up) — pre-rolls carry a second variant
-                attribute beyond size (pack count, e.g. "1 per tube"), which
-                previously ran on together as "1G · 1 per tube" under one
-                Qty label and read as one confusing value instead of two
-                distinct, individually meaningful ones. */}
+                pill easy to miss. */}
             {groups.length > 0 && (
               <p className="text-xs mt-0.5 truncate">
                 <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-1">Qty</span>
-                <span className="font-semibold text-bassani-700">{groups[0]}</span>
-              </p>
-            )}
-            {groups.length > 1 && (
-              <p className="text-xs mt-0.5 truncate">
-                <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-1">Pack</span>
-                <span className="font-semibold text-bassani-700">{groups.slice(1).join(" · ")}</span>
+                <span className="font-semibold text-bassani-700">{groups.join(" · ")}</span>
               </p>
             )}
             {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
