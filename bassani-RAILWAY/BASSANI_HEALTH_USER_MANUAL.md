@@ -433,6 +433,7 @@ The table below documents every automated email the portal sends, when it fires,
 | **Packing Started** | An orders clerk marks a reseller order as packing | The reseller who placed the order + Order CC list (if configured) |
 | **Ready for Collection** | An order passes both QA and RP approval on the packing board | All `warehouse_supervisor` portal users + any extra addresses in the Order Ready list |
 | **Order Ready for Collection** (reseller) | Same mark-complete event on a full-delivery reseller order | The reseller who placed the order + Order CC list (if configured) |
+| **Daily Digest: Production Orders (MOs)** | Automatic, every day at 17:00, if at least one Manufacturing Order is still in progress | Addresses configured in Settings > Email Notifications > "Daily Digest: Production Orders (MOs)" |
 
 **Notes:**
 

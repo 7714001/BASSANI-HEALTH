@@ -1615,6 +1615,56 @@ def send_backorder_daily_digest(to: "list[str]", items: list) -> None:
     _send(to, f"Backorders: {count} order{'s' if count != 1 else ''} require attention", _wrap(body))
 
 
+_MO_STATE_LABELS = {"draft": "Draft", "confirmed": "Confirmed", "progress": "In Progress", "to_close": "To Close"}
+
+
+def send_mo_daily_digest(to: "list[str]", items: list) -> None:
+    """End-of-day digest of Manufacturing Orders still in progress (not done or
+    cancelled) that Odoo created to replenish a backordered sale order line.
+    items: [{mo_name, product_name, order_ref, state}]. These MOs are created
+    entirely by Odoo's own replenishment routing when a sale order is
+    confirmed with insufficient stock — the portal never creates one itself,
+    this digest just surfaces what already exists in Odoo so nobody has to
+    open it to notice a new production order is needed."""
+    if not to or not items:
+        return
+    count = len(items)
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("mo_name", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("product_name", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">'
+        f'{item.get("order_ref", "")}</td>'
+        f'<td style="padding:8px 0 8px 16px;font-size:13px;color:#b45309;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">'
+        f'{_MO_STATE_LABELS.get(item.get("state", ""), item.get("state", ""))}</td>'
+        f'</tr>'
+        for item in items
+    )
+    body = (
+        _h1(f"{count} production order{'s' if count != 1 else ''} in progress")
+        + _p(
+            f"{count} Manufacturing Order{'s' if count != 1 else ''} triggered by customer orders "
+            "are still in progress. Worth a check that each is on track."
+        )
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + f'<thead><tr>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">MO</th>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Product</th>'
+        + f'<th style="text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Order</th>'
+        + f'<th style="text-align:right;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;padding-left:16px;">Status</th>'
+        + f'</tr></thead>'
+        + f'<tbody>{rows}</tbody>'
+        + f'</table>'
+        + _button("Open backorders", f"{settings.portal_url}/orders/backorders")
+        + _divider()
+        + _p("Log in to the portal for full details on each order.", muted=True)
+    )
+    _send(to, f"Production Orders: {count} in progress", _wrap(body))
+
+
 # Recurring order emails — Phase 8.46
 
 def send_recurring_order_upcoming(

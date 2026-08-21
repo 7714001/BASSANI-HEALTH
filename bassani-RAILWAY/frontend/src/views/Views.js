@@ -909,6 +909,7 @@ export function Orders() {
   const [cartProdSubCat,   setCartProdSubCat  ] = useState("all"); // selected child (brand/grade) id, or "all"
   const [cartParentCategories, setCartParentCategories] = useState([]);
   const [cartProductGroups,    setCartProductGroups   ] = useState(null); // [{id, name, product_ids}] — category-grouped browsing when "All categories" is selected
+  const [cartCollapsedGroups,  setCartCollapsedGroups ] = useState(new Set()); // group ids currently collapsed — expanded by default
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
   const [cart,             setCart            ] = useState([]);
@@ -1048,8 +1049,11 @@ export function Orders() {
   const renderCartProductCard = (p) => {
     const item       = cartItemFor(p);
     const outOfStock = (p.virtual_available ?? 0) <= 0;
-    const lowStock   = !outOfStock && (p.virtual_available ?? 0) < 10;
     const minQty     = cartMoq[p.id] || 0;
+    // Out-of-stock items are orderable (Bassani will manufacture/restock to
+    // fulfil as a backorder — see order_routes.py's stock-check/confirm
+    // flow) so there's no real upper bound to cap the quantity input at.
+    const qtyMax     = item && item._stock > 0 ? item._stock : undefined;
     const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
     // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
     // is selected, repeating its code as a chip on every card is just noise.
@@ -1076,26 +1080,31 @@ export function Orders() {
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : lowStock ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-700"}`}>
-            {outOfStock ? "Out of stock" : `${p.virtual_available} available`}
+          {/* Binary in-stock/out-of-stock only — Bassani does not want the
+              exact quantity on hand shown to resellers/customers. */}
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>
+            {outOfStock ? "Out of stock" : "In stock"}
           </span>
         </div>
         {item ? (
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
-              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-            <input type="number" min={Math.max(1, minQty)} max={item._stock} value={item.product_uom_qty}
-              onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, Math.min(v, item._stock)); }}
-              className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-            <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
-              className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
-            <button onClick={() => removeFromCart(item.product_id)}
-              className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
+                className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
+              <input type="number" min={Math.max(1, minQty)} max={qtyMax} value={item.product_uom_qty}
+                onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, qtyMax ? Math.min(v, qtyMax) : v); }}
+                className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+              <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
+                className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
+              <button onClick={() => removeFromCart(item.product_id)}
+                className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
+            </div>
+            {outOfStock && <p className="text-[10px] text-amber-600 text-center">Will ship as a backorder once restocked</p>}
           </div>
         ) : (
-          <button onClick={() => !outOfStock && addToCart(p)}
-            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
-            {outOfStock ? "Out of stock" : "+ Add to Order"}
+          <button onClick={() => addToCart(p)}
+            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
+            {outOfStock ? "+ Add to Order (Backorder)" : "+ Add to Order"}
           </button>
         )}
       </div>
@@ -1151,6 +1160,9 @@ export function Orders() {
       if (data.credit_warning) {
         toast(`⚠️ ${cartSelectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
           { duration: 10000 });
+      }
+      if (data.stock_warning) {
+        toast(`⚠️ ${data.stock_warning}`, { duration: 10000 });
       }
       if (isReseller) { navigate("/tickets/sales"); return; }
       setView("list");
@@ -1508,17 +1520,32 @@ export function Orders() {
               {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && !cartIsGroupedView && cartFilteredProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && cartIsGroupedView && (
-                <div className="space-y-8">
-                  {cartGroupedProducts.map(group => (
-                    <div key={group.id}>
-                      <h3 className="text-sm font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">
-                        {group.name} <span className="text-gray-400 font-normal">({group.products.length})</span>
-                      </h3>
-                      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-                        {group.products.map(p => renderCartProductCard(p))}
+                <div className="space-y-6">
+                  {cartGroupedProducts.map(group => {
+                    const collapsed = cartCollapsedGroups.has(group.id);
+                    return (
+                      <div key={group.id}>
+                        <button
+                          onClick={() => setCartCollapsedGroups(prev => {
+                            const next = new Set(prev);
+                            if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
+                            return next;
+                          })}
+                          className="w-full flex items-center gap-2 mb-3 pb-2 border-b border-gray-100 text-left"
+                        >
+                          <ChevronDown size={15} className={`text-gray-400 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+                          <h3 className="text-sm font-bold text-gray-800">
+                            {group.name} <span className="text-gray-400 font-normal">({group.products.length})</span>
+                          </h3>
+                        </button>
+                        {!collapsed && (
+                          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                            {group.products.map(p => renderCartProductCard(p))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {!cartProdsLoading && !cartIsGroupedView && (

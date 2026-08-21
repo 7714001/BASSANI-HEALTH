@@ -16,7 +16,7 @@ from services.email_service import (
     send_onboarding_submitted, send_application_escalation, send_countersign_needed,
     send_countersign_complete_notification, send_qa_approval_needed, send_rp_approval_needed,
     send_qa_rp_daily_digest, send_order_ready_for_collection, send_order_confirmed,
-    send_backorder_daily_digest, send_payment_auto_confirmed, send_s6_flag_notification,
+    send_backorder_daily_digest, send_mo_daily_digest, send_payment_auto_confirmed, send_s6_flag_notification,
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
     send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
@@ -76,6 +76,9 @@ TEST_EMAIL_SENDERS: dict = {
     "backorder_daily_digest_to": lambda to: send_backorder_daily_digest(
         [to], items=[{"order_ref": "S00999", "customer_name": "Test Pharmacy (Pty) Ltd", "picking_name": "WH/OUT/00123"}],
     ),
+    "mo_daily_digest_to": lambda to: send_mo_daily_digest(
+        [to], items=[{"mo_name": "WH/MO/00456", "product_name": "Test Flower 1G", "order_ref": "S00999", "state": "confirmed"}],
+    ),
     "finance_notification_to": lambda to: send_payment_auto_confirmed(
         [to], confirmed_items=[{"customer_name": "Test Pharmacy (Pty) Ltd", "order_id": "999", "invoice_name": "INV/2026/0999"}],
     ),
@@ -127,6 +130,7 @@ class EmailRoutingConfig(BaseModel):
     rp_approval_to:            List[str] = []   # order ready for RP inspection
     qa_rp_daily_digest_to:     List[str] = []   # 17:00 daily — orders still awaiting QA/RP sign-off
     backorder_daily_digest_to: List[str] = []   # 17:00 daily — orders waiting on stock
+    mo_daily_digest_to:        List[str] = []   # 17:00 daily — Manufacturing Orders still in progress
     finance_notification_to:   List[str] = []
     s6_flag_to:                List[str] = []   # S6 receipt flagged: no purchase order found
     recurring_order_accepted_to: List[str] = []  # customer accepted a recurring order occurrence
@@ -151,6 +155,7 @@ async def get_email_routing() -> dict:
         "rp_approval_to":           doc.get("rp_approval_to", []),
         "qa_rp_daily_digest_to":    doc.get("qa_rp_daily_digest_to", []),
         "backorder_daily_digest_to": doc.get("backorder_daily_digest_to", []),
+        "mo_daily_digest_to":       doc.get("mo_daily_digest_to", []),
         "finance_notification_to":  doc.get("finance_notification_to", []),
         "s6_flag_to":               doc.get("s6_flag_to", []),
         "recurring_order_accepted_to": doc.get("recurring_order_accepted_to", []),

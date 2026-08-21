@@ -1259,35 +1259,36 @@ async def create_order(
         if effective_partner_id != current_user.get("customer_company_partner_id"):
             raise HTTPException(status_code=403, detail="You can only place orders for your own account")
 
-    # Stock check — block the whole order if any line exceeds what's actually
-    # available to promise (on-hand minus what's already reserved by other
-    # orders), scoped to the resolved warehouse. The cart already disables
-    # "Add to Order" for out-of-stock items, but this is the authoritative
-    # check: it covers direct API calls and stock that changed after the cart
-    # was loaded.
+    # Stock check — non-blocking (2026-08-21, previously hard-blocked the
+    # whole order with a 400). A quote/order isn't binding until confirmed,
+    # and the confirm-time flow (stock_check, _confirm_order_core's backorder
+    # handling) is already the authoritative point where a shortfall is
+    # actually resolved (ships-now vs backorder split, then Odoo's own
+    # replenishment routing creates a Manufacturing Order if the product is
+    # configured that way). Hard-blocking creation here was a separate,
+    # stricter, now-inconsistent gate — Bassani wants out-of-stock items
+    # orderable so they can be fulfilled as a backorder. Surfaced as a
+    # non-blocking warning instead, same pattern as the credit check below.
     product_ids = [l.product_id for l in order.order_line]
+    stock_warning = None
     try:
         stock_rows = odoo.read(
             "product.product", product_ids,
             fields=["display_name", "virtual_available"],
             context=odoo_context(warehouse_id),
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error checking stock: {str(e)}")
-    stock_map = {p["id"]: p for p in stock_rows}
-
-    shortfalls = []
-    for l in order.order_line:
-        p = stock_map.get(l.product_id)
-        available = p["virtual_available"] if p else 0
-        if l.product_uom_qty > available:
-            name = p["display_name"] if p else f"Product #{l.product_id}"
-            shortfalls.append(f"{name} (requested {l.product_uom_qty:g}, only {available:g} available)")
-    if shortfalls:
-        raise HTTPException(
-            status_code=400,
-            detail="Not enough stock to fulfil this order: " + "; ".join(shortfalls),
-        )
+        stock_map = {p["id"]: p for p in stock_rows}
+        shortfalls = []
+        for l in order.order_line:
+            p = stock_map.get(l.product_id)
+            available = p["virtual_available"] if p else 0
+            if l.product_uom_qty > available:
+                name = p["display_name"] if p else f"Product #{l.product_id}"
+                shortfalls.append(f"{name} (requested {l.product_uom_qty:g}, only {available:g} available)")
+        if shortfalls:
+            stock_warning = "Some items exceed current stock and will need to be fulfilled as a backorder: " + "; ".join(shortfalls)
+    except Exception:
+        pass  # Non-fatal — stock info shouldn't block placing a quotation
 
     # Credit check — non-blocking here, since an order is just a quotation
     # until an admin confirms it. Surfaces a warning early so the reseller/
@@ -1409,7 +1410,7 @@ async def create_order(
         await audit_log("order.credit_warning", "order", odoo_order_id, entity_label=credit_partner_name,
                         user=current_user, detail=credit_warning, reseller_id=order.reseller_id)
 
-    return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning}
+    return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning, "stock_warning": stock_warning}
 
 
 @router.put("/{order_id}/confirm")

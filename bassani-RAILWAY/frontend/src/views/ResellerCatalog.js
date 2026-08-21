@@ -6,11 +6,6 @@ import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName, War
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 import { fetchAllProducts } from "../utils/productExport";
 
-const stockColor = (qty) =>
-  qty <= 0   ? "text-red-600 font-semibold"
-  : qty < 10 ? "text-amber-600 font-semibold"
-             : "text-bassani-700 font-semibold";
-
 // stripLeadingGroup drops the first attribute group (the grade/brand code,
 // e.g. "EXO") once a Brand/Grade sub-category is already selected — showing
 // it again in the Variant dropdown would just repeat what the reseller has
@@ -240,11 +235,17 @@ export default function ResellerCatalog() {
             },
             {
               accessorKey: "virtual_available",
-              header: "Available Stock",
+              header: "Stock",
               enableSorting: false,
+              // Binary in-stock/out-of-stock only — Bassani does not want
+              // the exact quantity on hand shown to resellers/customers.
               cell: ({ row: { original: p } }) => {
-                const qty = p.virtual_available ?? 0;
-                return <span className={stockColor(qty)}>{qty}</span>;
+                const outOfStock = (p.virtual_available ?? 0) <= 0;
+                return (
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>
+                    {outOfStock ? "Out of stock" : "In stock"}
+                  </span>
+                );
               },
             },
           ]}

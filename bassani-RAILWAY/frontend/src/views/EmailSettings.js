@@ -194,6 +194,13 @@ const ROUTING_KEYS = [
     placeholder: "ops@bassanihealth.com",
   },
   {
+    key: "mo_daily_digest_to", group: "orders", icon: Mail,
+    title: "Daily Digest: Production Orders (MOs)",
+    description: "Sent automatically at 17:00 each day, listing every Manufacturing Order still in progress that Odoo created to fulfil a backordered customer order.",
+    note: "If this list is empty, no digest is sent. A digest only sends when there is at least one production order still in progress.",
+    placeholder: "production@bassanihealth.com",
+  },
+  {
     key: "recurring_order_upcoming", group: "orders", icon: Mail, previewOnly: true,
     title: "Recurring Order: Upcoming (Customer Notice)",
     description: "Sent 2 days before each recurring order occurrence, directly to the customer on file — asking them to review and accept or decline.",

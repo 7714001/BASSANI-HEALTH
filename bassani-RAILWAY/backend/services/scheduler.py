@@ -19,10 +19,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from database import col
+from odoo_client import get_odoo_client
 from services.email_service import (
     send_application_escalation,
     send_qa_rp_daily_digest,
     send_backorder_daily_digest,
+    send_mo_daily_digest,
 )
 from routes.recurring_order_routes import (
     generate_recurring_notices,
@@ -146,11 +148,56 @@ async def run_backorder_digest() -> None:
     send_backorder_daily_digest(to, items)
 
 
+async def run_mo_digest() -> None:
+    """17:00 SAST — digest of Manufacturing Orders still in progress (not
+    done/cancelled) that Odoo's own replenishment routing created to fulfil
+    a backordered sale order line. The portal never creates an MO itself —
+    action_confirm on the sale order is the only write, and any resulting
+    MO is Odoo's automatic side effect of that call, contingent on the
+    product's own Manufacture/MTO route configuration. This digest exists
+    purely because nothing previously told staff a new one had appeared —
+    they'd only ever see it by opening the ticket/Order Passport.
+
+    Domain is scoped to `origin like "S0"` (Bassani's confirmed sale.order
+    naming convention, e.g. S00764/S00602 — see CLAUDE.md) specifically to
+    exclude the unrelated vault/manicuring-lab MOs (services/vault_odoo.py),
+    which are a different feature entirely and would otherwise be noise
+    here — those don't originate from a customer sale order at all."""
+    to = await _get_routing_list("mo_daily_digest_to")
+    if not to:
+        return
+    odoo = get_odoo_client()
+    try:
+        mos = odoo.search_read(
+            "mrp.production",
+            domain=[("state", "not in", ["done", "cancel"]), ("origin", "like", "S0")],
+            fields=["name", "product_id", "state", "origin"],
+            limit=200,
+            order="date_start asc",
+        )
+    except Exception as exc:
+        logger.warning("mo_digest_odoo_error", extra={"error": str(exc)})
+        return
+    if not mos:
+        return
+    items = [
+        {
+            "mo_name": m.get("name", ""),
+            "product_name": m["product_id"][1] if m.get("product_id") else "",
+            "order_ref": m.get("origin") or "",
+            "state": m.get("state", ""),
+        }
+        for m in mos
+    ]
+    send_mo_daily_digest(to, items)
+
+
 def start_notification_schedulers() -> None:
     """Called once from server.py's startup event."""
     asyncio.create_task(_interval_loop("application_escalation", 1800, check_stale_applications))
     asyncio.create_task(_daily_loop("qa_rp", 17, 0, run_qa_rp_digest))
     asyncio.create_task(_daily_loop("backorder", 17, 0, run_backorder_digest))
+    asyncio.create_task(_daily_loop("mo_digest", 17, 0, run_mo_digest))
     # Phase 8.46 — recurring orders: T-2-day notice/generation, then a same-day
     # sweep for occurrences nobody responded to in time.
     asyncio.create_task(_daily_loop("recurring_notice", 8, 0, generate_recurring_notices))
