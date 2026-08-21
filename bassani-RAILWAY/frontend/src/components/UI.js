@@ -379,25 +379,30 @@ function WarehouseSwitcher() {
 
 // Multi-company customer logins (2026-08-21) — a customer login can be
 // linked to more than one Odoo company (the same person is a contact, or
-// the company record itself, on several separate companies). Shown only
-// once there's actually something to switch between; self-gating, no
-// per-page opt-in prop needed like WarehouseSwitcher's, since a customer's
-// entire nav is 4 fixed items, all company-scoped. Mirrors
+// the company record itself, on several separate companies). Mirrors
 // WarehouseSwitcher's shape exactly — same self-service PUT, same local
 // state merge in AuthContext, no new token needed to see the switch.
+// **Always visible for every customer login, including one with only a
+// single company (2026-08-21 follow-up)** — shows which profile an order
+// is being placed under even when there's nothing to actually switch to,
+// so the app bar looks and behaves identically for every customer rather
+// than single-company logins missing an indicator multi-company ones have.
+// Also the one thing the mobile app bar prioritises showing (see TopBar) —
+// unlike WarehouseSwitcher, this has no `hidden sm:flex`.
 function CompanySwitcher() {
   const { user, setActiveCompany } = useAuth();
   if (user?.role !== "customer") return null;
   const companies = (user.companies || []).filter(c => c.active);
-  if (companies.length <= 1) return null;
+  if (companies.length === 0) return null;
 
   return (
-    <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">
-      <Building2 size={13} className="text-gray-400" />
+    <div className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600 min-w-0">
+      <Building2 size={13} className="text-gray-400 shrink-0" />
       <select
         value={user.customer_company_partner_id ?? ""}
         onChange={(e) => setActiveCompany(parseInt(e.target.value, 10))}
-        className="bg-transparent outline-none text-xs text-gray-700 max-w-[160px]"
+        disabled={companies.length === 1}
+        className="bg-transparent outline-none text-xs text-gray-700 max-w-[110px] sm:max-w-[160px] truncate disabled:cursor-default"
       >
         {companies.map((c) => (
           <option key={c.customer_company_partner_id} value={c.customer_company_partner_id}>{c.company_name}</option>
@@ -415,8 +420,12 @@ function CompanySwitcher() {
 // re-deriving it client-side.
 export function WarehouseLabel({ name }) {
   if (!name) return null;
+  // Hidden below sm (2026-08-21) — on a narrow app bar this competed for
+  // space with the page's own actions (e.g. the order cart's Back button)
+  // and had nowhere to go but overlap/overflow. Secondary context, not a
+  // control, so it's the one that gives way on mobile.
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600 bg-gray-50">
+    <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600 bg-gray-50">
       <Warehouse size={13} className="text-gray-400" />
       Stock shown for <span className="font-medium text-gray-800">{name}</span>
     </span>

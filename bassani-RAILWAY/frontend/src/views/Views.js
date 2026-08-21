@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle, ShoppingCart, SlidersHorizontal, Repeat } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, ChevronLeft, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle, ShoppingCart, SlidersHorizontal, Repeat } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -2019,11 +2019,15 @@ export function Orders() {
           actions={
             <>
               <WarehouseLabel name={cartWarehouseName} />
+              {/* Icon-only on mobile, icon+text from sm up (2026-08-21) — the
+                  full-text version ran off the edge of a phone-width app bar
+                  alongside the company switcher. */}
               <BtnSecondary onClick={() => {
                 if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
                 else setView("list");
               }}>
-                {editQuote || isReseller ? "← Back to My Quotes" : "← Back to Orders"}
+                <ChevronLeft size={14} className="shrink-0" />
+                <span className="hidden sm:inline">{editQuote || isReseller ? "Back to My Quotes" : "Back to Orders"}</span>
               </BtnSecondary>
             </>
           }

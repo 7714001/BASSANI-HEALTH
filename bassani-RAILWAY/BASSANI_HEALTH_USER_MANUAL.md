@@ -2089,7 +2089,7 @@ A customer's portal is deliberately simple — four items in the sidebar:
 
 If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person, **including orders Bassani staff place on the customer's behalf** — a customer's My Orders list is never limited to only what they personally placed. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
 
-**Switching between companies (2026-08-21):** if the same login has been granted access to more than one company, a dropdown appears at the top of the portal showing the company they're currently viewing. Switching it updates the Dashboard, Products, My Orders, and Invoices to that company's data immediately, no need to sign out or sign in again. The dropdown only appears once there's actually more than one company to choose from.
+**Switching between companies (2026-08-21):** every customer sees a company indicator at the top of the portal showing which account they're currently viewing, on both desktop and mobile. If that login only has access to one company, it just displays that company's name. If it's been granted access to more than one, it becomes a working dropdown. Switching it updates the Dashboard, Products, My Orders, and Invoices to that company's data immediately, with no need to sign out or sign in again.
 
 ### Placing an order
 
