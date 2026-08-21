@@ -2074,6 +2074,8 @@ Portal access is never automatic — an admin must turn it on for a specific cus
 
 If a row has no email address on file (including the company account row itself), it can't be granted a login until one is added — use **Add contact** in the Contacts section above to add a person, or edit the company's own email, then come back to this section.
 
+**Same person, more than one company (2026-08-21):** it's common for one email address to be linked to more than one Bassani customer, the way "Same contact, multiple branches" already works during onboarding. If you try to grant access to an email that already has an active login for a *different* company, the row shows an amber note ("Also has portal access to: [company]") and clicking Grant Access asks you to confirm first. The confirm screen lists every other company that login already has access to, each with a tick box, ticked by default. Confirming adds the new company to their existing login rather than creating a second one, no new password required, one email letting them know. If one of the other companies listed is a duplicate or a store being phased out, untick it before confirming. That removes that company's access in the same step, so it stops appearing in their switcher, without needing a separate trip to that company's own profile. That person then sees a company switcher at the top of their portal to move between whichever companies they still have access to, using the exact same sign-in.
+
 **Default warehouse:** Also on the customer profile, the **Default Warehouse** field lets you pin which warehouse a customer's orders and product catalogue draw from. Leave it blank to use the standard admin default.
 
 ### What a customer sees once logged in
@@ -2086,6 +2088,8 @@ A customer's portal is deliberately simple — four items in the sidebar:
 - **Invoices** — every invoice for the account, with the same PDF download available elsewhere in the portal.
 
 If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person, **including orders Bassani staff place on the customer's behalf** — a customer's My Orders list is never limited to only what they personally placed. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
+
+**Switching between companies (2026-08-21):** if the same login has been granted access to more than one company, a dropdown appears at the top of the portal showing the company they're currently viewing. Switching it updates the Dashboard, Products, My Orders, and Invoices to that company's data immediately, no need to sign out or sign in again. The dropdown only appears once there's actually more than one company to choose from.
 
 ### Placing an order
 

@@ -482,6 +482,18 @@ export default function CustomerProfile() {
   const [portalSelected,      setPortalSelected     ] = useState(new Set());
   const [portalGranting,      setPortalGranting     ] = useState(false);
   const [portalTogglingId,    setPortalTogglingId   ] = useState(null);
+  // Multi-company logins (2026-08-21) — a confirm step only when at least
+  // one selected contact's email already has active portal access to a
+  // DIFFERENT company (linked_elsewhere), so granting here would add this
+  // company to that existing login rather than create a new one. No added
+  // friction for the common, no-overlap case.
+  const [portalConfirmLinked, setPortalConfirmLinked] = useState(null); // [{name, email, linked_elsewhere}] | null
+  // Companies to leave checked (kept active) in the confirm dialog below —
+  // unchecking one deactivates it alongside the grant, e.g. a duplicate or
+  // phased-out profile the admin wants excluded from the switcher going
+  // forward. Keyed by customer_company_partner_id; starts with everything
+  // checked (today's default behaviour: add, touch nothing else).
+  const [portalKeepCompanies, setPortalKeepCompanies] = useState(new Set());
 
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
@@ -753,19 +765,75 @@ export default function CustomerProfile() {
     });
   };
 
+  // Every other company already linked across the selected contacts,
+  // deduped by customer_company_partner_id (two selected contacts could
+  // both surface the same other company). Source of truth for both the
+  // confirm dialog's checkboxes and the deactivate calls on submit.
+  const portalOtherCompanies = (() => {
+    if (!portalConfirmLinked) return [];
+    const seen = new Map();
+    for (const ct of portalConfirmLinked) {
+      for (const other of ct.linked_elsewhere || []) {
+        if (!seen.has(other.customer_company_partner_id)) seen.set(other.customer_company_partner_id, other);
+      }
+    }
+    return [...seen.values()];
+  })();
+
+  // Fires the actual grant call — split out from the click handler so it can
+  // run either immediately (no cross-company overlap) or after the admin
+  // confirms the "adds to an existing login elsewhere" dialog. Any company
+  // left unchecked there is deactivated alongside the grant (e.g. a
+  // duplicate/phased-out profile being deliberately excluded).
   const doGrantPortalAccess = async () => {
     if (portalSelected.size === 0) return;
+    const toRemove = portalOtherCompanies.filter(c => !portalKeepCompanies.has(c.customer_company_partner_id));
+    setPortalConfirmLinked(null);
     setPortalGranting(true);
     try {
       const { data: res } = await api.post(`/api/customers/${id}/portal-access`, { contact_ids: [...portalSelected] });
-      if (res.granted?.length) toast.success(`Portal access granted to ${res.granted.length} contact${res.granted.length > 1 ? "s" : ""}`);
+      if (res.granted?.length) toast.success(`Created ${res.granted.length} new login${res.granted.length > 1 ? "s" : ""}`);
+      if (res.company_added?.length) toast.success(`Added this company to ${res.company_added.length} existing login${res.company_added.length > 1 ? "s" : ""}`);
       if (res.errors?.length) res.errors.forEach(e => toast.error(e.detail));
+
+      for (const c of toRemove) {
+        try {
+          await api.post(`/api/customers/${c.customer_company_partner_id}/portal-access/${c.odoo_partner_id}/deactivate`);
+        } catch (e) {
+          toast.error(`Failed to remove access to ${c.company_name}`);
+        }
+      }
+      if (toRemove.length > 0) {
+        toast.success(`Removed access to ${toRemove.length} other compan${toRemove.length > 1 ? "ies" : "y"}`);
+      }
       loadPortalAccess();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to grant portal access");
     } finally {
       setPortalGranting(false);
     }
+  };
+
+  // Click handler for the Grant Access button — routes through a confirm
+  // step only when the selection includes a contact whose email is already
+  // in use elsewhere. Every other company starts checked (kept) — today's
+  // default behaviour is unchanged unless the admin deliberately unchecks one.
+  const onClickGrantPortalAccess = () => {
+    const linked = portalAccess.contacts.filter(ct => portalSelected.has(ct.id) && ct.linked_elsewhere?.length > 0);
+    if (linked.length > 0) {
+      setPortalConfirmLinked(linked);
+      setPortalKeepCompanies(new Set(linked.flatMap(ct => (ct.linked_elsewhere || []).map(o => o.customer_company_partner_id))));
+      return;
+    }
+    doGrantPortalAccess();
+  };
+
+  const togglePortalKeepCompany = (companyId) => {
+    setPortalKeepCompanies(prev => {
+      const next = new Set(prev);
+      if (next.has(companyId)) next.delete(companyId); else next.add(companyId);
+      return next;
+    });
   };
 
   const doTogglePortalStatus = async (contactId, action) => {
@@ -1126,6 +1194,11 @@ export default function CustomerProfile() {
                             </td>
                             <td className="px-5 py-3 text-gray-500">
                               {ct.email || <span className="text-red-400">No email on file</span>}
+                              {ct.linked_elsewhere?.length > 0 && (
+                                <p className="text-[11px] text-amber-600 mt-0.5">
+                                  Also has portal access to: {ct.linked_elsewhere.map(l => l.company_name).join(", ")}
+                                </p>
+                              )}
                             </td>
                             <td className="px-5 py-3">
                               {ct.portal_status === "active" && <Badge color="green">Active</Badge>}
@@ -1162,7 +1235,7 @@ export default function CustomerProfile() {
                       <p className="text-xs text-gray-400">
                         Select one or more contacts to send them a portal login invite.
                       </p>
-                      <BtnPrimary onClick={doGrantPortalAccess} loading={portalGranting} disabled={portalGranting || portalSelected.size === 0}>
+                      <BtnPrimary onClick={onClickGrantPortalAccess} loading={portalGranting} disabled={portalGranting || portalSelected.size === 0}>
                         Grant Access ({portalSelected.size})
                       </BtnPrimary>
                     </div>
@@ -1170,6 +1243,41 @@ export default function CustomerProfile() {
                 </>
               )}
             </Section>
+          )}
+
+          {portalConfirmLinked && (
+            <Modal title="Add to Existing Login?" onClose={() => setPortalConfirmLinked(null)}>
+              <div className="space-y-3 text-sm text-gray-600">
+                <p>
+                  {portalConfirmLinked.length === 1 ? "This contact's" : "These contacts'"} email address already
+                  has an active Bassani portal login for {portalOtherCompanies.length === 1 ? "another company" : "other companies"}:
+                </p>
+                <p className="text-xs text-gray-400">
+                  Granting access here adds this company to that same login instead of creating a new one, letting
+                  them switch between all their companies from one account with no new password to set. Untick any
+                  company below that shouldn't stay linked, for example a duplicate or phased-out profile.
+                </p>
+                <ul className="space-y-1.5">
+                  {portalOtherCompanies.map(c => (
+                    <li key={c.customer_company_partner_id} className="flex items-center gap-2.5 bg-gray-50 rounded-lg px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={portalKeepCompanies.has(c.customer_company_partner_id)}
+                        onChange={() => togglePortalKeepCompany(c.customer_company_partner_id)}
+                      />
+                      <span className="font-medium text-gray-800">{c.company_name}</span>
+                      {!portalKeepCompanies.has(c.customer_company_partner_id) && (
+                        <span className="text-[11px] text-red-500 ml-auto">Will be removed</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <BtnSecondary onClick={() => setPortalConfirmLinked(null)}>Cancel</BtnSecondary>
+                <BtnPrimary onClick={doGrantPortalAccess} loading={portalGranting}>Continue</BtnPrimary>
+              </div>
+            </Modal>
           )}
 
           {/* Documents */}

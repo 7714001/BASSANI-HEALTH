@@ -788,6 +788,25 @@ def send_customer_portal_invite(email: str, name: str, company_name: str, invite
     _send(email, "Your Bassani Health portal account is ready", _wrap(body))
 
 
+def send_customer_company_added(email: str, name: str, company_name: str, portal_url: str) -> None:
+    """Sent when an admin grants portal access for a company to an email that
+    already has a Bassani Health login for a different company (2026-08-21,
+    multi-company logins). No password involved, unlike
+    send_customer_portal_invite above — they already have one, this is
+    purely informational."""
+    body = (
+        _h1("A company has been added to your account")
+        + _p(f"Hi {name},")
+        + _p(
+            f"{company_name} has been added to your existing Bassani Health login. "
+            "You can now switch between your companies from the account menu at "
+            "the top of the portal, using your usual sign-in details."
+        )
+        + _button("Go to the portal", portal_url)
+    )
+    _send(email, "A company has been added to your Bassani Health account", _wrap(body))
+
+
 def send_otp_email(email: str, name: str, otp: str) -> None:
     """Sent when a staff member's login triggers the email OTP 2FA step."""
     body = (

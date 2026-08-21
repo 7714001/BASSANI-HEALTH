@@ -49,6 +49,9 @@ class PasswordReset(BaseModel):
 class WarehouseSelect(BaseModel):
     warehouse_id: Optional[int] = None   # None = "All warehouses" (clears the active selection)
 
+class ActiveCompanySelect(BaseModel):
+    customer_company_partner_id: int
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,6 +98,36 @@ async def set_active_warehouse(
         {"$set": {"active_warehouse_id": body.warehouse_id}},
     )
     return {"success": True, "active_warehouse_id": body.warehouse_id}
+
+
+@router.put("/me/active-company")
+async def set_active_company(
+    body: ActiveCompanySelect,
+    current_user: dict = Depends(get_current_user),
+):
+    """Self-service for the customer role only (2026-08-21) — switch which
+    linked company the portal scopes orders/invoices/dashboard/warehouse
+    reads to, the same top-nav-dropdown shape as set_active_warehouse above.
+    Only an id already present as an active entry in the caller's own
+    `companies` array is accepted — this is a self-service switch between
+    companies the login already has, not a way to grant new access. The
+    actual scoping fields (`customer_company_partner_id`/`odoo_partner_id`)
+    are derived fresh from this pointer by auth.py's
+    resolve_customer_active_company() on the very next request — no JWT
+    reissue needed, same as the warehouse switcher."""
+    if current_user.get("role") != "customer":
+        raise HTTPException(status_code=403, detail="Only customer accounts can switch companies")
+
+    companies = current_user.get("companies") or []
+    if not any(c.get("customer_company_partner_id") == body.customer_company_partner_id and c.get("active")
+               for c in companies):
+        raise HTTPException(status_code=403, detail="You don't have access to that company")
+
+    await col("users").update_one(
+        {"_id": ObjectId(current_user["id"])},
+        {"$set": {"active_company_partner_id": body.customer_company_partner_id}},
+    )
+    return {"success": True, "customer_company_partner_id": body.customer_company_partner_id}
 
 
 @router.get("/")

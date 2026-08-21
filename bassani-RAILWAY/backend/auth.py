@@ -2,6 +2,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
+from bson import ObjectId
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
@@ -28,8 +29,9 @@ ALL_ROLES = {
     "vault_custodian",
     # Phase 25 — external self-service customer login. Same shape as
     # reseller (outside require_permission's gate entirely, hand-checked
-    # per-route on role) but pinned to a single company account rather than
-    # a portfolio of owned customers.
+    # per-route on role). One login can be linked to more than one Odoo
+    # company (the same person can be a contact on several separate
+    # companies) — see resolve_customer_active_company() below.
     "customer",
 }
 ADMIN_ROLES = {"super_admin", "admin"}  # roles that access the main React portal
@@ -301,6 +303,47 @@ async def authenticate_user(username: str, password: str) -> Optional[dict]:
     return user
 
 
+async def resolve_customer_active_company(user: dict) -> dict:
+    """Multi-company customer logins (2026-08-21) — a customer's `companies`
+    array can hold more than one linked Odoo company (the same person can be
+    a contact, or the company record itself, on several separate companies).
+    `customer_company_partner_id`/`odoo_partner_id` are derived HERE, fresh
+    on every call, from whichever entry `active_company_partner_id` currently
+    points at — never written directly by provisioning. This is the single
+    choke point every other read of `current_user.get("customer_company_partner_id")`
+    across the codebase relies on staying correct, so none of those ~11 call
+    sites (orders, invoices, dashboard, recurring orders, warehouse scoping)
+    needed to change: they still just read a flat field, it's just always
+    fresh now instead of fixed at creation time.
+
+    No-op for every other role. Self-heals a stale/unset/revoked pointer by
+    falling back to the first still-active company (persisted back to Mongo,
+    best-effort); with zero active companies left, both derived fields are
+    set to None so every ownership check downstream correctly denies rather
+    than silently continuing to serve a revoked company's data.
+    """
+    if user.get("role") != "customer":
+        return user
+    companies = user.get("companies") or []
+    active_id = user.get("active_company_partner_id")
+    entry = next((c for c in companies if c.get("customer_company_partner_id") == active_id and c.get("active")), None)
+    healed = False
+    if not entry:
+        entry = next((c for c in companies if c.get("active")), None)
+        healed = True
+    user["customer_company_partner_id"] = entry.get("customer_company_partner_id") if entry else None
+    user["odoo_partner_id"] = entry.get("odoo_partner_id") if entry else None
+    if healed and entry and user.get("id"):
+        try:
+            await col("users").update_one(
+                {"_id": ObjectId(user["id"])},
+                {"$set": {"active_company_partner_id": entry["customer_company_partner_id"]}},
+            )
+        except Exception:
+            pass  # Best-effort — re-derives the same way again next request regardless
+    return user
+
+
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
@@ -330,6 +373,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     if payload.get("tv", 0) != (user.get("token_version") or 0):
         raise credentials_exception
 
+    user = await resolve_customer_active_company(user)
     return user
 
 

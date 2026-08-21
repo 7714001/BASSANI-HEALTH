@@ -952,13 +952,52 @@ async def get_portal_access(
         }]
 
     contact_ids_list = [c["id"] for c in contacts]
+
+    # Multi-company logins (2026-08-21): a contact's portal status now lives
+    # inside the matching entry of that user's `companies` array, not a
+    # top-level `active` flag — one login can be active for this company and
+    # deactivated for another. Match on the array's own fields via Mongo's
+    # implicit array-element matching (works the same as a flat-field query).
     users_map = {}
     if contact_ids_list:
         async for u in col("users").find(
-            {"role": "customer", "customer_company_partner_id": customer_id, "odoo_partner_id": {"$in": contact_ids_list}},
-            {"odoo_partner_id": 1, "active": 1, "_id": 0},
+            {"role": "customer", "companies.customer_company_partner_id": customer_id,
+             "companies.odoo_partner_id": {"$in": contact_ids_list}},
+            {"companies": 1, "username": 1, "_id": 0},
         ):
-            users_map[u["odoo_partner_id"]] = u
+            for entry in u.get("companies") or []:
+                if entry.get("customer_company_partner_id") == customer_id and entry.get("odoo_partner_id") in contact_ids_list:
+                    users_map[entry["odoo_partner_id"]] = {"active": entry.get("active", True), "username": u.get("username")}
+
+    # linked_elsewhere (2026-08-21) — surfaces, before an admin ever clicks
+    # Grant, that a candidate's email already has active portal access to a
+    # DIFFERENT company. Looked up per-email since that's the actual identity
+    # a login is keyed on — two different Odoo contact records (this
+    # company's vs another's) can share the same email, exactly the "one
+    # person, two branches" pattern CLAUDE.md already documents elsewhere.
+    linked_map = {}
+    emails = list({c["email"] for c in contacts if c.get("email")})
+    if emails:
+        async for u in col("users").find(
+            {"role": "customer", "username": {"$in": [e.strip().lower() for e in emails]}},
+            {"username": 1, "companies": 1, "_id": 0},
+        ):
+            # odoo_partner_id included so the admin UI can deactivate one of
+            # these other companies directly from the grant confirm dialog
+            # (e.g. a duplicate/phased-out profile being deliberately
+            # excluded) without a separate trip to that company's own
+            # profile page.
+            others = [
+                {
+                    "company_name": e.get("company_name"),
+                    "customer_company_partner_id": e.get("customer_company_partner_id"),
+                    "odoo_partner_id": e.get("odoo_partner_id"),
+                }
+                for e in (u.get("companies") or [])
+                if e.get("active") and e.get("customer_company_partner_id") != customer_id
+            ]
+            if others:
+                linked_map[u["username"]] = others
 
     for c in contacts:
         u = users_map.get(c["id"])
@@ -966,6 +1005,7 @@ async def get_portal_access(
             c["portal_status"] = "not_provisioned"
         else:
             c["portal_status"] = "active" if u.get("active", True) else "deactivated"
+        c["linked_elsewhere"] = linked_map.get((c.get("email") or "").strip().lower()) or []
 
     return {
         "is_company": is_company,
@@ -1012,14 +1052,19 @@ async def grant_portal_access(
     else:
         valid_ids = {customer_id}
 
-    granted, skipped_existing, errors = [], [], []
+    granted, company_added, skipped_existing, errors = [], [], [], []
     for contact_id in body.contact_ids:
         if contact_id not in valid_ids:
             errors.append({"contact_id": contact_id, "detail": "Not a contact of this company"})
             continue
 
-        existing = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id})
-        if existing:
+        # Multi-company logins (2026-08-21): the old check here was
+        # `{"odoo_partner_id": contact_id}` — a specific Odoo contact record
+        # can still only ever back one login (enforced below by the unique
+        # index on companies.odoo_partner_id too), so this stays a
+        # per-contact idempotency check, just against the array field.
+        existing_for_contact = await col("users").find_one({"role": "customer", "companies.odoo_partner_id": contact_id})
+        if existing_for_contact:
             skipped_existing.append(contact_id)
             continue
 
@@ -1033,8 +1078,51 @@ async def grant_portal_access(
             continue
 
         username = contact["email"].strip().lower()
-        if await col("users").find_one({"username": username}):
+        existing_login = await col("users").find_one({"username": username})
+
+        if existing_login and existing_login.get("role") != "customer":
             errors.append({"contact_id": contact_id, "detail": f"An account already exists for {username}"})
+            continue
+
+        if existing_login:
+            # Same email already has a customer portal login for a different
+            # company — add this company to that same login instead of
+            # failing. No new password: they already have one. A distinct
+            # email explains the new access rather than asking them to set a
+            # password they already have.
+            new_entry = {
+                "odoo_partner_id": contact_id,
+                "customer_company_partner_id": customer_id,
+                "company_name": company_name,
+                "active": True,
+            }
+            await col("users").update_one(
+                {"_id": existing_login["_id"]},
+                {"$push": {"companies": new_entry}},
+            )
+            # First company ever added to a login somehow missing one — keep
+            # the pointer sane. Harmless no-op otherwise (won't override a
+            # deliberately-chosen active company).
+            if not existing_login.get("active_company_partner_id"):
+                await col("users").update_one(
+                    {"_id": existing_login["_id"]},
+                    {"$set": {"active_company_partner_id": customer_id}},
+                )
+
+            from services.email_service import send_customer_company_added
+            from config import get_settings as _gs
+            background_tasks.add_task(
+                send_customer_company_added,
+                contact["email"], contact["name"], company_name, _gs().portal_url,
+            )
+
+            await audit_log(
+                "customer.portal_access_company_added", "customer_portal_access", str(existing_login["_id"]),
+                entity_label=f"{contact['name']} ({company_name})",
+                user=current_user,
+                after=new_entry,
+            )
+            company_added.append(contact_id)
             continue
 
         user_doc = {
@@ -1043,8 +1131,13 @@ async def grant_portal_access(
             "password": hash_password(secrets.token_urlsafe(32)),
             "role": "customer",
             "name": contact["name"],
-            "odoo_partner_id": contact_id,
-            "customer_company_partner_id": customer_id,
+            "companies": [{
+                "odoo_partner_id": contact_id,
+                "customer_company_partner_id": customer_id,
+                "company_name": company_name,
+                "active": True,
+            }],
+            "active_company_partner_id": customer_id,
             "commission_eligible": False,
             "active": True,
             "must_change_password": True,
@@ -1069,7 +1162,10 @@ async def grant_portal_access(
         )
         granted.append(contact_id)
 
-    return {"success": True, "granted": granted, "skipped_existing": skipped_existing, "errors": errors}
+    return {
+        "success": True, "granted": granted, "company_added": company_added,
+        "skipped_existing": skipped_existing, "errors": errors,
+    }
 
 
 @router.post("/{customer_id}/portal-access/{contact_id}/deactivate")
@@ -1078,14 +1174,27 @@ async def deactivate_portal_access(
     contact_id: int,
     current_user: dict = Depends(require_permission("customers.manage_portal_access")),
 ):
-    user = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id, "customer_company_partner_id": customer_id})
+    """Revokes access to ONE company (2026-08-21) — toggles that company's
+    entry inside `companies`, not the whole login's top-level `active` flag.
+    A login shared across several companies must keep working for the
+    others; suspending the entire account is a separate, explicit action
+    elsewhere, not a side effect of revoking one company. If the customer is
+    mid-session on the company being revoked, their next request self-heals
+    onto another active company (or is cleanly denied if none remain) via
+    auth.py's resolve_customer_active_company()."""
+    user = await col("users").find_one({"role": "customer", "companies.odoo_partner_id": contact_id, "companies.customer_company_partner_id": customer_id})
     if not user:
         raise HTTPException(status_code=404, detail="No portal login found for this contact")
-    await col("users").update_one({"_id": user["_id"]}, {"$set": {"active": False}})
+    await col("users").update_one(
+        {"_id": user["_id"]},
+        {"$set": {"companies.$[c].active": False}},
+        array_filters=[{"c.odoo_partner_id": contact_id, "c.customer_company_partner_id": customer_id}],
+    )
     await audit_log(
         "customer.portal_access_deactivated", "customer_portal_access", str(user["_id"]),
         entity_label=user.get("name") or user.get("username"),
         user=current_user,
+        detail={"customer_company_partner_id": customer_id},
     )
     return {"success": True}
 
@@ -1096,14 +1205,20 @@ async def reactivate_portal_access(
     contact_id: int,
     current_user: dict = Depends(require_permission("customers.manage_portal_access")),
 ):
-    user = await col("users").find_one({"role": "customer", "odoo_partner_id": contact_id, "customer_company_partner_id": customer_id})
+    """Mirror of deactivate above — restores this one company's entry only."""
+    user = await col("users").find_one({"role": "customer", "companies.odoo_partner_id": contact_id, "companies.customer_company_partner_id": customer_id})
     if not user:
         raise HTTPException(status_code=404, detail="No portal login found for this contact")
-    await col("users").update_one({"_id": user["_id"]}, {"$set": {"active": True}})
+    await col("users").update_one(
+        {"_id": user["_id"]},
+        {"$set": {"companies.$[c].active": True}},
+        array_filters=[{"c.odoo_partner_id": contact_id, "c.customer_company_partner_id": customer_id}],
+    )
     await audit_log(
         "customer.portal_access_reactivated", "customer_portal_access", str(user["_id"]),
         entity_label=user.get("name") or user.get("username"),
         user=current_user,
+        detail={"customer_company_partner_id": customer_id},
     )
     return {"success": True}
 

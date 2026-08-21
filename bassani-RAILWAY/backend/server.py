@@ -309,12 +309,62 @@ async def initialise_users():
     await col("customer_ownership").create_index([("reseller_id", 1)])
     await col("tickets").create_index([("customer_id", 1)])
 
-    # Customer self-service portal logins (Phase 25) — one login per Odoo
-    # contact. Partial index: reseller/staff user docs never carry
-    # odoo_partner_id at all, so a bare unique index would treat every one
-    # of those missing-field docs as colliding nulls.
+    # Customer self-service portal logins (Phase 25). Multi-company logins
+    # (2026-08-21): one login can now be linked to more than one Odoo
+    # company (companies: [{odoo_partner_id, customer_company_partner_id,
+    # company_name, active}], active_company_partner_id points at the
+    # currently-selected one — mirrors active_warehouse_id's shape). A
+    # specific Odoo contact record can still only ever back one login, just
+    # scoped to the array now rather than a flat field.
+    #
+    # Migration for any pre-existing flat-shaped docs (odoo_partner_id/
+    # customer_company_partner_id as top-level scalars, no companies array
+    # yet) — idempotent, only touches docs missing companies. Low-stakes:
+    # this role shipped the same day as this migration.
+    _flat_customers = await col("users").find(
+        {"role": "customer", "companies": {"$exists": False}, "odoo_partner_id": {"$exists": True}},
+        {"odoo_partner_id": 1, "customer_company_partner_id": 1},
+    ).to_list(length=1000)
+    if _flat_customers:
+        _company_ids = list({d["customer_company_partner_id"] for d in _flat_customers if d.get("customer_company_partner_id")})
+        _company_names = {}
+        try:
+            from odoo_client import get_odoo_client
+            odoo = get_odoo_client()
+            for row in odoo.read("res.partner", _company_ids, fields=["id", "name"]):
+                _company_names[row["id"]] = row["name"]
+        except Exception:
+            pass  # Non-fatal — migrated entries just carry an empty company_name, self-heals on next grant/edit
+        for d in _flat_customers:
+            cid = d.get("customer_company_partner_id")
+            await col("users").update_one(
+                {"_id": d["_id"]},
+                {"$set": {
+                    "companies": [{
+                        "odoo_partner_id": d.get("odoo_partner_id"),
+                        "customer_company_partner_id": cid,
+                        "company_name": _company_names.get(cid, ""),
+                        "active": True,
+                    }],
+                    "active_company_partner_id": cid,
+                }},
+            )
+        logger.info("startup_migrated_customer_companies", extra={"count": len(_flat_customers)})
+
+    # Old partial-unique index lived on the flat odoo_partner_id field —
+    # replaced by a multikey partial-unique index on the array field, same
+    # invariant (one Odoo contact record backs at most one login), correctly
+    # scoped now that odoo_partner_id lives inside companies[]. Must actually
+    # find and drop the old index by its real key spec, not a guessed name —
+    # newly-created customer docs no longer set a flat odoo_partner_id at
+    # all, so if the old index survives, every one of them collides as a
+    # "missing field = null" duplicate under it the moment a second such doc
+    # exists, breaking provisioning outright.
+    async for _idx in col("users").list_indexes():
+        if _idx.get("key") == {"odoo_partner_id": 1}:
+            await col("users").drop_index(_idx["name"])
     await col("users").create_index(
-        [("odoo_partner_id", 1)],
+        [("companies.odoo_partner_id", 1)],
         unique=True,
         partialFilterExpression={"role": "customer"},
     )

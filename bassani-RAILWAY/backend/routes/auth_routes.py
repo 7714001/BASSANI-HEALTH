@@ -13,6 +13,7 @@ from bson import ObjectId
 from auth import (
     authenticate_user, create_access_token,
     get_current_user, get_user_by_username,
+    resolve_customer_active_company,
     Token, verify_password, hash_password,
 )
 from config import get_settings
@@ -46,6 +47,17 @@ def _user_payload(user: dict) -> dict:
         "reseller_id":   user.get("reseller_id"),
         "odoo_partner_id":            user.get("odoo_partner_id"),
         "customer_company_partner_id": user.get("customer_company_partner_id"),
+        # Multi-company customer logins (2026-08-21) — trimmed to display
+        # fields only, no raw odoo_partner_id beyond what's already exposed
+        # above. Empty/absent for every role but customer.
+        "companies": [
+            {
+                "customer_company_partner_id": c.get("customer_company_partner_id"),
+                "company_name": c.get("company_name"),
+                "active": bool(c.get("active", True)),
+            }
+            for c in (user.get("companies") or [])
+        ],
         "is_super_admin": bool(user.get("is_super_admin", False)),
         "permissions":   user.get("permissions") or {},
         "warehouse_id":        user.get("warehouse_id"),
@@ -118,6 +130,7 @@ async def login(
     )
     await audit_log("user.login", "user", user["id"], entity_label=user["username"], user=user,
                     reseller_id=user.get("reseller_id"))
+    user = await resolve_customer_active_company(user)
     return Token(access_token=token, token_type="bearer", user=_user_payload(user))
 
 
@@ -173,6 +186,7 @@ async def verify_otp(request: Request, body: VerifyOtpBody):
     )
     await audit_log("user.login", "user", user["id"], entity_label=user["username"], user=user,
                     reseller_id=user.get("reseller_id"))
+    user = await resolve_customer_active_company(user)
     return Token(access_token=token, token_type="bearer", user=_user_payload(user))
 
 

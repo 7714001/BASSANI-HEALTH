@@ -13,7 +13,7 @@ import {
   LogOut, Bell, RefreshCw, UserCog, Loader2, Warehouse,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
-  Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle,
+  Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle, Building2,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -377,6 +377,36 @@ function WarehouseSwitcher() {
   );
 }
 
+// Multi-company customer logins (2026-08-21) — a customer login can be
+// linked to more than one Odoo company (the same person is a contact, or
+// the company record itself, on several separate companies). Shown only
+// once there's actually something to switch between; self-gating, no
+// per-page opt-in prop needed like WarehouseSwitcher's, since a customer's
+// entire nav is 4 fixed items, all company-scoped. Mirrors
+// WarehouseSwitcher's shape exactly — same self-service PUT, same local
+// state merge in AuthContext, no new token needed to see the switch.
+function CompanySwitcher() {
+  const { user, setActiveCompany } = useAuth();
+  if (user?.role !== "customer") return null;
+  const companies = (user.companies || []).filter(c => c.active);
+  if (companies.length <= 1) return null;
+
+  return (
+    <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">
+      <Building2 size={13} className="text-gray-400" />
+      <select
+        value={user.customer_company_partner_id ?? ""}
+        onChange={(e) => setActiveCompany(parseInt(e.target.value, 10))}
+        className="bg-transparent outline-none text-xs text-gray-700 max-w-[160px]"
+      >
+        {companies.map((c) => (
+          <option key={c.customer_company_partner_id} value={c.customer_company_partner_id}>{c.company_name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 // Read-only warehouse indicator for reseller-facing screens, where
 // WarehouseSwitcher is deliberately hidden (resellers have a fixed warehouse,
 // not a picker). Shows resellers/staff which warehouse the stock figures on
@@ -411,6 +441,7 @@ export function TopBar({ title, subtitle, onRefresh, actions, leftAction, odooCo
       </div>
       <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
         {showWarehouseSwitcher && <WarehouseSwitcher />}
+        <CompanySwitcher />
         <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${odooConnected ? "bg-bassani-50 text-bassani-700" : "bg-red-50 text-red-600"}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${odooConnected ? "bg-bassani-600" : "bg-red-500"}`} />
           {odooConnected ? "Odoo synced" : "Odoo offline"}

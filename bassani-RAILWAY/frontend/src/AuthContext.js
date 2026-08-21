@@ -54,6 +54,14 @@ export function AuthProvider({ children }) {
     setUser((u) => ({ ...u, active_warehouse_id: data.active_warehouse_id }));
   };
 
+  /** Customer self-service (2026-08-21): switch which linked company the
+   * portal is scoped to, when a login has more than one — same shape as
+   * setActiveWarehouse above, no new token needed. */
+  const setActiveCompany = async (customerCompanyPartnerId) => {
+    const { data } = await api.put("/api/users/me/active-company", { customer_company_partner_id: customerCompanyPartnerId });
+    setUser((u) => ({ ...u, customer_company_partner_id: data.customer_company_partner_id }));
+  };
+
   /** Authenticated user sets their own new password (required on first login). */
   const changePassword = async (currentPassword, newPassword) => {
     await api.post("/api/auth/change-password", {
@@ -84,7 +92,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   return (
-    <AuthContext.Provider value={{ user, login, verifyOtp, logout, loading, can, isAdmin, setActiveWarehouse, changePassword }}>
+    <AuthContext.Provider value={{ user, login, verifyOtp, logout, loading, can, isAdmin, setActiveWarehouse, setActiveCompany, changePassword }}>
       {children}
     </AuthContext.Provider>
   );
