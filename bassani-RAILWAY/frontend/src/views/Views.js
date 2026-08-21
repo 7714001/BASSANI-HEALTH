@@ -1224,18 +1224,31 @@ export function Orders() {
               <p className="font-semibold text-gray-900 text-sm leading-snug">{base}</p>
               {item && <span className="bg-bassani-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">×{item.product_uom_qty}</span>}
             </div>
+            {/* Variant promoted to a real subtitle line (2026-08-21) — for a
+                cannabis buyer, grade/size is a purchasing decision, not a
+                footnote, so it reads as proper text now rather than a tiny
+                pill easy to miss. The category badge (categ_id) is gone
+                outright — this card is only ever seen already grouped under
+                its own category heading (or with Category actively
+                filtered), so repeating it here was pure noise. */}
+            {groups.length > 0 && (
+              <p className="text-xs font-semibold text-bassani-700 mt-0.5 truncate">{groups.join(" · ")}</p>
+            )}
             {p.default_code && <p className="font-mono text-[10px] text-gray-400 mt-0.5">{p.default_code}</p>}
-            <div className="flex items-center gap-1.5 flex-wrap mt-1">
-              {groups.map((g, i) => (
-                <span key={i} className="text-[10px] bg-bassani-50 text-bassani-700 rounded-full px-2 py-0.5 font-medium">{g}</span>
-              ))}
-              {p.categ_id?.[1] && <span className="text-[10px] text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">{p.categ_id[1]}</span>}
-              {minQty > 0 && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">Min. {minQty} units</span>}
-            </div>
+            {minQty > 0 && (
+              <span className="inline-block text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5 mt-1.5">Min. {minQty} units</span>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
+          {/* "excl. VAT" clarifies this is the same pre-tax unit price the
+              cart's own Subtotal/VAT/Total breakdown is built from (2026-08-21)
+              — otherwise this card price and the cart footer's line total can
+              look like they don't add up once VAT is layered on at checkout. */}
+          <span className="flex items-baseline gap-1">
+            <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
+            <span className="text-[10px] font-medium text-gray-400">excl. VAT</span>
+          </span>
           {/* Binary in-stock/out-of-stock only — Bassani does not want the
               exact quantity on hand shown to resellers/customers. */}
           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>

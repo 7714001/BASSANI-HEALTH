@@ -56,7 +56,12 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
               : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
         ].join(" ")}
       >
-        <span className="truncate">
+        {/* min-w-0 (2026-08-21 fix) — without it, a long selected label had
+            no width limit to truncate against inside the flex row, so the
+            whole control grew wider than the placeholder-sized version
+            (and than the other, still-unselected dropdowns beside it)
+            instead of clipping with an ellipsis as intended. */}
+        <span className="truncate min-w-0">
           {selectedLabel ?? placeholder}
         </span>
         {value != null ? (
@@ -78,9 +83,12 @@ export function SearchableSelect({ value, onChange, options, placeholder, search
         )}
       </button>
 
-      {/* Dropdown panel */}
+      {/* Dropdown panel — z-30 (2026-08-21, was z-10) so it always renders
+          above the cart's sticky category/sub-category headers (z-20/z-15);
+          previously a heading stuck at the top of the scroll area could
+          paint over an open Category/Brand-Grade dropdown beneath it. */}
       {open && (
-        <div className="absolute top-full left-0 mt-1.5 w-60 bg-white border border-gray-200 rounded-xl shadow-xl z-10 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1.5 w-60 bg-white border border-gray-200 rounded-xl shadow-xl z-30 overflow-hidden">
           {/* Search input */}
           <div className="p-2 border-b border-gray-100">
             <div className="relative">
@@ -195,7 +203,7 @@ export function MultiSearchableSelect({ values = [], onChange, options, placehol
               : "text-gray-600 border-gray-200 bg-white hover:border-gray-300 hover:text-gray-700",
         ].join(" ")}
       >
-        <span className="truncate">
+        <span className="truncate min-w-0">
           {values.length > 0 ? `${values.length} selected` : placeholder}
         </span>
         <ChevronDown
@@ -204,8 +212,9 @@ export function MultiSearchableSelect({ values = [], onChange, options, placehol
         />
       </button>
 
+      {/* z-30 to match SearchableSelect above — same sticky-header stacking issue. */}
       {open && (
-        <div className="absolute top-full left-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-10 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-30 overflow-hidden">
           <div className="p-2 border-b border-gray-100">
             <div className="relative">
               <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
