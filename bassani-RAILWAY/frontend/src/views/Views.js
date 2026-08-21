@@ -1244,7 +1244,17 @@ export function Orders() {
   // Shared between the "All categories" grouped view and the single-category
   // sub-grouped view (2026-08-21 follow-up) — a category's own products (not
   // under any Brand/Grade child) plus a sub-heading per child with products.
-  const renderGroupBody = (group) => (
+  //
+  // subHeadingTop selects where the sub-heading docks when stuck: "top-11"
+  // when a parent category's own sticky heading (fixed h-11, see below) is
+  // also present above it in the "All categories" view, so the two stack
+  // flush with no gap or overlap; "top-0" when this is the single-category
+  // view with no parent heading in the DOM at all, so the sub-heading sticks
+  // right at the very top of the scroll area itself. Both this and the
+  // parent heading use Tailwind's h-11/top-11 spacing-scale token for the
+  // same value (44px) rather than an organic/measured height, so the offset
+  // is exact by construction instead of a guessed pixel figure.
+  const renderGroupBody = (group, subHeadingTop = "top-0") => (
     <div className="space-y-5">
       {group.ownProducts.length > 0 && (
         <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1253,17 +1263,16 @@ export function Orders() {
       )}
       {group.children.map(child => (
         <div key={child.id}>
-          {/* Sub-heading (2026-08-21 revision) — a small coloured accent bar plus
-              stronger contrast on the grade name itself so it doesn't blend into
-              the page while scrolling past it; parent name stays muted since
-              it's secondary context, not the primary label. */}
-          <h4 className="flex items-center gap-2 mb-2.5 pl-1">
+          {/* Sub-heading (2026-08-21 revision) — now sticky, stacking flush
+              below the parent category heading. Tinted background (vs the
+              parent's solid white) gives a clear two-tier visual hierarchy. */}
+          <h4 className={`w-full flex items-center gap-2 h-9 sticky ${subHeadingTop} z-[15] bg-gray-50 border-b border-gray-100 pl-1 pr-2`}>
             <span className="w-1 h-3.5 bg-bassani-500 rounded-full shrink-0" />
             <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{group.name} /</span>
             <span className="text-sm font-bold text-gray-800">{child.name}</span>
             <span className="text-xs font-normal text-gray-400">({child.products.length})</span>
           </h4>
-          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 pt-3">
             {child.products.map(p => renderCartProductCard(p))}
           </div>
         </div>
@@ -1742,7 +1751,13 @@ export function Orders() {
                 is just normal flow spacing — it scrolls away like any other content,
                 so once a header is stuck at true top:0 there's nothing behind it. */}
             <div className="flex-1 overflow-y-auto px-6 pb-6">
-            <div className="pt-6">
+            {/* No top padding when a sticky heading is present (2026-08-21 fix) —
+                otherwise the heading sat 24px down from the top on initial load,
+                with plain white space above it, then abruptly snapped flush the
+                moment you scrolled and it became stuck. It should look docked
+                immediately, not just after scrolling starts. Loading/empty/flat
+                views (no sticky heading) keep the normal breathing room. */}
+            <div className={(cartIsGroupedView || cartIsSubGroupedView) ? "" : "pt-6"}>
               {cartProdsLoading && <LoadingState />}
               {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && cartIsSubGroupedView
@@ -1761,21 +1776,24 @@ export function Orders() {
                             the scroll area (each section's own header takes over as
                             you scroll into it, standard "pinned section list" pattern)
                             with a solid band + shadow so it reads clearly over the
-                            product grid scrolling underneath it. */}
+                            product grid scrolling underneath it. Fixed h-11 height
+                            (rather than organic content height) so the Brand/Grade
+                            sub-heading below can dock flush under it at an exact,
+                            non-guessed top-11 offset — see renderGroupBody. */}
                         <button
                           onClick={() => setCartCollapsedGroups(prev => {
                             const next = new Set(prev);
                             if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
                             return next;
                           })}
-                          className="w-full flex items-center gap-2.5 -mx-6 px-6 mb-3 py-2.5 sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm text-left"
+                          className="w-full flex items-center gap-2.5 h-11 mb-3 sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm text-left"
                         >
                           <ChevronDown size={16} className={`text-bassani-600 transition-transform shrink-0 ${collapsed ? "-rotate-90" : ""}`} />
                           <h3 className="text-base font-bold text-gray-900 tracking-tight">
                             {group.name} <span className="text-gray-400 font-medium text-sm">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
                           </h3>
                         </button>
-                        {!collapsed && renderGroupBody(group)}
+                        {!collapsed && renderGroupBody(group, "top-11")}
                       </div>
                     );
                   })}
