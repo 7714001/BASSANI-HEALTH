@@ -912,6 +912,7 @@ export function Orders() {
   const [cartCollapsedGroups,  setCartCollapsedGroups ] = useState(new Set()); // group ids currently collapsed — expanded by default
   const [cartProdVariant,  setCartProdVariant ] = useState("all");
   const [cartStockFilter,  setCartStockFilter ] = useState("all"); // "all"|"in_stock"|"out_of_stock"
+  const [cartSortBy,       setCartSortBy      ] = useState("name"); // "name"|"price_asc"|"price_desc" — secondary sort, in-stock-first always wins
   const [cart,             setCart            ] = useState([]);
   const [cartNote,         setCartNote        ] = useState("");
   const [cartCustSearch,   setCartCustSearch  ] = useState("");
@@ -922,20 +923,31 @@ export function Orders() {
   const [cartSubmitting,   setCartSubmitting  ] = useState(false);
   const [editQuote,        setEditQuote       ] = useState(null); // { ticketId, orderId, customerName, customerId }
   const [cartWarehouseName, setCartWarehouseName] = useState(null);
+  const [cartClearConfirm, setCartClearConfirm] = useState(false);
+  // Delivery address picker (2026-08-21) — defaults to the customer's own
+  // registered/primary address (shippingAddressId "") unless a saved child
+  // address is explicitly chosen.
+  const [cartAddresses,         setCartAddresses        ] = useState([]);
+  const [cartShippingAddressId, setCartShippingAddressId] = useState("");
 
+  // Pages past GET /api/products/'s 200-per-request cap via fetchAllProducts
+  // (2026-08-21 fix — previously a bare capped api.get() call, which meant
+  // any "All categories" browse (or a single large category) silently
+  // dropped every product past the first 200 with no indication anything
+  // was missing).
   const loadCartProducts = useCallback(async () => {
     setCartProdsLoading(true);
     try {
-      const params = { limit: 200 };
+      const params = {};
       const effectiveCat = cartProdSubCat !== "all" ? cartProdSubCat : cartProdCat;
       if (effectiveCat !== "all") params.parent_category_id = effectiveCat;
-      const [prodR, catR] = await Promise.all([
-        api.get("/api/products/", { params }),
+      const [{ products: rows, warehouseName }, catR] = await Promise.all([
+        fetchAllProducts(params),
         api.get("/api/reseller-catalog/"),
       ]);
-      setCartProducts(prodR.data.products || []);
+      setCartProducts(rows);
       setCartMoq(catR.data.moq || {});
-      setCartWarehouseName(prodR.data.warehouse_name || null);
+      setCartWarehouseName(warehouseName);
     } catch { toast.error("Failed to load products"); }
     finally { setCartProdsLoading(false); }
   }, [cartProdCat, cartProdSubCat]);
@@ -986,6 +998,89 @@ export function Orders() {
     setView("new");
   }, []); // eslint-disable-line
 
+  // Reorder (2026-08-21) — navigated here from OrderPassport's Reorder
+  // button with { product_id, qty } pairs from a past order. Deliberately
+  // re-fetches CURRENT product data (price, stock) rather than reusing the
+  // old order's own price_unit — same "never invoice stale prices"
+  // principle the recurring-order engine already applies (8.46). A product
+  // no longer active/catalog-visible is silently dropped with a toast,
+  // rather than failing the whole reorder.
+  useEffect(() => {
+    const rl = location.state?.reorderLines;
+    if (!rl || rl.length === 0) return;
+    (async () => {
+      try {
+        const ids = rl.map(l => l.product_id).join(",");
+        // GET /api/products/ caps limit at 200 server-side — clamp so an
+        // unusually large historical order doesn't 422 the whole reorder.
+        const { data } = await api.get("/api/products/", { params: { ids, limit: Math.min(rl.length, 200) } });
+        const productMap = new Map((data.products || []).map(p => [p.id, p]));
+        const newCart = [];
+        let skipped = 0;
+        rl.forEach(l => {
+          const p = productMap.get(l.product_id);
+          if (!p) { skipped += 1; return; }
+          newCart.push({
+            product_id: p.id, product_uom_qty: l.qty, price_unit: p.list_price,
+            name: p.display_name || p.name, _sku: p.default_code || "",
+            _stock: Math.max(0, p.virtual_available ?? 0), _taxRate: p.tax_rate ?? 0,
+            _image128: p.image_128 || null,
+          });
+        });
+        if (newCart.length === 0) { toast.error("None of the items from that order are available to reorder"); return; }
+        setCart(newCart);
+        if (skipped > 0) toast(`${skipped} item${skipped > 1 ? "s" : ""} from that order ${skipped > 1 ? "are" : "is"} no longer available and ${skipped > 1 ? "were" : "was"} left out`, { icon: "⚠️" });
+        if (isCustomer && user?.customer_company_partner_id) {
+          setCartSelectedCust({ id: user.customer_company_partner_id, name: user.name });
+        } else if (location.state?.reorderCustomer) {
+          setCartSelectedCust(location.state.reorderCustomer);
+          setCartCustSearch(location.state.reorderCustomer.name || "");
+        }
+        setView("new");
+        toast.success("Cart filled from your previous order — review before placing");
+      } catch {
+        toast.error("Failed to reload products for reorder");
+      }
+    })();
+  }, []); // eslint-disable-line
+
+  // ── Cart persistence (2026-08-21) ────────────────────────────────────────
+  // Previously pure in-memory state — a refresh or accidental back-nav lost
+  // an entire in-progress cart with no recovery. Persisted to localStorage,
+  // scoped per user, restored on mount unless a more specific prefill
+  // (edit-quote or reorder) is already handling this mount's cart contents.
+  // Cleared automatically once an order is actually submitted (submitCart).
+  const cartStorageKey = user?.id ? `bassani_cart_${user.id}` : null;
+
+  useEffect(() => {
+    if (!cartStorageKey || location.state?.editQuote || location.state?.reorderLines) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(cartStorageKey) || "null");
+      if (saved?.cart?.length > 0) {
+        setCart(saved.cart);
+        if (saved.note) setCartNote(saved.note);
+        toast("Restored your saved cart", { icon: "🛒" });
+      }
+    } catch { /* corrupt/unavailable storage — ignore, just starts empty */ }
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    // Skip while editing an existing quote — that's a distinct editing
+    // session, not the "new order in progress" this persistence is for;
+    // saving it here would pollute a later fresh cart's restored contents.
+    if (!cartStorageKey || editQuote) return;
+    try {
+      if (cart.length === 0) { localStorage.removeItem(cartStorageKey); return; }
+      localStorage.setItem(cartStorageKey, JSON.stringify({ cart, note: cartNote }));
+    } catch { /* storage full/unavailable — non-fatal, cart just won't survive a refresh */ }
+  }, [cart, cartNote, cartStorageKey, editQuote]);
+
+  const doClearCart = () => {
+    setCart([]);
+    setCartNote("");
+    if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
+  };
+
   // Customer search debounce (cart)
   useEffect(() => {
     if (!cartCustDropOpen) { setCartCustResults([]); return; }
@@ -1003,6 +1098,17 @@ export function Orders() {
     return () => clearTimeout(t);
   }, [cartCustSearch, cartCustDropOpen]);
 
+  // Delivery addresses for the currently selected customer (2026-08-21) —
+  // refetched whenever the customer changes, resetting any previously
+  // chosen address since it may not belong to the new customer at all.
+  useEffect(() => {
+    setCartShippingAddressId("");
+    if (!cartSelectedCust?.id) { setCartAddresses([]); return; }
+    api.get(`/api/customers/${cartSelectedCust.id}/addresses`)
+      .then(r => setCartAddresses(r.data.addresses || []))
+      .catch(() => setCartAddresses([]));
+  }, [cartSelectedCust?.id]);
+
   // A customer account only ever orders for itself — pre-select its own
   // company instead of showing the reseller's "which customer" picker.
   useEffect(() => {
@@ -1011,8 +1117,12 @@ export function Orders() {
     }
   }, [isCustomer, view, editQuote, cartSelectedCust, user]);
 
+  // Deliberately does NOT clear `cart` (2026-08-21) — a saved-in-progress
+  // cart (see the localStorage persistence effects below) should survive
+  // re-opening "New Order", not be silently wiped. Use Clear Cart to empty
+  // it explicitly.
   const openNewOrder = () => {
-    setCart([]); setCartProdSearch(""); setCartProdCat("all"); setCartProdVariant("all"); setCartStockFilter("all"); setCartNote("");
+    setCartProdSearch(""); setCartProdCat("all"); setCartProdVariant("all"); setCartStockFilter("all");
     setCartCustSearch(""); setCartCustResults([]); setCartSelectedCust(null);
     setCartCustDropOpen(false); setCartSubmitting(false);
     setView("new");
@@ -1050,10 +1160,16 @@ export function Orders() {
     const item       = cartItemFor(p);
     const outOfStock = (p.virtual_available ?? 0) <= 0;
     const minQty     = cartMoq[p.id] || 0;
-    // Out-of-stock items are orderable (Bassani will manufacture/restock to
-    // fulfil as a backorder — see order_routes.py's stock-check/confirm
-    // flow) so there's no real upper bound to cap the quantity input at.
-    const qtyMax     = item && item._stock > 0 ? item._stock : undefined;
+    // Requesting more than _stock is always allowed (2026-08-21 fix) — it
+    // used to silently clamp back down for an in-stock item with zero
+    // explanation, while the +/- steppers had no cap at all and let it
+    // through with zero warning either way. Ordering past what's on hand is
+    // orderable regardless of whether _stock is 0 or partial: Bassani ships
+    // what's available now and backorders the rest either way (see
+    // order_routes.py's stock-check/confirm flow) — there's no reason a
+    // partially-in-stock item should be capped when a fully out-of-stock one
+    // isn't. The excess is now surfaced as a live inline note instead.
+    const backorderQty = item ? Math.max(0, item.product_uom_qty - item._stock) : 0;
     const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
     // Same redundant-grade stripping as the Variant dropdown — once Brand/Grade
     // is selected, repeating its code as a chip on every card is just noise.
@@ -1091,15 +1207,29 @@ export function Orders() {
             <div className="flex items-center gap-1.5">
               <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty - 1)}
                 className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">−</button>
-              <input type="number" min={Math.max(1, minQty)} max={qtyMax} value={item.product_uom_qty}
-                onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, qtyMax ? Math.min(v, qtyMax) : v); }}
+              <input type="number" min={Math.max(1, minQty)} value={item.product_uom_qty}
+                onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateCartQty(item.product_id, v); }}
                 className="flex-1 w-20 text-center font-bold text-sm bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
               <button onClick={() => updateCartQty(item.product_id, item.product_uom_qty + 1)}
                 className="w-8 h-8 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center font-bold text-base">+</button>
               <button onClick={() => removeFromCart(item.product_id)}
                 className="w-8 h-8 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 flex items-center justify-center text-xl leading-none">×</button>
             </div>
-            {outOfStock && <p className="text-[10px] text-amber-600 text-center">Will ship as a backorder once restocked</p>}
+            {/* Live inline warning (2026-08-21) — fires the moment the requested
+                quantity exceeds what's on hand, whether that's because the item
+                started out of stock or because the buyer typed/stepped past a
+                partial quantity. Previously the only feedback was a post-submit
+                toast; this now updates as the buyer adjusts the quantity.
+                Deliberately no numbers in this message — Bassani does not want
+                the exact stock figure disclosed, and "X will ship, Y backordered"
+                would hand it over via simple subtraction. */}
+            {backorderQty > 0 && (
+              <p className="text-[10px] text-amber-600 text-center">
+                {item._stock > 0
+                  ? "Part of this quantity will ship now, the rest as a backorder"
+                  : "Will ship as a backorder once restocked"}
+              </p>
+            )}
           </div>
         ) : (
           <button onClick={() => addToCart(p)}
@@ -1175,6 +1305,7 @@ export function Orders() {
         partner_id: cartSelectedCust.id,
         order_line: cart.map(i => ({ product_id: i.product_id, product_uom_qty: i.product_uom_qty, price_unit: i.price_unit, name: i.name })),
         note: cartNote,
+        shipping_address_id: cartShippingAddressId ? parseInt(cartShippingAddressId, 10) : null,
       });
       const successMsg = isReseller ? "Quote created — view and manage it in My Quotes"
         : isCustomer ? "Order placed — you can track its progress in My Orders"
@@ -1187,6 +1318,7 @@ export function Orders() {
       if (data.stock_warning) {
         toast(`⚠️ ${data.stock_warning}`, { duration: 10000 });
       }
+      if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
       if (isReseller) { navigate("/tickets/sales"); return; }
       setView("list");
       load();
@@ -1219,10 +1351,16 @@ export function Orders() {
     const matchStock   = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
     return matchQ && matchVariant && matchStock;
   };
+  // In-stock-first always wins (never overridden by the chosen sort — an
+  // out-of-stock item should never rank above an in-stock one just because
+  // it happens to be cheaper); cartSortBy only decides the tiebreaker
+  // within each stock tier, defaulting to name (unchanged prior behaviour).
   const cartSortInStockFirst = (a, b) => {
     const aIn = (a.virtual_available ?? 0) > 0;
     const bIn = (b.virtual_available ?? 0) > 0;
     if (aIn !== bIn) return aIn ? -1 : 1;
+    if (cartSortBy === "price_asc")  return (a.list_price ?? 0) - (b.list_price ?? 0);
+    if (cartSortBy === "price_desc") return (b.list_price ?? 0) - (a.list_price ?? 0);
     return a.name.localeCompare(b.name);
   };
   const cartFilteredProducts = cartProducts.filter(cartMatchesFilter).sort(cartSortInStockFirst);
@@ -1500,6 +1638,7 @@ export function Orders() {
   // ── New order (reseller / customer cart) ─────────────────────────────────
   if (view === "new" && (isReseller || isCustomer)) {
     return (
+      <>
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar
           title={editQuote ? "Edit Quote" : "Place New Order"}
@@ -1568,6 +1707,14 @@ export function Orders() {
                   <FilterPill label="In Stock"     active={cartStockFilter === "in_stock"}     onClick={() => setCartStockFilter(cartStockFilter === "in_stock"     ? "all" : "in_stock")}     />
                   <FilterPill label="Out of Stock" active={cartStockFilter === "out_of_stock"} onClick={() => setCartStockFilter(cartStockFilter === "out_of_stock" ? "all" : "out_of_stock")} />
                 </div>
+                <div className="pb-0.5">
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Sort</label>
+                  <Select value={cartSortBy} onChange={e => setCartSortBy(e.target.value)} className="text-sm">
+                    <option value="name">Name (A to Z)</option>
+                    <option value="price_asc">Price (Low to High)</option>
+                    <option value="price_desc">Price (High to Low)</option>
+                  </Select>
+                </div>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
@@ -1621,7 +1768,13 @@ export function Orders() {
                 <h3 className="font-semibold text-gray-900">Your Order</h3>
                 <p className="text-xs text-gray-400 mt-0.5">{cart.length === 0 ? "No items yet" : `${cart.length} line${cart.length > 1 ? "s" : ""} · ${fmtR(cartTotal)}`}</p>
               </div>
-              {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+              <div className="flex items-center gap-2">
+                {cart.length > 0 && !editQuote && (
+                  <button onClick={() => setCartClearConfirm(true)}
+                    className="text-[11px] font-medium text-gray-400 hover:text-red-500 transition-colors">Clear</button>
+                )}
+                {cart.length > 0 && <span className="bg-bassani-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -1676,6 +1829,23 @@ export function Orders() {
                   </>
                 )}
               </div>
+
+              {/* Delivery address (2026-08-21) — only shown once the customer has at
+                  least one saved address beyond their registered/primary one; defaults
+                  to that primary address, matching order behaviour before this existed. */}
+              {cartSelectedCust && cartAddresses.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Deliver To</p>
+                  <Select value={cartShippingAddressId} onChange={e => setCartShippingAddressId(e.target.value)}>
+                    <option value="">Registered address (default)</option>
+                    {cartAddresses.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}{a.city ? ` · ${a.city}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
 
               {/* Cart items */}
               {cart.length === 0 ? (
@@ -1749,6 +1919,18 @@ export function Orders() {
           </div>
         </div>
       </div>
+      {cartClearConfirm && (
+        <Modal title="Clear Cart" onClose={() => setCartClearConfirm(false)}>
+          <p className="text-sm text-gray-600 mb-4">
+            This removes every item currently in your cart. This can't be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setCartClearConfirm(false)}>Cancel</BtnSecondary>
+            <BtnDanger onClick={() => { doClearCart(); setCartClearConfirm(false); }}>Clear Cart</BtnDanger>
+          </div>
+        </Modal>
+      )}
+      </>
     );
   }
 

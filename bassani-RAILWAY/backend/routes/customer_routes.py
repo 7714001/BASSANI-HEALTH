@@ -701,7 +701,27 @@ def update_customer(
 
 
 @router.get("/{customer_id}/addresses")
-def list_customer_addresses(customer_id: int, current_user: dict = Depends(get_current_user)):
+async def list_customer_addresses(customer_id: int, current_user: dict = Depends(get_current_user)):
+    """
+    Fixed 2026-08-21: previously had no ownership check at all — any
+    authenticated reseller/customer could read any company's saved delivery
+    addresses just by knowing (or guessing) its Odoo partner id. Mirrors the
+    same ownership pattern used by customer_profile above. Needed now that
+    the reseller/customer cart offers a delivery-address picker at checkout.
+    """
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        if not reseller:
+            raise HTTPException(status_code=403, detail="Access denied")
+        ownership = await col("customer_ownership").find_one({
+            "reseller_id": reseller["id"], "odoo_partner_id": customer_id,
+        })
+        if not ownership:
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user.get("role") == "customer":
+        if customer_id != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
     odoo = get_odoo_client()
     try:
         child_ids = odoo.search("res.partner", [["parent_id", "=", customer_id]], limit=50)

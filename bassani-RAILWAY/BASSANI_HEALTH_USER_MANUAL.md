@@ -2083,7 +2083,15 @@ A customer's portal is deliberately simple — four items in the sidebar:
 - **My Orders** — every order placed on the account, whether they placed it themselves, a colleague at the same company placed it, or Bassani staff placed it on their behalf. Clicking an order opens the same Order Passport view staff use to track its progress.
 - **Invoices** — every invoice for the account, with the same PDF download available elsewhere in the portal.
 
-If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
+If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person, **including orders Bassani staff place on the customer's behalf** — a customer's My Orders list is never limited to only what they personally placed. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
+
+### Other things a customer can do
+
+- **Order items that are out of stock.** The catalogue only ever shows "In Stock" or "Out of Stock" — never an exact quantity. An out-of-stock item can still be added to the order; it ships as a backorder once restocked, and the cart shows a note explaining that.
+- **Choose a delivery address.** If the customer's account has more than one saved address, a "Deliver To" dropdown appears in the cart, defaulting to their main registered address.
+- **Reorder.** A "Reorder" button on any past order's page fills a fresh cart with the same items, at current prices, ready to review and submit again — quicker than rebuilding a large order from scratch.
+- **Set an order to repeat automatically.** A "Make Recurring" button on any confirmed order sets it up to repeat weekly, every two weeks, or monthly — the same feature a Sales Agent already has, just reachable from the customer's own order page instead of the internal ticket screen.
+- **Clear the cart.** A "Clear" link next to the order summary empties it in one step, with a confirmation prompt first since it can't be undone.
 
 ---
 

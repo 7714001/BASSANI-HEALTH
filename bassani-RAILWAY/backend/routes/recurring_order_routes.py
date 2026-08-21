@@ -24,7 +24,7 @@ from typing import Optional
 from pydantic import BaseModel
 from bson import ObjectId
 
-from auth import require_permission
+from auth import require_permission, get_current_user
 from config import get_settings
 from odoo_client import get_odoo_client
 from database import col, NO_ID
@@ -32,6 +32,7 @@ from middleware.audit import audit_log
 from routes.settings_routes import get_email_routing
 from routes.ticket_routes import (
     _require_ticket_driver, _reseller_id_for_user, _assert_reseller_owns_ticket, _actor,
+    _ticket_customer_partner_id,
 )
 from services.email_service import send_recurring_order_upcoming
 
@@ -41,6 +42,21 @@ settings = get_settings()
 router = APIRouter(prefix="/api/recurring-orders", tags=["recurring-orders"])
 
 CADENCES = ("weekly", "biweekly", "monthly")
+
+
+async def _require_recurring_setup_access(current_user: dict = Depends(get_current_user)) -> dict:
+    """Same population as _require_ticket_driver (staff-with-tickets.sales,
+    or any reseller for their own tickets) PLUS the customer role (2026-08-21)
+    — a customer can now set up recurring orders on their own confirmed
+    orders directly from their Order Passport (Phase 25), matching what a
+    reseller can already do from the ticket detail page. Deliberately NOT
+    added to _require_ticket_driver itself, since that dependency is shared
+    by four other endpoints (create/cancel/update-order-from-ticket,
+    send-quote) that live entirely on the internal ticket-pipeline UI the
+    customer role has no access to and shouldn't gain incidentally here."""
+    if current_user.get("role") == "customer":
+        return current_user
+    return await _require_ticket_driver(current_user)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -93,7 +109,7 @@ def _as_utc_midnight(d: date) -> datetime:
 @router.post("")
 async def create_recurring_order(
     body: RecurringOrderCreate,
-    current_user: dict = Depends(_require_ticket_driver),
+    current_user: dict = Depends(_require_recurring_setup_access),
 ):
     """Mark an existing ticket's linked order as the template for a recurring
     schedule. Line items (products + quantities) are frozen from the order at
@@ -111,6 +127,12 @@ async def create_recurring_order(
         if not rid:
             raise HTTPException(status_code=403, detail="Access denied")
         await _assert_reseller_owns_ticket(ticket, rid)
+    elif current_user.get("role") == "customer":
+        # Single fixed-id equality, same simplification used everywhere else
+        # a customer branch parallels a reseller one — no ownership-set
+        # lookup needed since a customer login only ever represents one company.
+        if _ticket_customer_partner_id(ticket) != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
     if not ticket.get("order_id"):
         raise HTTPException(status_code=400, detail="Build a quote on this ticket before making it recurring")
 

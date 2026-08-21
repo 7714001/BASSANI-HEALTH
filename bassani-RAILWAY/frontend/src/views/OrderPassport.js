@@ -6,11 +6,13 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
+  Repeat, RotateCcw,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, Modal,
   FormGroup, Input, Select, LoadingState, OdooPdfViewerModal,
 } from "../components/UI";
+import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -242,7 +244,9 @@ export default function OrderPassport() {
   const { orderId } = useParams();
   const navigate    = useNavigate();
   const location    = useLocation();
-  const { can }     = useAuth();
+  const { can, user } = useAuth();
+  const isReseller  = user?.role === "reseller";
+  const isCustomer  = user?.role === "customer";
 
   const [data,    setData   ] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -250,6 +254,28 @@ export default function OrderPassport() {
   // Odoo-native PDF viewer — one shared modal for whichever document (quote,
   // a specific delivery slip) was last requested.
   const [pdfView, setPdfView] = useState(null); // {url, title} | null
+
+  // Make Recurring (2026-08-21) — same modal/endpoint reseller/staff already
+  // use from SalesTickets.js, now also reachable from the customer's own
+  // Order Passport since a customer has no access to the ticket pipeline UI.
+  const [recurringModalOpen, setRecurringModalOpen] = useState(false);
+
+  // Reorder (2026-08-21) — prefills a fresh cart from this order's line
+  // items and hands off to the cart, which re-fetches current pricing/stock
+  // for each product rather than reusing this order's (possibly stale) ones.
+  const doReorder = () => {
+    const lines = (data.order.lines || [])
+      .filter(l => l.product_id)
+      .map(l => ({ product_id: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id, qty: l.product_uom_qty }));
+    if (lines.length === 0) return toast.error("No line items to reorder");
+    const p = data.order.partner_id;
+    navigate("/orders", {
+      state: {
+        reorderLines: lines,
+        reorderCustomer: p ? { id: p[0], name: p[1] } : null,
+      },
+    });
+  };
 
   // Create ticket
   const [creatingTicket,      setCreatingTicket     ] = useState(false);
@@ -431,6 +457,20 @@ export default function OrderPassport() {
           <ChevronLeft size={14} />Back
         </button>
         <div className="flex items-center gap-2">
+          {/* Reorder / Make Recurring (2026-08-21) — reseller/customer self-service,
+              reusing exactly the same cart/endpoint staff and resellers already use
+              elsewhere, just reachable from the customer's own Order Passport since
+              they have no access to the ticket pipeline UI those live on. */}
+          {(isReseller || isCustomer) && (order.lines || []).length > 0 && (
+            <BtnSecondary onClick={doReorder}>
+              <RotateCcw size={13} />Reorder
+            </BtnSecondary>
+          )}
+          {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.recurring_order_id && (
+            <BtnSecondary onClick={() => setRecurringModalOpen(true)}>
+              <Repeat size={13} />Make Recurring
+            </BtnSecondary>
+          )}
           <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Odoo quote` })}>
             <FileSearch size={13} />View Quote (Odoo)
           </BtnSecondary>
@@ -945,6 +985,13 @@ export default function OrderPassport() {
       )}
       {pdfView && (
         <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
+      )}
+      {recurringModalOpen && ticket?.ticket_id && (
+        <RecurringOrderSetupModal
+          ticketId={ticket.ticket_id}
+          onClose={() => setRecurringModalOpen(false)}
+          onCreated={() => { setRecurringModalOpen(false); load(); }}
+        />
       )}
     </div>
   );

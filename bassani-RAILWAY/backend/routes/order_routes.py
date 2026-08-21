@@ -36,7 +36,12 @@ class OrderCreate(BaseModel):
     order_line: List[OrderLine]
     reseller_id: Optional[str] = None          # MongoDB reseller ID
     note: Optional[str] = ""
-    delivery_address: Optional[str] = ""
+    # Optional delivery address (2026-08-21) — an Odoo res.partner id, either
+    # a saved child address of the ordering company or the company itself.
+    # Replaces the previous `delivery_address: Optional[str]` free-text
+    # field, which was declared but never actually read anywhere in this
+    # file — dead on both the request-parsing and order-creation sides.
+    shipping_address_id: Optional[int] = None
 
 class StatusUpdate(BaseModel):
     status: str                                 # Pending|Processing|Shipped|Delivered
@@ -84,14 +89,27 @@ async def list_orders(
         if not owned_partner_ids:
             return {"orders": [], "total": 0}
 
-    warehouse_id = await resolve_warehouse_id(current_user)
+    # Bug found live 2026-08-21: resolve_warehouse_id(customer) can basically
+    # never return None (it falls back to the global admin default the
+    # moment one is configured), so the warehouse filter below was silently
+    # restricting a customer's own order history to whichever one warehouse
+    # they're scoped to — hiding any order Bassani staff fulfilled from a
+    # different one, directly contradicting the "every login sees the whole
+    # company's order history" promise this phase was built on. Warehouse is
+    # an internal fulfilment detail, not a customer-facing scoping boundary:
+    # a customer should see every order for their company regardless of
+    # which warehouse processed it. Skipped for customer role only — still
+    # applied for staff and reseller, whose existing behaviour this isn't
+    # touching.
+    is_customer = current_user.get("role") == "customer"
+    warehouse_id = None if is_customer else await resolve_warehouse_id(current_user)
 
     domain = []
     if warehouse_id:
         domain.append(("warehouse_id", "=", warehouse_id))
     if current_user.get("role") == "reseller":
         domain.append(("commercial_partner_id", "in", list(owned_partner_ids)))
-    elif current_user.get("role") == "customer":
+    elif is_customer:
         # Company-level sharing (Phase 25): every login under one company
         # sees the same order history, scoped to a single fixed partner id
         # rather than an owned-set lookup.
@@ -830,7 +848,8 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         {"type": "sales", "order_id": {"$in": [resolved_id, order_id]}},
         {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
-         "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1},
+         "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
+         "recurring_order_id": 1},
     )
     ticket_out = None
     if ticket:
@@ -856,6 +875,11 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "reseller_name": _reseller_name,
             "customer_name": ticket.get("customer_name"),
             "notes":        ticket.get("notes"),
+            # Gates the passport's "Make Recurring" button — that ticket is
+            # only ever found here in the first place via an order_id match
+            # (line ~834), so order_id is implicitly always set once we get
+            # this far; only recurring_order_id needs surfacing.
+            "recurring_order_id": ticket.get("recurring_order_id"),
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────
@@ -1278,15 +1302,22 @@ async def create_order(
             context=odoo_context(warehouse_id),
         )
         stock_map = {p["id"]: p for p in stock_rows}
+        # Reseller/customer-facing wording never includes the actual stock
+        # figure (Bassani policy, 2026-08-21 — "only if it's in stock or out
+        # of stock", never the number) — "requested 20, only 5 available"
+        # would hand over the exact count via simple subtraction. Staff/admin
+        # still get the precise detail, useful for internal ops.
+        is_external = current_user.get("role") in ("reseller", "customer")
         shortfalls = []
         for l in order.order_line:
             p = stock_map.get(l.product_id)
             available = p["virtual_available"] if p else 0
             if l.product_uom_qty > available:
                 name = p["display_name"] if p else f"Product #{l.product_id}"
-                shortfalls.append(f"{name} (requested {l.product_uom_qty:g}, only {available:g} available)")
+                shortfalls.append(name if is_external else f"{name} (requested {l.product_uom_qty:g}, only {available:g} available)")
         if shortfalls:
-            stock_warning = "Some items exceed current stock and will need to be fulfilled as a backorder: " + "; ".join(shortfalls)
+            sep = ", " if is_external else "; "
+            stock_warning = "Some items exceed current stock and will need to be fulfilled as a backorder: " + sep.join(shortfalls)
     except Exception:
         pass  # Non-fatal — stock info shouldn't block placing a quotation
 
@@ -1322,6 +1353,25 @@ async def create_order(
 
     cid = get_company_id(odoo, warehouse_id)
 
+    # Optional delivery address (2026-08-21) — must belong to the ordering
+    # company itself: either the company's own partner id, or one of its
+    # saved child addresses (never validated against an arbitrary partner —
+    # a buyer picking someone else's address, deliberately or otherwise,
+    # must never reach Odoo). Silently falls back to Odoo's own default
+    # shipping address if it doesn't validate, rather than failing the
+    # whole order over a stale/removed address.
+    shipping_address_id = None
+    if order.shipping_address_id:
+        if order.shipping_address_id == effective_partner_id:
+            shipping_address_id = order.shipping_address_id
+        else:
+            try:
+                _addr = odoo.read("res.partner", [order.shipping_address_id], fields=["parent_id"])
+                if _addr and _addr[0].get("parent_id") and _addr[0]["parent_id"][0] == effective_partner_id:
+                    shipping_address_id = order.shipping_address_id
+            except Exception:
+                pass
+
     vals = {
         "partner_id": effective_partner_id,
         "order_line": lines,
@@ -1329,6 +1379,8 @@ async def create_order(
     }
     if warehouse_id:
         vals["warehouse_id"] = warehouse_id
+    if shipping_address_id:
+        vals["partner_shipping_id"] = shipping_address_id
 
     try:
         odoo_order_id = odoo.create("sale.order", vals, context=company_context(cid) or None)
