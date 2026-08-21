@@ -2064,12 +2064,12 @@ Portal access is never automatic — an admin must turn it on for a specific cus
 
 1. Go to **Customers** and open the customer's profile.
 2. Scroll to the **Portal Access** section (only visible if you have the "Grant & revoke customer portal logins" permission).
-3. For a business, you'll see every contact on file for that company, each with a checkbox and a status: **Not provisioned**, **Active**, or **Deactivated**. Tick the box next to each person who should get their own login, then click **Grant Access**. You can come back at any time and enable more contacts as needed — nothing is locked in.
+3. For a business, the list always starts with a row for the **company account itself** (marked "Company account"), using whatever email/phone is on the company's own record — useful when a customer has never had a separate named contact split out, only a general email address. Below that, every contact on file for the company also gets its own row. Each row has a checkbox and a status: **Not provisioned**, **Active**, or **Deactivated**. Tick the box next to whoever should get a login — the company account, one or more named contacts, or both — then click **Grant Access**. You can come back at any time and enable more logins as needed — nothing is locked in.
 4. For an individual customer (a named patient, not a company), there's a single enable toggle instead of a list.
-5. Each newly granted contact receives an email inviting them to set their own password. The link expires after 15 minutes — if it's expired, they can use "Forgot password" on the sign-in page to request a new one.
+5. Each newly granted login receives an email inviting them to set their own password. The link expires after 15 minutes — if it's expired, they can use "Forgot password" on the sign-in page to request a new one.
 6. To turn off a login (e.g. someone has left the business), click **Deactivate** next to their name. This only disables their login — it does not touch their contact record in the customer's account.
 
-If a contact has no email address on file, they can't be granted a login until one is added — use **Add contact** in the Contacts section above, or edit the existing contact, to add one first.
+If a row has no email address on file (including the company account row itself), it can't be granted a login until one is added — use **Add contact** in the Contacts section above to add a person, or edit the company's own email, then come back to this section.
 
 **Default warehouse:** Also on the customer profile, the **Default Warehouse** field lets you pin which warehouse a customer's orders and product catalogue draw from. Leave it blank to use the standard admin default.
 

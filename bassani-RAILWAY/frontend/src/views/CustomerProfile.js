@@ -1087,7 +1087,8 @@ export default function CustomerProfile() {
                 <p className="px-5 py-4 text-sm text-gray-400">Could not load portal access status.</p>
               ) : portalAccess.has_no_contacts ? (
                 <p className="px-5 py-4 text-sm text-gray-400">
-                  This company has no contacts on file yet. Add a contact above before granting portal access.
+                  Neither this company nor any of its contacts have an email address on file. Add one above
+                  (edit the company, or add a contact) before granting portal access.
                 </p>
               ) : (
                 <>
@@ -1115,7 +1116,14 @@ export default function CustomerProfile() {
                                 />
                               )}
                             </td>
-                            <td className="px-5 py-3 font-medium text-gray-900">{ct.name}</td>
+                            <td className="px-5 py-3 font-medium text-gray-900">
+                              {ct.name}
+                              {ct.is_company_record && (
+                                <span className="ml-2 text-[10px] font-semibold text-bassani-700 bg-bassani-50 rounded-full px-2 py-0.5 align-middle">
+                                  Company account
+                                </span>
+                              )}
+                            </td>
                             <td className="px-5 py-3 text-gray-500">
                               {ct.email || <span className="text-red-400">No email on file</span>}
                             </td>

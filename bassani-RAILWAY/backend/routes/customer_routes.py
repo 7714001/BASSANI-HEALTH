@@ -891,11 +891,12 @@ async def get_portal_access(
 ):
     """
     Portal-login state for a customer company. For a business (is_company),
-    lists every active Odoo child contact with its provisioning status. For
-    an individual, returns a single synthetic row for the partner itself —
-    individuals have no child contacts, so one enable/disable toggle covers
-    them (Phase 25.0's multi-login model is a per-company concept, not a
-    per-partner one).
+    always includes the company's own record as a candidate (many Bassani
+    customers only ever have an email/phone on the company itself, with no
+    separate contact person split out in Odoo) plus every active Odoo child
+    contact, each with its provisioning status — a company can grant a login
+    against its own details, a contact's, or both. For an individual,
+    returns a single synthetic row for the partner itself.
     """
     odoo = get_odoo_client()
     try:
@@ -908,18 +909,26 @@ async def get_portal_access(
     is_company = bool(partner.get("is_company"))
 
     if is_company:
+        contacts = [{
+            "id": partner["id"], "name": partner["name"],
+            "email": partner.get("email") or None, "phone": partner.get("phone") or None,
+            "function": None, "is_company_record": True,
+        }]
         contact_ids = odoo.search(
             "res.partner",
             [["parent_id", "=", customer_id], ["active", "=", True]],
             limit=200,
         )
         raw_contacts = odoo.read("res.partner", contact_ids, fields=["id", "name", "email", "phone", "function"]) if contact_ids else []
-        contacts = [{k: (v if v is not False else None) for k, v in c.items()} for c in raw_contacts]
+        contacts += [
+            {**{k: (v if v is not False else None) for k, v in c.items()}, "is_company_record": False}
+            for c in raw_contacts
+        ]
     else:
         contacts = [{
             "id": partner["id"], "name": partner["name"],
             "email": partner.get("email") or None, "phone": partner.get("phone") or None,
-            "function": None,
+            "function": None, "is_company_record": False,
         }]
 
     contact_ids_list = [c["id"] for c in contacts]
@@ -941,7 +950,12 @@ async def get_portal_access(
     return {
         "is_company": is_company,
         "contacts": contacts,
-        "has_no_contacts": is_company and not contacts,
+        # True only when nothing here — not even the company record itself —
+        # has an email on file, i.e. there is genuinely no login candidate
+        # yet. Kept as its own flag rather than an empty `contacts` list
+        # since `contacts` always has at least one row now (the company
+        # record for a business, the partner itself for an individual).
+        "has_no_contacts": not any(c.get("email") for c in contacts),
     }
 
 
@@ -971,8 +985,10 @@ async def grant_portal_access(
     company_name = partner["name"]
 
     if partner.get("is_company"):
+        # The company record itself is always a valid target too — matches
+        # get_portal_access always offering it as a candidate row.
         child_ids = odoo.search("res.partner", [["parent_id", "=", customer_id], ["active", "=", True]], limit=200)
-        valid_ids = set(child_ids)
+        valid_ids = set(child_ids) | {customer_id}
     else:
         valid_ids = {customer_id}
 
