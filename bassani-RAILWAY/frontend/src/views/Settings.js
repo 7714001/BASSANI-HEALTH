@@ -7,6 +7,7 @@ import DocumentTemplates from "./DocumentTemplates";
 import LabelPrinters from "./LabelPrinters";
 import GTINPool from "./GTINPool";
 import MonitorSettings from "./MonitorSettings";
+import OnboardingMonitorSettings from "./OnboardingMonitorSettings";
 
 const TABS = [
   { key: "warehouses",       label: "Warehouses" },
@@ -16,6 +17,7 @@ const TABS = [
   { key: "label-printers",   label: "Label Printers" },
   { key: "gtin-pool",        label: "GTIN Pool" },
   { key: "monitor-display",  label: "Monitor Display" },
+  { key: "onboarding-monitor-display", label: "Onboarding Monitor Display" },
 ];
 
 export default function Settings() {
@@ -53,6 +55,7 @@ export default function Settings() {
       {active === "label-printers" && <LabelPrinters embedded />}
       {active === "gtin-pool"        && <GTINPool embedded />}
       {active === "monitor-display"  && <MonitorSettings embedded />}
+      {active === "onboarding-monitor-display" && <OnboardingMonitorSettings embedded />}
     </div>
   );
 }

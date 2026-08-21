@@ -4914,12 +4914,12 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 
 ---
 
-## Phase 23 — Operations Monitor
+## Phase 23 — Operations Monitors
 
-**Goal:** A live, read-only big-screen display that gives operations staff an at-a-glance view of the full order pipeline, highlighting orders approaching the 72-hour fulfilment deadline so the team can prioritise without manually reviewing the ticket list.  
+**Goal:** A growing family of live, read-only big-screen displays — one per team/pipeline — sharing the same architecture (no login, URL query-token, admin generate/rotate in Settings, 30s poll). Started with the order pipeline; exco liked it enough to ask for more, one per part of the business that benefits from an at-a-glance view instead of manually reviewing a list.  
 **Priority:** Medium  
-**Status:** ✅ Complete  
-**Completed:** 2026-07-15
+**Status:** 🟡 In Progress — 23.0/23.1 (order pipeline monitor) complete; 23.2 (onboarding pipeline monitor) complete 2026-08-21; 23.3 (Manufacturing Orders / Backorders monitor, GACP facility) deliberately deferred — concept stage, needs its own scoping pass  
+**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21
 
 ### Context
 
@@ -4973,6 +4973,34 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] Rotating the token invalidates the old URL immediately
 
 **Follow-up fix (2026-08-04) — the deposit gate (8.47) created an invisible pipeline stage on this board.** 8.47 (reinstated 2026-07-29, after this phase originally shipped) inserted `awaiting_deposit` between `sale_order` and packing-board creation — a packing board entry now only gets created once Finance registers the deposit, not at order confirmation. `monitor_routes.py`'s Quotes-column query (`status in ["open", "quote", "sale_order"]`) was never updated for the new status, and there's no packing board entry yet at this stage either — so a confirmed order sitting on the deposit gate matched **no column at all** and simply vanished from the board between confirmation and deposit registration, despite this being a real bottleneck stage staff specifically wanted visibility into.
+
+---
+
+### 23.2 — Onboarding Pipeline Monitor — Complete 2026-08-21
+
+**Goal:** Same big-screen visibility as 23.0/23.1, for the customer onboarding pipeline instead of the order pipeline — exco's first ask for "more dashboards like this." A second dashboard (Manufacturing Orders / Backorders, for the GACP facility) is intentionally out of scope here; that one needs its own brainstorming pass once this one shipped, per the product owner's direction (tracked as 23.3, concept stage).
+
+**Key decision:** an application only counts as complete once the customer profile actually exists in Odoo (`status: "approved"`) **and** the welcome pack has actually been sent (`welcome_pack_sent_at` set) — not either alone. This directly surfaces the known 8.55 failure state (approval succeeded, welcome pack send failed) as its own visible column instead of letting it silently read as "done" the moment `status` flips to `approved`.
+
+**Deliberate scope trims vs. 23.0/23.1:** no WebSocket live-push (an application's stage doesn't change fast enough to justify wiring a refresh-broadcast into every mutation across `onboarding_routes.py` and `public_routes.py`'s customer-signing endpoint — the 30s poll fallback is the only refresh mechanism); no generalised multi-monitor Settings UI (a sibling settings component, not a refactor of `MonitorSettings.js` into a list — worth doing once a third monitor exists, not for one hypothetical now).
+
+- [x] `backend/routes/onboarding_monitor_routes.py` — new router at `/api/onboarding-monitor`, structurally a direct copy of `monitor_routes.py`: own token at `portal_settings._id: "onboarding_monitor_display_token"`, `GET/POST /token` (admin), `GET /validate` + `GET /data` (public, token-verified, MongoDB-only, no Odoo calls)
+- [x] `_derive_stage()` — Python port of `CustomerApplications.js`'s `deriveStatus()`, the only other place this pipeline's stages were ever computed (client-side only, admin list page). Kept in careful lockstep with that function.
+- [x] Seven Kanban columns: Pending Review, Awaiting Docs, Docs Generated, Awaiting Signature, Countersigning (folds the frontend's `needs_countersigning`/`countersigning_in_progress` split into one column), Ready to Approve, **Welcome Pack Pending** (new — approved but `welcome_pack_sent_at` not set, the direct payoff of the stricter completion definition above)
+- [x] Rejected applications excluded from the board entirely (not actionable, mirrors 23.0/23.1 excluding cancelled orders); fully-complete applications excluded from all columns, only feed the Completed Today KPI
+- [x] Age-tier deadlines: Pending Review reuses `scheduler.py::check_stale_applications`'s real existing 4h escalation threshold verbatim, so the column's "overdue" state agrees with the escalation email that already fires at that point. Every other column's deadline (48h/24h/72h/24h/24h/24h) is a proposed first-pass default, not confirmed business policy — flagged for the product owner to tune once real usage shows what's actually urgent.
+- [x] `frontend/src/views/OnboardingMonitor.js` — same full-screen dark-theme shell as `OrderMonitor.js` (30s poll, 1s live countdown tick, LIVE/OFFLINE indicator, invalid-token/loading states, no `ProtectedRoute`/`AppLayout` wrapper), 7-column Kanban + 4+8 KPI strip, cards link to `/applications/{id}` (`CustomerApplicationDetail.js`)
+- [x] `frontend/src/views/OnboardingMonitorSettings.js` — Settings tab, sibling of `MonitorSettings.js`
+- [x] `{ key: "onboarding-monitor-display", label: "Onboarding Monitor Display" }` tab added to `Settings.js`
+- [x] `<Route path="/onboarding-monitor" element={<OnboardingMonitor />} />` added to `App.js` (public, outside `ProtectedRoute`)
+
+### Definition of Done
+- [x] `/onboarding-monitor?token=...` loads without login and shows live Kanban columns + KPIs
+- [x] An application lands in the correct column at every stage from submission through approval
+- [x] An approved application whose welcome pack send failed shows in Welcome Pack Pending, not silently as done
+- [x] A fully complete application (approved + welcome pack sent) disappears from the board and counts in Completed Today
+- [x] A rejected application never appears
+- [x] Admin can generate, view, copy, and rotate the display URL from Settings → Onboarding Monitor Display, independently of the order monitor's own token
 
 - [x] `monitor_routes.py` — new query for `status: "awaiting_deposit"` tickets, reusing `_ticket_card()` (added `"awaiting_deposit": OVERDUE_HOURS` to `_QUOTE_STATUS_DEADLINE` — treated as the 72h "confirmed order" deadline, not the softer 48h quote deadline, since the customer has already committed at this point)
 - [x] New `deposit` column (key `deposit`, gold accent `#eab308`) inserted between Quotes and Packing, matching pipeline order; included in the `all_active` roll-up so it automatically feeds the existing Overdue/At Risk Row-1 KPIs with no separate change needed there

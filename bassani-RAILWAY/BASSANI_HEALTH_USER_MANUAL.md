@@ -1116,6 +1116,43 @@ The countdown badge on each card updates every second. Quotes use a 48-hour aler
 
 ---
 
+## Onboarding Monitor (TV Display)
+
+A second live, read-only big-screen display (2026-08-21), same idea as the Operations Monitor above but for the customer onboarding pipeline instead of the order pipeline — where every in-flight application currently sits, from just submitted through to fully approved. It has its own separate URL and token, managed independently of the Operations Monitor's.
+
+**No login is required.** Access is controlled by a secret URL token managed by the super admin.
+
+### Setting Up the Onboarding Monitor Display
+
+1. Go to **Settings → Onboarding Monitor Display**
+2. Click **Generate Display URL** (first time only)
+3. Click **Copy** to copy the full URL
+4. Open the URL in a browser on the display device and set it to full-screen (F11 on most browsers)
+
+The display refreshes automatically every 30 seconds. **Rotating the token:** click **Rotate token** in the same Settings tab — the old URL stops working immediately.
+
+### Reading the Monitor
+
+**Pipeline columns (left to right):**
+
+| Column | What it shows |
+|---|---|
+| Pending Review | Just submitted, no documents generated yet |
+| Awaiting Docs | Waiting on the reseller or customer to submit required documents |
+| Docs Generated | NDA/Store Agreement generated, not yet sent to the customer |
+| Awaiting Signature | Sent to the customer, waiting for them to sign |
+| Countersigning | Customer has signed; waiting on a Bassani signing authority to countersign one or both documents |
+| Ready to Approve | Fully countersigned, waiting on an admin to approve |
+| Welcome Pack Pending | Approved and the customer profile exists, but the welcome pack email hasn't gone out yet — this is a real "needs attention" state, not just a normal step, since it means something went wrong sending it |
+
+An application only leaves the board entirely once it's **approved and the welcome pack has actually been sent** — approval alone isn't enough, which is exactly what the Welcome Pack Pending column exists to catch. A rejected application never appears on the board at all.
+
+**KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each column plus Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy (aside from the 4-hour Pending Review deadline, which matches the existing stalled-application email alert) — let the team know if any of them feel wrong once you're using it day to day, they're easy to adjust.
+
+Clicking any card opens that application's review page directly.
+
+---
+
 ## Orders Clerk — Tshidi
 
 **Role in system:** `orders_clerk` (permission: `tickets.orders`)  

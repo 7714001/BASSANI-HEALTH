@@ -60,6 +60,7 @@ import BankReconciliation   from "./views/BankReconciliation";
 import Backorders           from "./views/Backorders";
 import OrderPassport        from "./views/OrderPassport";
 import OrderMonitor         from "./views/OrderMonitor";
+import OnboardingMonitor    from "./views/OnboardingMonitor";
 import BatchRegistry        from "./views/BatchRegistry";
 import VaultLogbook         from "./views/VaultLogbook";
 import S6Register           from "./views/S6Register";
@@ -327,6 +328,8 @@ export default function App() {
 
         {/* Public: operations monitor (no auth, token in URL) */}
         <Route path="/monitor" element={<OrderMonitor />} />
+        {/* Public: onboarding pipeline monitor (no auth, token in URL) */}
+        <Route path="/onboarding-monitor" element={<OnboardingMonitor />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
