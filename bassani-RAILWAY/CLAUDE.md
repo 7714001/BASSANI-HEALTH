@@ -363,6 +363,8 @@ Two paths coexist — both must stay working:
 
 `handlePickerAdd` in `SalesTickets.js` replaces the trailing empty line when adding from the drawer rather than always appending — preserves a clean line count.
 
+**Out-of-stock ordering, brought in line with the reseller/customer cart (2026-08-21):** both add-paths above used to hard-block an out-of-stock product outright — `ProductLineRow`'s search dropdown had `disabled={outOfStock}` on the result, and `ProductPickerDrawer`'s `+ Add` button had `disabled={!inStock}` — plus `ProductLineRow`'s quantity field silently capped/clamped to `_stock` once a product was added. None of this had a backend counterpart to begin with: `ticket_routes.py`'s `create_order_from_ticket`/`update_order_from_ticket` (what this quote builder actually submits to) have never validated stock at all, so the block was a frontend-only restriction with no matching gate on the other side. Both removed — a line can now be added and its quantity set past `_stock` freely, same as the cart. The quantity field shows a non-blocking amber note when it does (`"{stock} in stock, rest backorders"` — staff get the exact figure here, same as the existing `inStockBadge`/stock-count labels in both components, unlike the reseller/customer cart's binary-only display). The confirm-time stock-check modal (`SalesTickets.js`'s `confirmOrder`, ships-now/backorder split) already worked correctly before this fix and needed no changes — this closes the one remaining gap, which was purely about being able to add the item to the quote in the first place.
+
 ---
 
 ## Phase 13 — Compliance Notes

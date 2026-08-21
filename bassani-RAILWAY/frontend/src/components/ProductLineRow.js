@@ -1,10 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared product line row — used by the Sales Ticket quote builder and the
-// reseller order cart. Each row fires its own debounced Odoo search so
-// results are always live and catalogue size is never a constraint (no
-// preload, no item cap). Stock is resolved server-side: pass `warehouseId`
-// to pin a specific vault (quote builder), or omit it to let the backend
-// resolve the current user's own warehouse automatically (reseller cart).
+// Shared product line row — the Sales Ticket quote builder's inline search-add
+// path (SalesTickets.js's "Build Quote" flow for direct-inquiry/email tickets,
+// staff-only in practice — resellers' own portal-placed orders never carry a
+// "direct"/"email" source, so they never reach this specific table UI; their
+// equivalent flow is the card-grid cart in Views.js::Orders()). Each row fires
+// its own debounced Odoo search so results are always live and catalogue size
+// is never a constraint (no preload, no item cap). Stock is resolved
+// server-side via the optional `warehouseId` prop, pinning a specific vault.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
@@ -160,14 +162,19 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                 className="z-[9999] bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto"
               >
                 {searchResults.map(p => {
-                  const outOfStock = (p.virtual_available || 0) <= 0;
                   return (
+                    // Out-of-stock is selectable (2026-08-21) — matches the
+                    // reseller/customer cart's standard: Odoo handles a
+                    // shortfall as a backorder (and its own automatic MO if
+                    // the product's routing calls for one) at confirm time,
+                    // the same as any other order, so there's no reason
+                    // staff building a quote should be blocked from adding
+                    // it here in the first place. inStockBadge below still
+                    // shows the real figure either way.
                     <button
                       key={p.id}
-                      onMouseDown={() => { if (!outOfStock) selectProduct(p); }}
-                      disabled={outOfStock}
-                      title={outOfStock ? "No forecasted stock — cannot add to quote" : undefined}
-                      className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors ${outOfStock ? "opacity-50 cursor-not-allowed bg-gray-50" : "hover:bg-bassani-50"}`}
+                      onMouseDown={() => selectProduct(p)}
+                      className="w-full text-left px-3 py-2.5 flex items-start justify-between gap-3 border-b border-gray-50 last:border-0 transition-colors hover:bg-bassani-50"
                     >
                       <div className="flex items-start gap-2 min-w-0">
                       <ProductThumb product={p} size="xs" className="mt-0.5" />
@@ -218,34 +225,33 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       {/* ── Qty ── */}
       <td className="p-2 w-24">
         {(() => {
-          const noStock = line.product_id && line._stock === 0;
-          const maxQty  = line._stock > 0 ? line._stock : null;
-          const atMax   = maxQty !== null && line.product_uom_qty >= maxQty;
-          const overMax = maxQty !== null && line.product_uom_qty > maxQty;
+          // No cap, no clamp (2026-08-21) — quantity is never capped to
+          // stock on hand, matching the reseller/customer cart's standard.
+          // A backordered line is a non-blocking, informational warning
+          // (amber), not something the field prevents typing in the first
+          // place — Odoo handles the shortfall as a backorder (and its own
+          // automatic MO where configured) at confirm time regardless.
+          // Staff see the exact figures here, same as inStockBadge above.
+          const willBackorder = line.product_id && line.product_uom_qty > line._stock;
           return (
             <div>
               <input
                 type="number"
                 min="1"
                 step="1"
-                max={maxQty ?? undefined}
                 value={line.product_uom_qty}
                 onChange={e => {
                   const v = parseFloat(e.target.value) || 1;
-                  onUpdate({ product_uom_qty: maxQty ? Math.min(v, maxQty) : v });
+                  onUpdate({ product_uom_qty: v });
                 }}
                 className={`w-full text-sm text-center border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 bg-white ${
-                  noStock  ? "border-red-300 focus:ring-red-200 text-red-600" :
-                  overMax  ? "border-red-400 focus:ring-red-300 text-red-600" :
-                  atMax    ? "border-amber-300 focus:ring-amber-300" :
-                             "border-gray-200 focus:ring-bassani-300"
+                  willBackorder ? "border-amber-300 focus:ring-amber-300 text-amber-700" : "border-gray-200 focus:ring-bassani-300"
                 }`}
               />
-              {noStock && (
-                <p className="text-[10px] text-red-500 text-center mt-0.5 leading-none">0 available</p>
-              )}
-              {!noStock && atMax && (
-                <p className="text-[10px] text-amber-500 text-center mt-0.5 leading-none">max available</p>
+              {willBackorder && (
+                <p className="text-[10px] text-amber-600 text-center mt-0.5 leading-none">
+                  {line._stock > 0 ? `${line._stock} in stock, rest backorders` : "will backorder"}
+                </p>
               )}
             </div>
           );

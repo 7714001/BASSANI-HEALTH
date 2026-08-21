@@ -523,15 +523,18 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
 
                     <div className="flex flex-col items-end gap-2 shrink-0">
                       <p className="text-sm font-bold text-gray-900">{fmtR(p.list_price)}</p>
+                      {/* Out-of-stock is addable (2026-08-21) — matches the
+                          reseller/customer cart's standard: Odoo handles a
+                          shortfall as a backorder at confirm time regardless
+                          of who built the quote, so there's no reason to
+                          block adding it here. The "Out of stock" label
+                          above still shows the real state either way. */}
                       <button
-                        disabled={!inStock}
                         onClick={() => handleAdd(p)}
                         className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 min-w-[62px] justify-center ${
                           added
                             ? "bg-green-50 text-green-700 border border-green-200"
-                            : inStock
-                              ? "bg-bassani-600 hover:bg-bassani-700 text-white"
-                              : "bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200"
+                            : "bg-bassani-600 hover:bg-bassani-700 text-white"
                         }`}
                       >
                         {added ? <><CheckCircle2 size={11} />Added</> : "+ Add"}
