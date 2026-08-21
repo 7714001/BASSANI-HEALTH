@@ -1733,7 +1733,16 @@ export function Orders() {
                 </div>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
+            {/* Top spacing moved off the scrolling element itself (px-6 pb-6 here,
+                pt-6 on the inner wrapper below) — 2026-08-21 fix: with pt-6 on the
+                scrolling container, a sticky header sticks flush against the INSIDE
+                of that padding, but nothing ever covers the padding strip itself, so
+                product cards scrolling underneath were visible through a persistent
+                gap above every stuck header. Padding on a non-scrolling inner wrapper
+                is just normal flow spacing — it scrolls away like any other content,
+                so once a header is stuck at true top:0 there's nothing behind it. */}
+            <div className="flex-1 overflow-y-auto px-6 pb-6">
+            <div className="pt-6">
               {cartProdsLoading && <LoadingState />}
               {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && cartIsSubGroupedView
@@ -1759,7 +1768,7 @@ export function Orders() {
                             if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
                             return next;
                           })}
-                          className="w-full flex items-center gap-2.5 -mx-6 px-6 mb-3 py-2.5 sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-sm text-left"
+                          className="w-full flex items-center gap-2.5 -mx-6 px-6 mb-3 py-2.5 sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm text-left"
                         >
                           <ChevronDown size={16} className={`text-bassani-600 transition-transform shrink-0 ${collapsed ? "-rotate-90" : ""}`} />
                           <h3 className="text-base font-bold text-gray-900 tracking-tight">
@@ -1781,6 +1790,7 @@ export function Orders() {
                   {cartFilteredProducts.map(p => renderCartProductCard(p))}
                 </div>
               )}
+            </div>
             </div>
           </div>
 
