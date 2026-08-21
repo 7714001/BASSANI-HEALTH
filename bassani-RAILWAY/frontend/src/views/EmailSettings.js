@@ -242,6 +242,13 @@ const ROUTING_KEYS = [
     placeholder: "finance@bassanihealth.com",
   },
   {
+    key: "pop_uploaded_to", group: "finance", icon: Mail,
+    title: "Finance: Proof of Payment Uploaded",
+    description: "Triggered when a customer or reseller uploads a proof of payment against their own order. Review the file and register the deposit or balance payment as usual once confirmed.",
+    note: "If this list is empty, no notification is sent, but the ticket still shows a badge on the Sales Tickets list.",
+    placeholder: "finance@bassanihealth.com",
+  },
+  {
     key: "s6_flag_to", group: "production", icon: Mail,
     title: "Production: Stock Received Without Purchase Order",
     description: "Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved.",

@@ -418,6 +418,34 @@ def send_onboarding_submitted(
           _wrap(body))
 
 
+def send_pop_uploaded_notification(
+    to_emails: "list[str]",
+    ticket_ref: str,
+    customer_name: str,
+    filename: str,
+) -> None:
+    """Sent to Sales/Finance when a customer or reseller uploads a Proof of
+    Payment against their own ticket (2026-08-21). Evidence and a trigger
+    only — Finance still explicitly registers the deposit/balance payment
+    afterward via the existing flow, this just gets it in front of them
+    faster than waiting to be told outside the portal."""
+    if not to_emails:
+        return
+    body = (
+        _h1("Proof of payment uploaded")
+        + _p(f"{customer_name} has uploaded a proof of payment for their order.")
+        + _info_box([
+            ("Ticket", f"<strong>{ticket_ref}</strong>"),
+            ("Customer", customer_name),
+            ("File", filename),
+        ])
+        + _button("Open ticket", f"{settings.portal_url}/tickets/sales")
+        + _divider()
+        + _p("Review the file and register the payment once you've confirmed it.", muted=True)
+    )
+    _send(to_emails, f"Proof of Payment Uploaded: {customer_name}", _wrap(body))
+
+
 def send_countersign_complete_notification(
     to_emails: "list[str]",
     company_name: str,

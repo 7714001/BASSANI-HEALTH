@@ -12,7 +12,9 @@ existing `packing_board` document, extended in Phase 8.3. See
 """
 import jwt
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket, WebSocketDisconnect
+import os
+import uuid
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -29,7 +31,8 @@ from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
-from services.email_service import send_ticket_assigned
+from services.email_service import send_ticket_assigned, send_pop_uploaded_notification
+from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
 
 logger = logging.getLogger(__name__)
@@ -283,6 +286,40 @@ async def _require_ticket_driver(current_user: dict = Depends(get_current_user))
     if perms.get("tickets", {}).get("sales"):
         return current_user
     raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _require_ticket_uploader(current_user: dict = Depends(get_current_user)) -> dict:
+    """Staff with tickets.sales/finance_confirm, OR any reseller/customer (for
+    their own ticket — checked separately inside the endpoint, same split as
+    _require_ticket_driver above). First customer-role branch in this file —
+    every other helper here only ever passed through "reseller"."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") in ("reseller", "customer"):
+        return current_user
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("tickets", {}).get("sales") or perms.get("tickets", {}).get("finance_confirm"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _assert_ticket_uploader_owns_ticket(ticket: dict, current_user: dict) -> None:
+    """Ownership check for the POP upload/download endpoints — mirrors
+    _assert_reseller_owns_ticket, extended with the equivalent customer-role
+    equality check already used throughout order_routes.py/
+    recurring_order_routes.py's customer branches. No-op for staff (already
+    gated by permission in _require_ticket_uploader)."""
+    role = current_user.get("role")
+    if role == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        await _assert_reseller_owns_ticket(ticket, rid)
+    elif role == "customer":
+        if _ticket_customer_partner_id(ticket) != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
 
 
 async def _reseller_id_for_user(user: dict) -> Optional[str]:
@@ -888,7 +925,7 @@ async def confirm_payment(
     await col("tickets").update_one(
         {"_id": oid},
         {
-            "$set": {"payment_confirmed_by": current_user["id"], "payment_confirmed_at": now, "updated_at": now},
+            "$set": {"payment_confirmed_by": current_user["id"], "payment_confirmed_at": now, "updated_at": now, "pop_awaiting_review": False},
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
@@ -1491,6 +1528,7 @@ async def use_existing_invoice(
                 "payment_confirmed_at": now,
                 "invoice_id": body.invoice_id,
                 "updated_at": now,
+                "pop_awaiting_review": False,
             },
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
@@ -1539,6 +1577,133 @@ async def use_existing_invoice(
             f"{packing_board_warning}. Use Admin Override once resolved to retry."
         )
     return resp
+
+
+@router.post("/{ticket_id}/pop")
+async def upload_proof_of_payment(
+    ticket_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    note: Optional[str] = None,
+    current_user: dict = Depends(_require_ticket_uploader),
+):
+    """Customer/reseller self-service Proof of Payment upload (2026-08-21) —
+    evidence and a trigger only, never registers a payment itself. Finance
+    still explicitly clicks Register Deposit/Register Balance Payment
+    afterward, same as today; this just gets the ticket in front of them
+    faster than waiting to be told by email/WhatsApp outside the portal.
+    Mirrors customer_routes.py::upload_customer_document's R2 upload shape."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    await _assert_ticket_uploader_owns_ticket(ticket, current_user)
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+    if len(contents) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="File must be under 8MB")
+
+    ext = os.path.splitext(file.filename or "")[1] or ".pdf"
+    upload_id = str(uuid.uuid4())
+    key = f"tickets/{ticket_id}/pop/{upload_id}{ext}"
+    await r2_put(key, contents, content_type=file.content_type or "application/octet-stream")
+
+    now = datetime.now(timezone.utc)
+    upload_doc = {
+        "id": upload_id,
+        "r2_key": key,
+        "filename": file.filename,
+        "size": len(contents),
+        "uploaded_at": now,
+        "uploaded_by_name": current_user.get("name") or current_user.get("username", ""),
+        "note": (note or "").strip() or None,
+    }
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$push": {"pop_uploads": upload_doc},
+            "$set": {"pop_awaiting_review": True, "updated_at": now},
+        },
+    )
+    await audit_log(
+        "ticket.pop_uploaded", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+        after={"filename": file.filename, "size": len(contents)},
+    )
+
+    from routes.settings_routes import get_email_routing
+    routing = await get_email_routing()
+    notify = routing.get("pop_uploaded_to") or []
+    if notify:
+        ticket_ref = ticket.get("orders_ticket_ref") or str(oid)
+        background_tasks.add_task(
+            send_pop_uploaded_notification,
+            notify, ticket_ref, ticket.get("customer_name", ""), file.filename,
+        )
+
+    return {"success": True, "upload": {k: v for k, v in upload_doc.items() if k != "r2_key"}}
+
+
+@router.get("/{ticket_id}/pop/{upload_id}/download")
+async def download_proof_of_payment(
+    ticket_id: str,
+    upload_id: str,
+    current_user: dict = Depends(_require_ticket_uploader),
+):
+    """Fresh presigned URL, generated on demand — never baked into the main
+    ticket payload since presigned URLs expire."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    await _assert_ticket_uploader_owns_ticket(ticket, current_user)
+
+    upload = next((u for u in (ticket.get("pop_uploads") or []) if u.get("id") == upload_id), None)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    url = await r2_presign(upload["r2_key"])
+    return {"url": url, "filename": upload.get("filename")}
+
+
+@router.post("/{ticket_id}/pop/mark-reviewed")
+async def mark_pop_reviewed(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Clears the awaiting-review flag without registering any payment — for
+    a duplicate upload, or one that doesn't need action (e.g. handled another
+    way). Finance's queue to clear, same permission that gates Register
+    Deposit/Balance Payment; register_deposit/register_balance_payment also
+    clear this flag automatically on success, so this is only needed for the
+    no-payment-registered case."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"pop_awaiting_review": False, "updated_at": datetime.now(timezone.utc)}},
+    )
+    await audit_log(
+        "ticket.pop_marked_reviewed", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""),
+        user=current_user,
+    )
+    return {"success": True}
 
 
 @router.post("/{ticket_id}/register-deposit")
@@ -1758,6 +1923,7 @@ async def register_deposit(
                 "payment_confirmed_at": now,
                 "invoice_id": invoice_id,
                 "updated_at": now,
+                "pop_awaiting_review": False,
             },
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
@@ -1998,6 +2164,7 @@ async def register_balance_payment(
                 "balance_payment_by": current_user["id"],
                 "balance_payment_at": now,
                 "updated_at": now,
+                "pop_awaiting_review": False,
             },
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,

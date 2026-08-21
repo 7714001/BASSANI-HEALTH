@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw,
+  Repeat, RotateCcw, Upload, Loader2,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, Modal,
@@ -277,6 +277,48 @@ export default function OrderPassport() {
     });
   };
 
+  // Proof of Payment upload (2026-08-21) — evidence and a trigger only;
+  // Finance still explicitly registers the deposit/balance payment
+  // afterward via the existing ticket-pipeline flow, this just gets it in
+  // front of them faster than being told outside the portal.
+  const popFileInputRef = useRef(null);
+  const [popUploading, setPopUploading] = useState(false);
+  const [popViewingId, setPopViewingId] = useState(null);
+
+  const handlePopUpload = async (file) => {
+    const ticketId = data?.ticket?.ticket_id;
+    if (!file || !ticketId) return;
+    setPopUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await api.post(`/api/tickets/${ticketId}/pop`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      toast.success("Proof of payment uploaded");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to upload file");
+    } finally {
+      setPopUploading(false);
+      if (popFileInputRef.current) popFileInputRef.current.value = "";
+    }
+  };
+
+  const viewPop = async (uploadId) => {
+    const ticketId = data?.ticket?.ticket_id;
+    if (!ticketId) return;
+    setPopViewingId(uploadId);
+    try {
+      const { data: res } = await api.get(`/api/tickets/${ticketId}/pop/${uploadId}/download`);
+      window.open(res.url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to open file");
+    } finally {
+      setPopViewingId(null);
+    }
+  };
+
   // Create ticket
   const [creatingTicket,      setCreatingTicket     ] = useState(false);
   const [ticketPreflightModal, setTicketPreflightModal] = useState(null);
@@ -471,6 +513,16 @@ export default function OrderPassport() {
               <Repeat size={13} />Make Recurring
             </BtnSecondary>
           )}
+          {/* Proof of Payment upload (2026-08-21) — moved out of the toolbar
+              into its own card below (with room to explain it's optional),
+              rather than a bare button here with no context. */}
+          <input
+            ref={popFileInputRef}
+            type="file"
+            accept="image/*,.pdf"
+            className="hidden"
+            onChange={e => handlePopUpload(e.target.files?.[0])}
+          />
           <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Odoo quote` })}>
             <FileSearch size={13} />View Quote (Odoo)
           </BtnSecondary>
@@ -674,6 +726,58 @@ export default function OrderPassport() {
               )}
             </div>
           </div>
+
+          {/* ── Proof of Payment (2026-08-21) ───────────────────────────────────
+              Reseller/customer: always shown once there's an active ticket to
+              upload against, with the upload action and an explicit "this is
+              optional" line so it never reads as a required step blocking
+              their order. Staff/anyone without upload access: only shown once
+              something has actually been uploaded (nothing to act on
+              otherwise), read-only. */}
+          {((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0 ? (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <Upload size={12} />Proof of Payment
+                </p>
+                {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+                  <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
+                    <Upload size={12} />Upload
+                  </BtnSecondary>
+                )}
+              </div>
+              {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+                <p className="text-xs text-gray-400">
+                  This is optional. Bassani will still confirm your payment through the usual process either way,
+                  but sharing proof of payment here can help speed things up.
+                </p>
+              )}
+              {ticket?.pop_uploads?.length > 0 ? (
+                <div className="space-y-2">
+                  {ticket.pop_uploads.map(u => (
+                    <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
+                        <p className="text-[11px] text-gray-400">
+                          {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => viewPop(u.id)}
+                        disabled={popViewingId === u.id}
+                        className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                      >
+                        {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                        View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-300">No files uploaded yet.</p>
+              )}
+            </div>
+          ) : null}
 
           {/* ── Invoice(s) ───────────────────────────────────────────────────── */}
           {invoices.length > 0 ? (

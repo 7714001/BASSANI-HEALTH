@@ -1227,13 +1227,20 @@ async def reactivate_portal_access(
 async def set_customer_warehouse(
     customer_id: int,
     body: CustomerWarehouseBody,
-    current_user: dict = Depends(require_permission("customers.manage")),
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
 ):
     """
     Admin-pinned warehouse override for a customer company, read by
     warehouse_context.py::resolve_warehouse_id for role "customer". Falls
     back to the global admin default when unset — same shape as the
     existing samples_account toggle on customer_metadata.
+
+    Permission changed from customers.manage to customers.manage_portal_access
+    (2026-08-21) — this setting only ever matters once a customer login
+    actually exists, so the frontend folded it into the Portal Access section
+    (CustomerProfile.js), gated the same way that section already is. Kept in
+    sync here rather than leaving a frontend/backend permission mismatch where
+    someone could see the field but 403 trying to save it.
     """
     odoo = get_odoo_client()
     try:

@@ -20,6 +20,7 @@ from services.email_service import (
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
     send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
+    send_pop_uploaded_notification,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -45,6 +46,9 @@ TEST_EMAIL_SENDERS: dict = {
     ),
     "countersign_complete_to": lambda to: send_countersign_complete_notification(
         [to], company_name="Test Pharmacy (Pty) Ltd", app_id="APP-TEST01",
+    ),
+    "pop_uploaded_to": lambda to: send_pop_uploaded_notification(
+        [to], ticket_ref="TICKET-TEST01", customer_name="Test Pharmacy (Pty) Ltd", filename="proof_of_payment.pdf",
     ),
     "qa_approval_to": lambda to: send_qa_approval_needed(
         [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",
@@ -137,6 +141,7 @@ class EmailRoutingConfig(BaseModel):
     recurring_order_needs_confirm_to: List[str] = []  # accepted, but auto-confirm was blocked (e.g. credit limit) — needs manual staff review
     recurring_order_declined_to: List[str] = []  # customer declined a recurring order occurrence
     recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
+    pop_uploaded_to:             List[str] = []  # customer/reseller uploaded a proof of payment
 
 
 async def get_email_routing() -> dict:

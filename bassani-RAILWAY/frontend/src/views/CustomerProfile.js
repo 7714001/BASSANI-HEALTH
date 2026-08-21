@@ -514,8 +514,11 @@ export default function CustomerProfile() {
       .finally(() => setLoading(false));
   }, [id, navigate]);
 
+  // Default Warehouse now lives inside Portal Access (2026-08-21) — gated the
+  // same way that section is (customers.manage_portal_access), not the more
+  // general customers.manage, so this fetch is gated to match.
   useEffect(() => {
-    if (!can("customers.manage")) return;
+    if (!can("customers.manage_portal_access")) return;
     api.get("/api/warehouses/").then(r => setWarehouseOptions(r.data.warehouses || [])).catch(() => {});
   }, [id]); // eslint-disable-line
 
@@ -1120,32 +1123,6 @@ export default function CustomerProfile() {
             </Section>
           )}
 
-          {/* Default Warehouse — pins which warehouse this customer's own
-              self-service orders/stock are scoped to (Phase 25). Falls back
-              to the admin-set global default when unset. */}
-          {can("customers.manage") && (
-            <Section title="Default Warehouse">
-              <div className="px-5 py-4">
-                <p className="text-xs text-gray-500 mb-3">
-                  Only relevant if this customer has self-service portal access. Their orders and product
-                  catalogue draw from this warehouse. Leave unset to use the admin-set default.
-                </p>
-                <div className="max-w-xs">
-                  <Select
-                    value={customerWarehouseId}
-                    onChange={e => doSaveWarehouse(e.target.value)}
-                    disabled={warehouseSaving}
-                  >
-                    <option value="">Use admin default</option>
-                    {warehouseOptions.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-            </Section>
-          )}
-
           {/* Portal Access — grant/revoke self-service logins (Phase 25) */}
           {can("customers.manage_portal_access") && (
             <Section title="Portal Access">
@@ -1238,6 +1215,34 @@ export default function CustomerProfile() {
                       <BtnPrimary onClick={onClickGrantPortalAccess} loading={portalGranting} disabled={portalGranting || portalSelected.size === 0}>
                         Grant Access ({portalSelected.size})
                       </BtnPrimary>
+                    </div>
+                  )}
+                  {/* Default Warehouse (2026-08-21) — moved in from its own
+                      standalone section and now part of Portal Access: it
+                      pins which warehouse a customer's self-service orders/
+                      catalogue draw from, so it's meaningless until someone
+                      can actually log in and place one. Shown only once at
+                      least one login here is active, rather than always
+                      visible regardless of whether portal access exists yet. */}
+                  {portalAccess.contacts.some(ct => ct.portal_status === "active") && (
+                    <div className="px-5 py-4 border-t border-gray-50">
+                      <p className="text-xs font-semibold text-gray-700 mb-1">Default Warehouse</p>
+                      <p className="text-xs text-gray-500 mb-3">
+                        This customer's self-service orders and product catalogue draw from this warehouse.
+                        Leave unset to use the admin-set default.
+                      </p>
+                      <div className="max-w-xs">
+                        <Select
+                          value={customerWarehouseId}
+                          onChange={e => doSaveWarehouse(e.target.value)}
+                          disabled={warehouseSaving}
+                        >
+                          <option value="">Use admin default</option>
+                          {warehouseOptions.map(w => (
+                            <option key={w.id} value={w.id}>{w.name}</option>
+                          ))}
+                        </Select>
+                      </div>
                     </div>
                   )}
                 </>

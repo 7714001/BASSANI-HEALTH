@@ -964,6 +964,15 @@ Finance is involved at **two** points in the order pipeline:
 1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit — this applies to every order, no exceptions.
 2. **Ready for Collection** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo, and you register the balance payment once the customer pays.
 
+### Proof of Payment Alerts (2026-08-21)
+
+A customer or reseller can optionally upload a photo or PDF of their payment confirmation from the order's own page. When they do, you'll get:
+
+- An **email** (if configured under Settings > Email Notifications > Finance: "Proof of Payment Uploaded")
+- An amber **"POP Uploaded"** badge next to the ticket on the Sales Tickets list, alongside the existing green "Confirmed" badge if a deposit was already registered — a ticket can have its deposit confirmed and still show a new upload for the balance payment
+
+**This is only a heads-up, never a payment record.** Open the ticket, review the file (there's a "View files in Order Passport" link on the ticket detail page), and check it against your bank records as usual — then register the deposit or balance payment the normal way below. If a file turns out to be a duplicate or doesn't need any action, click **Mark POP Reviewed** on the ticket to clear the badge without registering anything. Registering a deposit or balance payment through the steps below always clears the badge automatically too.
+
 ### Registering the Deposit
 
 1. Open the Sales Ticket (it will be in **Awaiting Deposit** status)
@@ -1932,6 +1941,8 @@ On your **My Quotes** detail view, when an order is partially fulfilled you can 
 
 > Once an order is confirmed (whether via Place Order or a later Confirm Order), your customer receives a pro-forma invoice by email showing the 50% deposit due. Bassani's finance team registers that deposit once it's paid — only then does the order move onto the packing board for fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
 
+**Uploading proof of payment (2026-08-21):** on any order's page, a "Proof of Payment" card lets you (or your customer) upload a photo or PDF of the payment confirmation. It's optional — Bassani still confirms the deposit or balance through the usual process either way — but it puts the file straight in front of Finance, which can speed things up.
+
 ### Recurring Orders
 
 If a customer orders on a regular schedule, you can set it up two ways: tick **Make this a recurring order** in the cart before you click Place Order or Save as Draft (2026-08-21 — set it up in the same step as the order itself, no separate trip needed), or set it up afterwards from a ticket that already has an order on it (Merveille can also do this from her side for a direct-inquiry customer). Either way, you choose how often it repeats (weekly, every two weeks, or monthly) and optionally when it should stop. Two days before each repeat date, the portal emails the customer directly — not you — a link to review and accept or decline that occurrence. Accepting confirms the order automatically; Bassani finance still needs to register the deposit before it moves into fulfilment, same as any other order. If the customer doesn't respond, that occurrence is simply skipped and the schedule continues from the next date — nothing further is required from you.
@@ -2076,7 +2087,7 @@ If a row has no email address on file (including the company account row itself)
 
 **Same person, more than one company (2026-08-21):** it's common for one email address to be linked to more than one Bassani customer, the way "Same contact, multiple branches" already works during onboarding. If you try to grant access to an email that already has an active login for a *different* company, the row shows an amber note ("Also has portal access to: [company]") and clicking Grant Access asks you to confirm first. The confirm screen lists every other company that login already has access to, each with a tick box, ticked by default. Confirming adds the new company to their existing login rather than creating a second one, no new password required, one email letting them know. If one of the other companies listed is a duplicate or a store being phased out, untick it before confirming. That removes that company's access in the same step, so it stops appearing in their switcher, without needing a separate trip to that company's own profile. That person then sees a company switcher at the top of their portal to move between whichever companies they still have access to, using the exact same sign-in.
 
-**Default warehouse:** Also on the customer profile, the **Default Warehouse** field lets you pin which warehouse a customer's orders and product catalogue draw from. Leave it blank to use the standard admin default.
+**Default warehouse:** Once at least one login has been granted, a **Default Warehouse** field appears at the bottom of the Portal Access section, letting you pin which warehouse that customer's orders and product catalogue draw from. Leave it blank to use the standard admin default. It only appears once portal access actually exists, since it has nothing to affect before then.
 
 ### What a customer sees once logged in
 
@@ -2109,6 +2120,7 @@ Either way, the order exists the moment either button is clicked — cancelling 
 - **Set an order to repeat automatically.** Tick "Make this a recurring order" in the cart before placing or saving the order to set it up in the same step, or use the "Make Recurring" button on any existing order's page afterwards — both set it up to repeat weekly, every two weeks, or monthly, the same feature a Sales Agent already has.
 - **Clear the cart.** A "Clear" link next to the order summary empties it in one step, with a confirmation prompt first since it can't be undone.
 - **Order comfortably from a phone.** On a phone or narrow tablet, the catalogue filters tuck behind a "Filters" button and the order summary becomes a slim bar pinned to the bottom of the screen showing the item count and total — tap it to review the full order, change quantities, or submit. This is the same cart as on a laptop, just laid out to fit a smaller screen; nothing about placing an order works differently.
+- **Upload proof of payment (2026-08-21).** On any order's page (Order Passport, opened from My Orders), a "Proof of Payment" card lets the customer upload a photo or PDF of their payment confirmation. **This is optional** — Bassani will still confirm payment through the usual process either way — but sharing it can help speed things up, since it puts the file straight in front of Finance instead of them having to be told separately. Uploaded files stay listed there with a "View" link.
 
 ---
 

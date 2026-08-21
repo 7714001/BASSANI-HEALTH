@@ -849,7 +849,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
-         "recurring_order_id": 1},
+         "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1},
     )
     ticket_out = None
     if ticket:
@@ -880,6 +880,16 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             # (line ~834), so order_id is implicitly always set once we get
             # this far; only recurring_order_id needs surfacing.
             "recurring_order_id": ticket.get("recurring_order_id"),
+            # Proof of Payment (2026-08-21) — upload metadata only (filename/
+            # date/id), never a presigned URL here since those expire; the
+            # frontend fetches a fresh one on demand via
+            # GET /api/tickets/{id}/pop/{upload_id}/download when a file is
+            # actually opened.
+            "pop_uploads": [
+                {k: v for k, v in u.items() if k != "r2_key"}
+                for u in (ticket.get("pop_uploads") or [])
+            ],
+            "pop_awaiting_review": bool(ticket.get("pop_awaiting_review")),
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────

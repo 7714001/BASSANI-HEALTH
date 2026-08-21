@@ -15,7 +15,7 @@ import {
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
-  Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch,
+  Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -626,6 +626,23 @@ export default function SalesTickets() {
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not confirm payment"); }
     finally { setSaving(false); }
+  };
+
+  // Proof of Payment (2026-08-21) — clears the awaiting-review flag without
+  // registering any payment, for a duplicate upload or one that doesn't need
+  // action. register_deposit/register_balance_payment already clear this
+  // flag automatically on success, so this is only needed for that no-
+  // payment-registered case.
+  const [markingPopReviewed, setMarkingPopReviewed] = useState(false);
+  const markPopReviewed = async () => {
+    setMarkingPopReviewed(true);
+    const tid = detail.id;
+    try {
+      await api.post(`/api/tickets/${tid}/pop/mark-reviewed`);
+      toast.success("Marked as reviewed");
+      refreshDetail(tid);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not update"); }
+    finally { setMarkingPopReviewed(false); }
   };
 
   const sendQuote = async () => {
@@ -1578,6 +1595,32 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
+                    {/* Proof of Payment (2026-08-21) — full file list + view links
+                        live on the order's Order Passport page (shared with
+                        staff/reseller/customer); this is just a compact
+                        summary + deep link so the ticket detail doesn't
+                        duplicate that presigned-URL-fetching UI a second time. */}
+                    {detail.pop_uploads?.length > 0 && (
+                      <div className={`flex items-start gap-2 text-xs rounded-lg px-2.5 py-2 border ${detail.pop_awaiting_review ? "text-amber-700 bg-amber-50 border-amber-100" : "text-gray-500 bg-gray-50 border-gray-100"}`}>
+                        <Upload size={13} className={`shrink-0 mt-0.5 ${detail.pop_awaiting_review ? "text-amber-500" : "text-gray-400"}`} />
+                        <div>
+                          <p className="font-semibold">
+                            {detail.pop_uploads.length} proof of payment file{detail.pop_uploads.length > 1 ? "s" : ""} uploaded
+                            {!detail.pop_awaiting_review && " (reviewed)"}
+                          </p>
+                          <p className="mt-0.5">
+                            Latest: {detail.pop_uploads[detail.pop_uploads.length - 1].filename}
+                            {" · "}{fmtDate(detail.pop_uploads[detail.pop_uploads.length - 1].uploaded_at)}
+                          </p>
+                          {detail.order_id && (
+                            <button onClick={() => navigate(`/orders/${detail.order_id}/passport`)}
+                              className="font-medium underline mt-0.5">
+                              View files in Order Passport
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     {detail.is_sample && (
                       <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                         <span className="font-semibold">Sample order</span>
@@ -1885,6 +1928,17 @@ export default function SalesTickets() {
                         {!detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && (
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
+                          </button>
+                        )}
+
+                        {/* Proof of Payment (2026-08-21) — dismiss without registering
+                            a payment (register-deposit/register-payment already clear
+                            this automatically on success, so this covers only the
+                            no-payment-needed case, e.g. a duplicate upload). */}
+                        {detail.pop_awaiting_review && canFinance && (
+                          <button onClick={markPopReviewed} disabled={markingPopReviewed} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
+                            <Upload size={14} className="text-amber-500 shrink-0" />
+                            {markingPopReviewed ? "Marking…" : "Mark POP Reviewed"}
                           </button>
                         )}
 
@@ -3065,11 +3119,21 @@ export default function SalesTickets() {
                   ? <span className="text-xs text-gray-600">{t.assigned_to_name}</span>
                   : <span className="text-xs text-amber-500 flex items-center gap-1"><UserPlus size={11} />Unassigned</span>
               },
-              { id: "payment", header: "Payment", cell: ({ row: { original: t } }) =>
-                t.payment_confirmed_at
-                  ? <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 size={12} />Confirmed</span>
-                  : <span className="text-xs text-gray-400">—</span>
-              },
+              { id: "payment", header: "Payment", cell: ({ row: { original: t } }) => (
+                <div className="flex items-center gap-1.5">
+                  {t.payment_confirmed_at
+                    ? <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 size={12} />Confirmed</span>
+                    : <span className="text-xs text-gray-400">—</span>
+                  }
+                  {/* POP badge (2026-08-21) — independent of the Confirmed
+                      badge above: a deposit can already be confirmed while a
+                      *new* proof of payment (for the balance) is still
+                      awaiting review, so both can show at once. */}
+                  {t.pop_awaiting_review && (
+                    <Badge color="amber"><Upload size={9} className="inline mr-0.5" />POP Uploaded</Badge>
+                  )}
+                </div>
+              )},
               { accessorKey: "updated_at", header: "Last Updated", cell: ({ row: { original: t } }) =>
                 <span className="text-xs text-gray-400">{fmtDate(t.updated_at)}</span>
               },
