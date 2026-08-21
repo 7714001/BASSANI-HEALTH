@@ -1391,6 +1391,11 @@ async def create_order(
     # or staff) enters the ticket workflow so the team processes everything in one
     # place. Reseller orders start at 'quote' so the reseller can edit/send before
     # Bassani staff pick it up. Best-effort / non-blocking.
+    # Captured so the response can hand the frontend a ticket_id — needed to
+    # chain straight into recurring-order setup (POST /api/recurring-orders
+    # requires a real ticket_id) immediately after order creation, without a
+    # second round trip to look the ticket up by order_id.
+    _created_ticket_id: str | None = None
     try:
         _ticket_customer_name = credit_partner_name  # set by credit check above
         if not _ticket_customer_name:
@@ -1419,7 +1424,7 @@ async def create_order(
             if _is_reseller_order
             else f"Portal order — {_role} ({current_user.get('username', '')})"
         )
-        await col("tickets").insert_one({
+        _ticket_ins = await col("tickets").insert_one({
             "type": "sales",
             "source": "reseller" if _is_reseller_order else "portal",
             "customer_id": effective_partner_id,
@@ -1447,6 +1452,7 @@ async def create_order(
             "created_at": _now_t,
             "updated_at": _now_t,
         })
+        _created_ticket_id = str(_ticket_ins.inserted_id)
     except Exception as _te:
         print(f"⚠️  Auto-ticket creation failed for order {odoo_order_id}: {_te}")
 
@@ -1462,7 +1468,7 @@ async def create_order(
         await audit_log("order.credit_warning", "order", odoo_order_id, entity_label=credit_partner_name,
                         user=current_user, detail=credit_warning, reseller_id=order.reseller_id)
 
-    return {"success": True, "odoo_order_id": odoo_order_id, "credit_warning": credit_warning, "stock_warning": stock_warning}
+    return {"success": True, "odoo_order_id": odoo_order_id, "ticket_id": _created_ticket_id, "credit_warning": credit_warning, "stock_warning": stock_warning}
 
 
 @router.put("/{order_id}/confirm")

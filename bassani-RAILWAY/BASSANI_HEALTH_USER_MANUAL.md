@@ -1910,29 +1910,31 @@ Each product shows:
 2. Select the customer you are ordering for using the search box on the right
 3. Search or browse the catalogue and click **Add to Order** — the item appears in your cart
 4. Adjust quantities as needed (you cannot go below any minimum order quantity shown in amber)
-5. Click **Place Order** — a draft quote is created and you are taken back to **My Quotes**
+5. Click **Place Order** to submit and confirm it in one step, or **Save as Draft** if you're not ready to commit yet (for example, you still need to double-check something with the customer)
 
-From **My Quotes** you can:
+**Place Order** (2026-08-21) checks current stock availability before committing, in the same way Confirm Order always has:
+
+- If all items are in stock, it confirms immediately — no extra click needed
+- If some items are not available, a **stock check modal** shows which items will ship now and which will be backordered; choose **Confirm — Create Backorder** to proceed, or **Save as Draft Instead** if you'd rather hold off
+- If you confirm, Bassani will ship what is available immediately and fulfil the rest as soon as stock arrives, and you'll get a separate email when the backorder is ready
+- If the customer is over their credit limit, you'll be offered **Confirm Anyway** to proceed regardless, or **Save as Draft Instead**
+
+> **If the stock check modal shows a red "Partial fulfilment blocked" notice:** no confirm option will be offered. This is a configuration issue on the Bassani side — one or more products on the order need a setting updated before a partial delivery can be invoiced correctly. Contact Bassani directly. Your order is saved as a draft in the meantime; do not attempt to confirm it until you have been notified that the issue is resolved.
+
+**Save as Draft** creates the quote without confirming it — exactly like Place Order used to work. Use this when you want a chance to review, edit, or discuss the order with your customer before it commits. A draft quote sits in **My Quotes** where you (or Bassani staff) can pick it up later.
+
+From **My Quotes**, a draft quote (one you saved without confirming, or one you cancelled out of a stock/credit check on) offers:
 - **Edit Quote** — returns you to the cart pre-populated with the current lines so you can adjust quantities or add/remove products. The customer cannot be changed once the quote is created.
 - **Send Quote** — sends the quote to the customer for review (optional)
-- **Confirm Order** — converts the draft to a live sale order and hands it to Bassani's team for fulfilment
-
-When you click Confirm Order, the portal checks current stock availability before committing. If all items are in stock, confirmation proceeds immediately. If some items are not available:
-
-- A **stock check modal** shows which items will ship now and which will be backordered
-- You can choose to confirm with a backorder or cancel and wait
-- If you confirm, Bassani will ship what is available immediately and fulfil the rest as soon as stock arrives
-- You will receive a separate email when the backorder is ready for collection
-
-> **If the stock check modal shows a red "Partial fulfilment blocked" notice:** The "Confirm with Backorder" button will not be available. This is a configuration issue on the Bassani side — one or more products on the order need a setting updated before a partial delivery can be invoiced correctly. Contact Bassani directly. Do not attempt to re-confirm until you have been notified that the issue is resolved.
+- **Confirm Order** — runs the same stock-check-then-confirm flow described above, whenever you're ready to commit it
 
 On your **My Quotes** detail view, when an order is partially fulfilled you can see the split: items that shipped are listed under "Shipping now" and backordered items under "Backordered" with quantities.
 
-> Once an order is confirmed, your customer receives a pro-forma invoice by email showing the 50% deposit due. Bassani's finance team registers that deposit once it's paid — only then does the order move onto the packing board for fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
+> Once an order is confirmed (whether via Place Order or a later Confirm Order), your customer receives a pro-forma invoice by email showing the 50% deposit due. Bassani's finance team registers that deposit once it's paid — only then does the order move onto the packing board for fulfilment. You cannot edit or cancel after confirmation — contact Bassani directly if changes are needed at that stage.
 
 ### Recurring Orders
 
-If a customer orders on a regular schedule, you can set up a recurring order from a ticket that already has a confirmed order (Merveille can also do this from her side for a direct-inquiry customer). Two days before each repeat date, the portal emails the customer directly — not you — a link to review and accept or decline that occurrence. Accepting confirms the order automatically; Bassani finance still needs to register the deposit before it moves into fulfilment, same as any other order. If the customer doesn't respond, that occurrence is simply skipped and the schedule continues from the next date — nothing further is required from you.
+If a customer orders on a regular schedule, you can set it up two ways: tick **Make this a recurring order** in the cart before you click Place Order or Save as Draft (2026-08-21 — set it up in the same step as the order itself, no separate trip needed), or set it up afterwards from a ticket that already has an order on it (Merveille can also do this from her side for a direct-inquiry customer). Either way, you choose how often it repeats (weekly, every two weeks, or monthly) and optionally when it should stop. Two days before each repeat date, the portal emails the customer directly — not you — a link to review and accept or decline that occurrence. Accepting confirms the order automatically; Bassani finance still needs to register the deposit before it moves into fulfilment, same as any other order. If the customer doesn't respond, that occurrence is simply skipped and the schedule continues from the next date — nothing further is required from you.
 
 ### Viewing Your Commissions
 
@@ -2085,12 +2087,21 @@ A customer's portal is deliberately simple — four items in the sidebar:
 
 If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person, **including orders Bassani staff place on the customer's behalf** — a customer's My Orders list is never limited to only what they personally placed. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
 
+### Placing an order
+
+After adding products to the cart, a customer has two options:
+
+- **Place Order** — submits and confirms the order in one step. The portal checks stock first: if everything is in stock, it confirms right away; if something isn't, a summary shows what ships now versus what's backordered, with a button to confirm anyway or hold off. If the account is over its credit limit, the customer is told to contact Bassani directly — there's no self-service override.
+- **Save as Draft** — creates the order without confirming it, for when the customer isn't ready to commit yet. A saved draft appears in My Orders with its own **Confirm Order** button for whenever they're ready.
+
+Either way, the order exists the moment either button is clicked — cancelling out of the stock or credit check just leaves it as a draft rather than losing it.
+
 ### Other things a customer can do
 
 - **Order items that are out of stock.** The catalogue only ever shows "In Stock" or "Out of Stock" — never an exact quantity. An out-of-stock item can still be added to the order; it ships as a backorder once restocked, and the cart shows a note explaining that.
 - **Choose a delivery address.** If the customer's account has more than one saved address, a "Deliver To" dropdown appears in the cart, defaulting to their main registered address.
 - **Reorder.** A "Reorder" button on any past order's page fills a fresh cart with the same items, at current prices, ready to review and submit again — quicker than rebuilding a large order from scratch.
-- **Set an order to repeat automatically.** A "Make Recurring" button on any confirmed order sets it up to repeat weekly, every two weeks, or monthly — the same feature a Sales Agent already has, just reachable from the customer's own order page instead of the internal ticket screen.
+- **Set an order to repeat automatically.** Tick "Make this a recurring order" in the cart before placing or saving the order to set it up in the same step, or use the "Make Recurring" button on any existing order's page afterwards — both set it up to repeat weekly, every two weeks, or monthly, the same feature a Sales Agent already has.
 - **Clear the cart.** A "Clear" link next to the order summary empties it in one step, with a confirmation prompt first since it can't be undone.
 - **Order comfortably from a phone.** On a phone or narrow tablet, the catalogue filters tuck behind a "Filters" button and the order summary becomes a slim bar pinned to the bottom of the screen showing the item count and total — tap it to review the full order, change quantities, or submit. This is the same cart as on a laptop, just laid out to fit a smaller screen; nothing about placing an order works differently.
 

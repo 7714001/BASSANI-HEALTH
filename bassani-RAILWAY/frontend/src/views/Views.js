@@ -6,7 +6,7 @@ import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle, ShoppingCart, SlidersHorizontal } from "lucide-react";
+import { Plus, Edit2, Archive, Trash2, ChevronDown, Loader2, PackageSearch, History, FileText, Download, Percent, Layers, Link2, Tag, Printer, AlertTriangle, Truck, CheckCircle2, XCircle, ShoppingCart, SlidersHorizontal, Repeat } from "lucide-react";
 import OrderView from "./OrderView";
 import GS1LabelModal from "../components/GS1LabelModal";
 import BarcodeExportModal from "../components/BarcodeExportModal";
@@ -938,6 +938,37 @@ export function Orders() {
   const [cartAddresses,         setCartAddresses        ] = useState([]);
   const [cartShippingAddressId, setCartShippingAddressId] = useState("");
 
+  // Place Order vs Save as Draft (2026-08-21) — previously "Place Order" only
+  // ever created a draft Odoo quotation; confirming it was a separate step
+  // buried on the order's own detail page, easy to miss entirely. Now Place
+  // Order runs the same stock-check-review-then-confirm flow the detail page
+  // already had, chained straight after creation; Save as Draft keeps the
+  // old create-only behaviour for anyone not ready to commit yet. Applies to
+  // both reseller and customer — a reseller's order used to sit at ticket
+  // status "quote" for Bassani staff to review before confirming, but the
+  // stock-check/credit-check the portal already runs makes that manual
+  // staff gatekeeping step redundant (confirmed with the product owner).
+  const [cartConfirmOrderId,   setCartConfirmOrderId  ] = useState(null);
+  const [cartStockCheckModal,  setCartStockCheckModal ] = useState(false);
+  const [cartStockCheckData,   setCartStockCheckData  ] = useState(null);
+  // Reseller/staff get a "Confirm Anyway" override on a credit-limit block
+  // (matches SalesTickets.js's existing confirmOrder pattern) — a customer
+  // does not, and is told to contact Bassani instead (Phase 25 convention).
+  const [cartCreditOverrideMsg, setCartCreditOverrideMsg] = useState(null);
+
+  // "Make this a recurring order" built into checkout (2026-08-21) — same
+  // fields RecurringOrderSetupModal.js collects, fired right after order
+  // creation using the ticket_id create_order now returns, instead of
+  // requiring a separate trip to the order's Passport page afterward.
+  const [cartMakeRecurring,    setCartMakeRecurring    ] = useState(false);
+  const [cartRecurCadence,     setCartRecurCadence     ] = useState("weekly");
+  const [cartRecurWeekday,     setCartRecurWeekday     ] = useState("0");
+  const [cartRecurDayOfMonth,  setCartRecurDayOfMonth  ] = useState("1");
+  const [cartRecurHasEnd,      setCartRecurHasEnd      ] = useState(false);
+  const [cartRecurEndDate,     setCartRecurEndDate     ] = useState("");
+  const [cartRecurHasMax,      setCartRecurHasMax      ] = useState(false);
+  const [cartRecurMaxOcc,      setCartRecurMaxOcc      ] = useState("");
+
   // Pages past GET /api/products/'s 200-per-request cap via fetchAllProducts
   // (2026-08-21 fix — previously a bare capped api.get() call, which meant
   // any "All categories" browse (or a single large category) silently
@@ -1086,6 +1117,7 @@ export function Orders() {
   const doClearCart = () => {
     setCart([]);
     setCartNote("");
+    setCartMakeRecurring(false);
     if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
   };
 
@@ -1288,12 +1320,71 @@ export function Orders() {
     </div>
   );
 
-  const submitCart = async () => {
+  // Shared cleanup once the cart's job is fully done — order exists (either
+  // as a draft or confirmed), any recurring schedule attempt has already run.
+  const finishCartSubmit = () => {
+    setCartSubmitting(false);
+    setCartSheetOpen(false);
+    setCartMakeRecurring(false);
+    if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
+    if (isReseller) { navigate("/tickets/sales"); return; }
+    setView("list");
+    load();
+  };
+
+  // Stock-check-then-confirm chain (2026-08-21) — reuses the exact endpoints
+  // the standalone order-detail "Confirm Order" action already calls
+  // (GET stock-check, PUT confirm), just triggered immediately after
+  // creation instead of requiring a separate later visit to the order's own
+  // page. The order already exists in Odoo as a draft the moment this runs,
+  // so cancelling out of either modal below still leaves a valid draft
+  // behind — never a lost order, just one left unconfirmed.
+  const runCartConfirmChain = async (orderId) => {
+    try {
+      const { data } = await api.get(`/api/orders/${orderId}/stock-check`);
+      setCartStockCheckData(data);
+      setCartStockCheckModal(true);
+      setCartSubmitting(false);
+    } catch {
+      await finalizeCartConfirm(orderId, false);
+    }
+  };
+
+  const finalizeCartConfirm = async (orderId, overrideCredit) => {
+    setCartSubmitting("confirm");
+    try {
+      await api.put(`/api/orders/${orderId}/confirm`, null, overrideCredit ? { params: { override_credit: true } } : undefined);
+      toast.success("Order confirmed. You'll receive an email shortly with your 50% deposit invoice.");
+      setCartStockCheckModal(false);
+      setCartStockCheckData(null);
+      setCartConfirmOrderId(null);
+      finishCartSubmit();
+    } catch (e) {
+      if (e.response?.status === 402) {
+        setCartStockCheckModal(false);
+        if (isReseller) {
+          setCartSubmitting(false);
+          setCartCreditOverrideMsg(e.response.data?.detail || "This order is over the customer's credit limit.");
+        } else {
+          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
+          toast("Your order was saved as a draft — you can confirm it once this is resolved.", { duration: 8000 });
+          finishCartSubmit();
+        }
+      } else {
+        toast.error(e.response?.data?.detail || "Failed to confirm order");
+        setCartSubmitting(false);
+      }
+    }
+  };
+
+  const submitCart = async (confirmNow = false) => {
     if (cart.length === 0) return toast.error("Add at least one product");
     if (!cartSelectedCust) return toast.error("Select a customer first");
-    setCartSubmitting(true);
+    setCartSubmitting(confirmNow ? "confirm" : "draft");
 
-    // Edit-quote mode: update existing draft order lines via the ticket endpoint
+    // Edit-quote mode: update existing draft order lines via the ticket endpoint —
+    // always a plain save, no Place Order / confirm split (the ticket already
+    // exists; confirming happens from its own detail page as before).
     if (editQuote) {
       try {
         await api.put(`/api/tickets/${editQuote.ticketId}/update-order`, {
@@ -1332,10 +1423,7 @@ export function Orders() {
         note: cartNote,
         shipping_address_id: cartShippingAddressId ? parseInt(cartShippingAddressId, 10) : null,
       });
-      const successMsg = isReseller ? "Quote created — view and manage it in My Quotes"
-        : isCustomer ? "Order placed — you can track its progress in My Orders"
-        : "Order placed — it's now in the Sales queue for processing";
-      toast.success(successMsg);
+      const odooOrderId = data.odoo_order_id;
       if (data.credit_warning) {
         toast(`⚠️ ${cartSelectedCust.name} is over their credit limit by ${fmtR(data.credit_warning.shortfall)} — this order will need an admin override to confirm.`,
           { duration: 10000 });
@@ -1343,14 +1431,38 @@ export function Orders() {
       if (data.stock_warning) {
         toast(`⚠️ ${data.stock_warning}`, { duration: 10000 });
       }
-      if (cartStorageKey) { try { localStorage.removeItem(cartStorageKey); } catch { /* ignore */ } }
-      setCartSheetOpen(false);
-      if (isReseller) { navigate("/tickets/sales"); return; }
-      setView("list");
-      load();
+
+      // Built-in-checkout recurring setup (2026-08-21) — fires regardless of
+      // Place Order vs Save as Draft, since the recurring engine re-fetches
+      // its own pricing/creates its own ticket at each occurrence; today's
+      // confirm state has no bearing on it. Non-fatal — the order itself
+      // already exists either way, so a failure here doesn't undo it.
+      if (cartMakeRecurring && data.ticket_id) {
+        try {
+          const body = { ticket_id: data.ticket_id, cadence: cartRecurCadence };
+          if (cartRecurCadence === "monthly") body.day_of_month = parseInt(cartRecurDayOfMonth, 10);
+          else body.weekday = parseInt(cartRecurWeekday, 10);
+          if (cartRecurHasEnd && cartRecurEndDate) body.end_date = cartRecurEndDate;
+          if (cartRecurHasMax && cartRecurMaxOcc) body.max_occurrences = parseInt(cartRecurMaxOcc, 10);
+          const rr = await api.post("/api/recurring-orders", body);
+          toast.success(`Recurring order set up — next occurrence notice on ${new Date(rr.data.next_run_date).toLocaleDateString("en-ZA")}`);
+        } catch (e) {
+          toast.error(e.response?.data?.detail || "Order placed, but the recurring schedule couldn't be set up — try again from the order's page.", { duration: 8000 });
+        }
+      }
+
+      if (!confirmNow) {
+        const successMsg = isReseller ? "Quote saved as a draft — view and manage it in My Quotes"
+          : "Order saved as a draft — confirm it any time from My Orders";
+        toast.success(successMsg);
+        finishCartSubmit();
+        return;
+      }
+
+      setCartConfirmOrderId(odooOrderId);
+      await runCartConfirmChain(odooOrderId);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to place order");
-    } finally {
       setCartSubmitting(false);
     }
   };
@@ -1815,16 +1927,84 @@ export function Orders() {
               </div>
             </div>
           )}
+          {/* Built into checkout (2026-08-21) — previously only reachable
+              afterwards from Order Passport. Fires regardless of Save as
+              Draft vs Place Order below; the recurring engine re-fetches its
+              own pricing and creates its own ticket at each occurrence, so
+              today's confirm state has no bearing on it. */}
+          {!editQuote && cart.length > 0 && (
+            <div className="border border-gray-100 rounded-xl p-3 bg-gray-50/60">
+              <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                <input type="checkbox" checked={cartMakeRecurring} onChange={e => setCartMakeRecurring(e.target.checked)} className="accent-bassani-600" />
+                <Repeat size={13} className="text-bassani-500 shrink-0" />
+                Make this a recurring order
+              </label>
+              {cartMakeRecurring && (
+                <div className="mt-3 space-y-2.5">
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Repeats</label>
+                    <Select value={cartRecurCadence} onChange={e => setCartRecurCadence(e.target.value)}>
+                      <option value="weekly">Weekly</option>
+                      <option value="biweekly">Every 2 weeks</option>
+                      <option value="monthly">Monthly</option>
+                    </Select>
+                  </div>
+                  {cartRecurCadence !== "monthly" ? (
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">On</label>
+                      <Select value={cartRecurWeekday} onChange={e => setCartRecurWeekday(e.target.value)}>
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Day of month</label>
+                      <Input type="number" min="1" max="28" value={cartRecurDayOfMonth}
+                        onChange={e => setCartRecurDayOfMonth(e.target.value)} placeholder="1-28" />
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input type="checkbox" checked={cartRecurHasEnd} onChange={e => setCartRecurHasEnd(e.target.checked)} className="accent-bassani-600" />
+                      Stop after a specific date
+                    </label>
+                    {cartRecurHasEnd && <Input type="date" value={cartRecurEndDate} onChange={e => setCartRecurEndDate(e.target.value)} />}
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input type="checkbox" checked={cartRecurHasMax} onChange={e => setCartRecurHasMax(e.target.checked)} className="accent-bassani-600" />
+                      Stop after a number of occurrences
+                    </label>
+                    {cartRecurHasMax && <Input type="number" min="1" value={cartRecurMaxOcc}
+                      onChange={e => setCartRecurMaxOcc(e.target.value)} placeholder="e.g. 12" />}
+                  </div>
+                  <p className="text-[11px] text-gray-400">You'll be emailed a review link 2 days before each occurrence.</p>
+                </div>
+              )}
+            </div>
+          )}
           <Textarea value={cartNote} onChange={e => setCartNote(e.target.value)} rows={2} placeholder="Delivery notes or special instructions…" />
-          <div className="flex gap-2">
-            <BtnSecondary onClick={() => {
-              if (editQuote) { setEditQuote(null); navigate("/tickets/sales"); }
-              else setView("list");
-            }} className="flex-1">Cancel</BtnSecondary>
-            <BtnPrimary onClick={submitCart} loading={cartSubmitting} disabled={cartSubmitting || cart.length === 0} className="flex-1">
-              {cartSubmitting ? (editQuote ? "Saving…" : "Placing…") : (editQuote ? "Save Quote" : "Place Order")}
-            </BtnPrimary>
-          </div>
+          {editQuote ? (
+            <div className="flex gap-2">
+              <BtnSecondary onClick={() => { setEditQuote(null); navigate("/tickets/sales"); }} className="flex-1">Cancel</BtnSecondary>
+              <BtnPrimary onClick={() => submitCart(false)} loading={cartSubmitting === "draft"} disabled={!!cartSubmitting || cart.length === 0} className="flex-1">
+                {cartSubmitting === "draft" ? "Saving…" : "Save Quote"}
+              </BtnPrimary>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <BtnSecondary onClick={() => submitCart(false)} loading={cartSubmitting === "draft"} disabled={!!cartSubmitting || cart.length === 0} className="flex-1">
+                {cartSubmitting === "draft" ? "Saving…" : "Save as Draft"}
+              </BtnSecondary>
+              <BtnPrimary onClick={() => submitCart(true)} loading={cartSubmitting === "confirm"} disabled={!!cartSubmitting || cart.length === 0} className="flex-1">
+                {cartSubmitting === "confirm" ? "Placing…" : "Place Order"}
+              </BtnPrimary>
+            </div>
+          )}
         </div>
       </>
     );
@@ -1958,19 +2138,30 @@ export function Orders() {
                 see the right panel below) plus safe-area-inset-bottom on
                 notched phones, so the last row of products is never hidden
                 behind it; not needed once the sidebar cart takes over at lg. */}
-            <div className="flex-1 overflow-y-auto px-6 pb-32 lg:pb-6">
+            {/* No horizontal padding here (2026-08-21) — the top-level category
+                heading below needs to bleed full-width, edge to edge, with its
+                own internal px-6 for the text. Everything else (sub-headings,
+                product grids, loading/empty states) gets its own px-6 wrapper
+                instead, so it reads as indented beneath the full-width banner. */}
+            <div className="flex-1 overflow-y-auto pb-32 lg:pb-6">
             {/* No top padding when a sticky heading is present (2026-08-21 fix) —
                 otherwise the heading sat 24px down from the top on initial load,
                 with plain white space above it, then abruptly snapped flush the
                 moment you scrolled and it became stuck. It should look docked
                 immediately, not just after scrolling starts. Loading/empty/flat
                 views (no sticky heading) keep the normal breathing room. */}
-            <div className={(cartIsGroupedView || cartIsSubGroupedView) ? "" : "pt-6"}>
-              {cartProdsLoading && <LoadingState />}
-              {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <EmptyState />}
+            <div className={cartIsGroupedView || cartIsSubGroupedView ? "" : "pt-6 px-6"}>
+              {/* This branch's outer wrapper has no padding of its own (a
+                  full-width heading may render below it), so Loading/Empty
+                  need their own px-6 here specifically — not needed in the
+                  flat-view branch further down, which inherits padding from
+                  the wrapper above since it never has a full-width heading. */}
+              {cartProdsLoading && (cartIsGroupedView || cartIsSubGroupedView) && <div className="px-6"><LoadingState /></div>}
+              {cartProdsLoading && !cartIsGroupedView && !cartIsSubGroupedView && <LoadingState />}
+              {!cartProdsLoading && cartIsGroupedView && cartGroupedProducts.length === 0 && <div className="px-6"><EmptyState /></div>}
               {!cartProdsLoading && cartIsSubGroupedView
                 && cartSelectedCategoryGroup.ownProducts.length === 0
-                && cartSelectedCategoryGroup.children.length === 0 && <EmptyState />}
+                && cartSelectedCategoryGroup.children.length === 0 && <div className="px-6"><EmptyState /></div>}
               {!cartProdsLoading && !cartIsGroupedView && !cartIsSubGroupedView && cartFilteredProducts.length === 0 && <EmptyState />}
               {!cartProdsLoading && cartIsGroupedView && (
                 <div className="space-y-6">
@@ -1987,21 +2178,26 @@ export function Orders() {
                             product grid scrolling underneath it. Fixed h-11 height
                             (rather than organic content height) so the Brand/Grade
                             sub-heading below can dock flush under it at an exact,
-                            non-guessed top-11 offset — see renderGroupBody. */}
+                            non-guessed top-11 offset — see renderGroupBody. Spans the
+                            full scroll-container width, edge to edge (its own px-6
+                            for the text) — sub-headings and product cards below stay
+                            inset in their own px-6 wrapper, so the banner reads as a
+                            deliberate full-width section break, not just another
+                            indented row. */}
                         <button
                           onClick={() => setCartCollapsedGroups(prev => {
                             const next = new Set(prev);
                             if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
                             return next;
                           })}
-                          className="w-full flex items-center gap-2.5 h-11 mb-3 sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm text-left"
+                          className="w-full flex items-center gap-2.5 h-11 mb-3 px-6 sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm text-left"
                         >
                           <ChevronDown size={16} className={`text-bassani-600 transition-transform shrink-0 ${collapsed ? "-rotate-90" : ""}`} />
                           <h3 className="text-base font-bold text-gray-900 tracking-tight">
                             {group.name} <span className="text-gray-400 font-medium text-sm">({group.ownProducts.length + group.children.reduce((s, c) => s + c.products.length, 0)})</span>
                           </h3>
                         </button>
-                        {!collapsed && renderGroupBody(group, "top-11")}
+                        {!collapsed && <div className="px-6">{renderGroupBody(group, "top-11")}</div>}
                       </div>
                     );
                   })}
@@ -2010,7 +2206,10 @@ export function Orders() {
               {/* A single top-level category is selected via the dropdown — still
                   split by Brand/Grade if it has children, just without repeating
                   the category name as a heading (the dropdown already shows it). */}
-              {!cartProdsLoading && cartIsSubGroupedView && renderGroupBody(cartSelectedCategoryGroup)}
+              {!cartProdsLoading && cartIsSubGroupedView && <div className="px-6">{renderGroupBody(cartSelectedCategoryGroup)}</div>}
+              {/* No extra px-6 here — the flat/ungrouped view's own wrapper div
+                  above already carries "pt-6 px-6" (it has no full-width
+                  heading to bleed past, unlike the grouped view). */}
               {!cartProdsLoading && !cartIsGroupedView && !cartIsSubGroupedView && (
                 <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
                   {cartFilteredProducts.map(p => renderCartProductCard(p))}
@@ -2051,6 +2250,109 @@ export function Orders() {
             {cartPanel}
           </div>
         </div>
+      )}
+      {/* Place Order's stock-check review step (2026-08-21) — same content/logic
+          as the standalone order-detail "Confirm Order" modal, just triggered
+          immediately after creation. The order already exists as a draft by
+          the time this shows, so Cancel here still leaves a valid draft
+          behind rather than losing anything. */}
+      {cartStockCheckModal && cartStockCheckData && (
+        <Modal title="Confirm Order" onClose={() => { setCartStockCheckModal(false); setCartStockCheckData(null); toast("Order saved as a draft — you can confirm it any time from My Orders.", { duration: 6000 }); finishCartSubmit(); }}>
+          {cartStockCheckData.is_partial ? (
+            <>
+              {cartStockCheckData.invoice_policy_block && (
+                <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
+                  <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
+                    <p className="text-xs text-red-700 mt-1">
+                      This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
+                <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3 mb-4">
+                {cartStockCheckData.lines.filter(l => !l.will_backorder).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Ships now</p>
+                    <div className="space-y-1">
+                      {cartStockCheckData.lines.filter(l => !l.will_backorder).map((l, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs bg-green-50 rounded-lg px-3 py-1.5">
+                          <span className="text-gray-700">{l.name}</span>
+                          <span className="font-medium text-green-700">{l.qty_available} units</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {cartStockCheckData.lines.filter(l => l.will_backorder).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Backordered</p>
+                    <div className="space-y-1">
+                      {cartStockCheckData.lines.filter(l => l.will_backorder).map((l, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs bg-amber-50 rounded-lg px-3 py-1.5">
+                          <span className="text-gray-700">{l.name}</span>
+                          <span className="font-medium text-amber-700">{l.qty_available} of {l.qty_ordered} in stock</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <BtnSecondary className="flex-1 justify-center" onClick={() => { setCartStockCheckModal(false); setCartStockCheckData(null); toast("Order saved as a draft — you can confirm it any time from My Orders.", { duration: 6000 }); finishCartSubmit(); }}>
+                  Save as Draft Instead
+                </BtnSecondary>
+                {!cartStockCheckData.invoice_policy_block && (
+                  <BtnPrimary className="flex-1 justify-center" loading={cartSubmitting === "confirm"} onClick={() => finalizeCartConfirm(cartConfirmOrderId, false)}>
+                    Confirm — Create Backorder
+                  </BtnPrimary>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
+                <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-green-800">All items are in stock. This order will be fulfilled in full.</p>
+              </div>
+              <div className="flex gap-2">
+                <BtnSecondary className="flex-1 justify-center" onClick={() => { setCartStockCheckModal(false); setCartStockCheckData(null); toast("Order saved as a draft — you can confirm it any time from My Orders.", { duration: 6000 }); finishCartSubmit(); }}>
+                  Save as Draft Instead
+                </BtnSecondary>
+                <BtnPrimary className="flex-1 justify-center" loading={cartSubmitting === "confirm"} onClick={() => finalizeCartConfirm(cartConfirmOrderId, false)}>
+                  Confirm Order
+                </BtnPrimary>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+      {/* Reseller/staff credit-limit override (2026-08-21) — mirrors
+          SalesTickets.js's confirmOrder "Confirm Anyway" pattern. A customer
+          never sees this (no self-override, told to contact Bassani instead —
+          handled inside finalizeCartConfirm). */}
+      {cartCreditOverrideMsg && (
+        <Modal title="Credit Limit Exceeded" onClose={() => { setCartCreditOverrideMsg(null); toast("Order saved as a draft — you can confirm it any time from My Quotes.", { duration: 6000 }); finishCartSubmit(); }}>
+          <p className="text-sm text-gray-600 mb-4">{cartCreditOverrideMsg}</p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => { setCartCreditOverrideMsg(null); toast("Order saved as a draft — you can confirm it any time from My Quotes.", { duration: 6000 }); finishCartSubmit(); }}>
+              Save as Draft Instead
+            </BtnSecondary>
+            <BtnPrimary onClick={() => { const oid = cartConfirmOrderId; setCartCreditOverrideMsg(null); finalizeCartConfirm(oid, true); }}>
+              Confirm Anyway
+            </BtnPrimary>
+          </div>
+        </Modal>
       )}
       {cartFilterSheetOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-black/40 flex items-end" onClick={e => e.target === e.currentTarget && setCartFilterSheetOpen(false)}>
