@@ -220,6 +220,14 @@ def _app_card(app: dict, stage: str) -> dict:
         "source":           app.get("source") or "portal",
         "assigned_name":    (app.get("assigned_to") or {}).get("name"),
         "stage":            stage,
+        # True only for the 8.55 retry case: approval succeeded but the
+        # welcome pack send failed. Both this and a normal not-yet-approved
+        # application land in the same "ready_to_finish" board column
+        # (2026-08-22, merged per the product owner's request now that
+        # approve + send-pack is one button in the normal case) — this flag
+        # is how the card still surfaces that it's a different, already-
+        # actioned-once situation rather than an untouched queue item.
+        "needs_retry":      stage == "welcome_pack_pending",
         "clock_start":      _iso(clock),
         "deadline_hours":   deadline,
         "hours_elapsed":    round(elapsed, 2),
@@ -239,9 +247,18 @@ async def validate_token(token: str = Query("")):
 # ── Public: full board data ───────────────────────────────────────────────────
 
 _COLUMN_KEYS = [
-    "pending_review", "awaiting_docs", "docs_generated", "awaiting_signature",
-    "countersigning", "ready_to_approve", "welcome_pack_pending",
+    "pending_review", "docs_generated", "awaiting_signature",
+    "countersigning", "ready_to_finish",
 ]
+# "awaiting_docs" is a real stage (_derive_stage() below still returns it,
+# and _DEADLINES still has an entry for it) but is deliberately not one of
+# the board's columns (2026-08-22, confirmed with the product owner): it
+# only applies to the reseller-inbox-initiated onboarding path, which is not
+# part of the live process (customer self-service via /apply only) — an
+# application in this stage is simply excluded from the board entirely,
+# same as a rejected one, rather than showing a column that would always
+# read empty. If that path is ever used again, kept in the data model but
+# silently invisible here rather than cluttering the display.
 
 
 @router.get("/data")
@@ -272,6 +289,8 @@ async def get_onboarding_monitor_data(token: str = Query("")):
         card = _app_card(app, stage)
         if stage in ("needs_countersigning", "countersigning_in_progress"):
             columns["countersigning"].append(card)
+        elif stage in ("ready_to_approve", "welcome_pack_pending"):
+            columns["ready_to_finish"].append(card)
         elif stage in columns:
             columns[stage].append(card)
 
@@ -290,12 +309,11 @@ async def get_onboarding_monitor_data(token: str = Query("")):
             "awaiting_signing_authority": len(columns["countersigning"]),
             "completed_today":       completed_today,
             "pending_review":        len(columns["pending_review"]),
-            "awaiting_docs":         len(columns["awaiting_docs"]),
             "docs_generated":        len(columns["docs_generated"]),
             "awaiting_signature":    len(columns["awaiting_signature"]),
             "countersigning":        len(columns["countersigning"]),
-            "ready_to_approve":      len(columns["ready_to_approve"]),
-            "welcome_pack_pending":  len(columns["welcome_pack_pending"]),
+            "ready_to_finish":       len(columns["ready_to_finish"]),
+            "needs_retry":           sum(1 for c in columns["ready_to_finish"] if c["needs_retry"]),
             "oldest_hours":          round(oldest_hours, 1) if oldest_hours is not None else None,
         },
         "columns": columns,

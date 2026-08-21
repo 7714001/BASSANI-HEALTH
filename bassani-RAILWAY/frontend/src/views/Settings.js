@@ -6,8 +6,7 @@ import ConnectedMailboxes from "./ConnectedMailboxes";
 import DocumentTemplates from "./DocumentTemplates";
 import LabelPrinters from "./LabelPrinters";
 import GTINPool from "./GTINPool";
-import MonitorSettings from "./MonitorSettings";
-import OnboardingMonitorSettings from "./OnboardingMonitorSettings";
+import MonitorDisplaysSettings from "./MonitorDisplaysSettings";
 
 const TABS = [
   { key: "warehouses",       label: "Warehouses" },
@@ -16,13 +15,18 @@ const TABS = [
   { key: "doc-templates",    label: "Document Templates" },
   { key: "label-printers",   label: "Label Printers" },
   { key: "gtin-pool",        label: "GTIN Pool" },
-  { key: "monitor-display",  label: "Monitor Display" },
-  { key: "onboarding-monitor-display", label: "Onboarding Monitor Display" },
+  { key: "monitor-displays", label: "Monitor Displays" },
 ];
 
 export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const active = searchParams.get("tab") || "warehouses";
+  const rawTab = searchParams.get("tab") || "warehouses";
+  // Old per-monitor tab keys (pre-2026-08-22 consolidation) still redirect
+  // correctly rather than landing on a blank pane, in case a bookmark or a
+  // stale link out there still points at one of them.
+  const active = (rawTab === "monitor-display" || rawTab === "onboarding-monitor-display")
+    ? "monitor-displays"
+    : rawTab;
 
   const switchTab = (key) => setSearchParams({ tab: key }, { replace: true });
 
@@ -48,14 +52,13 @@ export default function Settings() {
         </div>
       </div>
 
-      {active === "warehouses"     && <Warehouses embedded />}
-      {active === "email-routing"  && <EmailSettings embedded />}
-      {active === "mailboxes"      && <ConnectedMailboxes embedded />}
-      {active === "doc-templates"  && <DocumentTemplates embedded />}
-      {active === "label-printers" && <LabelPrinters embedded />}
+      {active === "warehouses"       && <Warehouses embedded />}
+      {active === "email-routing"    && <EmailSettings embedded />}
+      {active === "mailboxes"        && <ConnectedMailboxes embedded />}
+      {active === "doc-templates"    && <DocumentTemplates embedded />}
+      {active === "label-printers"   && <LabelPrinters embedded />}
       {active === "gtin-pool"        && <GTINPool embedded />}
-      {active === "monitor-display"  && <MonitorSettings embedded />}
-      {active === "onboarding-monitor-display" && <OnboardingMonitorSettings embedded />}
+      {active === "monitor-displays" && <MonitorDisplaysSettings embedded />}
     </div>
   );
 }

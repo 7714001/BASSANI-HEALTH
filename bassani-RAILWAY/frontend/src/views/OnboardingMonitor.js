@@ -11,14 +11,25 @@ import api from "../api";
 
 const POLL_MS = 30_000;
 
+// "Ready to Finish" merges what were two separate columns (Ready to Approve /
+// Welcome Pack Pending) into one (2026-08-22) — now that approval and the
+// welcome pack send are a single button in the normal case (8.55), a card
+// sitting here is just "one click away from done" either way. A card that's
+// specifically the retry case (approved, but the pack send failed) still
+// gets its own RETRY badge on the card itself, so that distinct, more
+// urgent situation doesn't disappear into the general queue.
+// "Awaiting Docs" (reseller-inbox-initiated applications) is deliberately
+// not a column here (2026-08-22, confirmed with the product owner) — that
+// intake path isn't part of the live process, customer self-service via
+// /apply is the only way an application is created, so the column would
+// always read empty. The backend still tracks the underlying stage/data,
+// just excludes it from the board rather than showing a dead column.
 const COLUMNS = [
-  { key: "pending_review",       label: "Pending Review",       accent: "#6366f1" },
-  { key: "awaiting_docs",        label: "Awaiting Docs",        accent: "#eab308" },
-  { key: "docs_generated",       label: "Docs Generated",       accent: "#8b5cf6" },
-  { key: "awaiting_signature",   label: "Awaiting Signature",   accent: "#06b6d4" },
-  { key: "countersigning",       label: "Countersigning",       accent: "#14b8a6" },
-  { key: "ready_to_approve",     label: "Ready to Approve",     accent: "#22c55e" },
-  { key: "welcome_pack_pending", label: "Welcome Pack Pending", accent: "#f97316" },
+  { key: "pending_review",     label: "Pending Review",   accent: "#6366f1" },
+  { key: "docs_generated",     label: "Docs Generated",   accent: "#8b5cf6" },
+  { key: "awaiting_signature", label: "Awaiting Signature", accent: "#06b6d4" },
+  { key: "countersigning",     label: "Countersigning",   accent: "#14b8a6" },
+  { key: "ready_to_finish",    label: "Ready to Finish",  accent: "#22c55e" },
 ];
 
 const TIER = {
@@ -160,6 +171,7 @@ function ApplicationCard({ card, now }) {
           {card.company_name || "—"}
         </span>
         <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {card.needs_retry && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(249,115,22,0.25)", color: "#fdba74", animation: "pulse 2s ease-in-out infinite" }}>RETRY: WELCOME PACK</span>}
           {isReseller && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(20,184,166,0.2)", color: "#5eead4" }}>RESELLER</span>}
           {regInfo    && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${regInfo.color}22`, color: regInfo.color }}>{regInfo.label}</span>}
           {isInbox    && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(99,102,241,0.2)", color: "#a5b4fc" }}>INBOX</span>}
@@ -415,15 +427,16 @@ export default function OnboardingMonitor() {
           />
         </div>
 
-        {/* Row 2: Stage breakdown — one per Kanban column plus Oldest Active */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 10, marginBottom: 16 }}>
-          <KpiSmall label="Pending Review"       value={kpis.pending_review}       color="#6366f1" />
-          <KpiSmall label="Awaiting Docs"        value={kpis.awaiting_docs}        color={kpis.awaiting_docs > 0 ? "#eab308" : "#475569"} />
-          <KpiSmall label="Docs Generated"       value={kpis.docs_generated}       color="#8b5cf6" />
-          <KpiSmall label="Awaiting Signature"   value={kpis.awaiting_signature}   color="#06b6d4" />
-          <KpiSmall label="Countersigning"       value={kpis.countersigning}       color={kpis.countersigning > 0 ? "#f59e0b" : "#475569"} />
-          <KpiSmall label="Ready to Approve"     value={kpis.ready_to_approve}     color="#22c55e" />
-          <KpiSmall label="Welcome Pack Pending" value={kpis.welcome_pack_pending} color={kpis.welcome_pack_pending > 0 ? "#f97316" : "#475569"} />
+        {/* Row 2: Stage breakdown — one per Kanban column plus Oldest Active.
+            "Needs Retry" is a sub-count within Ready to Finish (the 8.55
+            welcome-pack-send failure case), not its own board column. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginBottom: 16 }}>
+          <KpiSmall label="Pending Review"     value={kpis.pending_review}     color="#6366f1" />
+          <KpiSmall label="Docs Generated"     value={kpis.docs_generated}     color="#8b5cf6" />
+          <KpiSmall label="Awaiting Signature" value={kpis.awaiting_signature} color="#06b6d4" />
+          <KpiSmall label="Countersigning"     value={kpis.countersigning}     color={kpis.countersigning > 0 ? "#f59e0b" : "#475569"} />
+          <KpiSmall label="Ready to Finish"    value={kpis.ready_to_finish}    color="#22c55e" />
+          <KpiSmall label="Needs Retry"        value={kpis.needs_retry}        color={kpis.needs_retry > 0 ? "#f97316" : "#475569"} />
           <KpiSmall
             label="Oldest Active"
             value={fmtHours(kpis.oldest_hours)}

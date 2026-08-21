@@ -1064,14 +1064,14 @@ The Operations Monitor is a live, read-only display designed to run on a dedicat
 
 ### Setting Up the Monitor Display
 
-1. Go to **Settings → Monitor Display**
+1. Go to **Settings → Monitor Displays**, and find the **Operations Monitor** card
 2. Click **Generate Display URL** (first time only)
 3. Click **Copy** to copy the full URL
 4. Open the URL in a browser on the display device and set it to full-screen (F11 on most browsers)
 
-The display refreshes automatically every 30 seconds.
+The display refreshes automatically every 30 seconds. Every monitor display shares this one Settings tab, each with its own independent URL and token (2026-08-22).
 
-**Rotating the token:** If the display URL is compromised or you want to revoke access to a specific device, click **Rotate token** in Settings → Monitor Display. The old URL stops working immediately. Copy the new URL and update all display devices.
+**Rotating the token:** If the display URL is compromised or you want to revoke access to a specific device, click **Rotate token** on the Operations Monitor card in Settings → Monitor Displays. The old URL stops working immediately. Copy the new URL and update all display devices.
 
 ### Reading the Monitor
 
@@ -1124,12 +1124,12 @@ A second live, read-only big-screen display (2026-08-21), same idea as the Opera
 
 ### Setting Up the Onboarding Monitor Display
 
-1. Go to **Settings → Onboarding Monitor Display**
+1. Go to **Settings → Monitor Displays**, and find the **Onboarding Monitor** card
 2. Click **Generate Display URL** (first time only)
 3. Click **Copy** to copy the full URL
 4. Open the URL in a browser on the display device and set it to full-screen (F11 on most browsers)
 
-The display refreshes automatically every 30 seconds. **Rotating the token:** click **Rotate token** in the same Settings tab — the old URL stops working immediately.
+The display refreshes automatically every 30 seconds. **Rotating the token:** click **Rotate token** on the same card — the old URL stops working immediately. Every monitor display (Operations, Onboarding, and any added later) now lives under this one Settings tab, each with its own independent URL and token.
 
 ### Reading the Monitor
 
@@ -1137,17 +1137,17 @@ The display refreshes automatically every 30 seconds. **Rotating the token:** cl
 
 | Column | What it shows |
 |---|---|
-| Pending Review | Just submitted, no documents generated yet |
-| Awaiting Docs | Waiting on the reseller or customer to submit required documents |
+| Pending Review | Just submitted via `/apply`, no documents generated yet |
 | Docs Generated | NDA/Store Agreement generated, not yet sent to the customer |
 | Awaiting Signature | Sent to the customer, waiting for them to sign |
 | Countersigning | Customer has signed; waiting on a Bassani signing authority to countersign one or both documents |
-| Ready to Approve | Fully countersigned, waiting on an admin to approve |
-| Welcome Pack Pending | Approved and the customer profile exists, but the welcome pack email hasn't gone out yet — this is a real "needs attention" state, not just a normal step, since it means something went wrong sending it |
+| Ready to Finish | Fully countersigned and one click away from being done — either waiting on an admin to click **Approve & Send Welcome Pack**, or (flagged with a pulsing **RETRY: WELCOME PACK** badge on the card) already approved but the welcome pack email specifically failed to send and needs the retry button clicked |
 
-An application only leaves the board entirely once it's **approved and the welcome pack has actually been sent** — approval alone isn't enough, which is exactly what the Welcome Pack Pending column exists to catch. A rejected application never appears on the board at all.
+Every application on this board arrives the same way: the customer signs up themselves via the `/apply` link (directly, or through a reseller's referral link). There is no other intake path in normal use.
 
-**KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each column plus Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy (aside from the 4-hour Pending Review deadline, which matches the existing stalled-application email alert) — let the team know if any of them feel wrong once you're using it day to day, they're easy to adjust.
+An application only leaves the board entirely once it's **approved and the welcome pack has actually been sent** — approval alone isn't enough. Since Approve and Send Welcome Pack are a single button in the normal case (see Onboarding Applications below), both "not yet approved" and "approved but the pack send failed" sit in the same Ready to Finish column — the RETRY badge is what tells you at a glance which cards are a genuine problem needing the retry action, versus a normal application just waiting its turn. A rejected application never appears on the board at all.
+
+**KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each of the 5 columns above, a separate **Needs Retry** count, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy (aside from the 4-hour Pending Review deadline, which matches the existing stalled-application email alert) — let the team know if any of them feel wrong once you're using it day to day, they're easy to adjust.
 
 Clicking any card opens that application's review page directly.
 
