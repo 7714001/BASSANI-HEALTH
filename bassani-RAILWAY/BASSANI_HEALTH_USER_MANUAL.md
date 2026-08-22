@@ -1089,6 +1089,7 @@ Row 2 — live pipeline breakdown:
 - **QA Pending** — packed orders awaiting QA sign-off.
 - **RP Pending** — QA-approved orders awaiting RP sign-off.
 - **Awaiting Collection** — invoice raised, customer has not yet collected.
+- **Backorders** — orders with at least one line still waiting on stock or production (2026-08-22). A red **BACKORDER** tag appears directly on any affected card, wherever it currently sits on the board — the order can otherwise look perfectly on track while part of it is actually stuck. For the manufacturing-floor detail behind a backorder (what's being produced, for which order), see the Manufacturing Monitor below.
 - **Oldest Active** — age of the oldest live order across all stages. Green = under 48h, orange = 48–72h, red = overdue.
 
 **Pipeline columns (left to right):**
@@ -1150,6 +1151,42 @@ An application only leaves the board entirely once it's **approved and the welco
 **KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each of the 5 columns above, a separate **Needs Retry** count, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy, aside from two real ones: the 4-hour Pending Review deadline, which matches the existing stalled-application email alert, and the 30-day Awaiting Signature deadline, which matches the actual expiry of the customer's signing link. Let the team know if any of the estimated ones feel wrong once you're using it day to day, they're easy to adjust.
 
 Clicking any card opens that application's review page directly.
+
+---
+
+## Manufacturing Monitor (TV Display)
+
+A third live, read-only big-screen display (2026-08-22), for the GACP manufacturing facility. It shows every Manufacturing Order Odoo has automatically created against a customer order that hasn't finished production yet — what to produce, how much is left, and which order/customer it's for — so the floor can prioritize its own queue without waiting for the 17:00 daily email or opening the portal's admin Backorders page.
+
+**No login is required.** Access is controlled by a secret URL token managed by the super admin, same as the other two monitors.
+
+### Setting Up the Manufacturing Monitor Display
+
+1. Go to **Settings → Monitor Displays**, and find the **Manufacturing Monitor** card
+2. Click **Generate Display URL** (first time only)
+3. Click **Copy** to copy the full URL
+4. Open the URL in a browser on the display device and set it to full-screen (F11 on most browsers)
+
+The display refreshes automatically every 30 seconds.
+
+### Reading the Monitor
+
+**Pipeline columns (left to right)** — these mirror Odoo's own Manufacturing Order stages directly:
+
+| Column | What it shows |
+|---|---|
+| Draft | Odoo has proposed the MO but it hasn't been confirmed yet |
+| Confirmed | Confirmed, not yet started |
+| In Progress | Currently being produced |
+| To Close | Nearly done, needs final confirmation to close out |
+
+A finished (Done) or cancelled MO drops off the board automatically — there's no "Completed Today" tile here, since a closed MO simply stops appearing rather than staying visible briefly the way the other two monitors show recent completions.
+
+**Each card shows:** the product being manufactured (the main heading — this board is about what to make, not who it's for), the MO reference, how many units are still remaining out of the total ordered, the sale order reference and customer name, a linked ticket reference if one exists, a live age badge, and a due date if Odoo has one planned. Clicking a card opens that order's Order Passport in a new tab.
+
+**KPI strip:** Overdue, At Risk, In Progress, and To Close across the top; a count for each of the 4 columns, total units still remaining across every open MO, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the other two monitors. **Deadlines shown are proposed first-pass estimates only** — there is no confirmed production SLA yet for how long each stage should take; let the team know once real usage shows what's actually urgent so these can be tuned.
+
+Only Manufacturing Orders tied to a customer sale order appear here — internal production-facility batch work (the separate Vault module used by Production/Compliance staff) never shows on this board.
 
 ---
 

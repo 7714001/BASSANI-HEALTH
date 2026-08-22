@@ -117,7 +117,7 @@ def _age_tier(elapsed: float, deadline: float) -> str:
     return "ok"
 
 
-def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None) -> dict:
+def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False) -> dict:
     clock   = entry.get("queued_at", datetime.now(timezone.utc))
     elapsed = _hours_elapsed(clock)
     return {
@@ -140,6 +140,13 @@ def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str |
         "packer_name":    entry.get("packer_name"),
         "assigned_name":  assigned_name,
         "warehouse_name": entry.get("warehouse_name"),
+        # True when a sibling packing_board entry for this same order_id is
+        # a still-waiting backorder child (is_backorder/waiting_stock, set
+        # in packing_board_routes.py around the backorder-split point) —
+        # 2026-08-22. Flags that this order LOOKS on-track here but part of
+        # it is actually stuck waiting on stock/production; see the
+        # Manufacturing Orders monitor for the production-floor detail.
+        "has_backorder":  has_backorder,
     }
 
 
@@ -182,6 +189,7 @@ def _ticket_card(ticket: dict) -> dict:
         "packer_name":    None,
         "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": None,
+        "has_backorder":  False,  # not reachable pre-packing-board-completion
     }
 
 
@@ -208,6 +216,7 @@ def _collection_card(ticket: dict, board: dict) -> dict:
         "packer_name":    None,
         "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": board.get("warehouse_name"),
+        "has_backorder":  False,  # not reachable pre-packing-board-completion
     }
 
 
@@ -236,6 +245,7 @@ def _board_ready_card(entry: dict, assigned_name: str | None = None) -> dict:
         "packer_name":    entry.get("packer_name") or entry.get("assigned_packer"),
         "assigned_name":  assigned_name,
         "warehouse_name": entry.get("warehouse_name"),
+        "has_backorder":  False,  # not reachable once an order is already ready for collection
     }
 
 
@@ -350,6 +360,21 @@ async def get_monitor_data(token: str = Query("")):
             if t.get("orders_ticket_ref")
         }
 
+    # Backorder signal (2026-08-22) — a still-waiting backorder child entry
+    # shares its order_id with the primary entry it split from
+    # (packing_board_routes.py sets "order_id": body.order_id on the child
+    # doc), so one batched query against the same order_ids already on this
+    # page finds every order whose primary card should carry the badge.
+    # Deliberately Mongo-only, no Odoo call, to preserve this file's
+    # existing Mongo-only design.
+    backorder_map: dict = {}
+    if board_order_ids:
+        bo_entries = await col("packing_board").find(
+            {"order_id": {"$in": board_order_ids}, "is_backorder": True, "waiting_stock": True},
+            {"order_id": 1, "_id": 0},
+        ).to_list(length=1000)
+        backorder_map = {e["order_id"]: True for e in bo_entries}
+
     # ── Build columns ─────────────────────────────────────────────────────────
     packing_col    = []
     qa_col         = []
@@ -359,13 +384,14 @@ async def get_monitor_data(token: str = Query("")):
         status    = entry.get("status", "")
         order_id  = entry.get("order_id", "")
         a_name    = ticket_assign_map.get(order_id)
+        has_bo    = backorder_map.get(order_id, False)
         if status in ("queued", "packing"):
-            packing_col.append(_board_card(entry, assigned_name=a_name))
+            packing_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
         elif status == "ready":
             if not entry.get("qa_approved_at"):
-                qa_col.append(_board_card(entry, assigned_name=a_name))
+                qa_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
             else:
-                rp_col.append(_board_card(entry, assigned_name=a_name))
+                rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
 
     quotes_col     = [_ticket_card(t) for t in open_quotes]
     deposit_col    = [_ticket_card(t) for t in awaiting_deposit_tickets]
@@ -400,6 +426,7 @@ async def get_monitor_data(token: str = Query("")):
             "qa_pending":          len(qa_col),
             "rp_pending":          len(rp_col),
             "awaiting_collection": len(collection_col),
+            "backorders":          len(backorder_map),
             "oldest_hours":        round(oldest_hours, 1) if oldest_hours is not None else None,
         },
         "columns": {

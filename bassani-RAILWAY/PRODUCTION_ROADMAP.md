@@ -33,7 +33,7 @@
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
-| 23 | Operations Monitors | 🟡 In Progress | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 concept, deferred |
+| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22 |
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 
@@ -4918,8 +4918,8 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 
 **Goal:** A growing family of live, read-only big-screen displays — one per team/pipeline — sharing the same architecture (no login, URL query-token, admin generate/rotate in Settings, 30s poll). Started with the order pipeline; exco liked it enough to ask for more, one per part of the business that benefits from an at-a-glance view instead of manually reviewing a list.  
 **Priority:** Medium  
-**Status:** 🟡 In Progress — 23.0/23.1 (order pipeline monitor) complete; 23.2 (onboarding pipeline monitor) complete 2026-08-21; 23.3 (Manufacturing Orders / Backorders monitor, GACP facility) deliberately deferred — concept stage, needs its own scoping pass  
-**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21
+**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), and 23.3 (Manufacturing Orders monitor, GACP facility) all shipped  
+**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22
 
 ### Context
 
@@ -5006,6 +5006,31 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] A fully complete application (approved + welcome pack sent) disappears from the board and counts in Completed Today
 - [x] A rejected application never appears
 - [x] Admin can generate, view, copy, and rotate the display URL from Settings → Monitor Displays → Onboarding Monitor, independently of the order monitor's own token
+
+### 23.3 — Manufacturing Orders Monitor — Complete 2026-08-22
+
+**Goal:** Bassani's policy change to allow ordering out-of-stock items (Odoo auto-creates a Manufacturing Order or a stock backorder per each product's routing config) left the GACP manufacturing facility with no dashboard telling them what to produce and for which order — only a daily 17:00 SAST email digest (`scheduler.py::run_mo_digest`). Raised directly by the product owner after seeing the onboarding monitor ship: "does the manufacturing facility need a similar dashboard... so manufacturing can prioritize orders?"
+
+**Scoping decision:** `run_mo_digest` (Manufacturing Orders, manufacturing floor) and `run_backorder_digest` (Mongo `packing_board` backorder entries, sales/warehouse) were already two deliberately separate daily digests serving two different audiences. This phase mirrors that same split rather than building one combined board — a dedicated MO-centric monitor for the manufacturing floor, plus a small, independent backorder signal added to the existing Order Monitor for the sales/packing audience who already watches that screen.
+
+- [x] `backend/routes/manufacturing_monitor_routes.py` — new router, third in the token-gated public-TV monitor family, same architecture as 23.0/23.1/23.2 (own token, admin generate/rotate, public validate + data, 30s poll, no WebSocket). The first monitor whose data lives only in Odoo (no Mongo mirror of `mrp.production`) — `GET /data` makes live Odoo calls every poll, the same class of deliberate exception `run_mo_digest` already is
+- [x] Domain identical to `run_mo_digest`'s (`state not in [done, cancel]`, `origin like "S0"`) so the board and the daily email never disagree about what counts as an open, sale-order-driven MO, and both correctly exclude the unrelated vault/manicuring-lab MOs (`services/vault_odoo.py`, no sale-order `origin`)
+- [x] Four Kanban columns keyed directly to Odoo's own `mrp.production` state machine (`draft`/`confirmed`/`progress`/`to_close`) — no derived stage needed, the state field IS the stage; these four values were already live-verified elsewhere in the codebase (label maps in `email_service.py`, `Backorders.js`, `OrderPassport.js`, `OrderView.js`, `SalesTickets.js`, `OrdersTickets.js`) before this phase, not a fresh assumption
+- [x] Cards resolve product, remaining quantity (`product_qty - qty_producing`), MO state, and the linked sale order + portal ticket (batch-resolved by `origin` name then `order_id`, same degrade-to-missing-enrichment pattern `order_routes.py`'s backorders endpoint already uses for the identical lookups) — clock source is `create_date` (a standard Odoo magic field, always populated)
+- [x] Deadlines (`draft` 24h / `confirmed` 48h / `progress` 72h / `to_close` 24h) explicitly flagged as proposed defaults, not confirmed GACP production SLA — no such data exists anywhere in this codebase yet
+- [x] No `completed_today` KPI — done MOs are excluded by the domain itself, so there's no completion signal to count
+- [x] `frontend/src/views/ManufacturingMonitor.js` — same dark-theme shell as the other two monitors; product name is the primary card label rather than customer name, inverting the other boards' customer-first layout, since this board answers "what to make." Cards click through to the Order Passport via `sale_order_id`, falling back to `/orders/backorders` if unresolved
+- [x] `MonitorDisplaysSettings.js` gains one new `MONITORS` array entry — no new tab or settings file, confirming the config-array design from 23.2's consolidation was worth building
+- [x] `backend/server.py` — router registered; `frontend/src/App.js` — public route `/manufacturing-monitor` added (no auth, token in URL)
+
+**Backorder signal on the existing Order Monitor (2026-08-22, delivered alongside 23.3):** `monitor_routes.py`'s board was otherwise entirely blind to stock/production status — an order could sit in Packing/QA/RP looking perfectly on-track while a line of it was actually a still-waiting backorder. Added a batched Mongo lookup (keyed on the `order_id`s already on the current `board_active` page — a backorder child entry shares its parent's `order_id`, set in `packing_board_routes.py` at the split point) that attaches `has_backorder: bool` to every packing-board-derived card, plus a `backorders` KPI reused from the same query result. Deliberately Mongo-only, no Odoo call added to this file — preserves its existing Mongo-only design; `OrderMonitor.js` shows a red BACKORDER tag on flagged cards and the new KPI in Row 2 (grid widened 7→8 columns).
+
+### Definition of Done
+- [x] `/manufacturing-monitor?token=...` loads without login and shows live Kanban columns + KPIs
+- [x] An MO tied to a customer sale order shows in the correct state column with product, remaining quantity, linked order/ticket, and age
+- [x] A vault-created MO (no sale-order origin) never appears on this board
+- [x] Admin can generate, view, copy, and rotate the display URL from Settings → Monitor Displays → Manufacturing Monitor, independently of the other two monitors' tokens
+- [x] An order with an active backorder sibling entry shows the BACKORDER tag and the KPI count on the existing Order Monitor; an order with none shows neither
 
 - [x] `monitor_routes.py` — new query for `status: "awaiting_deposit"` tickets, reusing `_ticket_card()` (added `"awaiting_deposit": OVERDUE_HOURS` to `_QUOTE_STATUS_DEADLINE` — treated as the 72h "confirmed order" deadline, not the softer 48h quote deadline, since the customer has already committed at this point)
 - [x] New `deposit` column (key `deposit`, gold accent `#eab308`) inserted between Quotes and Packing, matching pipeline order; included in the `all_active` roll-up so it automatically feeds the existing Overdue/At Risk Row-1 KPIs with no separate change needed there

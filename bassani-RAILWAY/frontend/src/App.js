@@ -61,6 +61,7 @@ import Backorders           from "./views/Backorders";
 import OrderPassport        from "./views/OrderPassport";
 import OrderMonitor         from "./views/OrderMonitor";
 import OnboardingMonitor    from "./views/OnboardingMonitor";
+import ManufacturingMonitor from "./views/ManufacturingMonitor";
 import BatchRegistry        from "./views/BatchRegistry";
 import VaultLogbook         from "./views/VaultLogbook";
 import S6Register           from "./views/S6Register";
@@ -330,6 +331,8 @@ export default function App() {
         <Route path="/monitor" element={<OrderMonitor />} />
         {/* Public: onboarding pipeline monitor (no auth, token in URL) */}
         <Route path="/onboarding-monitor" element={<OnboardingMonitor />} />
+        {/* Public: manufacturing orders monitor (no auth, token in URL) */}
+        <Route path="/manufacturing-monitor" element={<ManufacturingMonitor />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
