@@ -9,11 +9,11 @@
 // who need to look something up rather than glance at a screen.
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2, ClipboardEdit } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
 import { useAuth } from "../AuthContext";
-import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary, BtnPrimary, Modal, openMonitorDisplay } from "../components/UI";
+import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary, BtnPrimary, Modal, FormGroup, Input, openMonitorDisplay } from "../components/UI";
 import { MO_STATE_LABEL } from "./Backorders";
 
 const STATE_STYLE = {
@@ -34,6 +34,10 @@ function StatePill({ state }) {
 function fmtQty(n) {
   if (n === null || n === undefined) return "—";
   return Number(n).toLocaleString("en-ZA", { maximumFractionDigits: 2 });
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
 }
 
 function ageDays(createDate) {
@@ -97,6 +101,8 @@ export default function ManufacturingOrders() {
   const [soFilter,    setSoFilter   ] = useState(location.state?.soName || "");
   const [busyId,        setBusyId       ] = useState(null);   // mo_id currently mid-action
   const [completeTarget, setCompleteTarget] = useState(null); // mo pending Mark Complete confirmation
+  const [recordTarget,  setRecordTarget ] = useState(null);   // mo pending Record Production
+  const [recordQty,     setRecordQty    ] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +126,37 @@ export default function ManufacturingOrders() {
       setData(d => d.map(m => m.mo_id === mo.mo_id ? { ...m, state: "confirmed" } : m));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to confirm manufacturing order");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openRecord = (mo) => {
+    setRecordQty(String(mo.qty_producing || ""));
+    setRecordTarget(mo);
+  };
+
+  const doRecordProduction = async () => {
+    const mo  = recordTarget;
+    const qty = parseFloat(recordQty);
+    if (!Number.isFinite(qty) || qty <= (mo.qty_producing || 0)) {
+      toast.error(`Enter a quantity greater than what's already recorded (${fmtQty(mo.qty_producing)})`);
+      return;
+    }
+    if (qty > mo.qty_total) {
+      toast.error(`Cannot exceed the order quantity of ${fmtQty(mo.qty_total)}`);
+      return;
+    }
+    setRecordTarget(null);
+    setBusyId(mo.mo_id);
+    try {
+      const r = await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/record-production`, { qty_producing: qty });
+      toast.success(`${mo.mo_name} updated — ${MO_STATE_LABEL[r.data.state] || r.data.state}`);
+      setData(d => d.map(m => m.mo_id === mo.mo_id
+        ? { ...m, state: r.data.state, qty_producing: r.data.qty_producing, qty_remaining: round2(m.qty_total - r.data.qty_producing) }
+        : m));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to record production");
     } finally {
       setBusyId(null);
     }
@@ -298,14 +335,25 @@ export default function ManufacturingOrders() {
                       );
                     }
                     if (["confirmed", "progress", "to_close"].includes(m.state)) {
+                      const canRecord = m.qty_producing < m.qty_total;
                       return (
-                        <BtnPrimary
-                          onClick={e => { e.stopPropagation(); setCompleteTarget(m); }}
-                          loading={isBusy}
-                          disabled={isBusy}
-                        >
-                          <CheckCircle2 size={13} />Mark Complete
-                        </BtnPrimary>
+                        <div className="flex items-center gap-1.5">
+                          {canRecord && (
+                            <BtnSecondary
+                              onClick={e => { e.stopPropagation(); openRecord(m); }}
+                              disabled={isBusy}
+                            >
+                              <ClipboardEdit size={13} />Record Production
+                            </BtnSecondary>
+                          )}
+                          <BtnPrimary
+                            onClick={e => { e.stopPropagation(); setCompleteTarget(m); }}
+                            loading={isBusy}
+                            disabled={isBusy}
+                          >
+                            <CheckCircle2 size={13} />Mark Complete
+                          </BtnPrimary>
+                        </div>
                       );
                     }
                     return null;
@@ -328,6 +376,31 @@ export default function ManufacturingOrders() {
           <div className="flex justify-end gap-2 mt-5">
             <BtnSecondary onClick={() => setCompleteTarget(null)}>Cancel</BtnSecondary>
             <BtnPrimary onClick={doComplete}><CheckCircle2 size={14} />Mark Complete</BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {recordTarget && (
+        <Modal title="Record production" onClose={() => setRecordTarget(null)} width="max-w-md">
+          <p className="text-sm text-gray-600 mb-4">
+            How much of <span className="font-mono font-semibold">{recordTarget.mo_name}</span> ({recordTarget.product_name}) has actually been
+            produced so far? This updates Odoo's own record without finalising the order — Mark Complete is still a separate step once it's
+            fully produced.
+          </p>
+          <FormGroup label={`Quantity produced (out of ${fmtQty(recordTarget.qty_total)})`} required>
+            <Input
+              type="number"
+              min={recordTarget.qty_producing}
+              max={recordTarget.qty_total}
+              step="any"
+              value={recordQty}
+              onChange={e => setRecordQty(e.target.value)}
+              autoFocus
+            />
+          </FormGroup>
+          <div className="flex justify-end gap-2 mt-2">
+            <BtnSecondary onClick={() => setRecordTarget(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={doRecordProduction}><ClipboardEdit size={14} />Save</BtnPrimary>
           </div>
         </Modal>
       )}

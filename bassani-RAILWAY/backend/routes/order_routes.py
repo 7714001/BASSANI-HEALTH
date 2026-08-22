@@ -495,6 +495,58 @@ async def confirm_manufacturing_order(
     return {"mo_id": mo_id, "state": "confirmed"}
 
 
+class RecordProductionBody(BaseModel):
+    qty_producing: float
+
+
+@router.put("/manufacturing-orders/{mo_id}/record-production")
+async def record_manufacturing_order_production(
+    mo_id: int,
+    body: RecordProductionBody,
+    current_user: dict = Depends(require_permission("orders.manufacturing_manage")),
+):
+    """Records the real quantity produced so far, without finalising the MO —
+    the piece deliberately left out of the original lightweight-nudge design
+    (23.5), added once it surfaced that Confirm/Complete alone meant an MO
+    driven entirely through the portal skipped straight from confirmed to
+    done and never visibly rested in Odoo's own progress/to_close states, so
+    the Manufacturing Monitor's In Progress/To Close columns only ever
+    reflected work recorded directly in Odoo. state is Odoo's own computed
+    value off qty_producing vs product_qty — this endpoint doesn't set state
+    directly, the write is enough for Odoo to derive progress/to_close
+    itself, same as Odoo's own Manufacturing app would produce."""
+    odoo = get_odoo_client()
+    try:
+        mo = _assert_mo_is_order_linked(odoo, mo_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if mo["state"] not in ("confirmed", "progress", "to_close"):
+        raise HTTPException(status_code=400, detail=f"This manufacturing order is {mo['state']} — it must be confirmed before production can be recorded")
+
+    product_qty   = mo.get("product_qty") or 0
+    qty_producing = mo.get("qty_producing") or 0
+    new_qty       = body.qty_producing
+    if new_qty <= qty_producing:
+        raise HTTPException(status_code=400, detail=f"Enter a quantity greater than what's already recorded ({qty_producing})")
+    if new_qty > product_qty:
+        raise HTTPException(status_code=400, detail=f"Cannot exceed the order quantity of {product_qty}")
+
+    try:
+        odoo.write("mrp.production", [mo_id], {"qty_producing": new_qty})
+        new_state = odoo.read("mrp.production", [mo_id], fields=["state"])[0]["state"]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo could not record this quantity: {str(e)}")
+
+    await audit_log("mo.record_production", "manufacturing_order", str(mo_id), entity_label=mo["name"],
+                     user=current_user,
+                     before={"state": mo["state"], "qty_producing": qty_producing},
+                     after={"state": new_state, "qty_producing": new_qty})
+    return {"mo_id": mo_id, "state": new_state, "qty_producing": new_qty}
+
+
 @router.put("/manufacturing-orders/{mo_id}/complete")
 async def complete_manufacturing_order(
     mo_id: int,
