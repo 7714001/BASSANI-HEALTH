@@ -33,17 +33,26 @@ router = APIRouter(prefix="/api/onboarding-monitor", tags=["onboarding-monitor"]
 
 NO_ID = {"_id": 0}
 
-# Deadlines below are proposed defaults, not confirmed business policy — the
-# 4h PENDING_REVIEW figure is the one real exception, reused verbatim from
+# Deadlines below are proposed defaults, not confirmed business policy,
+# except two real ones: PENDING_REVIEW's 4h, reused verbatim from
 # scheduler.py::check_stale_applications's existing escalation threshold so
 # this column's "overdue" agrees with the escalation email that already
-# fires at that exact point. The rest are first-pass estimates, easy to tune
-# once real usage shows what's actually urgent.
+# fires at that exact point; and AWAITING_SIGNATURE's 30 days (720h,
+# 2026-08-22), which matches the actual signing-session token lifetime
+# (onboarding_routes.py's /generate-signing-docs sets
+# `expires_at = now + timedelta(days=30)` the moment the session is
+# generated) rather than an arbitrary staff-facing SLA — the customer
+# genuinely has up to 30 days before their link stops working, so the clock
+# for this column starts at signing_session_generated_at (see
+# _stage_clock() below), not signing_session_sent_at, to track that real
+# expiry exactly rather than approximate it from send time. The rest are
+# first-pass estimates, easy to tune once real usage shows what's actually
+# urgent.
 _DEADLINES = {
     "pending_review":              4,
     "awaiting_docs":                48,
     "docs_generated":               24,
-    "awaiting_signature":           72,
+    "awaiting_signature":           720,
     "needs_countersigning":         24,
     "countersigning_in_progress":   24,
     "ready_to_approve":             24,
@@ -184,7 +193,11 @@ def _stage_clock(app: dict, stage: str) -> datetime:
     if stage == "docs_generated":
         return app.get("signing_session_generated_at") or _clock_fallback(app)
     if stage == "awaiting_signature":
-        return app.get("signing_session_sent_at") or _clock_fallback(app)
+        # Anchored to generation, not send — the real 30-day token expiry
+        # (see the _DEADLINES comment above) is computed from
+        # signing_session_generated_at, so that's what the countdown must
+        # track even though the customer only sees the link once it's sent.
+        return app.get("signing_session_generated_at") or app.get("signing_session_sent_at") or _clock_fallback(app)
     if stage in ("needs_countersigning", "countersigning_in_progress"):
         documents = app.get("documents") or []
         signed_at = [

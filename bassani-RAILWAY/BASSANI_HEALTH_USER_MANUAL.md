@@ -1139,7 +1139,7 @@ The display refreshes automatically every 30 seconds. **Rotating the token:** cl
 |---|---|
 | Pending Review | Just submitted via `/apply`, no documents generated yet |
 | Docs Generated | NDA/Store Agreement generated, not yet sent to the customer |
-| Awaiting Signature | Sent to the customer, waiting for them to sign |
+| Awaiting Signature | Sent to the customer, waiting for them to sign. The signing link is valid for 30 days from when it was generated, so this column's countdown runs on that real 30-day window, not a shorter staff SLA |
 | Countersigning | Customer has signed; waiting on a Bassani signing authority to countersign one or both documents |
 | Ready to Finish | Fully countersigned and one click away from being done — either waiting on an admin to click **Approve & Send Welcome Pack**, or (flagged with a pulsing **RETRY: WELCOME PACK** badge on the card) already approved but the welcome pack email specifically failed to send and needs the retry button clicked |
 
@@ -1147,7 +1147,7 @@ Every application on this board arrives the same way: the customer signs up them
 
 An application only leaves the board entirely once it's **approved and the welcome pack has actually been sent** — approval alone isn't enough. Since Approve and Send Welcome Pack are a single button in the normal case (see Onboarding Applications below), both "not yet approved" and "approved but the pack send failed" sit in the same Ready to Finish column — the RETRY badge is what tells you at a glance which cards are a genuine problem needing the retry action, versus a normal application just waiting its turn. A rejected application never appears on the board at all.
 
-**KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each of the 5 columns above, a separate **Needs Retry** count, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy (aside from the 4-hour Pending Review deadline, which matches the existing stalled-application email alert) — let the team know if any of them feel wrong once you're using it day to day, they're easy to adjust.
+**KPI strip:** Overdue, At Risk, Awaiting Signing Authority (how many are sitting in Countersigning), and Completed Today (profile created and welcome pack sent, today) across the top; a count for each of the 5 columns above, a separate **Needs Retry** count, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the Operations Monitor above. Deadlines shown are Bassani's first-pass estimates for each stage rather than a fixed company policy, aside from two real ones: the 4-hour Pending Review deadline, which matches the existing stalled-application email alert, and the 30-day Awaiting Signature deadline, which matches the actual expiry of the customer's signing link. Let the team know if any of the estimated ones feel wrong once you're using it day to day, they're easy to adjust.
 
 Clicking any card opens that application's review page directly.
 
