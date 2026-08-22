@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck, UserCheck } from "lucide-react";
+import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck, UserCheck, Monitor } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate, OnboardCustomerButton } from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate, OnboardCustomerButton, BtnSecondary } from "../components/UI";
 
 // ── Derived status ─────────────────────────────────────────────────────────────
 
@@ -56,12 +56,17 @@ function StatusBadge({ derivedStatus }) {
 
 // ── Filter definitions ─────────────────────────────────────────────────────────
 
+// "Awaiting Docs" is deliberately not a filter chip (2026-08-22, confirmed
+// with the product owner) — it only ever applied to the reseller-inbox-
+// initiated onboarding path, which is no longer used; every application now
+// arrives via customer self-service /apply. deriveStatus()/STATUS_CFG still
+// handle it so a legacy application in that state still renders a correct
+// badge under "All" rather than falling back to a raw/unstyled label.
 const FILTERS = [
   { key: "all",                        label: "All"                 },
   { key: "pending_review",             label: "Pending Review"      },
   { key: "docs_generated",             label: "Docs Generated"      },
   { key: "awaiting_signature",         label: "Awaiting Signature"  },
-  { key: "awaiting_docs",              label: "Awaiting Docs"       },
   { key: "needs_countersigning",       label: "Needs Countersign"   },
   { key: "countersigning_in_progress", label: "In Progress"         },
   { key: "ready_to_approve",           label: "Ready to Approve"    },
@@ -128,7 +133,14 @@ export default function CustomerApplications() {
         title="Customer Applications"
         subtitle={subtitle}
         onRefresh={load}
-        actions={<OnboardCustomerButton />}
+        actions={
+          <div className="flex items-center gap-2">
+            <BtnSecondary onClick={() => navigate("/settings?tab=monitor-displays")}>
+              <Monitor size={14} />Onboarding Monitor
+            </BtnSecondary>
+            <OnboardCustomerButton />
+          </div>
+        }
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 flex items-center justify-between gap-4 flex-wrap">

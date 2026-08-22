@@ -5,7 +5,7 @@ import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
-  TopBar, SearchBar, DataTable, Badge,
+  TopBar, SearchBar, DataTable, Badge, OnboardCustomerButton,
   Modal, FormGroup, Input, BtnPrimary, BtnSecondary,
 } from "../components/UI";
 
@@ -191,6 +191,7 @@ export default function PartnerDirectory() {
       <TopBar
         title="Partner Directory"
         subtitle={`${total.toLocaleString()} record${total !== 1 ? "s" : ""} · ${counts.unlinked} unlinked contact${counts.unlinked !== 1 ? "s" : ""}`}
+        actions={<OnboardCustomerButton />}
       />
 
       {/* Filter pills + search */}
