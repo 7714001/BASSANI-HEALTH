@@ -534,7 +534,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 #### 3.6 Credit Limit Enforcement
 - [x] Fetch `credit_limit` and `credit` from `res.partner` in Odoo — new `backend/credit.py::credit_status()` is the single shared check, used by order creation, order confirmation, and the customer list/profile (`credit_hold` flag)
 - [x] If customer is over limit: **two-stage behaviour, not a single check.** At order creation (still just a quotation) it's non-blocking — the response includes a `credit_warning` and the cart shows a toast naming the shortfall, but the order is still created. At confirm time (the point where it actually commits to an invoice) it's a hard gate — `PUT /api/orders/{id}/confirm` returns 402 with the shortfall unless called with `?override_credit=true`; the frontend catches the 402 and prompts the admin to confirm the override via a dialog rather than just failing
-- [x] Add `credit_hold` flag to customer display in portal — Customers list shows a red "Credit Hold" badge next to Credit Limit when over; `CustomerProfile.js` shows the same badge in the header chip row
+- [x] Add `credit_hold` flag to customer display in portal — `CustomerProfile.js` shows a red "Credit Hold" badge in the header chip row when over limit. The Customers list itself no longer has a Credit Limit column at all (2026-08-22 — replaced with Portal Access, see 25.1's Key Files note on `list_customers`); `credit_hold` is still computed and returned per row by `_attach_credit_hold()`, just not currently rendered in that table — the credit-limit gate itself (below) is unaffected, this only changed what the list view surfaces.
 - [x] Log credit limit checks to audit collection — **only the events that matter**, not every routine check (consistent with how this app's audit trail is used elsewhere): `order.credit_warning` (created over limit), `order.credit_block` (confirm rejected), `order.credit_override` (admin confirmed anyway) — each captures credit/limit/shortfall in `detail`
 
 #### 3.7 Multi-Warehouse / Vault Selection & Stock Accuracy
@@ -2466,7 +2466,7 @@ The portal was built primarily for desktop/laptop use. Responsive Tailwind class
 ### 10.2 — List Views ✅
 
 - [x] `DataTable` extended with `meta.className` support — column definitions can now declare `meta: { className: "hidden md:table-cell" }` and both `<th>` and `<td>` receive the class automatically
-- [x] **Customers** — Contact, City, Section 21, Credit Limit, Terms, Created By → `hidden md:table-cell`; Name + Type always visible
+- [x] **Customers** — Contact, City, Section 21, Portal Access (replaced Credit Limit 2026-08-22), Terms, Created By → `hidden md:table-cell`; Name + Type always visible
 - [x] **Orders** — Order # → `hidden sm:table-cell`; Date / Amount(untaxed) / Payment → `hidden md:table-cell`; Ticket / Packing → `hidden lg:table-cell`; Customer + Total + Status always visible
 - [x] **Products** — Category / Cost / Tax / Forecasted → `hidden md:table-cell`; Sale Price → `hidden sm:table-cell`; Product/SKU + On Hand always visible
 - [x] **Invoices** — Date / Due Date / Outstanding → `hidden sm:table-cell`; Invoice # + Customer + Total + Status always visible

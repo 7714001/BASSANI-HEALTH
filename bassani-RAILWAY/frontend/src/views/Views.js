@@ -791,8 +791,6 @@ export function Customers() {
 
   useEffect(() => { load(); }, [load]);
 
-  const balanceColor = (b, l) => !l ? "text-gray-600" : b/l >= 1 ? "text-red-600" : b/l >= 0.75 ? "text-amber-600" : "text-bassani-700";
-
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
@@ -827,14 +825,13 @@ export function Customers() {
             { accessorKey:"email", header:"Contact", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.email||"—"}</span> },
             { accessorKey:"city", header:"City", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-gray-500 text-sm">{c.city||"—"}</span> },
             { id:"s21", header:"Section 21", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>c.comment?.includes("Section 21: Registered")?<span className="text-xs text-bassani-700 font-medium">✓ Registered</span>:<span className="text-xs text-gray-400">—</span> },
-            { accessorKey:"credit_limit", header:"Credit Limit", meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>(
-              <div className="flex items-center gap-1.5">
-                <span className={balanceColor(0,c.credit_limit)}>{fmtR(c.credit_limit)}</span>
-                {c.credit_hold && (
-                  <span title="Customer is currently over their credit limit" className="text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-1.5 py-0.5">Credit Hold</span>
-                )}
-              </div>
-            ) },
+            { id:"portal_access", header:"Portal Access", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>
+              c.portal_access === "active"
+                ? <Badge color="green" label="Granted" />
+                : c.portal_access === "deactivated"
+                  ? <Badge color="amber" label="Deactivated" />
+                  : <Badge color="gray" label="Not Granted" />
+            },
             { id:"terms", header:"Terms", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=><span className="text-xs text-gray-500">{c.property_payment_term_id?.[1]||"—"}</span> },
             ...(!isReseller ? [
               { id:"createdBy", header:"Created By", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:c}})=>

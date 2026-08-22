@@ -220,6 +220,33 @@ async def list_customers(
             c["created_by_reseller_name"] = match["reseller_name"] if match else None
             c["created_by_reseller_id"]   = match["reseller_id"]   if match else None
 
+        # Overlay portal-access status (2026-08-22) — a lightweight per-page
+        # summary for the list view, not the full per-contact breakdown
+        # get_portal_access below builds (that one round-trips to Odoo per
+        # customer and is only ever called for a single company at a time).
+        # A company's portal_access is "active" the moment ANY of its logins'
+        # `companies[]` entries for it is active — one company can have
+        # several logins (2026-08-21 multi-login model) and only needs one
+        # live to count as having access; "deactivated" only when every
+        # entry that ever existed for it has been switched off.
+        customer_ids = [c["id"] for c in customers]
+        access_map: dict[int, str] = {}
+        if customer_ids:
+            async for u in col("users").find(
+                {"role": "customer", "companies.customer_company_partner_id": {"$in": customer_ids}},
+                {"companies": 1, "_id": 0},
+            ):
+                for entry in u.get("companies") or []:
+                    pid = entry.get("customer_company_partner_id")
+                    if pid not in customer_ids:
+                        continue
+                    if entry.get("active"):
+                        access_map[pid] = "active"
+                    elif access_map.get(pid) != "active":
+                        access_map[pid] = "deactivated"
+        for c in customers:
+            c["portal_access"] = access_map.get(c["id"], "none")
+
         return {"customers": customers, "total": total}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
