@@ -367,6 +367,88 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
     return {"backorders": result, "total": len(result)}
 
 
+@router.get("/manufacturing-orders")
+async def list_manufacturing_orders(current_user: dict = Depends(require_permission("orders.view"))):
+    """Every open Manufacturing Order tied to a customer sale order, flat
+    (not picking-first like /backorders) — an MO can exist well before any
+    delivery is attempted, since Odoo often creates it the moment the sale
+    order is confirmed, depending on the product's routing. Same domain as
+    scheduler.py::run_mo_digest and manufacturing_monitor_routes.py's public
+    TV board, so all three never disagree about what counts as an open,
+    customer-order-driven MO. Deliberately not sharing a helper with those
+    two or with /backorders above — same tolerated duplication already
+    documented on this file's other MO-fetching endpoint."""
+    odoo = get_odoo_client()
+    try:
+        mos = odoo.search_read(
+            "mrp.production",
+            domain=[("state", "not in", ["done", "cancel"]), ("origin", "like", "S0")],
+            fields=["id", "name", "product_id", "product_qty", "qty_producing", "state",
+                    "origin", "create_date", "date_start", "date_finished"],
+            limit=500,
+            order="create_date asc",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    sale_by_name: dict = {}
+    sale_names = list({mo["origin"] for mo in mos if mo.get("origin")})
+    if sale_names:
+        try:
+            sale_orders = odoo.search_read(
+                "sale.order",
+                domain=[("name", "in", sale_names)],
+                fields=["id", "name", "partner_id"],
+                limit=len(sale_names),
+            )
+            for so in sale_orders:
+                partner = so.get("partner_id")
+                sale_by_name[so["name"]] = {
+                    "id":            so["id"],
+                    "customer_name": partner[1] if isinstance(partner, list) else "",
+                }
+        except Exception:
+            pass
+
+    ticket_map: dict = {}
+    sale_ids = [s["id"] for s in sale_by_name.values()]
+    if sale_ids:
+        try:
+            async for t in col("tickets").find(
+                {"order_id": {"$in": [str(i) for i in sale_ids]}},
+                {"_id": 1, "order_id": 1},
+            ):
+                tid = str(t["_id"])
+                ticket_map[str(t["order_id"])] = {"ticket_id": tid, "ref": f"TKT-{tid[-8:].upper()}"}
+        except Exception:
+            pass
+
+    result = []
+    for mo in mos:
+        origin    = mo.get("origin") or ""
+        sale_info = sale_by_name.get(origin)
+        product   = mo.get("product_id")
+        qty_total     = mo.get("product_qty") or 0
+        qty_producing = mo.get("qty_producing") or 0
+        result.append({
+            "mo_id":          mo["id"],
+            "mo_name":        mo.get("name", ""),
+            "product_name":   product[1] if isinstance(product, list) else "",
+            "qty_total":      qty_total,
+            "qty_producing":  qty_producing,
+            "qty_remaining":  round(qty_total - qty_producing, 3),
+            "state":          mo.get("state") or "draft",
+            "order_ref":      origin,
+            "sale_order_id":  sale_info.get("id") if sale_info else None,
+            "customer_name":  sale_info.get("customer_name") if sale_info else "",
+            "ticket":         ticket_map.get(str(sale_info["id"])) if sale_info else None,
+            "create_date":    mo.get("create_date"),
+            "date_finished":  mo.get("date_finished"),
+        })
+
+    return {"manufacturing_orders": result, "total": len(result)}
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single order with line items and commission breakdown."""

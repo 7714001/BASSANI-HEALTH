@@ -11,7 +11,7 @@ const STATE_STYLE = {
   waiting:   "bg-gray-100   text-gray-500",
 };
 
-const MO_STATE_LABEL = {
+export const MO_STATE_LABEL = {
   draft:       "Draft",
   confirmed:   "Confirmed",
   progress:    "In Progress",

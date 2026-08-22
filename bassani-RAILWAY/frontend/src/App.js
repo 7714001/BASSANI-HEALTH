@@ -58,6 +58,7 @@ import MyProfile            from "./views/MyProfile";
 import Settings             from "./views/Settings";
 import BankReconciliation   from "./views/BankReconciliation";
 import Backorders           from "./views/Backorders";
+import ManufacturingOrders  from "./views/ManufacturingOrders";
 import OrderPassport        from "./views/OrderPassport";
 import OrderMonitor         from "./views/OrderMonitor";
 import OnboardingMonitor    from "./views/OnboardingMonitor";
@@ -230,6 +231,9 @@ export default function App() {
         } />
         <Route path="/orders/backorders" element={
           <ProtectedRoute permission="orders.view"><AppLayout><Backorders /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/orders/manufacturing-orders" element={
+          <ProtectedRoute permission="orders.view"><AppLayout><ManufacturingOrders /></AppLayout></ProtectedRoute>
         } />
         <Route path="/orders/:orderId/passport" element={
           <ProtectedRoute><AppLayout><OrderPassport /></AppLayout></ProtectedRoute>

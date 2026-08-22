@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw, Upload, Loader2,
+  Repeat, RotateCcw, Upload, Loader2, Factory,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, Modal,
@@ -993,6 +993,11 @@ export default function OrderPassport() {
             {hasBackorder && (
               <BtnSecondary onClick={() => navigate("/orders/backorders")}>
                 <Clock size={13} />Backorders
+              </BtnSecondary>
+            )}
+            {manufacturing_orders?.length > 0 && (
+              <BtnSecondary onClick={() => navigate("/orders/manufacturing-orders", { state: { soName: order.name } })}>
+                <Factory size={13} />Manufacturing Orders
               </BtnSecondary>
             )}
           </div>

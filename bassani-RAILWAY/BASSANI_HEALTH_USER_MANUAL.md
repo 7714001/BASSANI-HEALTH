@@ -1616,6 +1616,16 @@ Every backorder still waiting on stock at 17:00 is included automatically in a d
 
 **Manufacturing Orders:** When Odoo has created an `mrp.production` record linked to the same sale order, the MO name and state appear inline on the relevant product line. The chip shows the MO reference, its state (Confirmed / In Progress / To Close), how many units are currently being produced (e.g. "5/10 producing"), and the planned finish date when set. Phase 13 will add the ability to schedule and drive production directly from this view.
 
+### Manufacturing Orders
+
+Go to **Manufacturing Orders** (under the Orders section in the sidebar, next to Backorders, same `orders.view` access) to see every open Manufacturing Order across the business in one searchable, filterable table — a logged-in counterpart to the public Manufacturing Monitor TV display described earlier in this manual.
+
+**This is not the same list as Backorders.** Backorders only shows orders where a delivery has already been attempted and split by a packer. A Manufacturing Order can exist well before that point — Odoo often creates it the moment a sale order is confirmed, depending on the product's own production setup. If you're looking for "what does GACP need to make right now, regardless of whether packing has started," use this page; if you're looking for "which deliveries are actually short right now," use Backorders.
+
+Each row shows the product, MO reference, quantity produced vs. remaining, state (Draft / Confirmed / In Progress / To Close), the linked sale order and customer, a portal ticket reference if one exists, how many days the MO has been open, and its planned finish date. Filter by state using the pills above the table, or search by product, order reference, or customer name. Clicking a row opens that order's Order Passport.
+
+Arriving here from an Order Passport's **Manufacturing Orders** button pre-filters the table to that order's reference — click **View all** to clear the filter.
+
 **MO visibility on tickets:** The same production status information appears in two other places:
 - **Sales Ticket detail** — a "Production Status" card appears below the Delivery and Fulfilment section whenever any delivery on the order is a backorder. It auto-loads without refreshing the page.
 - **Orders Ticket waiting_stock panel** — when an order is in Awaiting Stock state (a backorder entry), a "Production orders" section appears inside the amber panel, showing the same MO detail.
