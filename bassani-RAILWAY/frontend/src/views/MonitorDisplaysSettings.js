@@ -181,7 +181,7 @@ function MonitorDisplayCard({ config }) {
 
 export default function MonitorDisplaysSettings({ embedded }) {
   const content = (
-    <div className={embedded ? "p-6 max-w-4xl mx-auto w-full space-y-6" : "space-y-6"}>
+    <div className={embedded ? "flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full space-y-6" : "space-y-6"}>
       <div>
         <h2 className="text-base font-semibold text-gray-900">Monitor Displays</h2>
         <p className="text-sm text-gray-500 mt-0.5">
