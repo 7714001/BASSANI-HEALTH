@@ -1440,8 +1440,8 @@ export default function SalesTickets() {
                                       {mo.qty_producing > 0 && (
                                         <span className="ml-1.5 text-green-600">{mo.qty_producing}/{mo.product_qty} producing</span>
                                       )}
-                                      {mo.date_planned_finished && (
-                                        <span className="ml-1.5 text-gray-400">· due {fmtDate(mo.date_planned_finished)}</span>
+                                      {mo.date_finished && (
+                                        <span className="ml-1.5 text-gray-400">· due {fmtDate(mo.date_finished)}</span>
                                       )}
                                     </div>
                                     <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>

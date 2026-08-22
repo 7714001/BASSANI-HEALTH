@@ -33,7 +33,7 @@
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
-| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22 |
+| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22 |
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 
@@ -4918,8 +4918,8 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 
 **Goal:** A growing family of live, read-only big-screen displays — one per team/pipeline — sharing the same architecture (no login, URL query-token, admin generate/rotate in Settings, 30s poll). Started with the order pipeline; exco liked it enough to ask for more, one per part of the business that benefits from an at-a-glance view instead of manually reviewing a list.  
 **Priority:** Medium  
-**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), and 23.3 (Manufacturing Orders monitor, GACP facility) all shipped  
-**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22
+**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), 23.3 (Manufacturing Orders monitor, GACP facility), and 23.4 (MO-blocked signal folded back into the order pipeline monitor) all shipped  
+**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22 · 23.4 — 2026-08-22
 
 ### Context
 
@@ -5043,6 +5043,24 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] New `deposit` column (key `deposit`, gold accent `#eab308`) inserted between Quotes and Packing, matching pipeline order; included in the `all_active` roll-up so it automatically feeds the existing Overdue/At Risk Row-1 KPIs with no separate change needed there
 - [x] New `awaiting_deposit` KPI added to Row 2, between Open Inquiries and In Packing
 - **Design decision:** a dedicated column, not folded into Open Quotes — matches the existing precedent of QA Review and RP Review already being split into two columns rather than one combined "Compliance" column, specifically so each distinct role's action queue (here: Finance) stays unambiguous at a glance on a screen nobody is meant to interact with, only read from across a room.
+
+### 23.4 — MO-Blocked Signal on the Order Pipeline Monitor — Complete 2026-08-22
+
+**Goal:** Raised directly in conversation after 23.3 shipped: the Manufacturing Orders monitor gives the production floor visibility into what to make, but the Order Monitor (the board sales/packing staff actually watch) still had no way to tell that a card sitting in Packing/QA/RP was actually blocked on an open MO — it could look perfectly on-track while a line item was really waiting on production. The question raised was whether a new "manufacturing ticket" entity should be created to track an MO's lifecycle the way `sales_ticket` tracks the order pipeline.
+
+**Design decision — no new ticket entity.** A manufacturing-ticket concept was considered and rejected: it would duplicate `mrp.production`'s own Odoo-owned state machine as a second, portal-side source of truth, the exact parallel-ledger anti-pattern Architecture Principle #1 already rules out for financial records — and it would drift the moment someone changed the MO directly in Odoo without a matching portal action. The Manufacturing Monitor (23.3) already exists specifically to mirror that state machine read-only; a second entity would either duplicate it or fight it for authority. Instead, this phase closes the loop with the same lightweight signal pattern 23.3 already built for backorders (`has_backorder`) — a derived, read-only flag joined onto the existing board, not a new pipeline.
+
+- [x] `backend/routes/monitor_routes.py::get_monitor_data` — new `mo_pending_map` block, directly after the existing `backorder_map` block: resolves the `board_order_ids` already collected on the page to `sale.order` names (one `search_read`), then searches `mrp.production` on `origin in [...names]`, same domain as 23.3's monitor/digest/list endpoint (`state not in [done, cancel]`) so none of the four MO-reading endpoints in the codebase ever disagree about what counts as an open, order-linked MO. Wrapped in try/except → empty map on any Odoo error, so a production board hiccup degrades to "no badge," never fails the whole Order Monitor
+- [x] This is the one deliberate exception to `monitor_routes.py`'s otherwise Mongo-only design (documented in the file's module docstring) — bounded to the order_ids already on the current page, same class of exception `manufacturing_monitor_routes.py`/`scheduler.py::run_mo_digest` already are
+- [x] `_board_card()` gained `has_mo_pending: bool` (mirrors `has_backorder`'s shape exactly, including the "not reachable" `False` placeholder in `_ticket_card`/`_collection_card`/`_board_ready_card` for stages the signal can't apply to yet)
+- [x] New `in_production` KPI, counted from the same card set, no extra query
+- [x] `frontend/src/views/OrderMonitor.js` — blue "IN PRODUCTION" chip next to the existing red BACKORDER chip (distinct colour so the two read as different signals at a glance — one is a delivery that was short-picked, the other is stock that doesn't exist yet), and an "In Production" KPI tile next to Backorders
+- [x] Drive-by fix while in this area: `SalesTickets.js`'s existing per-order "Production Status" card (unchanged in scope, already built) read `mo.date_planned_finished`, a field the `/manufacturing-orders` response has never actually returned since the 2026-08-11 Odoo-19 field rename to `date_finished` — the "· due {date}" annotation had silently never rendered. Fixed to read the correct field.
+
+### Definition of Done
+- [x] An order on the Order Monitor with an open, order-linked MO shows the IN PRODUCTION badge and is counted in the `in_production` KPI; an order with none shows neither
+- [x] Simulating an Odoo failure for the MO lookup leaves the rest of the board (including the backorder signal) rendering normally, with the MO badge simply absent
+- [x] No new Mongo collection, ticket type, or entity was introduced — the signal is derived at read time from live Odoo state, same as 23.3's own monitor
 
 ---
 

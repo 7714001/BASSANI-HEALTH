@@ -165,6 +165,7 @@ function OrderCard({ card, now }) {
         </span>
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {card.has_backorder && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(239,68,68,0.2)", color: "#f87171" }}>BACKORDER</span>}
+          {card.has_mo_pending && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(59,130,246,0.2)", color: "#93c5fd" }}>IN PRODUCTION</span>}
           {isSample   && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(99,102,241,0.2)", color: "#a5b4fc" }}>SAMPLE</span>}
           {isReseller && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "rgba(20,184,166,0.2)", color: "#5eead4" }}>RESELLER</span>}
           {stageInfo  && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${stageInfo.color}22`, color: stageInfo.color }}>{stageInfo.label}</span>}
@@ -476,6 +477,7 @@ export default function OrderMonitor() {
           <KpiSmall label="RP Pending"          value={kpis.rp_pending}          color={kpis.rp_pending  > 0 ? "#f59e0b" : "#475569"} />
           <KpiSmall label="Awaiting Collection" value={kpis.awaiting_collection} color="#14b8a6" />
           <KpiSmall label="Backorders"          value={kpis.backorders}          color={kpis.backorders > 0 ? "#ef4444" : "#475569"} />
+          <KpiSmall label="In Production"       value={kpis.in_production}       color={kpis.in_production > 0 ? "#3b82f6" : "#475569"} />
           <KpiSmall
             label="Oldest Active"
             value={fmtHours(kpis.oldest_hours)}

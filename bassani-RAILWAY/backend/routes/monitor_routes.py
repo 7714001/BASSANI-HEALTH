@@ -8,6 +8,12 @@ Public endpoints (token-verified, no login required):
 Admin endpoints (JWT):
   GET  /api/monitor/token            — retrieve current token
   POST /api/monitor/token            — generate / rotate token
+
+Otherwise Mongo-only by design (cheap for frequent polling) — the one
+exception is the has_mo_pending signal (23.4, 2026-08-22), which makes a
+single bounded, degrade-gracefully Odoo call per poll since there is no
+Mongo mirror of mrp.production. Same class of exception
+manufacturing_monitor_routes.py and scheduler.py::run_mo_digest already are.
 """
 import secrets
 from datetime import datetime, timezone
@@ -16,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 
 from auth import require_admin
 from database import col
+from odoo_client import get_odoo_client
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
@@ -117,7 +124,7 @@ def _age_tier(elapsed: float, deadline: float) -> str:
     return "ok"
 
 
-def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False) -> dict:
+def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False, has_mo_pending: bool = False) -> dict:
     clock   = entry.get("queued_at", datetime.now(timezone.utc))
     elapsed = _hours_elapsed(clock)
     return {
@@ -147,6 +154,14 @@ def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str |
         # it is actually stuck waiting on stock/production; see the
         # Manufacturing Orders monitor for the production-floor detail.
         "has_backorder":  has_backorder,
+        # True when this order has an open (not done/cancel) mrp.production
+        # tied to it via origin (23.4, 2026-08-22) — same signal as
+        # has_backorder above but for the "Odoo needs to make more stock"
+        # case rather than the "delivery was short-picked" case. Sourced
+        # live from Odoo each poll (see mo_pending_map below) since there is
+        # no Mongo mirror of mrp.production — degrades to False on any Odoo
+        # error rather than failing the board.
+        "has_mo_pending": has_mo_pending,
     }
 
 
@@ -190,6 +205,7 @@ def _ticket_card(ticket: dict) -> dict:
         "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": None,
         "has_backorder":  False,  # not reachable pre-packing-board-completion
+        "has_mo_pending": False,  # not reachable pre-packing-board-completion
     }
 
 
@@ -217,6 +233,7 @@ def _collection_card(ticket: dict, board: dict) -> dict:
         "assigned_name":  ticket.get("assigned_to_name"),
         "warehouse_name": board.get("warehouse_name"),
         "has_backorder":  False,  # not reachable pre-packing-board-completion
+        "has_mo_pending": False,  # not reachable pre-packing-board-completion
     }
 
 
@@ -246,6 +263,7 @@ def _board_ready_card(entry: dict, assigned_name: str | None = None) -> dict:
         "assigned_name":  assigned_name,
         "warehouse_name": entry.get("warehouse_name"),
         "has_backorder":  False,  # not reachable once an order is already ready for collection
+        "has_mo_pending": False,  # not reachable once an order is already ready for collection
     }
 
 
@@ -375,6 +393,43 @@ async def get_monitor_data(token: str = Query("")):
         ).to_list(length=1000)
         backorder_map = {e["order_id"]: True for e in bo_entries}
 
+    # Manufacturing-order signal (23.4, 2026-08-22) — the mirror of
+    # backorder_map above for the "Odoo needs to make more stock" case. There
+    # is no Mongo copy of mrp.production, so unlike every other lookup in this
+    # function this one is a live, bounded Odoo call (bounded to the
+    # order_ids already on this page, same batching approach as
+    # backorder_map) — the same class of Odoo-touching exception
+    # manufacturing_monitor_routes.py and scheduler.py::run_mo_digest already
+    # are. Same domain as both of those, and as order_routes.py's
+    # /manufacturing-orders list, so none of the four ever disagree about
+    # what counts as an open, order-linked MO. Fully non-fatal: any Odoo
+    # error here degrades to "no badge shown," never fails the board.
+    mo_pending_map: dict = {}
+    if board_order_ids:
+        try:
+            odoo = get_odoo_client()
+            sale_rows = odoo.search_read(
+                "sale.order",
+                domain=[("id", "in", [int(i) for i in board_order_ids])],
+                fields=["id", "name"],
+                limit=len(board_order_ids),
+            )
+            name_to_order_id = {s["name"]: str(s["id"]) for s in sale_rows}
+            if name_to_order_id:
+                mos = odoo.search_read(
+                    "mrp.production",
+                    domain=[("state", "not in", ["done", "cancel"]),
+                            ("origin", "in", list(name_to_order_id.keys()))],
+                    fields=["origin"],
+                    limit=1000,
+                )
+                for mo in mos:
+                    oid = name_to_order_id.get(mo.get("origin"))
+                    if oid:
+                        mo_pending_map[oid] = True
+        except Exception:
+            pass
+
     # ── Build columns ─────────────────────────────────────────────────────────
     packing_col    = []
     qa_col         = []
@@ -385,13 +440,14 @@ async def get_monitor_data(token: str = Query("")):
         order_id  = entry.get("order_id", "")
         a_name    = ticket_assign_map.get(order_id)
         has_bo    = backorder_map.get(order_id, False)
+        has_mo    = mo_pending_map.get(order_id, False)
         if status in ("queued", "packing"):
-            packing_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
+            packing_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
         elif status == "ready":
             if not entry.get("qa_approved_at"):
-                qa_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
+                qa_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
             else:
-                rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo))
+                rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
 
     quotes_col     = [_ticket_card(t) for t in open_quotes]
     deposit_col    = [_ticket_card(t) for t in awaiting_deposit_tickets]
@@ -427,6 +483,7 @@ async def get_monitor_data(token: str = Query("")):
             "rp_pending":          len(rp_col),
             "awaiting_collection": len(collection_col),
             "backorders":          len(backorder_map),
+            "in_production":       sum(1 for c in all_active if c["has_mo_pending"]),
             "oldest_hours":        round(oldest_hours, 1) if oldest_hours is not None else None,
         },
         "columns": {
