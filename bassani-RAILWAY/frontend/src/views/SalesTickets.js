@@ -15,12 +15,12 @@ import {
   UserPlus, ShoppingCart, Ban, DollarSign, Send, ChevronDown,
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
-  Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload,
+  Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
-  SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal,
+  SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal, openMonitorDisplay,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -2953,6 +2953,11 @@ export default function SalesTickets() {
               <span className={`inline-block w-2 h-2 rounded-full ${wsConnected ? "bg-green-500" : "bg-gray-300"}`} />
               {wsConnected ? "Live" : "Reconnecting…"}
             </span>
+            {!isReseller && (
+              <BtnSecondary onClick={() => openMonitorDisplay("/api/monitor/token", "/monitor", navigate)}>
+                <Monitor size={14} />Order Monitor
+              </BtnSecondary>
+            )}
             {canDrive && !isReseller && (
               <BtnPrimary onClick={openCreate}><Plus size={14} />New Direct Inquiry</BtnPrimary>
             )}

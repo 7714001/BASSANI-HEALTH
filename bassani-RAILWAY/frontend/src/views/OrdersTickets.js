@@ -7,18 +7,19 @@
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
 import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
-  OdooPdfViewerModal,
+  OdooPdfViewerModal, openMonitorDisplay,
 } from "../components/UI";
 
 // canvas → PNG data URL so the barcode survives innerHTML → new window print copy
@@ -59,6 +60,7 @@ const TERMINAL = new Set(["complete", "incomplete", "cancelled", "collected", "c
 const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "incomplete", "cancelled", "cleared", "waiting_stock"];
 
 export default function OrdersTickets() {
+  const navigate = useNavigate();
   const { can, user } = useAuth();
   const canOrders = can("tickets.orders");
   const canQa     = can("tickets.qa_approve");
@@ -1004,15 +1006,20 @@ export default function OrdersTickets() {
         subtitle="Queued → Packing → Ready → QA + RP Approved → Complete"
         onRefresh={load}
         actions={
-          hasWaitingStock && canOrders ? (
-            <BtnSecondary
-              onClick={handleCheckStock}
-              loading={busyId === "check-stock"}
-              className="text-amber-700 border-amber-200 hover:bg-amber-50"
-            >
-              <RefreshCw size={13} />Check backorder stock
+          <div className="flex items-center gap-2">
+            <BtnSecondary onClick={() => openMonitorDisplay("/api/monitor/token", "/monitor", navigate)}>
+              <Monitor size={14} />Order Monitor
             </BtnSecondary>
-          ) : undefined
+            {hasWaitingStock && canOrders && (
+              <BtnSecondary
+                onClick={handleCheckStock}
+                loading={busyId === "check-stock"}
+                className="text-amber-700 border-amber-200 hover:bg-amber-50"
+              >
+                <RefreshCw size={13} />Check backorder stock
+              </BtnSecondary>
+            )}
+          </div>
         }
       />
       <main className="flex-1 overflow-y-auto p-6">

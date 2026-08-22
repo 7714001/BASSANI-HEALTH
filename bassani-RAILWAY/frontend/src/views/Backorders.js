@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { RefreshCw, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import { RefreshCw, ExternalLink, ChevronDown, ChevronRight, Monitor, HelpCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
-import { TopBar, FilterPill, fmtDate, BtnSecondary } from "../components/UI";
+import { TopBar, FilterPill, fmtDate, BtnSecondary, Modal, openMonitorDisplay } from "../components/UI";
 
 const STATE_STYLE = {
   confirmed: "bg-orange-100 text-orange-700",
@@ -190,6 +190,46 @@ function ProductGroupRow({ group, navigate }) {
   );
 }
 
+// ── "How is this created?" guide ────────────────────────────────────────────
+// Self-contained button + reference modal, same shape as ProductionGuideButton
+// (frontend/src/components/ProductionGuide.js) — plain-language explanation
+// so nobody has to guess why a row landed here.
+
+function BackorderGuideButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <BtnSecondary onClick={() => setOpen(true)}>
+        <HelpCircle size={14} />How are these created?
+      </BtnSecondary>
+      {open && (
+        <Modal title="How a backorder is created" onClose={() => setOpen(false)} width="max-w-lg">
+          <div className="space-y-3 text-sm text-gray-600">
+            <p>
+              A backorder appears here when a packer tries to complete a delivery and there isn't enough
+              stock on hand to fulfil every line in full. Odoo automatically splits the delivery: what's
+              available ships now, and the rest becomes a new, linked delivery that waits until stock is
+              available.
+            </p>
+            <p>
+              <span className="font-semibold text-gray-700">The portal never creates a backorder itself</span> —
+              it only shows the ones Odoo's own delivery process already created. You can't prevent one from
+              here; the fix is getting stock into the warehouse (a restock, or a Manufacturing Order — see the
+              Manufacturing Orders page).
+            </p>
+            <p>
+              A backorder is a different thing from a Manufacturing Order: a backorder means a delivery was
+              short-picked because stock ran out, while a Manufacturing Order means Odoo needs to <span className="italic">make more</span> of
+              a product before it can ever be picked. An order can have one, both, or neither depending on how
+              far along it is.
+            </p>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export default function Backorders() {
@@ -270,10 +310,16 @@ export default function Backorders() {
       <TopBar
         title="Backorders"
         actions={
-          <BtnSecondary onClick={load} disabled={loading}>
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            Refresh
-          </BtnSecondary>
+          <div className="flex items-center gap-2">
+            <BackorderGuideButton />
+            <BtnSecondary onClick={() => openMonitorDisplay("/api/monitor/token", "/monitor", navigate)}>
+              <Monitor size={14} />Order Monitor
+            </BtnSecondary>
+            <BtnSecondary onClick={load} disabled={loading}>
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </BtnSecondary>
+          </div>
         }
       />
 

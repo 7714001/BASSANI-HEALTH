@@ -33,7 +33,7 @@
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
-| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22 |
+| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22; 23.5 complete — 2026-08-22 |
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 
@@ -4918,8 +4918,8 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 
 **Goal:** A growing family of live, read-only big-screen displays — one per team/pipeline — sharing the same architecture (no login, URL query-token, admin generate/rotate in Settings, 30s poll). Started with the order pipeline; exco liked it enough to ask for more, one per part of the business that benefits from an at-a-glance view instead of manually reviewing a list.  
 **Priority:** Medium  
-**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), 23.3 (Manufacturing Orders monitor, GACP facility), and 23.4 (MO-blocked signal folded back into the order pipeline monitor) all shipped  
-**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22 · 23.4 — 2026-08-22
+**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), 23.3 (Manufacturing Orders monitor, GACP facility), 23.4 (MO-blocked signal folded back into the order pipeline monitor), and 23.5 (MO status control + monitor discoverability + guides) all shipped  
+**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22 · 23.4 — 2026-08-22 · 23.5 — 2026-08-22
 
 ### Context
 
@@ -5061,6 +5061,34 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] An order on the Order Monitor with an open, order-linked MO shows the IN PRODUCTION badge and is counted in the `in_production` KPI; an order with none shows neither
 - [x] Simulating an Odoo failure for the MO lookup leaves the rest of the board (including the backorder signal) rendering normally, with the MO badge simply absent
 - [x] No new Mongo collection, ticket type, or entity was introduced — the signal is derived at read time from live Odoo state, same as 23.3's own monitor
+
+### 23.5 — MO Status Control, Monitor Discoverability, and "How Is This Created?" Guides — Complete 2026-08-22
+
+**Goal:** Three separate gaps raised together in conversation, all in service of the same "execs get a real bird's-eye view, staff never need to open Odoo" goal Phase 23 exists for: (1) Manufacturing Orders were read-only everywhere in the portal — nobody could move one forward without opening Odoo directly; (2) the staff-facing pages that pair with a monitor board (`SalesTickets.js`, `OrdersTickets.js`, `Backorders.js`, `ManufacturingOrders.js`) had no link to that board at all, discovered by directly auditing each page rather than assuming; (3) neither Backorders nor Manufacturing Orders explained to a new/confused staff member *why* a row exists.
+
+**MO status control — scope decision confirmed with the product owner:** a lightweight status nudge, not full MRP execution (no partial-completion/component/lot UI — that tier was explicitly declined this round). Gated by a new independently-grantable permission rather than baked into a role: `vault_custodian` is GACP-vault-scoped and doesn't get it by default (that role already "sees nothing of the commercial pipeline," and these MOs are the commercial pipeline) — an admin grants `orders.manufacturing_manage` to whichever staff member should actually manage this, `vault_custodian` included if that's who ends up doing it in practice, same pattern as `customers.manage_portal_access` being separate from `customers.manage`.
+
+- [x] `backend/auth.py` / `frontend/src/views/Users.js` — new `orders.manufacturing_manage` permission bit, `False` by default for every role (including `vault_custodian`) and in `DEFAULT_PERMISSIONS`, `True` only in `FULL_PERMISSIONS`/super_admin — added in all required places per the standing three-places-in-Users.js convention
+- [x] `backend/routes/order_routes.py` — `PUT /manufacturing-orders/{mo_id}/confirm` (draft→confirmed only, `mrp.production.action_confirm`) and `PUT /manufacturing-orders/{mo_id}/complete` (confirmed/progress/to_close only — writes the full remaining `qty_producing` then `button_mark_done`). Both methods are the exact ones already proven live in `vault_odoo.py`'s `_manufacture_split`, not a fresh guess at Odoo's MRP semantics. Both re-read the MO fresh from Odoo first (defends a stale frontend view / race with Odoo's own automation) and re-verify its `origin` still matches the `S0`-prefixed domain before acting (defends a stray/vault-module mo_id). Odoo's own validation errors (e.g. a genuine component shortage on Mark Complete) are passed through as the error detail, not swallowed — a real, useful signal for the person clicking the button. Audit-logged (`mo.confirm`/`mo.complete`, entity_type `manufacturing_order`)
+- [x] `frontend/src/views/ManufacturingOrders.js` — row actions (Confirm / Mark Complete), gated on `can("orders.manufacturing_manage")`. Mark Complete goes through a confirmation `Modal` (standing pattern — it's a real, hard-to-reverse Odoo stock movement); Confirm has no stock-side-effect and fires directly. On success, Confirm patches the row's state locally and Mark Complete removes it (a `done` MO no longer matches this list's own open-MO domain, so it would vanish on the next refresh regardless)
+- [x] Reminder for whoever grants this: the Manufacturing Orders nav item and list endpoint are separately gated on `orders.view`, which `vault_custodian` also doesn't have by default — granting just `manufacturing_manage` isn't enough on its own to use this page
+
+**Monitor discoverability:**
+
+- [x] `frontend/src/components/UI.js` — new shared `openMonitorDisplay(tokenPath, publicPath, navigate)`, extracted from `CustomerApplications.js`'s original inline `openOnboardingMonitor` (fetch the current token, open the public board in a new tab, fall back to Settings → Monitor Displays if none generated yet) before copying that exact shape four more times
+- [x] "Order Monitor" toolbar button added to `SalesTickets.js` (ticket list, staff-only — hidden for reseller), `OrdersTickets.js` (packing board list — this file had no `react-router-dom` import at all before this, now added), and `Backorders.js`
+- [x] "Manufacturing Monitor" toolbar button added to `ManufacturingOrders.js`
+- [x] `CustomerApplications.js` migrated onto the new shared helper (no behavior change) so the pattern doesn't triple
+
+**"How is this created?" guides:**
+
+- [x] `BackorderGuideButton` (`Backorders.js`) and `MOGuideButton` (`ManufacturingOrders.js`) — same self-contained button + reference `Modal` shape as the existing `ProductionGuideButton` (`components/ProductionGuide.js`). Plain-language content: the portal never creates a backorder or an MO itself, it only shows what Odoo's own delivery/routing automation already did; a backorder means a delivery was short-picked, an MO means Odoo needs to make more stock before picking can even happen — an order can have one, both, or neither. The MO guide also explains what Confirm/Mark Complete do underneath, in plain language rather than Odoo jargon
+
+### Definition of Done
+- [x] A user without `orders.manufacturing_manage` sees no row actions on Manufacturing Orders; a user with it can Confirm a draft MO and Mark Complete a confirmed one, both reflected live in Odoo
+- [x] Odoo's own validation error (e.g. insufficient component stock) surfaces as a clear toast on Mark Complete rather than a generic failure
+- [x] Every one of the four audited pages (`SalesTickets.js`, `OrdersTickets.js`, `Backorders.js`, `ManufacturingOrders.js`) opens the correct public monitor board in a new tab from its toolbar
+- [x] Both new guide modals open and their copy matches this document's actual backorder/MO business rules
 
 ---
 

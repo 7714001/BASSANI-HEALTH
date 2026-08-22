@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle, XCircle, Clock, ArrowRight, PenLine, FileCheck, UserCheck, Monitor } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate, OnboardCustomerButton, BtnSecondary } from "../components/UI";
+import { TopBar, DataTable, FilterPill, ChipRow, SearchBar, fmtDate, OnboardCustomerButton, BtnSecondary, openMonitorDisplay } from "../components/UI";
 
 // ── Derived status ─────────────────────────────────────────────────────────────
 
@@ -100,22 +100,7 @@ export default function CustomerApplications() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Opens the live board directly, not the Settings tab that manages its
-  // token — that page still exists as the fallback for the "no token
-  // generated yet" case, since there's nothing to open without one.
-  const openOnboardingMonitor = async () => {
-    try {
-      const { data } = await api.get("/api/onboarding-monitor/token");
-      if (data?.token) {
-        window.open(`${window.location.origin}/onboarding-monitor?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
-      } else {
-        toast.error("No display URL generated yet — set one up in Settings → Monitor Displays");
-        navigate("/settings?tab=monitor-displays");
-      }
-    } catch {
-      toast.error("Failed to open Onboarding Monitor");
-    }
-  };
+  const openOnboardingMonitor = () => openMonitorDisplay("/api/onboarding-monitor/token", "/onboarding-monitor", navigate);
 
   const enriched = useMemo(() =>
     allApps.map(a => ({ ...a, _derived: deriveStatus(a) })),

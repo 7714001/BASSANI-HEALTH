@@ -25,6 +25,27 @@ export const fmtNum     = (n) => Number(n || 0).toLocaleString("en-ZA");
 export const fmtDate    = (d) => d ? new Date(d).toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric", ...SAST }) : "—";
 export const fmtDateTime= (d) => d ? new Date(d).toLocaleString("en-ZA", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", ...SAST }) : "—";
 
+// Opens a public monitor display board in a new tab, fetching its current
+// token first — shared by every staff-facing list/board page that pairs
+// with one of the monitor family (Order Monitor, Manufacturing Monitor,
+// Onboarding Monitor). Extracted from CustomerApplications.js's original
+// inline openOnboardingMonitor, which had this exact shape, before copying
+// it a fourth and fifth time. Falls back to the Settings tab that manages
+// the token if none has been generated yet, rather than failing silently.
+export async function openMonitorDisplay(tokenPath, publicPath, navigate) {
+  try {
+    const { data } = await api.get(tokenPath);
+    if (data?.token) {
+      window.open(`${window.location.origin}${publicPath}?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
+    } else {
+      toast.error("No display URL generated yet — set one up in Settings → Monitor Displays");
+      navigate("/settings?tab=monitor-displays");
+    }
+  } catch {
+    toast.error("Failed to open monitor display");
+  }
+}
+
 // Splits an Odoo display_name into base name + variant chips.
 // Odoo appends each attribute as a trailing "(Value)" group:
 // "Product (Weight: 1g) (Pack: 2)" → { base: "Product", groups: ["Weight: 1g", "Pack: 2"] }

@@ -9,10 +9,11 @@
 // who need to look something up rather than glance at a screen.
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
-import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary } from "../components/UI";
+import { useAuth } from "../AuthContext";
+import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary, BtnPrimary, Modal, openMonitorDisplay } from "../components/UI";
 import { MO_STATE_LABEL } from "./Backorders";
 
 const STATE_STYLE = {
@@ -41,14 +42,61 @@ function ageDays(createDate) {
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
+// ── "How is this created?" guide ────────────────────────────────────────────
+// Same self-contained button + reference modal shape as
+// ProductionGuideButton (frontend/src/components/ProductionGuide.js) and
+// Backorders.js's BackorderGuideButton.
+
+function MOGuideButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <BtnSecondary onClick={() => setOpen(true)}>
+        <HelpCircle size={14} />How are these created?
+      </BtnSecondary>
+      {open && (
+        <Modal title="How a Manufacturing Order is created" onClose={() => setOpen(false)} width="max-w-lg">
+          <div className="space-y-3 text-sm text-gray-600">
+            <p>
+              A Manufacturing Order (MO) appears here automatically, created by Odoo the moment a customer's
+              sale order is confirmed, whenever a product's own routing configuration says more of it needs
+              to be made before it can be delivered. <span className="font-semibold text-gray-700">The portal
+              never creates an MO itself</span> — it only shows the ones Odoo's own configuration already
+              generated.
+            </p>
+            <p>
+              An MO can exist well before any delivery is attempted, which is why you may see one here for an
+              order that hasn't shown up on the Backorders page yet — a backorder only appears once a packer
+              has actually tried to pick the delivery and come up short.
+            </p>
+            <p className="font-semibold text-gray-700">What Confirm and Mark Complete do</p>
+            <p>
+              <span className="font-medium">Confirm</span> moves a Draft MO to Confirmed in Odoo, reserving
+              the components it needs. <span className="font-medium">Mark Complete</span> records the full
+              remaining quantity as produced and finalises the MO in Odoo, moving the finished stock in.
+              Both write directly to the same record you'd otherwise need to open Odoo to change — if Odoo
+              can't complete either action (for example, a component is genuinely out of stock), the error it
+              gives is shown here exactly as Odoo reports it.
+            </p>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 export default function ManufacturingOrders() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { can } = useAuth();
+  const canManage = can("orders.manufacturing_manage");
   const [data,        setData       ] = useState([]);
   const [loading,     setLoading    ] = useState(true);
   const [stateFilter, setStateFilter] = useState("");
   const [search,      setSearch     ] = useState("");
   const [soFilter,    setSoFilter   ] = useState(location.state?.soName || "");
+  const [busyId,        setBusyId       ] = useState(null);   // mo_id currently mid-action
+  const [completeTarget, setCompleteTarget] = useState(null); // mo pending Mark Complete confirmation
 
   const load = async () => {
     setLoading(true);
@@ -63,6 +111,36 @@ export default function ManufacturingOrders() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const doConfirm = async (mo) => {
+    setBusyId(mo.mo_id);
+    try {
+      await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/confirm`);
+      toast.success(`${mo.mo_name} confirmed`);
+      setData(d => d.map(m => m.mo_id === mo.mo_id ? { ...m, state: "confirmed" } : m));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to confirm manufacturing order");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const doComplete = async () => {
+    const mo = completeTarget;
+    setCompleteTarget(null);
+    setBusyId(mo.mo_id);
+    try {
+      await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/complete`);
+      toast.success(`${mo.mo_name} marked complete`);
+      // A done MO no longer matches the open-MO domain this list reads —
+      // remove it immediately rather than waiting for the next refresh.
+      setData(d => d.filter(m => m.mo_id !== mo.mo_id));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to mark manufacturing order complete");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const stateCounts = useMemo(() => {
     const c = { draft: 0, confirmed: 0, progress: 0, to_close: 0 };
@@ -91,10 +169,16 @@ export default function ManufacturingOrders() {
         title="Manufacturing Orders"
         subtitle={`${filtered.length} open MO${filtered.length !== 1 ? "s" : ""}`}
         actions={
-          <BtnSecondary onClick={load} disabled={loading}>
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            Refresh
-          </BtnSecondary>
+          <div className="flex items-center gap-2">
+            <MOGuideButton />
+            <BtnSecondary onClick={() => openMonitorDisplay("/api/manufacturing-monitor/token", "/manufacturing-monitor", navigate)}>
+              <Monitor size={14} />Manufacturing Monitor
+            </BtnSecondary>
+            <BtnSecondary onClick={load} disabled={loading}>
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </BtnSecondary>
+          </div>
         }
       />
 
@@ -198,11 +282,55 @@ export default function ManufacturingOrders() {
                       {m.date_finished ? m.date_finished.split(" ")[0] : "—"}
                     </span>
                   ) },
+                ...(canManage ? [{
+                  id: "actions", header: "", enableSorting: false,
+                  cell: ({ row: { original: m } }) => {
+                    const isBusy = busyId === m.mo_id;
+                    if (m.state === "draft") {
+                      return (
+                        <BtnSecondary
+                          onClick={e => { e.stopPropagation(); doConfirm(m); }}
+                          loading={isBusy}
+                          disabled={isBusy}
+                        >
+                          <PlayCircle size={13} />Confirm
+                        </BtnSecondary>
+                      );
+                    }
+                    if (["confirmed", "progress", "to_close"].includes(m.state)) {
+                      return (
+                        <BtnPrimary
+                          onClick={e => { e.stopPropagation(); setCompleteTarget(m); }}
+                          loading={isBusy}
+                          disabled={isBusy}
+                        >
+                          <CheckCircle2 size={13} />Mark Complete
+                        </BtnPrimary>
+                      );
+                    }
+                    return null;
+                  },
+                }] : []),
               ]}
             />
           )}
         </div>
       </div>
+
+      {completeTarget && (
+        <Modal title="Mark manufacturing order complete?" onClose={() => setCompleteTarget(null)} width="max-w-md">
+          <p className="text-sm text-gray-600">
+            This records the full remaining quantity of <span className="font-mono font-semibold">{fmtQty(completeTarget.qty_remaining)}</span> for{" "}
+            <span className="font-mono font-semibold">{completeTarget.mo_name}</span> ({completeTarget.product_name}) as produced, and finalises
+            it in Odoo — the finished stock moves in and this can't be undone from here. If a component is out of stock, Odoo will refuse and
+            nothing changes.
+          </p>
+          <div className="flex justify-end gap-2 mt-5">
+            <BtnSecondary onClick={() => setCompleteTarget(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={doComplete}><CheckCircle2 size={14} />Mark Complete</BtnPrimary>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

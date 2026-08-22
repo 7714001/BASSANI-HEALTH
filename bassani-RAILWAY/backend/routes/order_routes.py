@@ -449,6 +449,91 @@ async def list_manufacturing_orders(current_user: dict = Depends(require_permiss
     return {"manufacturing_orders": result, "total": len(result)}
 
 
+def _assert_mo_is_order_linked(odoo, mo_id: int) -> dict:
+    """Re-reads an mrp.production fresh from Odoo and confirms it's actually
+    one of the customer-order-driven MOs this endpoint is allowed to touch
+    (same S0-origin domain used everywhere else this file reads MOs) —
+    defends a stray/unrelated mo_id (e.g. a vault-module MO, which has no
+    sale-order origin) from being acted on through this endpoint."""
+    rows = odoo.read("mrp.production", [mo_id], fields=["id", "name", "state", "origin", "product_qty", "qty_producing"])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Manufacturing order not found")
+    mo = rows[0]
+    if not mo.get("origin") or not mo["origin"].startswith("S0"):
+        raise HTTPException(status_code=404, detail="Manufacturing order not found")
+    return mo
+
+
+@router.put("/manufacturing-orders/{mo_id}/confirm")
+async def confirm_manufacturing_order(
+    mo_id: int,
+    current_user: dict = Depends(require_permission("orders.manufacturing_manage")),
+):
+    """Lightweight status nudge (not full MRP execution) — moves a draft MO
+    to confirmed via Odoo's own action_confirm, the exact method already
+    proven live in vault_odoo.py's _manufacture_split. Odoo still does all
+    the real work (component reservation etc.); the portal is not
+    reimplementing any of it."""
+    odoo = get_odoo_client()
+    try:
+        mo = _assert_mo_is_order_linked(odoo, mo_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if mo["state"] != "draft":
+        raise HTTPException(status_code=400, detail=f"This manufacturing order is already {mo['state']}, not draft — nothing to confirm")
+
+    try:
+        odoo.execute("mrp.production", "action_confirm", [mo_id])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo could not confirm this manufacturing order: {str(e)}")
+
+    await audit_log("mo.confirm", "manufacturing_order", str(mo_id), entity_label=mo["name"],
+                     user=current_user, before={"state": "draft"}, after={"state": "confirmed"})
+    return {"mo_id": mo_id, "state": "confirmed"}
+
+
+@router.put("/manufacturing-orders/{mo_id}/complete")
+async def complete_manufacturing_order(
+    mo_id: int,
+    current_user: dict = Depends(require_permission("orders.manufacturing_manage")),
+):
+    """Lightweight status nudge — produces the full remaining quantity in one
+    shot and marks the MO done, mirroring vault_odoo.py's own
+    write-qty_producing-then-button_mark_done sequence exactly (the one
+    proven-live pattern for actually completing an MO in this codebase).
+    No partial-completion UI — that's the full-MRP-execution tier this round
+    deliberately stayed out of. Odoo's own validation (e.g. a component
+    stock shortage) is allowed to surface as the error detail here, not
+    swallowed — it's a real, useful signal for the person clicking this."""
+    odoo = get_odoo_client()
+    try:
+        mo = _assert_mo_is_order_linked(odoo, mo_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    if mo["state"] not in ("confirmed", "progress", "to_close"):
+        raise HTTPException(status_code=400, detail=f"This manufacturing order is {mo['state']} — it must be confirmed before it can be marked complete")
+
+    remaining = round((mo.get("product_qty") or 0) - (mo.get("qty_producing") or 0), 4)
+    try:
+        if remaining > 0:
+            odoo.write("mrp.production", [mo_id], {"qty_producing": mo.get("product_qty") or 0})
+        odoo.execute("mrp.production", "button_mark_done", [mo_id])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Odoo could not mark this manufacturing order complete: {str(e)}")
+
+    await audit_log("mo.complete", "manufacturing_order", str(mo_id), entity_label=mo["name"],
+                     user=current_user,
+                     before={"state": mo["state"], "qty_producing": mo.get("qty_producing")},
+                     after={"state": "done", "qty_producing": mo.get("product_qty")})
+    return {"mo_id": mo_id, "state": "done"}
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single order with line items and commission breakdown."""
