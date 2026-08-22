@@ -73,14 +73,20 @@ function MOGuideButton() {
               order that hasn't shown up on the Backorders page yet — a backorder only appears once a packer
               has actually tried to pick the delivery and come up short.
             </p>
-            <p className="font-semibold text-gray-700">What Confirm and Mark Complete do</p>
+            <p className="font-semibold text-gray-700">Moving an order through its stages</p>
             <p>
-              <span className="font-medium">Confirm</span> moves a Draft MO to Confirmed in Odoo, reserving
-              the components it needs. <span className="font-medium">Mark Complete</span> records the full
-              remaining quantity as produced and finalises the MO in Odoo, moving the finished stock in.
-              Both write directly to the same record you'd otherwise need to open Odoo to change — if Odoo
-              can't complete either action (for example, a component is genuinely out of stock), the error it
-              gives is shown here exactly as Odoo reports it.
+              There are two actions. <span className="font-medium">Confirm</span> moves a Draft MO to
+              Confirmed in Odoo, reserving the components it needs. <span className="font-medium">Update
+              Status</span> handles everything after that: enter how many have actually been produced and
+              save. Leave it at the full amount to finish the order in one step, or lower it to log partial
+              progress and come back later — either way, Odoo works out whether that puts the order In
+              Progress, To Close, or fully Complete. Both actions write directly to the same record you'd
+              otherwise need to open Odoo to change — if Odoo can't complete one (for example, a component is
+              genuinely out of stock), the error it gives is shown here exactly as Odoo reports it.
+            </p>
+            <p>
+              Once an order is marked complete, any backorders waiting on that stock are automatically
+              rechecked — no need to click "Check backorder stock" separately.
             </p>
           </div>
         </Modal>
@@ -99,10 +105,9 @@ export default function ManufacturingOrders() {
   const [stateFilter, setStateFilter] = useState("");
   const [search,      setSearch     ] = useState("");
   const [soFilter,    setSoFilter   ] = useState(location.state?.soName || "");
-  const [busyId,        setBusyId       ] = useState(null);   // mo_id currently mid-action
-  const [completeTarget, setCompleteTarget] = useState(null); // mo pending Mark Complete confirmation
-  const [recordTarget,  setRecordTarget ] = useState(null);   // mo pending Record Production
-  const [recordQty,     setRecordQty    ] = useState("");
+  const [busyId,       setBusyId      ] = useState(null); // mo_id currently mid-action
+  const [updateTarget, setUpdateTarget] = useState(null); // mo pending Update Status
+  const [updateQty,    setUpdateQty   ] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -131,49 +136,50 @@ export default function ManufacturingOrders() {
     }
   };
 
-  const openRecord = (mo) => {
-    setRecordQty(String(mo.qty_producing || ""));
-    setRecordTarget(mo);
+  // Defaults to the full order quantity — the common case ("it's all done")
+  // needs zero typing, just open the modal and save. Reducing the number is
+  // the deliberate opt-in for logging partial progress instead.
+  const openUpdate = (mo) => {
+    setUpdateQty(String(mo.qty_total ?? ""));
+    setUpdateTarget(mo);
   };
 
-  const doRecordProduction = async () => {
-    const mo  = recordTarget;
-    const qty = parseFloat(recordQty);
-    if (!Number.isFinite(qty) || qty <= (mo.qty_producing || 0)) {
-      toast.error(`Enter a quantity greater than what's already recorded (${fmtQty(mo.qty_producing)})`);
+  const parsedUpdateQty = parseFloat(updateQty);
+  const updateIsComplete = updateTarget && Number.isFinite(parsedUpdateQty) && parsedUpdateQty >= updateTarget.qty_total;
+
+  const doUpdateStatus = async () => {
+    const mo  = updateTarget;
+    const qty = parsedUpdateQty;
+    if (!Number.isFinite(qty) || qty <= 0) {
+      toast.error("Enter a quantity greater than zero");
       return;
     }
     if (qty > mo.qty_total) {
       toast.error(`Cannot exceed the order quantity of ${fmtQty(mo.qty_total)}`);
       return;
     }
-    setRecordTarget(null);
-    setBusyId(mo.mo_id);
-    try {
-      const r = await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/record-production`, { qty_producing: qty });
-      toast.success(`${mo.mo_name} updated — ${MO_STATE_LABEL[r.data.state] || r.data.state}`);
-      setData(d => d.map(m => m.mo_id === mo.mo_id
-        ? { ...m, state: r.data.state, qty_producing: r.data.qty_producing, qty_remaining: round2(m.qty_total - r.data.qty_producing) }
-        : m));
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to record production");
-    } finally {
-      setBusyId(null);
+    if (qty < mo.qty_total && qty <= mo.qty_producing) {
+      toast.error(`Enter a quantity greater than what's already recorded (${fmtQty(mo.qty_producing)})`);
+      return;
     }
-  };
-
-  const doComplete = async () => {
-    const mo = completeTarget;
-    setCompleteTarget(null);
+    setUpdateTarget(null);
     setBusyId(mo.mo_id);
     try {
-      await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/complete`);
-      toast.success(`${mo.mo_name} marked complete`);
-      // A done MO no longer matches the open-MO domain this list reads —
-      // remove it immediately rather than waiting for the next refresh.
-      setData(d => d.filter(m => m.mo_id !== mo.mo_id));
+      if (qty >= mo.qty_total) {
+        await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/complete`);
+        toast.success(`${mo.mo_name} marked complete`);
+        // A done MO no longer matches the open-MO domain this list reads —
+        // remove it immediately rather than waiting for the next refresh.
+        setData(d => d.filter(m => m.mo_id !== mo.mo_id));
+      } else {
+        const r = await api.put(`/api/orders/manufacturing-orders/${mo.mo_id}/record-production`, { qty_producing: qty });
+        toast.success(`${mo.mo_name} updated — ${MO_STATE_LABEL[r.data.state] || r.data.state}`);
+        setData(d => d.map(m => m.mo_id === mo.mo_id
+          ? { ...m, state: r.data.state, qty_producing: r.data.qty_producing, qty_remaining: round2(m.qty_total - r.data.qty_producing) }
+          : m));
+      }
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to mark manufacturing order complete");
+      toast.error(e.response?.data?.detail || "Failed to update manufacturing order");
     } finally {
       setBusyId(null);
     }
@@ -335,25 +341,14 @@ export default function ManufacturingOrders() {
                       );
                     }
                     if (["confirmed", "progress", "to_close"].includes(m.state)) {
-                      const canRecord = m.qty_producing < m.qty_total;
                       return (
-                        <div className="flex items-center gap-1.5">
-                          {canRecord && (
-                            <BtnSecondary
-                              onClick={e => { e.stopPropagation(); openRecord(m); }}
-                              disabled={isBusy}
-                            >
-                              <ClipboardEdit size={13} />Record Production
-                            </BtnSecondary>
-                          )}
-                          <BtnPrimary
-                            onClick={e => { e.stopPropagation(); setCompleteTarget(m); }}
-                            loading={isBusy}
-                            disabled={isBusy}
-                          >
-                            <CheckCircle2 size={13} />Mark Complete
-                          </BtnPrimary>
-                        </div>
+                        <BtnPrimary
+                          onClick={e => { e.stopPropagation(); openUpdate(m); }}
+                          loading={isBusy}
+                          disabled={isBusy}
+                        >
+                          <ClipboardEdit size={13} />Update Status
+                        </BtnPrimary>
                       );
                     }
                     return null;
@@ -365,42 +360,35 @@ export default function ManufacturingOrders() {
         </div>
       </div>
 
-      {completeTarget && (
-        <Modal title="Mark manufacturing order complete?" onClose={() => setCompleteTarget(null)} width="max-w-md">
-          <p className="text-sm text-gray-600">
-            This records the full remaining quantity of <span className="font-mono font-semibold">{fmtQty(completeTarget.qty_remaining)}</span> for{" "}
-            <span className="font-mono font-semibold">{completeTarget.mo_name}</span> ({completeTarget.product_name}) as produced, and finalises
-            it in Odoo — the finished stock moves in and this can't be undone from here. If a component is out of stock, Odoo will refuse and
-            nothing changes.
-          </p>
-          <div className="flex justify-end gap-2 mt-5">
-            <BtnSecondary onClick={() => setCompleteTarget(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={doComplete}><CheckCircle2 size={14} />Mark Complete</BtnPrimary>
-          </div>
-        </Modal>
-      )}
-
-      {recordTarget && (
-        <Modal title="Record production" onClose={() => setRecordTarget(null)} width="max-w-md">
+      {updateTarget && (
+        <Modal title="Update production status" onClose={() => setUpdateTarget(null)} width="max-w-md">
           <p className="text-sm text-gray-600 mb-4">
-            How much of <span className="font-mono font-semibold">{recordTarget.mo_name}</span> ({recordTarget.product_name}) has actually been
-            produced so far? This updates Odoo's own record without finalising the order — Mark Complete is still a separate step once it's
-            fully produced.
+            How much of <span className="font-mono font-semibold">{updateTarget.mo_name}</span> ({updateTarget.product_name}) has actually been
+            produced so far? Defaults to the full order amount — reduce it to log partial progress instead of finishing the order now.
           </p>
-          <FormGroup label={`Quantity produced (out of ${fmtQty(recordTarget.qty_total)})`} required>
+          <FormGroup label={`Quantity produced (out of ${fmtQty(updateTarget.qty_total)})`} required>
             <Input
               type="number"
-              min={recordTarget.qty_producing}
-              max={recordTarget.qty_total}
+              min={0}
+              max={updateTarget.qty_total}
               step="any"
-              value={recordQty}
-              onChange={e => setRecordQty(e.target.value)}
+              value={updateQty}
+              onChange={e => setUpdateQty(e.target.value)}
               autoFocus
             />
           </FormGroup>
-          <div className="flex justify-end gap-2 mt-2">
-            <BtnSecondary onClick={() => setRecordTarget(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={doRecordProduction}><ClipboardEdit size={14} />Save</BtnPrimary>
+          {updateIsComplete && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-1">
+              This will mark the order complete in Odoo — the finished stock moves in and this can't be undone from here. If a component is out
+              of stock, Odoo will refuse and nothing changes.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 mt-4">
+            <BtnSecondary onClick={() => setUpdateTarget(null)}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={doUpdateStatus}>
+              {updateIsComplete ? <CheckCircle2 size={14} /> : <ClipboardEdit size={14} />}
+              {updateIsComplete ? "Mark Complete" : "Save Progress"}
+            </BtnPrimary>
           </div>
         </Modal>
       )}

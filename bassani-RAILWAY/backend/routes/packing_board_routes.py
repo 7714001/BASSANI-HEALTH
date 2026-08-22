@@ -39,6 +39,7 @@ from services.email_service import (
     send_qa_approval_needed,
     send_rp_approval_needed,
 )
+from services.notification_service import notify_ticket_handoff
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
@@ -205,7 +206,6 @@ async def _sync_sales_ticket(
                 "note": f"Orders ticket reached '{outcome}'" + (f": {reason}" if reason else ""),
             }}},
         )
-        from services.notification_service import notify_ticket_handoff
         await notify_ticket_handoff(ticket.get("customer_name", ""), outcome, ticket.get("assigned_to"))
 
         # Notify the actual customer account — main company email plus every
@@ -1047,14 +1047,21 @@ async def mark_collected(
     }
 
 
-@router.get("/backorders/check-stock")
-async def check_backorder_stock(
-    background_tasks: BackgroundTasks,
-    current_user: dict = Depends(require_permission("tickets.orders")),
-):
+async def _check_and_notify_backorder_stock(background_tasks: BackgroundTasks) -> dict:
     """Check all waiting_stock backorder entries against Odoo. When a backorder picking
     has moved to 'assigned' (stock reserved), clears the waiting flag and fires
-    notifications to the reseller and internal staff."""
+    notifications to the reseller, internal staff, and the assigned sales rep.
+
+    Shared by the manual "Check backorder stock" button (check_backorder_stock
+    below) and, since 2026-08-22, automatically called from
+    order_routes.py's Manufacturing Order Record Production / Mark Complete
+    endpoints — production finishing or advancing is exactly the kind of
+    event that should prompt a reservation recheck, not just wait for someone
+    to click the manual button. Deliberately not scoped to the specific
+    product an MO just produced: this sweep is already cheap and bounded
+    (≤200 waiting_stock entries), so reusing the same blanket check avoids
+    the real complexity of correlating an MO's product back to which
+    backorder line(s) it might unblock."""
     entries = await col("packing_board").find(
         {"is_backorder": True, "waiting_stock": True}
     ).to_list(200)
@@ -1108,9 +1115,39 @@ async def check_backorder_stock(
             reseller_name=reseller_name or "",
             backorder_lines=_bo_items,
         )
+
+        # Push notification to whoever owns the Sales ticket (2026-08-22) —
+        # reuses notify_ticket_handoff's existing "a ticket I own changed
+        # stage" semantics rather than inventing a new preference key nobody
+        # can configure yet (no notification-preferences UI exists in the
+        # frontend today). order_id on a backorder entry is the same
+        # str(sale_order_id) the primary entry it split from carries.
+        try:
+            _bo_ticket = await col("tickets").find_one(
+                {"type": "sales", "order_id": int(bo_entry["order_id"]), "exit_status": None},
+                {"assigned_to": 1, "_id": 0},
+            )
+            if _bo_ticket and _bo_ticket.get("assigned_to"):
+                background_tasks.add_task(
+                    notify_ticket_handoff,
+                    customer_name=customer_name,
+                    outcome="stock now available for packing",
+                    assigned_user_id=_bo_ticket["assigned_to"],
+                )
+        except (ValueError, TypeError):
+            pass  # order_id wasn't a plain int string — non-fatal, email notice above already fired
+
         updated_refs.append(order_ref)
 
     return {"checked": len(entries), "ready": len(updated_refs), "updated": updated_refs}
+
+
+@router.get("/backorders/check-stock")
+async def check_backorder_stock(
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    return await _check_and_notify_backorder_stock(background_tasks)
 
 
 @router.put("/incomplete")

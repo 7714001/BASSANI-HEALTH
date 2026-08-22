@@ -1261,6 +1261,55 @@ def send_order_confirmed_partial(
           _wrap(body), cc=cc or None)
 
 
+def send_order_confirmed_partial_customer(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    order_total: float,
+    order_id: str,
+    shipped_lines: list,
+    backorder_lines: list,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent to the actual customer account (main company email, cc'd to every
+    other contact on file — see _resolve_customer_notification_recipients in
+    packing_board_routes.py) when their order is confirmed with some items on
+    backorder. Independent of send_order_confirmed_partial above, which only
+    reaches a reseller who placed the order and does nothing for a
+    customer-role self-placed order (2026-08-22) — the account actually
+    receiving the goods should always know part of it is delayed, regardless
+    of who placed it. Deliberately not mirrored for every reseller-facing
+    milestone (e.g. packing-started) — this and Ready for Collection are the
+    two genuinely relevant ones for an end customer, not every status change.
+    """
+    if not customer_email:
+        return
+    shipped_html = _item_rows(shipped_lines)
+    backorder_html = _item_rows(backorder_lines, qty_key="qty_short")
+    body = (
+        _h1("Your order is confirmed")
+        + _p(f"Hi {customer_name},")
+        + _p(
+            "Your order has been confirmed. The items below are in stock and we're beginning "
+            "fulfilment now. A few items aren't currently available and have been placed on "
+            "backorder. We'll get them to you as soon as they're back in stock, with no extra "
+            "step needed on your side."
+        )
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Order total", f"R{order_total:,.2f}"),
+            ("Status", _badge("Partially available", "#d97706")),
+        ], tint="#fffbeb", border="#fde68a")
+        + _section_heading("Being fulfilled now")
+        + shipped_html
+        + _section_heading("On backorder")
+        + backorder_html
+        + _button("Track your order", f"{settings.portal_url}/orders/{order_id}/passport")
+    )
+    _send(customer_email, f"Order Confirmed: {order_ref}",
+          _wrap(body), cc=cc or None)
+
+
 def send_backorder_alert_internal(
     to: "str | list[str]",
     order_ref: str,

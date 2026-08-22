@@ -15,7 +15,8 @@ from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
-    send_order_confirmed_partial, send_backorder_alert_internal,
+    send_order_confirmed_partial, send_order_confirmed_partial_customer,
+    send_backorder_alert_internal,
     send_deposit_due_proforma,
 )
 
@@ -499,10 +500,27 @@ class RecordProductionBody(BaseModel):
     qty_producing: float
 
 
+async def _recheck_backorder_stock(background_tasks: BackgroundTasks) -> None:
+    """Best-effort trigger for the backorder stock recheck
+    (packing_board_routes.py::_check_and_notify_backorder_stock) after a
+    Manufacturing Order records progress or completes (2026-08-22) —
+    production advancing is exactly the kind of event that should prompt a
+    reservation recheck, not just wait for someone to click the manual
+    "Check backorder stock" button on Orders Tickets. Never allowed to fail
+    the MO action that triggered it — the write already succeeded in Odoo by
+    the time this runs."""
+    try:
+        from routes.packing_board_routes import _check_and_notify_backorder_stock
+        await _check_and_notify_backorder_stock(background_tasks)
+    except Exception as e:
+        logger.warning("mo_backorder_recheck_failed", extra={"error": str(e)})
+
+
 @router.put("/manufacturing-orders/{mo_id}/record-production")
 async def record_manufacturing_order_production(
     mo_id: int,
     body: RecordProductionBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("orders.manufacturing_manage")),
 ):
     """Records the real quantity produced so far, without finalising the MO —
@@ -544,12 +562,14 @@ async def record_manufacturing_order_production(
                      user=current_user,
                      before={"state": mo["state"], "qty_producing": qty_producing},
                      after={"state": new_state, "qty_producing": new_qty})
+    await _recheck_backorder_stock(background_tasks)
     return {"mo_id": mo_id, "state": new_state, "qty_producing": new_qty}
 
 
 @router.put("/manufacturing-orders/{mo_id}/complete")
 async def complete_manufacturing_order(
     mo_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("orders.manufacturing_manage")),
 ):
     """Lightweight status nudge — produces the full remaining quantity in one
@@ -583,6 +603,7 @@ async def complete_manufacturing_order(
                      user=current_user,
                      before={"state": mo["state"], "qty_producing": mo.get("qty_producing")},
                      after={"state": "done", "qty_producing": mo.get("product_qty")})
+    await _recheck_backorder_stock(background_tasks)
     return {"mo_id": mo_id, "state": "done"}
 
 
@@ -2136,14 +2157,17 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     _routing = await get_email_routing()
     _order_ref_str = order_data.get("name", f"#{order_id}")
 
+    _shipped_lines = None
+    if is_partial:
+        _shipped_lines = [
+            {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
+            for i in items if not i.get("is_backordered")
+        ]
+
     if comm_lookup and comm_lookup.get("reseller_id"):
         _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _reseller and _reseller.get("email"):
             if is_partial:
-                _shipped_lines = [
-                    {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
-                    for i in items if not i.get("is_backordered")
-                ]
                 background_tasks.add_task(
                     send_order_confirmed_partial,
                     order_ref=_order_ref_str,
@@ -2165,6 +2189,30 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
                     reseller_email=_reseller["email"],
                     cc=_routing["order_cc"] or None,
                 )
+
+    # ── Customer-facing backorder notice (2026-08-22) ─────────────────────────
+    # Independent of the reseller leg above — the account actually receiving
+    # the goods should always know part of its order is delayed, regardless
+    # of whether a reseller placed it. Deliberately the only mid-pipeline
+    # email added for the customer role this round (not "packing started" —
+    # that's internal warehouse status, not something an end customer needs
+    # to be told); "order confirmed" (non-partial) and "ready for collection"
+    # are already covered by the proforma email and
+    # send_order_ready_for_collection_customer respectively.
+    if is_partial and order_data.get("partner_id"):
+        from routes.packing_board_routes import _resolve_customer_notification_recipients
+        _cust_email, _cust_cc = await _resolve_customer_notification_recipients(odoo, order_data["partner_id"][0])
+        if _cust_email:
+            background_tasks.add_task(
+                send_order_confirmed_partial_customer,
+                order_ref=_order_ref_str,
+                customer_name=order_data["partner_id"][1],
+                order_total=float(order_data.get("amount_total", 0)),
+                order_id=str(order_id),
+                shipped_lines=_shipped_lines,
+                backorder_lines=shortfalls,
+                cc=_cust_cc or None,
+            )
 
     if is_partial and _routing.get("order_to"):
         background_tasks.add_task(

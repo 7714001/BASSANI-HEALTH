@@ -20,6 +20,7 @@ from services.email_service import (
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
     send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
+    send_order_confirmed_partial_customer,
     send_pop_uploaded_notification,
 )
 
@@ -72,6 +73,12 @@ TEST_EMAIL_SENDERS: dict = {
     # field. Same shape as recurring_order_upcoming below.
     "order_ready_customer": lambda to: send_order_ready_for_collection_customer(
         customer_email=to, order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd",
+    ),
+    "order_confirmed_partial_customer": lambda to: send_order_confirmed_partial_customer(
+        customer_email=to, customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        order_total=12500.00, order_id="999",
+        shipped_lines=[{"name": "Test Product A", "qty": 10}],
+        backorder_lines=[{"name": "Test Product B", "qty_short": 5}],
     ),
     "order_cc": lambda to: send_order_confirmed(
         order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_total=12500.00,

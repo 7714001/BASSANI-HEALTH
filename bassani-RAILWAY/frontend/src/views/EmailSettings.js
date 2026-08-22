@@ -179,6 +179,12 @@ const ROUTING_KEYS = [
     note: "This one always goes straight to the customer resolved from Odoo, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
   },
   {
+    key: "order_confirmed_partial_customer", group: "orders", icon: Mail, previewOnly: true,
+    title: "Order Confirmed with Backorder (Customer Notice)",
+    description: "Sent when a customer's order is confirmed with some items on backorder, directly to the customer account on file — independent of the reseller notice, so a customer-placed order is never silent about a shortfall.",
+    note: "This one always goes straight to the customer resolved from Odoo, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
+  },
+  {
     key: "order_cc", group: "orders", icon: Mail,
     title: "Order CC",
     description: "CC'd on order placed and order confirmed emails sent to resellers.",
