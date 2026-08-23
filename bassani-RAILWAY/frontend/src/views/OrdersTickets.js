@@ -104,16 +104,21 @@ export default function OrdersTickets() {
   const [purgeConfirm,    setPurgeConfirm   ] = useState(false);
   const [purging,         setPurging        ] = useState(false);
 
-  // Fetch MOs when viewing a waiting_stock backorder entry
+  // Fetch MOs whenever the entry has an order — previously gated on the
+  // entry already being a waiting_stock backorder, which meant an MO that
+  // exists BEFORE any backorder forms (the common case — Odoo often creates
+  // one the moment the sale order confirms) was invisible to the packer/
+  // clerk working this ticket, even though the Operations Monitor's
+  // has_mo_pending badge already showed it above them (2026-08-23 fix).
   useEffect(() => {
     const orderId = detail?.order_id;
-    if (!orderId || detail?.status !== "waiting_stock") { setMos([]); return; }
+    if (!orderId) { setMos([]); return; }
     setMosLoading(true);
     api.get(`/api/orders/${orderId}/manufacturing-orders`)
       .then(r => setMos(r.data.manufacturing_orders || []))
       .catch(() => setMos([]))
       .finally(() => setMosLoading(false));
-  }, [detail?.order_id, detail?.status]);
+  }, [detail?.order_id]);
 
   // Fetch confirmed lot assignments for on-screen display (done pickings only)
   useEffect(() => {
@@ -849,6 +854,51 @@ export default function OrdersTickets() {
                         </div>
                       )}
 
+                      {/* Production Status — any MO linked to this order, shown as soon as
+                          one exists (2026-08-23), not just once it's already caused a
+                          backorder. Standalone now (previously nested inside, and only
+                          ever fetched for, the waiting_stock panel below) so a packer
+                          working a queued/packing entry can see it too. */}
+                      {(mosLoading || mos.length > 0) && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                            <Package size={12} />Production Status
+                          </p>
+                          {mosLoading ? (
+                            <p className="text-xs text-gray-400">Loading production orders...</p>
+                          ) : mos.map(mo => {
+                            const MO_COLOURS = {
+                              draft:     "bg-gray-100 text-gray-500",
+                              confirmed: "bg-amber-50 text-amber-700",
+                              progress:  "bg-green-50 text-green-700",
+                              to_close:  "bg-blue-50 text-blue-700",
+                            };
+                            const MO_LABELS = {
+                              draft: "Draft", confirmed: "Confirmed",
+                              progress: "In Progress", to_close: "To Close",
+                            };
+                            const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
+                            return (
+                              <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
+                                <div className="min-w-0">
+                                  <span className="font-mono font-medium text-gray-700">{mo.mo_name}</span>
+                                  <span className="ml-1.5 text-gray-500 truncate">{mo.product_name}</span>
+                                  {mo.qty_producing > 0 && (
+                                    <span className="ml-1.5 text-green-600">{mo.qty_producing}/{mo.product_qty} producing</span>
+                                  )}
+                                  {mo.date_planned_finished && (
+                                    <span className="ml-1.5 text-gray-400">· due {fmtDate(mo.date_planned_finished)}</span>
+                                  )}
+                                </div>
+                                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
+                                  {MO_LABELS[mo.state] || mo.state}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       {/* Waiting stock — backorder entry info + check stock button */}
                       {detail.status === "waiting_stock" && (
                         <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3">
@@ -869,46 +919,6 @@ export default function OrdersTickets() {
                             >
                               <RefreshCw size={13} />Check stock availability
                             </BtnSecondary>
-                          )}
-                          {/* Production orders replenishing this backorder */}
-                          {(mosLoading || mos.length > 0) && (
-                            <div className="border-t border-amber-100 pt-3 space-y-2">
-                              <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-1">
-                                <Package size={10} />Production orders
-                              </p>
-                              {mosLoading ? (
-                                <p className="text-xs text-amber-600">Loading...</p>
-                              ) : mos.map(mo => {
-                                const MO_COLOURS = {
-                                  draft:     "bg-gray-100 text-gray-500",
-                                  confirmed: "bg-amber-100 text-amber-800",
-                                  progress:  "bg-green-50 text-green-700",
-                                  to_close:  "bg-blue-50 text-blue-700",
-                                };
-                                const MO_LABELS = {
-                                  draft: "Draft", confirmed: "Confirmed",
-                                  progress: "In Progress", to_close: "To Close",
-                                };
-                                const colour = MO_COLOURS[mo.state] || "bg-gray-100 text-gray-500";
-                                return (
-                                  <div key={mo.mo_id} className="flex items-start justify-between gap-2 text-xs">
-                                    <div className="min-w-0">
-                                      <span className="font-mono font-medium text-amber-900">{mo.mo_name}</span>
-                                      <span className="ml-1.5 text-amber-700 truncate">{mo.product_name}</span>
-                                      {mo.qty_producing > 0 && (
-                                        <span className="ml-1.5 text-green-700">{mo.qty_producing}/{mo.product_qty} producing</span>
-                                      )}
-                                      {mo.date_planned_finished && (
-                                        <span className="ml-1.5 text-amber-600">· due {fmtDate(mo.date_planned_finished)}</span>
-                                      )}
-                                    </div>
-                                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${colour}`}>
-                                      {MO_LABELS[mo.state] || mo.state}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
                           )}
                         </div>
                       )}

@@ -1166,7 +1166,7 @@ A third live, read-only big-screen display (2026-08-22), for the GACP manufactur
 
 **No login is required.** Access is controlled by a secret URL token managed by the super admin, same as the other two monitors.
 
-**Light/dark theme and order grouping (2026-08-23):** same dark-by-default theme toggle and fullscreen button as the Operations Monitor. This board already grouped Manufacturing Orders by their sale order — when a column holds more than one product for the same order, they're nested under one shared header (order reference + customer) instead of repeating that line per card; clicking the header (as well as any individual product card) now opens that order's Order Passport.
+**Light/dark theme and order grouping (2026-08-23):** same dark-by-default theme toggle and fullscreen button as the Operations Monitor. This board already grouped Manufacturing Orders by their sale order; **every order now shows its order reference + customer heading, even one with only a single product** (previously only orders with more than one product got a heading at all) — clicking the header, same as clicking any individual product card, opens that order's Order Passport.
 
 ### Setting Up the Manufacturing Monitor Display
 
@@ -1192,7 +1192,7 @@ A finished (Done) or cancelled MO drops off the board automatically — there's 
 
 **Each card shows:** the product being manufactured (the main heading — this board is about what to make, not who it's for), the MO reference, how many units are still remaining out of the total ordered, the sale order reference and customer name, a linked ticket reference if one exists, a live age badge, and a due date if Odoo has one planned. Clicking a card opens that order's Order Passport in a new tab.
 
-**KPI strip:** Overdue, At Risk, In Progress, and To Close across the top; a count for each of the 4 columns, total units still remaining across every open MO, and Oldest Active underneath. Colour coding and the live countdown badges work exactly the same way as the other two monitors. **Deadlines shown are proposed first-pass estimates only** — there is no confirmed production SLA yet for how long each stage should take; let the team know once real usage shows what's actually urgent so these can be tuned.
+**KPI strip (2026-08-23, made order-focused):** the top row now answers "which orders need chasing," not "how many individual products are in each state" — **Orders Overdue**, **Orders At Risk**, **Orders Affected** (distinct orders with any open production right now), and **Oldest Order Waiting**. An order counts as Overdue or At Risk if *any one* of its products is — a single late item makes the whole order worth chasing, the same way a customer waiting on a 5-product order doesn't care that 4 of the 5 are ready. A second, smaller row underneath keeps the original per-product breakdown (Draft/Confirmed/In Progress/To Close counts, plus total units still remaining) as a secondary production-floor workload signal. Colour coding and the live countdown badges work exactly the same way as the other two monitors. **Deadlines shown are proposed first-pass estimates only** — there is no confirmed production SLA yet for how long each stage should take; let the team know once real usage shows what's actually urgent so these can be tuned.
 
 Only Manufacturing Orders tied to a customer sale order appear here — internal production-facility batch work (the separate Vault module used by Production/Compliance staff) never shows on this board.
 
@@ -1638,11 +1638,11 @@ Filter either view by state using the pills above the table, or search by produc
 
 Arriving here from an Order Passport's **Manufacturing Orders** button pre-filters the table to that order's reference — click **View all** to clear the filter.
 
-**MO visibility on tickets:** The same production status information appears in two other places:
-- **Sales Ticket detail** — a "Production Status" card appears below the Delivery and Fulfilment section whenever any delivery on the order is a backorder. It auto-loads without refreshing the page.
-- **Orders Ticket waiting_stock panel** — when an order is in Awaiting Stock state (a backorder entry), a "Production orders" section appears inside the amber panel, showing the same MO detail.
+**MO visibility on tickets:** The same production status information appears in two other places, both fixed 2026-08-23 to show as soon as an MO exists rather than waiting for a backorder:
+- **Sales Ticket detail** — a "Production Status" card appears below the Delivery and Fulfilment section as soon as any Manufacturing Order is linked to the order. It auto-loads without refreshing the page.
+- **Orders Ticket detail** — the same "Production Status" card appears on the packing board entry, regardless of whether it's currently a backorder.
 
-If no MOs exist (Odoo has not yet created a replenishment manufacturing order), neither the card nor the section appears.
+Previously both only appeared once the order had already become a backorder — but a Manufacturing Order commonly exists well before that point, since Odoo often creates one the moment the sale order is confirmed. That meant the Manufacturing Monitor and Operations Monitor could already be showing "in production" on an order while the staff member actually working that ticket saw nothing. Now both match what the monitors show. If no MOs exist at all, neither card appears.
 
 ### Invoices
 

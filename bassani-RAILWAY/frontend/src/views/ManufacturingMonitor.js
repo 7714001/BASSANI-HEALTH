@@ -4,7 +4,7 @@
 // Bassani branding). Genuine difference from the other two boards: this
 // board's data lives only in Odoo, so every poll makes a live Odoo call —
 // see backend/routes/manufacturing_monitor_routes.py's file header for why.
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../api";
 import {
@@ -102,10 +102,12 @@ function MOCard({ card, now, theme, hideOrderLine }) {
   );
 }
 
+// Every group shows its order/customer heading, even a single-product order
+// (2026-08-23) — previously only groups with more than one product got the
+// header at all, so a single-item order's card carried no order/customer
+// context unless you read the smaller inline order_ref line on the card
+// itself.
 function CardGroup({ group, now, theme }) {
-  if (group.cards.length === 1) {
-    return <MOCard card={group.cards[0]} now={now} theme={theme} />;
-  }
   const first = group.cards[0];
   return (
     <CardGroupBox theme={theme}>
@@ -113,7 +115,7 @@ function CardGroup({ group, now, theme }) {
         orderRef={first.order_ref}
         customerName={first.customer_name}
         count={group.cards.length}
-        unitLabel="products"
+        unitLabel={group.cards.length === 1 ? "product" : "products"}
         href={cardUrl(first)}
         theme={theme}
       />
@@ -165,6 +167,32 @@ export default function ManufacturingMonitor() {
     return () => clearInterval(id);
   }, [valid, fetchData]);
 
+  // Order-level rollups, computed client-side from the already-fetched flat
+  // per-column card lists (2026-08-23) — this board's headline KPIs were
+  // entirely per-MO (individual product), which tells production how busy
+  // the floor is but not which ORDER needs chasing: a single overdue
+  // product buried inside a 5-product order never surfaced as "this order
+  // is at risk." An order is overdue/at-risk if ANY of its products is —
+  // the worst product on the order determines whether the order itself
+  // needs chasing, mirroring how a customer experiences it (they don't
+  // care that 4 of 5 items are ready if the 5th is late). No backend
+  // change needed — every card already carries `sale_order_id`/`age_tier`.
+  const allCards = useMemo(() => {
+    if (!data) return [];
+    return COLUMNS.flatMap(cfg => data.columns[cfg.key] || []);
+  }, [data]);
+
+  const orderRollups = useMemo(() => {
+    const groups = groupCardsByOrder(allCards, c => c.sale_order_id || `mo-${c.id}`);
+    let ordersOverdue = 0, ordersAtRisk = 0;
+    groups.forEach(g => {
+      const tiers = new Set(g.cards.map(c => c.age_tier));
+      if (tiers.has("overdue")) ordersOverdue++;
+      else if (tiers.has("urgent")) ordersAtRisk++;
+    });
+    return { ordersAffected: groups.length, ordersOverdue, ordersAtRisk };
+  }, [allCards]);
+
   if (valid === false) {
     return <MonitorInvalidTokenScreen theme={theme} settingsHint="Generate a token in Settings → Monitor Displays" />;
   }
@@ -191,44 +219,36 @@ export default function ManufacturingMonitor() {
       />
 
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
+      {/* Row 1 is order-focused (2026-08-23) — the headline numbers answer
+          "which orders need chasing," not "how many individual products are
+          in each state." Row 2 keeps the per-product/MO breakdown as a
+          secondary signal, still useful for the production floor's own
+          workload view. */}
       <div style={{ padding: "16px 20px 0", flexShrink: 0 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 10 }}>
           <KpiCard theme={theme}
-            label="Overdue"
-            value={kpis.overdue}
-            sub={kpis.overdue > 0 ? "Past the proposed deadline — act now" : "All MOs on track"}
+            label="Orders Overdue"
+            value={orderRollups.ordersOverdue}
+            sub={orderRollups.ordersOverdue > 0 ? "At least one product past deadline — chase these first" : "No orders overdue"}
             color="#dc2626"
-            pulse={kpis.overdue > 0}
+            pulse={orderRollups.ordersOverdue > 0}
           />
           <KpiCard theme={theme}
-            label="At Risk"
-            value={kpis.at_risk}
-            sub="Approaching deadline"
+            label="Orders At Risk"
+            value={orderRollups.ordersAtRisk}
+            sub="Approaching deadline on at least one product"
             color="#ea580c"
           />
           <KpiCard theme={theme}
-            label="In Progress"
-            value={kpis.in_progress}
-            sub="Currently being produced"
-            color="#16a34a"
+            label="Orders Affected"
+            value={orderRollups.ordersAffected}
+            sub="Distinct orders with open production right now"
+            color={t.brand}
           />
           <KpiCard theme={theme}
-            label="To Close"
-            value={kpis.to_close}
-            sub="Nearly done, needs final confirmation"
-            color="#2563eb"
-          />
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 16 }}>
-          <KpiSmall theme={theme} label="Draft"        value={kpis.draft}        />
-          <KpiSmall theme={theme} label="Confirmed"    value={kpis.confirmed}    color="#d97706" />
-          <KpiSmall theme={theme} label="In Progress"  value={kpis.in_progress}  color="#16a34a" />
-          <KpiSmall theme={theme} label="To Close"     value={kpis.to_close}     color="#2563eb" />
-          <KpiSmall theme={theme} label="Units Remaining" value={fmtQty(kpis.total_units_remaining)} />
-          <KpiSmall theme={theme}
-            label="Oldest Active"
+            label="Oldest Order Waiting"
             value={fmtHours(kpis.oldest_hours)}
+            sub="Longest any order has been waiting on production"
             color={
               !kpis.oldest_hours ? undefined
               : kpis.oldest_hours > 72 ? "#dc2626"
@@ -236,6 +256,14 @@ export default function ManufacturingMonitor() {
               : t.brand
             }
           />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+          <KpiSmall theme={theme} label="Draft"        value={kpis.draft}        />
+          <KpiSmall theme={theme} label="Confirmed"    value={kpis.confirmed}    color="#d97706" />
+          <KpiSmall theme={theme} label="In Progress"  value={kpis.in_progress}  color="#16a34a" />
+          <KpiSmall theme={theme} label="To Close"     value={kpis.to_close}     color="#2563eb" />
+          <KpiSmall theme={theme} label="Units Remaining" value={fmtQty(kpis.total_units_remaining)} />
         </div>
       </div>
 

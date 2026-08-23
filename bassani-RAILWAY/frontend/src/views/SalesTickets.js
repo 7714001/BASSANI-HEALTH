@@ -565,17 +565,21 @@ export default function SalesTickets() {
       .finally(() => setDeliveriesLoading(false));
   }, [detail?.order_id]);
 
-  // Fetch MOs when any delivery is a backorder
+  // Fetch MOs whenever the ticket has an order — previously gated on a
+  // delivery already being a backorder, which meant an MO that exists
+  // BEFORE any backorder forms (the common case — Odoo often creates one
+  // the moment the sale order confirms) was invisible here even though the
+  // Operations Monitor's has_mo_pending badge already showed it (2026-08-23
+  // fix: the monitor board had this signal, the working screen didn't).
   useEffect(() => {
     const orderId = detail?.order_id;
-    const hasBackorder = deliveries.some(d => d.is_backorder);
-    if (!orderId || !hasBackorder) { setMos([]); return; }
+    if (!orderId) { setMos([]); return; }
     setMosLoading(true);
     api.get(`/api/orders/${orderId}/manufacturing-orders`)
       .then(r => setMos(r.data.manufacturing_orders || []))
       .catch(() => setMos([]))
       .finally(() => setMosLoading(false));
-  }, [detail?.order_id, deliveries]);
+  }, [detail?.order_id]);
 
   const advance = async () => {
     if (stageForm.status === "incomplete" && !stageForm.incomplete_reason)
@@ -1410,7 +1414,8 @@ export default function SalesTickets() {
                         </div>
                       )}
 
-                      {/* Production Status — MOs linked to this order (backorder replenishment) */}
+                      {/* Production Status — any MO linked to this order, shown as soon as one
+                          exists (2026-08-23), not just once it's already caused a backorder */}
                       {(mosLoading || mos.length > 0) && (
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
