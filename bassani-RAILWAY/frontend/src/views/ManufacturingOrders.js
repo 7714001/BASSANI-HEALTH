@@ -13,7 +13,7 @@ import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2, ClipboardEdit
 import toast from "react-hot-toast";
 import api from "../api";
 import { useAuth } from "../AuthContext";
-import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary, BtnPrimary, Modal, FormGroup, Input, openMonitorDisplay } from "../components/UI";
+import { TopBar, DataTable, FilterPill, SearchBar, BtnSecondary, BtnPrimary, Modal, FormGroup, Input, Pager, openMonitorDisplay } from "../components/UI";
 import { MO_STATE_LABEL } from "./Backorders";
 
 const STATE_STYLE = {
@@ -221,6 +221,8 @@ export default function ManufacturingOrders() {
   const [busyId,       setBusyId      ] = useState(null); // mo_id currently mid-action
   const [updateTarget, setUpdateTarget] = useState(null); // mo pending Update Status
   const [updateQty,    setUpdateQty   ] = useState("");
+  const [groupPageIndex, setGroupPageIndex] = useState(0); // By Order view's own pagination — DataTable (By Product) already paginates itself
+  const [groupPageSize,  setGroupPageSize ] = useState(25);
 
   const load = async () => {
     setLoading(true);
@@ -336,10 +338,37 @@ export default function ManufacturingOrders() {
       map.get(key).mos.push(m);
     });
     return Array.from(map.values()).sort((a, b) => {
-      const aOldest = Math.min(...a.mos.map(m => ageDays(m.create_date) ?? 0));
-      const bOldest = Math.min(...b.mos.map(m => ageDays(m.create_date) ?? 0));
+      // Math.max, not min — a group's rank is its OLDEST (most urgent)
+      // member, so one urgent product never gets buried under a newer
+      // product just because they share an order (2026-08-23 fix: this was
+      // previously Math.min, ranking groups by their newest/least-urgent
+      // member instead, the opposite of what the comment above intends).
+      const aOldest = Math.max(...a.mos.map(m => ageDays(m.create_date) ?? 0));
+      const bOldest = Math.max(...b.mos.map(m => ageDays(m.create_date) ?? 0));
       return bOldest - aOldest;
     });
+  }, [filtered]);
+
+  // Reset to page 1 whenever the underlying group list changes shape —
+  // otherwise a filter/search that shrinks the result set can strand the
+  // view on a now-empty page.
+  useEffect(() => { setGroupPageIndex(0); }, [orderGroups.length, groupPageSize]);
+
+  const pagedGroups = useMemo(() => {
+    const start = groupPageIndex * groupPageSize;
+    return orderGroups.slice(start, start + groupPageSize);
+  }, [orderGroups, groupPageIndex, groupPageSize]);
+
+  // Summary stats — mirrors the public Manufacturing Monitor's own KPI row
+  // (units remaining, oldest open) so this admin page never shows less
+  // summary information than the public TV board does, plus the one this
+  // page was specifically missing: how many distinct orders have open MOs,
+  // not just how many MOs exist (one order can have several).
+  const summaryStats = useMemo(() => {
+    const orderKeys = new Set(filtered.map(m => m.order_ref || `mo-${m.mo_id}`));
+    const unitsRemaining = filtered.reduce((sum, m) => sum + (Number(m.qty_remaining) || 0), 0);
+    const oldestDays = filtered.reduce((max, m) => Math.max(max, ageDays(m.create_date) ?? 0), 0);
+    return { ordersAffected: orderKeys.size, unitsRemaining: round2(unitsRemaining), oldestDays };
   }, [filtered]);
 
   return (
@@ -362,7 +391,27 @@ export default function ManufacturingOrders() {
       />
 
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
-        {/* Stats row */}
+        {/* Summary row — mirrors the public Manufacturing Monitor's own KPI
+            row, so this admin page is never less informative than the TV
+            board it's the searchable counterpart to. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-400 uppercase font-semibold tracking-wide mb-1">Orders Affected</p>
+            <p className="text-2xl font-bold text-gray-900">{summaryStats.ordersAffected}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-400 uppercase font-semibold tracking-wide mb-1">Units Remaining</p>
+            <p className="text-2xl font-bold text-gray-900">{fmtQty(summaryStats.unitsRemaining)}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-400 uppercase font-semibold tracking-wide mb-1">Oldest Open</p>
+            <p className={`text-2xl font-bold ${summaryStats.oldestDays > 3 ? "text-red-600" : summaryStats.oldestDays > 1 ? "text-amber-600" : "text-gray-900"}`}>
+              {summaryStats.oldestDays}d
+            </p>
+          </div>
+        </div>
+
+        {/* Stage breakdown row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { label: "Draft",       value: stateCounts.draft,     color: "text-gray-600" },
@@ -430,32 +479,41 @@ export default function ManufacturingOrders() {
               <p className="text-xs text-gray-400 mt-1">Nothing currently needs producing for a customer order.</p>
             </div>
           ) : groupBy === "order" ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="p-3 w-8" />
-                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">SO Ref</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Products</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Ticket</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orderGroups.map(group => (
-                    <OrderGroupRow
-                      key={group.order_ref || group.mos[0]?.mo_id}
-                      group={group}
-                      navigate={navigate}
-                      canManage={canManage}
-                      busyId={busyId}
-                      doConfirm={doConfirm}
-                      openUpdate={openUpdate}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="p-3 w-8" />
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">SO Ref</th>
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Products</th>
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Ticket</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedGroups.map(group => (
+                      <OrderGroupRow
+                        key={group.order_ref || group.mos[0]?.mo_id}
+                        group={group}
+                        navigate={navigate}
+                        canManage={canManage}
+                        busyId={busyId}
+                        doConfirm={doConfirm}
+                        openUpdate={openUpdate}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pager
+                pageIndex={groupPageIndex}
+                pageSize={groupPageSize}
+                total={orderGroups.length}
+                onPageChange={setGroupPageIndex}
+                onPageSizeChange={setGroupPageSize}
+              />
+            </>
           ) : (
             <DataTable
               loading={loading}
