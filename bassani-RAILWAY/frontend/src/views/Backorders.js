@@ -60,10 +60,11 @@ function ProductRow({ line }) {
 
 function OrderRow({ entry, defaultExpanded, navigate }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const multiLine = entry.lines.length > 1;
   const age = ageDays(entry.create_date);
+  const totalOutstanding = entry.lines.reduce((sum, l) => sum + Number(l.qty_outstanding || 0), 0);
 
   return (
+    <>
     <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
       {/* Expand toggle — always shown, same chevron pattern as Manufacturing
           Orders' By Order view, even for a single-line entry (2026-08-23) */}
@@ -109,20 +110,15 @@ function OrderRow({ entry, defaultExpanded, navigate }) {
         )}
       </td>
 
-      {/* Products outstanding — collapsed shows just the first line + count */}
-      <td className="p-3 min-w-[220px]">
-        {expanded ? (
-          <div className="space-y-0.5">
-            {entry.lines.map((l, i) => <ProductRow key={i} line={l} />)}
-          </div>
-        ) : (
-          <>
-            <ProductRow line={entry.lines[0] || { product_name: "—", qty_outstanding: 0 }} />
-            {multiLine && (
-              <p className="text-[11px] text-gray-400 mt-0.5">+{entry.lines.length - 1} more product{entry.lines.length > 2 ? "s" : ""}</p>
-            )}
-          </>
-        )}
+      {/* Products outstanding — a fixed summary regardless of expand state;
+          per-product detail now lives in its own row below when expanded
+          (2026-08-23), matching Manufacturing Orders' By Order layout,
+          rather than being stacked inside this one cell */}
+      <td className="p-3 whitespace-nowrap">
+        <span className="text-sm font-semibold text-orange-600">
+          {totalOutstanding % 1 === 0 ? totalOutstanding : totalOutstanding.toFixed(2)} outstanding
+        </span>
+        <p className="text-[11px] text-gray-400">{entry.lines.length} product{entry.lines.length !== 1 ? "s" : ""}</p>
       </td>
 
       {/* State */}
@@ -150,6 +146,15 @@ function OrderRow({ entry, defaultExpanded, navigate }) {
         )}
       </td>
     </tr>
+    {expanded && entry.lines.map((l, i) => (
+      <tr key={i} className="bg-gray-50 border-b border-gray-100">
+        <td className="p-3" />
+        <td className="p-3 pl-8" colSpan={8}>
+          <ProductRow line={l} />
+        </td>
+      </tr>
+    ))}
+    </>
   );
 }
 
