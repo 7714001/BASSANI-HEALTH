@@ -33,7 +33,7 @@
 | 19 | My Profile & Multi-Authority Signing | 🟢 Complete | 19.0–19.4 complete — 2026-07-08 |
 | 20 | Sales Agent Accounts & Commission Eligibility | 🟢 Complete | 20.0–20.3 complete — 2026-07-08 |
 | 21 | Customer Data Model Hardening | 🟢 Complete | 21.0–21.5 complete — 2026-07-09 |
-| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22; 23.5 complete — 2026-08-22 |
+| 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22; 23.5 complete — 2026-08-22; 23.6 complete — 2026-08-23 (shared `MonitorKit.js`, light/dark theme with light default, fullscreen toggle, Bassani branding, Operations board grouped by order/SO to match Manufacturing's existing grouping — see CLAUDE.md for the full breakdown) |
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 
@@ -5096,6 +5096,7 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 
 **Manufacturing Orders / Manufacturing Monitor grouped by SO, same day (2026-08-23):** raised directly — group by sale order so staff can confirm everything on an order is ready, not just one product in isolation, while each product's status is still tracked individually. Reused `Backorders.js`'s existing `groupBy`/`OrderRow` pattern rather than designing a new one.
 - [x] `frontend/src/views/ManufacturingOrders.js` — By Order / By Product toggle, defaulting to By Order. By Order is a hand-rolled expandable `<table>` (`OrderGroupRow`, grouped by `order_ref`, each group sorted oldest-first by its own oldest member); By Product is the original flat `DataTable`, unchanged. Confirm/Update Status extracted into a shared `MOActions` component so both views render and behave identically
+- [x] **Parent row redesign (2026-08-23, second follow-up):** added an Age column to the parent row (previously only the flat By Product view showed age) and replaced the raw per-product state pills on the parent with one rollup `Status` pill via `rollupState()` — least-advanced product wins, since the order isn't ready until its furthest-behind product is; a "Mixed — least advanced shown" note + hover tooltip listing every product's own state appears only when the group actually has more than one distinct state. Every group row can now be collapsed, not just ones with more than one product. Child product rows (qty remaining/produced, action buttons) are unchanged
 - [x] `frontend/src/views/ManufacturingMonitor.js` — within each of the 4 status columns, `groupCardsByOrder()` clusters already-sorted cards by `sale_order_id` into one shared header (order ref + customer) per group instead of repeating that line on every card. A group's rank is its most-urgent member's original position, so grouping never buries an urgent single-item order behind a calmer multi-item one. No backend change — every card already carried `sale_order_id`/`order_ref`/`customer_name`
 
 **Pagination + summary KPIs, same-day follow-up (2026-08-23):** raised directly — the By Order view (now the default tab) had no pagination at all, and the page had no way to see how many distinct orders were affected by open MOs, only the MO count itself.
@@ -5115,6 +5116,26 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] With a reactivated backorder and its finished primary both present, working the backorder through assign → pack → ready → QA → RP → complete → collected only ever mutates the backorder's own document — the primary's fields are untouched throughout
 - [x] A normal order with no backorder behaves identically to before this fix in every respect
 - [x] An order with 2+ products each on their own MO shows them clustered together on both Manufacturing Orders (By Order) and the Manufacturing Monitor, each still independently confirmable/updatable, with state filter chips and KPI counts still correct against the flat underlying data
+
+### 23.6 — Light/Dark Theme, Enterprise Redesign, and Order Grouping — Complete 2026-08-23
+
+**Goal:** these three boards are no longer just office/facility TVs — they're now also used interactively from laptops (click a card to jump straight to its Order Passport or application). The original permanently-dark, generic-palette design didn't match the rest of the portal's light UI or carry any Bassani branding, and the Operations board didn't yet group cards by order/SO the way Manufacturing's already did. Requested directly by the product owner, along with a request for a light/dark toggle (light default) and general recommendations for bringing these boards up to a competitive, enterprise-dashboard standard.
+
+- [x] New `frontend/src/components/MonitorKit.js` — shared theme tokens (light/dark palettes, Bassani teal brand accent pulled from `tailwind.config.js`), `useMonitorTheme()` (`localStorage`-persisted, defaults to light), tier icons alongside color (colorblind-safer), and theme-aware versions of the KPI cards/column shell/age badge/header bar/loading/invalid screens that were previously three independent, drifting copies. Deliberate, one-time exception to the "parallel files over shared abstraction" precedent for these three files — justified because theme is a fourth cross-cutting concern that must never drift three ways, and the redesign already touched all three files
+- [x] `ThemeToggle` (sun/moon button in the header) + `FullscreenToggle` (Fullscreen API) — new controls on every board's header bar
+- [x] Bassani branding: `/logo.png` in the header (replacing plain "BASSANI HEALTH" text) and brand-teal accents on the LIVE indicator and positive KPI values, matching the rest of the portal instead of a generic dark NOC look
+- [x] `groupCardsByOrder()` generalized out of `ManufacturingMonitor.js` into `MonitorKit.js` (parameterized by a caller-supplied key extractor), plus a new shared, clickable `OrderGroupHeader` — **Operations Monitor (`OrderMonitor.js`) now groups cards by order/SO within each column**, the same pattern Manufacturing already used (23.3), closing the gap where a primary delivery and its re-queued backorder child sharing one `order_id` could render as two anonymous cards instead of one recognizable order
+- [x] Manufacturing Monitor's own group header (previously inert text) is now clickable through to the Order Passport, gaining the same behavior Operations' new group header has, as a side effect of sharing the component
+- [x] Onboarding Monitor intentionally left ungrouped — it's application/company-focused, not order-focused, so the grouping ask didn't apply there; it was still rebuilt on `MonitorKit.js` for visual/theme consistency
+- [x] No backend changes — all three `/api/*monitor*/data` endpoints already returned everything needed (`so_ref`, `sale_order_id`, etc.); this was presentation-only
+
+### Definition of Done
+- [x] Each of the three boards loads in light theme by default with no stored preference, and the toggle switches to dark and persists across a refresh (per browser, via `localStorage`)
+- [x] The fullscreen button enters/exits fullscreen and its icon reflects the current state
+- [x] Operations and Manufacturing cards sharing an order/SO within the same column render nested under one clickable group header instead of as separate anonymous cards; an order with only one card in a column still renders as a normal single card, unchanged
+- [x] Clicking a card or a group header opens the correct destination (Order Passport / application / `/orders/backorders` fallback) exactly as before the redesign
+- [x] KPI numbers and column counts are unchanged from before the redesign — pure presentation refactor, no data-layer logic change
+- [x] `npm run build` compiles cleanly with no new warnings
 
 ---
 

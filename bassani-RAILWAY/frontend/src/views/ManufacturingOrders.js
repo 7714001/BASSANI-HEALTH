@@ -31,6 +31,19 @@ function StatePill({ state }) {
   );
 }
 
+// Least-advanced-wins: an order isn't actually ready until every one of its
+// products is, so the parent row's single rollup status is whichever
+// product is furthest BEHIND, not the furthest ahead — that's the thing
+// actually blocking the order. Draft is the earliest stage, to_close the
+// latest, matching STATE_STYLE/MO_STATE_LABEL's own ordering.
+const STATE_PRIORITY = { draft: 0, confirmed: 1, progress: 2, to_close: 3 };
+
+function rollupState(mos) {
+  return mos.reduce((worst, m) =>
+    (STATE_PRIORITY[m.state] ?? 0) < (STATE_PRIORITY[worst.state] ?? 0) ? m : worst
+  , mos[0]).state;
+}
+
 function fmtQty(n) {
   if (n === null || n === undefined) return "—";
   return Number(n).toLocaleString("en-ZA", { maximumFractionDigits: 2 });
@@ -133,17 +146,16 @@ function MOActions({ m, canManage, busyId, doConfirm, openUpdate }) {
 
 function OrderGroupRow({ group, navigate, canManage, busyId, doConfirm, openUpdate }) {
   const [expanded, setExpanded] = useState(true);
-  const multiLine = group.mos.length > 1;
+  const isMixed = new Set(group.mos.map(m => m.state)).size > 1;
+  const overall = rollupState(group.mos);
 
   return (
     <>
       <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
         <td className="p-3 w-8">
-          {multiLine ? (
-            <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600">
-              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-          ) : null}
+          <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600">
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
         </td>
         <td className="p-3 font-mono text-sm whitespace-nowrap">
           {group.sale_order_id ? (
@@ -161,14 +173,20 @@ function OrderGroupRow({ group, navigate, canManage, busyId, doConfirm, openUpda
         <td className="p-3 text-sm text-gray-700 max-w-[180px] truncate">
           {group.customer_name || "—"}
         </td>
-        <td className="p-3 min-w-[280px]">
-          <div className="flex flex-wrap gap-1.5">
-            {group.mos.map(m => (
-              <span key={m.mo_id} className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${STATE_STYLE[m.state] || "bg-gray-100 text-gray-500"}`}>
-                {MO_STATE_LABEL[m.state] || m.state}
-              </span>
-            ))}
+        <td className="p-3 whitespace-nowrap">
+          <span className={`text-xs font-semibold ${group.oldestAgeDays > 3 ? "text-red-600" : group.oldestAgeDays > 1 ? "text-amber-600" : "text-gray-500"}`}>
+            {group.oldestAgeDays}d
+          </span>
+        </td>
+        <td
+          className="p-3 min-w-[200px]"
+          title={isMixed ? group.mos.map(m => `${m.product_name || m.mo_name}: ${MO_STATE_LABEL[m.state] || m.state}`).join("\n") : undefined}
+        >
+          <div className="flex items-center gap-2">
+            <StatePill state={overall} />
+            <span className="text-xs text-gray-400">{group.mos.length} product{group.mos.length !== 1 ? "s" : ""}</span>
           </div>
+          {isMixed && <p className="text-[10px] text-gray-400 mt-0.5">Mixed — least advanced shown</p>}
         </td>
         <td className="p-3 whitespace-nowrap">
           {group.ticket ? (
@@ -187,7 +205,7 @@ function OrderGroupRow({ group, navigate, canManage, busyId, doConfirm, openUpda
       {expanded && group.mos.map(m => (
         <tr key={m.mo_id} className="bg-gray-50 border-b border-gray-100">
           <td className="p-3" />
-          <td className="p-3 pl-8" colSpan={2}>
+          <td className="p-3 pl-8" colSpan={3}>
             <p className="text-sm font-medium text-gray-900">{m.product_name || "—"}</p>
             <p className="text-[10px] font-mono text-gray-400">{m.mo_name}</p>
           </td>
@@ -337,16 +355,17 @@ export default function ManufacturingOrders() {
       }
       map.get(key).mos.push(m);
     });
-    return Array.from(map.values()).sort((a, b) => {
-      // Math.max, not min — a group's rank is its OLDEST (most urgent)
-      // member, so one urgent product never gets buried under a newer
-      // product just because they share an order (2026-08-23 fix: this was
-      // previously Math.min, ranking groups by their newest/least-urgent
-      // member instead, the opposite of what the comment above intends).
-      const aOldest = Math.max(...a.mos.map(m => ageDays(m.create_date) ?? 0));
-      const bOldest = Math.max(...b.mos.map(m => ageDays(m.create_date) ?? 0));
-      return bOldest - aOldest;
-    });
+    // oldestAgeDays is precomputed once here (not just used for sorting) so
+    // OrderGroupRow can show it directly as the parent row's Age column.
+    const groups = Array.from(map.values()).map(g => ({
+      ...g,
+      oldestAgeDays: Math.max(...g.mos.map(m => ageDays(m.create_date) ?? 0)),
+    }));
+    // Sort by oldest (most urgent) member, not newest — a group with one
+    // urgent product must never get buried under a newer product just
+    // because they share an order (2026-08-23 fix: this was previously
+    // Math.min, ranking groups by their newest/least-urgent member instead).
+    return groups.sort((a, b) => b.oldestAgeDays - a.oldestAgeDays);
   }, [filtered]);
 
   // Reset to page 1 whenever the underlying group list changes shape —
@@ -487,7 +506,8 @@ export default function ManufacturingOrders() {
                       <th className="p-3 w-8" />
                       <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">SO Ref</th>
                       <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
-                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Products</th>
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Age</th>
+                      <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</th>
                       <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Ticket</th>
                     </tr>
                   </thead>

@@ -1,14 +1,18 @@
 // Manufacturing Orders monitor — public/big-screen board for the GACP
-// manufacturing facility (Phase 23.3, companion to OrderMonitor.js and
-// OnboardingMonitor.js, same architecture: URL-token-only access, no login,
-// 30s poll, no WebSocket). Genuine difference from the other two: this
+// manufacturing facility (Phase 23.3, redesigned 23.6 2026-08-23 onto the
+// shared MonitorKit — light/dark theme (light default), fullscreen toggle,
+// Bassani branding). Genuine difference from the other two boards: this
 // board's data lives only in Odoo, so every poll makes a live Odoo call —
 // see backend/routes/manufacturing_monitor_routes.py's file header for why.
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../api";
-
-// ── Constants ─────────────────────────────────────────────────────────────────
+import {
+  useMonitorTheme, THEME, pageContainerStyle, resolveHeaderColor, getTiers,
+  fmtHours, fmtQty, fmtDueDate, AgeBadge, KpiCard, KpiSmall, Column,
+  CardGroupBox, OrderGroupHeader, groupCardsByOrder, MonitorHeaderBar,
+  MonitorLoadingScreen, MonitorInvalidTokenScreen, GlobalMonitorStyles,
+} from "../components/MonitorKit";
 
 const POLL_MS = 30_000;
 
@@ -19,140 +23,29 @@ const POLL_MS = 30_000;
 // portal, rather than inventing new column colors here.
 const COLUMNS = [
   { key: "draft",     label: "Draft",       accent: "#94a3b8" },
-  { key: "confirmed", label: "Confirmed",   accent: "#f59e0b" },
-  { key: "progress",  label: "In Progress", accent: "#22c55e" },
-  { key: "to_close",  label: "To Close",    accent: "#3b82f6" },
+  { key: "confirmed", label: "Confirmed",   accent: "#d97706" },
+  { key: "progress",  label: "In Progress", accent: "#16a34a" },
+  { key: "to_close",  label: "To Close",    accent: "#2563eb" },
 ];
-
-const TIER = {
-  ok:      { border: "#22c55e", bg: "rgba(34,197,94,0.08)",   text: "#4ade80",  dot: "#22c55e",  label: "On track"  },
-  warning: { border: "#fbbf24", bg: "rgba(251,191,36,0.08)",  text: "#fcd34d",  dot: "#fbbf24",  label: "Attention" },
-  urgent:  { border: "#f97316", bg: "rgba(249,115,22,0.08)",  text: "#fb923c",  dot: "#f97316",  label: "Urgent"    },
-  overdue: { border: "#ef4444", bg: "rgba(239,68,68,0.08)",   text: "#f87171",  dot: "#ef4444",  label: "OVERDUE"   },
-};
-
-// ── Formatters (mirrors OrderMonitor.js / OnboardingMonitor.js) ────────────────
-
-function fmtHours(h) {
-  if (h === null || h === undefined) return "—";
-  const hrs  = Math.floor(h);
-  const mins = Math.round((h - hrs) * 60);
-  if (hrs === 0) return `${mins}m`;
-  return `${hrs}h ${mins}m`;
-}
-
-function fmtQty(n) {
-  if (n === null || n === undefined) return "—";
-  return Number(n).toLocaleString("en-ZA", { maximumFractionDigits: 2 });
-}
-
-function fmtDueDate(iso) {
-  if (!iso) return null;
-  return new Date(iso).toLocaleDateString("en-ZA", { day: "numeric", month: "short" });
-}
-
-function countdown(clockStart, deadlineHours, now) {
-  if (!clockStart) return null;
-  const start      = new Date(clockStart).getTime();
-  const deadlineMs = start + deadlineHours * 3_600_000;
-  const remainMs   = deadlineMs - now;
-  const abs        = Math.abs(remainMs);
-  const h          = Math.floor(abs / 3_600_000);
-  const m          = Math.floor((abs % 3_600_000) / 60_000);
-  const s          = Math.floor((abs % 60_000) / 1_000);
-  const isOver     = remainMs < 0;
-  return { isOver, h, m, s };
-}
 
 function cardUrl(card) {
   if (card.sale_order_id) return `/orders/${encodeURIComponent(card.sale_order_id)}/passport`;
   return "/orders/backorders";
 }
 
-// ── Sub-components (KpiCard/KpiSmall/AgeBadge/Column shells identical to
-// OrderMonitor.js/OnboardingMonitor.js — kept as a third copy rather than
-// extracted into a shared file, matching this codebase's existing
-// preference for parallel per-feature files over a shared abstraction) ───────
-
-function KpiCard({ label, value, sub, color, pulse }) {
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.04)",
-      border: `1px solid ${color}33`,
-      borderRadius: 16,
-      padding: "18px 22px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 4,
-      position: "relative",
-      overflow: "hidden",
-    }}>
-      <div style={{ width: 3, position: "absolute", left: 0, top: 0, bottom: 0, background: color, borderRadius: "4px 0 0 4px" }} />
-      <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", color: "#64748b", textTransform: "uppercase" }}>{label}</span>
-      <span style={{
-        fontSize: 36,
-        fontWeight: 800,
-        color,
-        lineHeight: 1,
-        animation: pulse ? "pulse 2s ease-in-out infinite" : "none",
-      }}>{value ?? "—"}</span>
-      {sub && <span style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>{sub}</span>}
-    </div>
-  );
-}
-
-function KpiSmall({ label, value, color = "#94a3b8" }) {
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.03)",
-      border: "1px solid rgba(255,255,255,0.06)",
-      borderRadius: 12,
-      padding: "12px 16px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 3,
-    }}>
-      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", color: "#475569", textTransform: "uppercase" }}>{label}</span>
-      <span style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{value ?? "—"}</span>
-    </div>
-  );
-}
-
-function AgeBadge({ card, now }) {
-  const tier = TIER[card.age_tier] || TIER.ok;
-  const cd   = countdown(card.clock_start, card.deadline_hours, now);
-  if (!cd) return null;
-  const { isOver, h, m, s } = cd;
-  const label = isOver
-    ? `+${h}h ${m}m overdue`
-    : h > 0 ? `${h}h ${m}m left`
-    : `${m}m ${s}s left`;
-
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 5,
-      padding: "3px 8px", borderRadius: 20,
-      background: tier.bg, color: tier.text,
-      fontSize: 11, fontWeight: 700,
-      animation: card.age_tier === "overdue" ? "pulse 1.5s ease-in-out infinite" : "none",
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: tier.dot, flexShrink: 0 }} />
-      {label}
-    </span>
-  );
-}
-
-function MOCard({ card, now, hideOrderLine }) {
-  const tier   = TIER[card.age_tier] || TIER.ok;
-  const href   = cardUrl(card);
-  const due    = fmtDueDate(card.date_finished);
+function MOCard({ card, now, theme, hideOrderLine }) {
+  const t     = THEME[theme];
+  const tiers = getTiers(theme);
+  const tier  = tiers[card.age_tier] || tiers.ok;
+  const href  = cardUrl(card);
+  const due   = fmtDueDate(card.date_finished);
 
   return (
     <div
       onClick={() => window.open(href, "_blank", "noopener,noreferrer")}
       style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.07)",
+        background: t.surfaceAlt,
+        border: `1px solid ${t.border}`,
         borderLeft: `4px solid ${tier.border}`,
         borderRadius: "0 12px 12px 0",
         padding: "12px 14px",
@@ -162,161 +55,70 @@ function MOCard({ card, now, hideOrderLine }) {
         transition: "background 0.2s",
         cursor: "pointer",
       }}
-      onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}
-      onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+      onMouseEnter={e => e.currentTarget.style.background = t.hoverBg}
+      onMouseLeave={e => e.currentTarget.style.background = t.surfaceAlt}
     >
       {/* Product — the primary label on this board, since the question is
           "what do I make," not "who is it for" (inverted from the other
           two boards' customer-first card layout) */}
       <div>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", lineHeight: 1.3 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: t.textPrimary, lineHeight: 1.3 }}>
           {card.product_name || "—"}
         </span>
-        <div style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace", marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: t.textMuted, fontFamily: "monospace", marginTop: 2 }}>
           {card.mo_name}
         </div>
       </div>
 
       {/* Quantity readout */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-        <span style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>{fmtQty(card.qty_remaining)}</span>
-        <span style={{ fontSize: 11, color: "#475569" }}>
+        <span style={{ fontSize: 18, fontWeight: 800, color: t.textPrimary }}>{fmtQty(card.qty_remaining)}</span>
+        <span style={{ fontSize: 11, color: t.textMuted }}>
           units remaining ({fmtQty(card.qty_producing)} / {fmtQty(card.qty_total)} produced)
         </span>
       </div>
 
       {/* Order / customer / ticket — hidden when a shared group header
-          (CardGroup below) already shows it, so it isn't repeated per card */}
+          (OrderGroupHeader below) already shows it, so it isn't repeated */}
       {(!hideOrderLine || card.ticket) && (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {!hideOrderLine && card.order_ref && (
-            <span style={{ fontSize: 11, color: "#94a3b8" }}>
+            <span style={{ fontSize: 11, color: t.textSecondary }}>
               {card.order_ref}{card.customer_name ? ` · ${card.customer_name}` : ""}
             </span>
           )}
           {card.ticket && (
-            <span style={{ fontSize: 10, color: "#5eead4" }}>{card.ticket.ref}</span>
+            <span style={{ fontSize: 10, color: t.brand }}>{card.ticket.ref}</span>
           )}
         </div>
       )}
 
       {/* Age badge + due date */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <AgeBadge card={card} now={now} />
-        {due && <span style={{ fontSize: 10, color: "#475569" }}>Due: {due}</span>}
+        <AgeBadge card={card} now={now} theme={theme} />
+        {due && <span style={{ fontSize: 10, color: t.textMuted }}>Due: {due}</span>}
       </div>
     </div>
   );
 }
 
-// Groups a column's already-sorted (oldest/most-urgent-first) cards by sale
-// order, so staff can see at a glance whether every product on an order is
-// ready rather than one card in isolation (2026-08-23). Preserves the
-// existing sort by taking each group's rank from its first (most urgent)
-// member's position in the incoming array — a group is never re-sorted to
-// the back just because it also contains a calmer product.
-function groupCardsByOrder(cards) {
-  const map = new Map();
-  const order = [];
-  cards.forEach(card => {
-    const key = card.sale_order_id || `mo-${card.id}`;
-    if (!map.has(key)) {
-      map.set(key, { key, order_ref: card.order_ref, customer_name: card.customer_name, cards: [] });
-      order.push(key);
-    }
-    map.get(key).cards.push(card);
-  });
-  return order.map(k => map.get(k));
-}
-
-function CardGroup({ group, now }) {
+function CardGroup({ group, now, theme }) {
   if (group.cards.length === 1) {
-    return <MOCard card={group.cards[0]} now={now} />;
+    return <MOCard card={group.cards[0]} now={now} theme={theme} />;
   }
+  const first = group.cards[0];
   return (
-    <div style={{
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 12,
-      padding: 8,
-      display: "flex",
-      flexDirection: "column",
-      gap: 6,
-      background: "rgba(255,255,255,0.015)",
-    }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 4px" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>
-          {group.order_ref || "—"}{group.customer_name ? ` · ${group.customer_name}` : ""}
-        </span>
-        <span style={{ fontSize: 10, color: "#475569", flexShrink: 0, marginLeft: 8 }}>
-          {group.cards.length} products
-        </span>
-      </div>
-      {group.cards.map(card => <MOCard key={card.id} card={card} now={now} hideOrderLine />)}
-    </div>
-  );
-}
-
-function Column({ config, cards, now }) {
-  const count = cards.length;
-  const hasOverdue = cards.some(c => c.age_tier === "overdue");
-  const hasUrgent  = cards.some(c => c.age_tier === "urgent");
-  const headerColor = hasOverdue ? "#ef4444" : hasUrgent ? "#f97316" : config.accent;
-  const groups = groupCardsByOrder(cards);
-
-  return (
-    <div style={{
-      display: "flex",
-      flexDirection: "column",
-      minWidth: 0,
-      flex: 1,
-      background: "rgba(255,255,255,0.02)",
-      border: "1px solid rgba(255,255,255,0.05)",
-      borderRadius: 16,
-      overflow: "hidden",
-    }}>
-      <div style={{
-        padding: "14px 16px",
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        background: `linear-gradient(135deg, ${headerColor}18 0%, transparent 100%)`,
-        flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 3, height: 20, background: headerColor, borderRadius: 2 }} />
-          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", color: "#e2e8f0", textTransform: "uppercase" }}>
-            {config.label}
-          </span>
-        </div>
-        <span style={{
-          fontSize: 13, fontWeight: 800,
-          background: count === 0 ? "rgba(100,116,139,0.2)" : `${headerColor}25`,
-          color: count === 0 ? "#475569" : headerColor,
-          padding: "2px 10px", borderRadius: 20,
-          minWidth: 28, textAlign: "center",
-        }}>
-          {count}
-        </span>
-      </div>
-
-      <div style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "12px 10px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}>
-        {count === 0 ? (
-          <div style={{ textAlign: "center", color: "#334155", fontSize: 12, padding: "32px 0" }}>
-            All clear
-          </div>
-        ) : (
-          groups.map(group => <CardGroup key={group.key} group={group} now={now} />)
-        )}
-      </div>
-    </div>
+    <CardGroupBox theme={theme}>
+      <OrderGroupHeader
+        orderRef={first.order_ref}
+        customerName={first.customer_name}
+        count={group.cards.length}
+        unitLabel="products"
+        href={cardUrl(first)}
+        theme={theme}
+      />
+      {group.cards.map(card => <MOCard key={card.id} card={card} now={now} theme={theme} hideOrderLine />)}
+    </CardGroupBox>
   );
 }
 
@@ -325,14 +127,14 @@ function Column({ config, cards, now }) {
 export default function ManufacturingMonitor() {
   const [searchParams]              = useSearchParams();
   const token                       = searchParams.get("token") || "";
+  const [theme, toggleTheme]        = useMonitorTheme();
 
-  const [valid,       setValid     ] = useState(null);   // null=checking, true, false
+  const [valid,       setValid     ] = useState(null);
   const [data,        setData      ] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [now,         setNow       ] = useState(Date.now());
   const [connected,   setConnected ] = useState(true);
 
-  // 1-second tick for live countdowns
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -349,7 +151,6 @@ export default function ManufacturingMonitor() {
     }
   }, [token]);
 
-  // Validate token once on mount
   useEffect(() => {
     if (!token) { setValid(false); return; }
     api.get(`/api/manufacturing-monitor/validate?token=${encodeURIComponent(token)}`)
@@ -364,157 +165,97 @@ export default function ManufacturingMonitor() {
     return () => clearInterval(id);
   }, [valid, fetchData]);
 
-  // ── Invalid token screen ──────────────────────────────────────────────────
   if (valid === false) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ textAlign: "center", color: "#ef4444" }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>⚠</div>
-          <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Invalid display token</div>
-          <div style={{ fontSize: 14, color: "#475569" }}>Generate a token in Settings → Monitor Displays</div>
-        </div>
-      </div>
-    );
+    return <MonitorInvalidTokenScreen theme={theme} settingsHint="Generate a token in Settings → Monitor Displays" />;
   }
-
-  // ── Loading ───────────────────────────────────────────────────────────────
   if (valid === null || !data) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ textAlign: "center", color: "#475569" }}>
-          <div style={{ width: 40, height: 40, border: "3px solid #1e293b", borderTop: "3px solid #6366f1", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
-          <div style={{ fontSize: 14 }}>Connecting to production feed…</div>
-        </div>
-      </div>
-    );
+    return <MonitorLoadingScreen theme={theme} message="Connecting to production feed…" />;
   }
 
+  const t = THEME[theme];
   const { kpis, columns } = data;
   const lastUpdatedStr = lastUpdated
     ? lastUpdated.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—";
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#0f172a",
-      color: "#f1f5f9",
-      fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-      display: "flex",
-      flexDirection: "column",
-      overflow: "hidden",
-    }}>
-      <style>{`
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-        @keyframes spin  { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-      `}</style>
+    <div style={pageContainerStyle(theme)}>
+      <GlobalMonitorStyles theme={theme} />
 
-      {/* ── Header bar ─────────────────────────────────────────────────────── */}
-      <div style={{
-        padding: "14px 24px",
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        background: "rgba(255,255,255,0.02)",
-        flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: "-0.02em", color: "#f1f5f9" }}>
-            BASSANI HEALTH
-          </div>
-          <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.1)" }} />
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#64748b", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-            Manufacturing Monitor · GACP Facility
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ fontSize: 12, color: "#334155" }}>
-            Updated {lastUpdatedStr}
-          </span>
-          <span style={{
-            display: "flex", alignItems: "center", gap: 5,
-            fontSize: 11, fontWeight: 600,
-            color: connected ? "#22c55e" : "#ef4444",
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#22c55e" : "#ef4444", animation: connected ? "pulse 3s ease-in-out infinite" : "none" }} />
-            {connected ? "LIVE" : "OFFLINE"}
-          </span>
-        </div>
-      </div>
+      <MonitorHeaderBar
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        title="Manufacturing Monitor · GACP Facility"
+        lastUpdatedStr={lastUpdatedStr}
+        connected={connected}
+      />
 
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
       <div style={{ padding: "16px 20px 0", flexShrink: 0 }}>
-        {/* Row 1: Production health */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 10 }}>
-          <KpiCard
+          <KpiCard theme={theme}
             label="Overdue"
             value={kpis.overdue}
             sub={kpis.overdue > 0 ? "Past the proposed deadline — act now" : "All MOs on track"}
-            color="#ef4444"
+            color="#dc2626"
             pulse={kpis.overdue > 0}
           />
-          <KpiCard
+          <KpiCard theme={theme}
             label="At Risk"
             value={kpis.at_risk}
             sub="Approaching deadline"
-            color="#f97316"
+            color="#ea580c"
           />
-          <KpiCard
+          <KpiCard theme={theme}
             label="In Progress"
             value={kpis.in_progress}
             sub="Currently being produced"
-            color="#22c55e"
+            color="#16a34a"
           />
-          <KpiCard
+          <KpiCard theme={theme}
             label="To Close"
             value={kpis.to_close}
             sub="Nearly done, needs final confirmation"
-            color="#3b82f6"
+            color="#2563eb"
           />
         </div>
 
-        {/* Row 2: Stage breakdown — one per Kanban column plus totals */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 16 }}>
-          <KpiSmall label="Draft"        value={kpis.draft}        color="#94a3b8" />
-          <KpiSmall label="Confirmed"    value={kpis.confirmed}    color="#f59e0b" />
-          <KpiSmall label="In Progress"  value={kpis.in_progress}  color="#22c55e" />
-          <KpiSmall label="To Close"     value={kpis.to_close}     color="#3b82f6" />
-          <KpiSmall label="Units Remaining" value={fmtQty(kpis.total_units_remaining)} color="#94a3b8" />
-          <KpiSmall
+          <KpiSmall theme={theme} label="Draft"        value={kpis.draft}        />
+          <KpiSmall theme={theme} label="Confirmed"    value={kpis.confirmed}    color="#d97706" />
+          <KpiSmall theme={theme} label="In Progress"  value={kpis.in_progress}  color="#16a34a" />
+          <KpiSmall theme={theme} label="To Close"     value={kpis.to_close}     color="#2563eb" />
+          <KpiSmall theme={theme} label="Units Remaining" value={fmtQty(kpis.total_units_remaining)} />
+          <KpiSmall theme={theme}
             label="Oldest Active"
             value={fmtHours(kpis.oldest_hours)}
             color={
-              !kpis.oldest_hours ? "#475569"
-              : kpis.oldest_hours > 72 ? "#ef4444"
-              : kpis.oldest_hours > 48 ? "#f97316"
-              : "#22c55e"
+              !kpis.oldest_hours ? undefined
+              : kpis.oldest_hours > 72 ? "#dc2626"
+              : kpis.oldest_hours > 48 ? "#ea580c"
+              : t.brand
             }
           />
         </div>
       </div>
 
       {/* ── Kanban columns ─────────────────────────────────────────────────── */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        gap: 10,
-        padding: "0 20px 20px",
-        overflow: "hidden",
-        minHeight: 0,
-      }}>
-        {COLUMNS.map(cfg => (
-          <Column
-            key={cfg.key}
-            config={cfg}
-            cards={columns[cfg.key] || []}
-            now={now}
-          />
-        ))}
+      <div style={{ flex: 1, display: "flex", gap: 10, padding: "0 20px 20px", overflow: "hidden", minHeight: 0 }}>
+        {COLUMNS.map(cfg => {
+          const cards = columns[cfg.key] || [];
+          const groups = groupCardsByOrder(cards, c => c.sale_order_id || `mo-${c.id}`);
+          return (
+            <Column
+              key={cfg.key}
+              config={cfg}
+              count={cards.length}
+              headerColor={resolveHeaderColor(cards, cfg.accent, theme)}
+              theme={theme}
+            >
+              {groups.map(group => <CardGroup key={group.key} group={group} now={now} theme={theme} />)}
+            </Column>
+          );
+        })}
       </div>
     </div>
   );
