@@ -556,22 +556,22 @@ export function ErrorState({ message, onRetry }) {
 }
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
-export function BtnPrimary({ children, onClick, disabled, loading, size = "md", type = "button" }) {
+export function BtnPrimary({ children, onClick, disabled, loading, size = "md", type = "button", className = "" }) {
   const p = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";
   return (
     <button type={type} onClick={onClick} disabled={disabled || loading}
-      className={`${p} bg-bassani-600 hover:bg-bassani-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5`}>
+      className={`${p} bg-bassani-600 hover:bg-bassani-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 ${className}`}>
       {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       {children}
     </button>
   );
 }
 
-export function BtnSecondary({ children, onClick, disabled, loading, size = "md" }) {
+export function BtnSecondary({ children, onClick, disabled, loading, size = "md", className = "" }) {
   const p = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";
   return (
     <button onClick={onClick} disabled={disabled || loading}
-      className={`${p} bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5`}>
+      className={`${p} bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5 ${className}`}>
       {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       {children}
     </button>
@@ -598,11 +598,11 @@ export function PaginationBar({ page, pageSize, total, onChange }) {
   );
 }
 
-export function BtnDanger({ children, onClick, disabled, loading, size = "sm" }) {
+export function BtnDanger({ children, onClick, disabled, loading, size = "sm", className = "" }) {
   const p = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";
   return (
     <button onClick={onClick} disabled={disabled || loading}
-      className={`${p} bg-white border border-red-200 hover:border-red-400 text-red-600 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5`}>
+      className={`${p} bg-white border border-red-200 hover:border-red-400 text-red-600 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 ${className}`}>
       {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       {children}
     </button>
