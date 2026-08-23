@@ -1590,15 +1590,16 @@ What you can do here:
 
 ### Order Passport
 
-Click any order row to open its **Order Passport** — a single-page lifecycle summary that shows everything about an order in one place, without needing to navigate between three separate views.
+Click any order row to open its **Order Passport** — a single-page lifecycle summary that shows everything about an order in one place, without needing to navigate between three separate views. **Redesigned 2026-08-23** into a two-column layout: a hero strip at the top (order reference, one overall colour-coded status badge, customer, and four at-a-glance figures — Order Total, Outstanding balance, Item count, Fulfilled %), a main column below it with the order's timeline and transactional detail, and a status/action sidebar alongside it that stays in view while the main column scrolls.
 
 **What the passport shows:**
 - **Overall status** — a colour-coded badge derived from the combined state of the Odoo order, ticket stage, invoice, and deliveries (e.g. "Awaiting Payment", "In Packing", "Complete")
-- **Pipeline stepper** — visual progress indicator from Quote through to Complete, with the active stage highlighted
-- **Sales Ticket card** — ticket reference, current stage, who it is assigned to, order type (Reseller Order / Internal Order), reseller name if applicable, customer name, any notes, and both created and last-updated timestamps
-- **Invoice card** — invoice reference, amount, payment state, and due date
+- **Order Timeline** — a single dated, chronological record of the order's life (Order Placed → Confirmed → Deposit Registered → Queued → Packing → QA Approved → RP Approved → Ready for Collection → Invoice Raised → Payment Received → Collected), each step showing who actioned it and when, wherever that's known. Replaces the old separate pipeline stepper and status-pill row with one authoritative story of what's happened so far.
+- **Order lines table** — all products (with a thumbnail per line) with quantities, unit prices, and the batch references dispatched against each line
 - **Delivery & Fulfilment section** — each outgoing delivery with state, scheduled date, and per-product quantities delivered vs ordered; batch/lot numbers shown as chips on each line
-- **Order lines table** — all products with quantities, unit prices, and the batch references dispatched against each line
+- **Sidebar — Sales Ticket card** — ticket reference, current stage, who it is assigned to, order type (Reseller Order / Internal Order), reseller name if applicable, customer name, any notes, and both created and last-updated timestamps
+- **Sidebar — Packing card** — packing status, packer, packing slip reference, QA/RP approval sign-off, and collection details
+- **Sidebar — Invoice card(s)** — invoice reference, amount, payment state, due date, and a Register Payment action where applicable
 - **Outstanding line rows** — any product not yet fully delivered is highlighted in amber; clicking the row navigates to the Backorders page pre-filtered to that order
 
 The passport is also the landing page for all barcode scans and order reference searches via the global search bar.

@@ -1076,6 +1076,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             pass
 
     # Order lines
+    product_images: dict = {}
     if order.get("order_line"):
         try:
             lines = odoo.read("sale.order.line", order["order_line"], fields=[
@@ -1083,6 +1084,19 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
                 "price_subtotal", "qty_delivered", "qty_invoiced",
             ])
             order["lines"] = lines
+            # Thumbnails for the Order Lines table — same image_128 field
+            # product_routes.py already uses for every other product list in
+            # the portal, batched here the same shape as lot_map below.
+            line_product_ids = list({
+                l["product_id"][0] for l in lines
+                if l.get("product_id") and isinstance(l["product_id"], list)
+            })
+            if line_product_ids:
+                try:
+                    prods = odoo.read("product.product", line_product_ids, fields=["image_128"])
+                    product_images = {p["id"]: p["image_128"] for p in prods if p.get("image_128")}
+                except Exception:
+                    pass
         except Exception:
             order["lines"] = []
 
@@ -1303,6 +1317,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         "invoices":       invoices_out,
         "deliveries":     deliveries,
         "lot_map":        lot_map,
+        "product_images": product_images,
         "manufacturing_orders": mos,
         "overall_status": overall_status,
     }
