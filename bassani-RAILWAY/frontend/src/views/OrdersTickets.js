@@ -123,13 +123,18 @@ export default function OrdersTickets() {
       .catch(() => {});
   }, [detail?.order_id]);
 
+  // picking_id (Odoo's own stock.picking id, unique per delivery) disambiguates
+  // which packing_board document an action targets when a backorder and its
+  // primary entry share the same order_id (2026-08-23) — omitted, every
+  // endpoint below defaults to the primary (non-backorder) entry, so this is
+  // a no-op for the overwhelmingly common case of an order with no backorder.
   const openDetail = async (entry) => {
     setDetail(null);
     setDetailLoading(true);
     setView("detail");
     setQtyPackedEdits({});
     try {
-      const r = await api.get(`/api/packing/entry/${entry.order_id}`);
+      const r = await api.get(`/api/packing/entry/${entry.order_id}${entry.odoo_picking_id ? `?picking_id=${entry.odoo_picking_id}` : ""}`);
       setDetail(r.data);
       setOverrideStatus(r.data.status);
     } catch {
@@ -140,9 +145,9 @@ export default function OrdersTickets() {
     }
   };
 
-  const refreshDetail = async (order_id) => {
+  const refreshDetail = async (order_id, pickingId = detail?.odoo_picking_id) => {
     try {
-      const r = await api.get(`/api/packing/entry/${order_id}`);
+      const r = await api.get(`/api/packing/entry/${order_id}${pickingId ? `?picking_id=${pickingId}` : ""}`);
       setDetail(r.data);
       setOverrideStatus(r.data.status);
       setPackerInput("");
@@ -155,7 +160,7 @@ export default function OrdersTickets() {
   const act = async (path, order_id, extra = {}) => {
     setBusyId(order_id);
     try {
-      await api.put(`/api/packing/${path}`, { order_id, ...extra });
+      await api.put(`/api/packing/${path}`, { order_id, picking_id: detail?.odoo_picking_id, ...extra });
       toast.success("Updated");
       await refreshDetail(order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
@@ -165,7 +170,7 @@ export default function OrdersTickets() {
   const handleComplete = async () => {
     setBusyId(detail.order_id);
     try {
-      const r = await api.put("/api/packing/complete", { order_id: detail.order_id });
+      const r = await api.put("/api/packing/complete", { order_id: detail.order_id, picking_id: detail.odoo_picking_id });
       if (r.data.is_partial) {
         toast.success("Partial delivery validated — backorder entry created");
       } else if (r.data.warning) {
@@ -220,7 +225,7 @@ export default function OrdersTickets() {
     if (!incompleteReason.trim()) return toast.error("A reason is required");
     setBusyId(detail.order_id);
     try {
-      await api.put("/api/packing/incomplete", { order_id: detail.order_id, reason: incompleteReason.trim() });
+      await api.put("/api/packing/incomplete", { order_id: detail.order_id, reason: incompleteReason.trim(), picking_id: detail.odoo_picking_id });
       toast.success("Marked incomplete");
       setIncompleteModal(false);
       setIncompleteReason("");
@@ -241,7 +246,7 @@ export default function OrdersTickets() {
     }
     setQtyPackedSaving(prev => new Set(prev).add(sku));
     try {
-      await api.put("/api/packing/update-item-qty", { order_id: detail.order_id, sku, qty_packed: val });
+      await api.put("/api/packing/update-item-qty", { order_id: detail.order_id, sku, qty_packed: val, picking_id: detail.odoo_picking_id });
       setQtyPackedEdits(prev => { const n = { ...prev }; delete n[sku]; return n; });
       await refreshDetail(detail.order_id);
     } catch (e) {
@@ -254,7 +259,7 @@ export default function OrdersTickets() {
   const submitOverride = async () => {
     setBusyId(detail.order_id);
     try {
-      await api.put("/api/packing/override-status", { order_id: detail.order_id, status: overrideStatus });
+      await api.put("/api/packing/override-status", { order_id: detail.order_id, status: overrideStatus, picking_id: detail.odoo_picking_id });
       toast.success("Stage overridden");
       await refreshDetail(detail.order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Override failed"); }
@@ -268,7 +273,7 @@ export default function OrdersTickets() {
     // Optimistic update
     setDetail(d => ({ ...d, item_ticks: { ...d.item_ticks, [sku]: !currentlyTicked } }));
     try {
-      await api.put(`/api/packing/tick?order_id=${encodeURIComponent(detail.order_id)}&sku=${encodeURIComponent(sku)}&ticked=${!currentlyTicked}`);
+      await api.put(`/api/packing/tick?order_id=${encodeURIComponent(detail.order_id)}&sku=${encodeURIComponent(sku)}&ticked=${!currentlyTicked}${detail.odoo_picking_id ? `&picking_id=${detail.odoo_picking_id}` : ""}`);
     } catch (e) {
       // Revert on failure
       setDetail(d => ({ ...d, item_ticks: { ...d.item_ticks, [sku]: currentlyTicked } }));
@@ -283,7 +288,7 @@ export default function OrdersTickets() {
     if (!packerInput.trim() || !detail) return;
     setSavingPacker(true);
     try {
-      await api.put("/api/packing/assign-packer", { order_id: detail.order_id, packer_name: packerInput.trim() });
+      await api.put("/api/packing/assign-packer", { order_id: detail.order_id, packer_name: packerInput.trim(), picking_id: detail.odoo_picking_id });
       toast.success("Packer assigned");
       await refreshDetail(detail.order_id);
       setPackerInput("");
@@ -307,6 +312,7 @@ export default function OrdersTickets() {
         order_id: detail.order_id,
         product_id: productId,
         lot_id: parseInt(lotId),
+        picking_id: detail.odoo_picking_id,
       });
       toast.success(`Batch ${data.lot_name} assigned`);
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to assign lot"); }
@@ -375,8 +381,13 @@ export default function OrdersTickets() {
                     <div className="p-6 border-b border-gray-100">
                       <div className="flex items-start justify-between mb-5">
                         <div>
-                          <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+                          <h2 className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
                             {(STATUS_LABEL[detail.status] || detail.status).toUpperCase()}
+                            {detail.is_backorder && (
+                              <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 rounded px-2 py-0.5 align-middle">
+                                Backorder
+                              </span>
+                            )}
                           </h2>
                           <p className="text-sm font-mono text-gray-400 mt-0.5 flex items-center gap-2">
                             {detail.ps_num}

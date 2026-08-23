@@ -283,9 +283,31 @@ async def _verify_ws_user(ws: WebSocket, required_roles: set) -> Optional[dict]:
 # Used by both REST endpoints and WebSocket handlers to ensure audit logging
 # is consistent regardless of how an action is triggered.
 
-async def _do_assign_packer(order_id: str, packer_name: str, actor: dict) -> Optional[dict]:
+def _entry_query(order_id: str, picking_id: Optional[int] = None) -> dict:
+    """The single lookup rule every per-entry packing_board endpoint uses to
+    find the right document (2026-08-23). order_id alone is NOT unique — a
+    backorder entry deliberately shares its parent's order_id (set at the
+    split point in complete_entry below), so once both the primary and a
+    reactivated backorder exist at the same time under the same order_id,
+    a bare {"order_id": ...} lookup can silently resolve to either one.
+    picking_id (Odoo's own stock.picking id, already stored on every entry
+    as odoo_picking_id) is the real unique identifier for "which delivery."
+    When omitted, defaults to the primary (non-backorder) entry — the exact
+    rule mark_collected already used for itself before this was generalised,
+    which is also why this is fully backward compatible: an order with no
+    backorder only ever has one entry matching either branch, so nothing
+    about the existing trained flow changes."""
+    query: dict = {"order_id": order_id}
+    if picking_id:
+        query["odoo_picking_id"] = picking_id
+    else:
+        query["is_backorder"] = {"$ne": True}
+    return query
+
+
+async def _do_assign_packer(order_id: str, packer_name: str, actor: dict, picking_id: Optional[int] = None) -> Optional[dict]:
     result = await col("packing_board").find_one_and_update(
-        {"order_id": order_id},
+        _entry_query(order_id, picking_id),
         {"$set": {
             "packer_name": packer_name.upper(),
             "status":      "packing",
@@ -302,8 +324,8 @@ async def _do_assign_packer(order_id: str, packer_name: str, actor: dict) -> Opt
     return result
 
 
-async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict) -> Optional[dict]:
-    entry = await col("packing_board").find_one({"order_id": order_id})
+async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict, picking_id: Optional[int] = None) -> Optional[dict]:
+    entry = await col("packing_board").find_one(_entry_query(order_id, picking_id))
     if not entry:
         return None
     ticks = entry.get("item_ticks", {})
@@ -314,7 +336,7 @@ async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict) -> O
         update["status"]   = "ready"
         update["ready_at"] = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": order_id},
+        {"_id": entry["_id"]},
         {"$set": update},
         return_document=True,
     )
@@ -328,7 +350,7 @@ async def _do_tick_item(order_id: str, sku: str, ticked: bool, actor: dict) -> O
     return updated
 
 
-async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Optional[dict]:
+async def _do_update_status(order_id: str, new_status: str, actor: dict, picking_id: Optional[int] = None) -> Optional[dict]:
     ts_field = {
         "collected": "collected_at",
         "cleared":   "cleared_at",
@@ -338,7 +360,7 @@ async def _do_update_status(order_id: str, new_status: str, actor: dict) -> Opti
     if ts_field:
         update[ts_field] = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": order_id},
+        _entry_query(order_id, picking_id),
         {"$set": update},
         return_document=True,
     )
@@ -372,25 +394,30 @@ class BoardEntry(BaseModel):
 class AssignPacker(BaseModel):
     order_id:    str
     packer_name: str
+    picking_id:  Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 class UpdateStatus(BaseModel):
-    order_id: str
-    status:   str
+    order_id:   str
+    status:     str
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 class OrderIdBody(BaseModel):
-    order_id: str
+    order_id:   str
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 class IncompleteBody(BaseModel):
-    order_id: str
-    reason:   str
+    order_id:   str
+    reason:     str
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 class CancelBody(BaseModel):
-    order_id: str
-    reason:   Optional[str] = None
+    order_id:   str
+    reason:     Optional[str] = None
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 class AdoptBody(BaseModel):
@@ -404,6 +431,7 @@ class UpdateItemQtyBody(BaseModel):
     order_id:   str
     sku:        str
     qty_packed: float
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
@@ -447,7 +475,7 @@ async def assign_packer(
     body: AssignPacker,
     current_user: dict = Depends(require_admin),
 ):
-    result = await _do_assign_packer(body.order_id, body.packer_name, current_user)
+    result = await _do_assign_packer(body.order_id, body.packer_name, current_user, body.picking_id)
     if not result:
         raise HTTPException(status_code=404, detail="Order not on board")
     return {"success": True, "packer": body.packer_name.upper()}
@@ -458,9 +486,10 @@ async def tick_item(
     order_id: str,
     sku:      str,
     ticked:   bool = True,
+    picking_id: Optional[int] = None,
     current_user: dict = Depends(require_admin),
 ):
-    updated = await _do_tick_item(order_id, sku, ticked, current_user)
+    updated = await _do_tick_item(order_id, sku, ticked, current_user, picking_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
     all_done = all(updated["item_ticks"].values()) if updated.get("item_ticks") else False
@@ -476,7 +505,7 @@ async def update_item_qty(
     Stored as qty_packed on the item; used as qty_done when validating in Odoo.
     Must be >= 0 and <= qty_reserved. If below reserved, Odoo will auto-create
     a backorder for the shortfall when the order is marked complete."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "packing":
@@ -498,7 +527,7 @@ async def update_item_qty(
         for i in items
     ]
     await col("packing_board").update_one(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"items": new_items}},
     )
     await audit_log(
@@ -514,7 +543,7 @@ async def update_status(
     body: UpdateStatus,
     current_user: dict = Depends(require_admin),
 ):
-    updated = await _do_update_status(body.order_id, body.status, current_user)
+    updated = await _do_update_status(body.order_id, body.status, current_user, body.picking_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
     return {"success": True}
@@ -527,7 +556,7 @@ async def qa_approve(
 ):
     """QA Manager sign-off — required (alongside RP) before an entry can be
     marked complete. Only valid once packing has finished (status='ready')."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "ready":
@@ -535,7 +564,7 @@ async def qa_approve(
 
     now = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"qa_approved_by": current_user.get("name") or current_user.get("username"), "qa_approved_at": now}},
         return_document=True,
     )
@@ -554,7 +583,7 @@ async def rp_approve(
     """Responsible Pharmacist sign-off — required (alongside QA) before an
     entry can be marked complete. Independent of QA's approval — neither
     approves on the other's behalf."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "ready":
@@ -562,7 +591,7 @@ async def rp_approve(
 
     now = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"rp_approved_by": current_user.get("name") or current_user.get("username"), "rp_approved_at": now}},
         return_document=True,
     )
@@ -678,7 +707,7 @@ async def complete_entry(
     """Orders Clerk's final close-out action — the explicit "I'm declaring
     this ready" step the business described, taken only after both QA and RP
     have independently signed off."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "ready":
@@ -872,8 +901,13 @@ async def complete_entry(
         _complete_set["inv_num"] = invoice_name or ""
         _complete_set["invoice_id"] = invoice_id
 
+    # Targets the exact same document resolved at the top of this function via
+    # entry["_id"] — previously hardcoded to {"order_id": ..., "is_backorder":
+    # {"$ne": True}} regardless of which entry was actually being completed,
+    # which meant completing a backorder's own delivery here would have
+    # silently tried to re-complete the primary entry instead (2026-08-23 fix).
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id, "is_backorder": {"$ne": True}},
+        {"_id": entry["_id"]},
         {"$set": _complete_set},
         return_document=True,
     )
@@ -1000,13 +1034,7 @@ async def mark_collected(
     """Orders Clerk confirms customer has collected a delivery (primary or backorder).
     Creates the Odoo invoice for the delivered qty, then checks whether all pickings
     for this order are now collected — if so, advances the ticket to complete."""
-    query: dict = {"order_id": body.order_id}
-    if body.picking_id:
-        query["odoo_picking_id"] = body.picking_id
-    else:
-        query["is_backorder"] = {"$ne": True}  # target primary entry when no picking_id given
-
-    entry = await col("packing_board").find_one(query)
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Packing entry not found")
     if entry.get("collected_at"):
@@ -1047,21 +1075,35 @@ async def mark_collected(
     }
 
 
-async def _check_and_notify_backorder_stock(background_tasks: BackgroundTasks) -> dict:
+async def _check_and_notify_backorder_stock(background_tasks: BackgroundTasks, actor: Optional[dict] = None) -> dict:
     """Check all waiting_stock backorder entries against Odoo. When a backorder picking
-    has moved to 'assigned' (stock reserved), clears the waiting flag and fires
-    notifications to the reseller, internal staff, and the assigned sales rep.
+    has moved to 'assigned' (stock reserved), clears the waiting flag, moves the
+    entry back into the active pipeline, and fires notifications to the
+    reseller, internal staff, and the assigned sales rep.
 
     Shared by the manual "Check backorder stock" button (check_backorder_stock
-    below) and, since 2026-08-22, automatically called from
+    below, actor=current_user so the audit trail attributes the clerk who
+    triggered it) and, since 2026-08-22, automatically called from
     order_routes.py's Manufacturing Order Record Production / Mark Complete
-    endpoints — production finishing or advancing is exactly the kind of
-    event that should prompt a reservation recheck, not just wait for someone
-    to click the manual button. Deliberately not scoped to the specific
-    product an MO just produced: this sweep is already cheap and bounded
-    (≤200 waiting_stock entries), so reusing the same blanket check avoids
-    the real complexity of correlating an MO's product back to which
-    backorder line(s) it might unblock."""
+    endpoints (actor=whoever updated the MO) — production finishing or
+    advancing is exactly the kind of event that should prompt a reservation
+    recheck, not just wait for someone to click the manual button.
+    Deliberately not scoped to the specific product an MO just produced: this
+    sweep is already cheap and bounded (≤200 waiting_stock entries), so
+    reusing the same blanket check avoids the real complexity of correlating
+    an MO's product back to which backorder line(s) it might unblock.
+
+    **2026-08-23 fix:** this used to only clear the `waiting_stock` boolean —
+    the notifications fired correctly, but the entry's own `status` field
+    stayed `"waiting_stock"` forever, so it never actually reappeared in the
+    Queued column or anywhere staff would naturally look for active work.
+    The only way to progress it was a generic admin-only status override.
+    Now explicitly re-queues it (`status: "queued"`, fresh `queued_at` so its
+    age on the monitor starts counting from when it actually became
+    actionable, not from whenever the original shortfall was discovered) —
+    the same entry point a brand-new packing_board entry starts at
+    (`POST /queue`), so every existing queued→packing→ready→QA→RP→complete
+    action already works on it with no special-casing needed."""
     entries = await col("packing_board").find(
         {"is_backorder": True, "waiting_stock": True}
     ).to_list(200)
@@ -1084,13 +1126,18 @@ async def _check_and_notify_backorder_stock(background_tasks: BackgroundTasks) -
         if not pick_rows or pick_rows[0]["state"] != "assigned":
             continue
 
+        now = datetime.now(timezone.utc)
         await col("packing_board").update_one(
             {"_id": bo_entry["_id"]},
-            {"$set": {"waiting_stock": False}},
+            {"$set": {"waiting_stock": False, "status": "queued", "queued_at": now}},
         )
 
         order_ref = str(bo_entry.get("order_id", ""))
         customer_name = bo_entry.get("customer_name", "")
+        await audit_log("packing.backorder_stock_ready", "packing_board", order_ref,
+                         entity_label=customer_name, user=actor,
+                         detail={"picking_id": picking_id, "picking_name": bo_entry.get("picking_name")})
+        await broadcast_monitor_refresh()
         reseller_email: Optional[str] = None
         reseller_name: Optional[str] = None
         if bo_entry.get("reseller_id"):
@@ -1147,7 +1194,7 @@ async def check_backorder_stock(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
-    return await _check_and_notify_backorder_stock(background_tasks)
+    return await _check_and_notify_backorder_stock(background_tasks, actor=current_user)
 
 
 @router.put("/incomplete")
@@ -1157,7 +1204,7 @@ async def mark_incomplete(
 ):
     """Orders Clerk flags a partial/blocked order — always requires a reason
     so Sales has something concrete to relay to the client."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] in ("collected", "cleared", "cancelled", "complete", "incomplete"):
@@ -1165,7 +1212,7 @@ async def mark_incomplete(
 
     now = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"status": "incomplete", "incomplete_at": now, "incomplete_reason": body.reason}},
         return_document=True,
     )
@@ -1183,7 +1230,7 @@ async def cancel_entry(
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk cancels an order before fulfilment completes."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] in ("collected", "cleared", "cancelled", "complete", "incomplete"):
@@ -1191,7 +1238,7 @@ async def cancel_entry(
 
     now = datetime.now(timezone.utc)
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"status": "cancelled", "cancelled_at": now, "incomplete_reason": body.reason}},
         return_document=True,
     )
@@ -1204,11 +1251,11 @@ async def cancel_entry(
 
 
 @router.get("/entry/{order_id}")
-async def get_entry(order_id: str, current_user: dict = Depends(get_current_user)):
+async def get_entry(order_id: str, picking_id: Optional[int] = None, current_user: dict = Depends(get_current_user)):
     if current_user.get("role") == "reseller":
         res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
         rid = res_doc["id"] if res_doc else None
-        entry = await col("packing_board").find_one({"order_id": order_id, "reseller_id": rid}, NO_ID)
+        entry = await col("packing_board").find_one({**_entry_query(order_id, picking_id), "reseller_id": rid}, NO_ID)
         if not entry:
             raise HTTPException(status_code=403, detail="Access denied")
         return entry
@@ -1219,7 +1266,7 @@ async def get_entry(order_id: str, current_user: dict = Depends(get_current_user
         or current_user.get("role") in _BOARD_VIEW_ROLES
     ):
         raise HTTPException(status_code=403, detail="Access denied")
-    entry = await col("packing_board").find_one({"order_id": order_id}, NO_ID)
+    entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
     return entry
@@ -1351,12 +1398,12 @@ async def mark_packing(
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk: advance a queued order to packing."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "queued":
         raise HTTPException(status_code=400, detail="Order must be queued before marking as packing")
-    updated = await _do_update_status(body.order_id, "packing", current_user)
+    updated = await _do_update_status(body.order_id, "packing", current_user, body.picking_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry.get("reseller_id"):
@@ -1383,12 +1430,12 @@ async def mark_ready(
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
     """Orders Clerk: advance a packing order to ready for inspection."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "packing":
         raise HTTPException(status_code=400, detail="Order must be packing before marking as ready")
-    updated = await _do_update_status(body.order_id, "ready", current_user)
+    updated = await _do_update_status(body.order_id, "ready", current_user, body.picking_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
 
@@ -1413,11 +1460,11 @@ async def override_status(
     """Admin override — set any status directly (tickets.manage permission required).
     When overriding to a terminal status, also syncs the linked sales ticket so
     legacy or manually-corrected entries stay consistent with the sales pipeline."""
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
     updated = await col("packing_board").find_one_and_update(
-        {"order_id": body.order_id},
+        {"_id": entry["_id"]},
         {"$set": {"status": body.status}},
         return_document=True,
     )
@@ -1446,6 +1493,7 @@ class AssignLotBody(BaseModel):
     order_id: str
     product_id: int   # Odoo product.product ID
     lot_id: int       # Odoo stock.lot ID
+    picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
 
 
 @router.put("/assign-lot")
@@ -1458,7 +1506,7 @@ async def assign_lot(
     Writes lot_id to the matching stock.move.line in Odoo so the lot appears
     on the validated delivery note. Must be called before mark-complete.
     """
-    entry = await col("packing_board").find_one({"order_id": body.order_id})
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on packing board")
     if entry.get("status") not in ("queued", "packing", "ready"):
@@ -1466,10 +1514,16 @@ async def assign_lot(
 
     odoo = get_odoo_client()
     try:
-        # Find all active (not done/cancelled) pickings for this sale order
+        # Scoped to the specific picking when known (body.picking_id, or the
+        # resolved entry's own odoo_picking_id — a backorder and its primary
+        # are separate Odoo pickings, so searching "all active pickings for
+        # this sale order" could otherwise match move lines belonging to the
+        # wrong delivery entirely, 2026-08-23 fix).
+        _picking_filter_id = body.picking_id or entry.get("odoo_picking_id")
+        _picking_domain = [("id", "=", _picking_filter_id)] if _picking_filter_id else [("sale_id", "=", int(body.order_id))]
         pickings = odoo.search_read(
             "stock.picking",
-            [("sale_id", "=", int(body.order_id)), ("state", "not in", ["done", "cancel"])],
+            _picking_domain + [("state", "not in", ["done", "cancel"])],
             fields=["id", "move_line_ids"],
         )
     except Exception as e:

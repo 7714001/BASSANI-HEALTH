@@ -142,7 +142,7 @@ function AgeBadge({ card, now }) {
   );
 }
 
-function MOCard({ card, now }) {
+function MOCard({ card, now, hideOrderLine }) {
   const tier   = TIER[card.age_tier] || TIER.ok;
   const href   = cardUrl(card);
   const due    = fmtDueDate(card.date_finished);
@@ -185,17 +185,20 @@ function MOCard({ card, now }) {
         </span>
       </div>
 
-      {/* Order / customer / ticket */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {card.order_ref && (
-          <span style={{ fontSize: 11, color: "#94a3b8" }}>
-            {card.order_ref}{card.customer_name ? ` · ${card.customer_name}` : ""}
-          </span>
-        )}
-        {card.ticket && (
-          <span style={{ fontSize: 10, color: "#5eead4" }}>{card.ticket.ref}</span>
-        )}
-      </div>
+      {/* Order / customer / ticket — hidden when a shared group header
+          (CardGroup below) already shows it, so it isn't repeated per card */}
+      {(!hideOrderLine || card.ticket) && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {!hideOrderLine && card.order_ref && (
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>
+              {card.order_ref}{card.customer_name ? ` · ${card.customer_name}` : ""}
+            </span>
+          )}
+          {card.ticket && (
+            <span style={{ fontSize: 10, color: "#5eead4" }}>{card.ticket.ref}</span>
+          )}
+        </div>
+      )}
 
       {/* Age badge + due date */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -206,11 +209,59 @@ function MOCard({ card, now }) {
   );
 }
 
+// Groups a column's already-sorted (oldest/most-urgent-first) cards by sale
+// order, so staff can see at a glance whether every product on an order is
+// ready rather than one card in isolation (2026-08-23). Preserves the
+// existing sort by taking each group's rank from its first (most urgent)
+// member's position in the incoming array — a group is never re-sorted to
+// the back just because it also contains a calmer product.
+function groupCardsByOrder(cards) {
+  const map = new Map();
+  const order = [];
+  cards.forEach(card => {
+    const key = card.sale_order_id || `mo-${card.id}`;
+    if (!map.has(key)) {
+      map.set(key, { key, order_ref: card.order_ref, customer_name: card.customer_name, cards: [] });
+      order.push(key);
+    }
+    map.get(key).cards.push(card);
+  });
+  return order.map(k => map.get(k));
+}
+
+function CardGroup({ group, now }) {
+  if (group.cards.length === 1) {
+    return <MOCard card={group.cards[0]} now={now} />;
+  }
+  return (
+    <div style={{
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 12,
+      padding: 8,
+      display: "flex",
+      flexDirection: "column",
+      gap: 6,
+      background: "rgba(255,255,255,0.015)",
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 4px" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>
+          {group.order_ref || "—"}{group.customer_name ? ` · ${group.customer_name}` : ""}
+        </span>
+        <span style={{ fontSize: 10, color: "#475569", flexShrink: 0, marginLeft: 8 }}>
+          {group.cards.length} products
+        </span>
+      </div>
+      {group.cards.map(card => <MOCard key={card.id} card={card} now={now} hideOrderLine />)}
+    </div>
+  );
+}
+
 function Column({ config, cards, now }) {
   const count = cards.length;
   const hasOverdue = cards.some(c => c.age_tier === "overdue");
   const hasUrgent  = cards.some(c => c.age_tier === "urgent");
   const headerColor = hasOverdue ? "#ef4444" : hasUrgent ? "#f97316" : config.accent;
+  const groups = groupCardsByOrder(cards);
 
   return (
     <div style={{
@@ -262,7 +313,7 @@ function Column({ config, cards, now }) {
             All clear
           </div>
         ) : (
-          cards.map(card => <MOCard key={card.id} card={card} now={now} />)
+          groups.map(group => <CardGroup key={group.key} group={group} now={now} />)
         )}
       </div>
     </div>

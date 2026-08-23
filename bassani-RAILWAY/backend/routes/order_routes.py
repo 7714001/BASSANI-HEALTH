@@ -500,7 +500,7 @@ class RecordProductionBody(BaseModel):
     qty_producing: float
 
 
-async def _recheck_backorder_stock(background_tasks: BackgroundTasks) -> None:
+async def _recheck_backorder_stock(background_tasks: BackgroundTasks, actor: Optional[dict] = None) -> None:
     """Best-effort trigger for the backorder stock recheck
     (packing_board_routes.py::_check_and_notify_backorder_stock) after a
     Manufacturing Order records progress or completes (2026-08-22) —
@@ -508,10 +508,12 @@ async def _recheck_backorder_stock(background_tasks: BackgroundTasks) -> None:
     reservation recheck, not just wait for someone to click the manual
     "Check backorder stock" button on Orders Tickets. Never allowed to fail
     the MO action that triggered it — the write already succeeded in Odoo by
-    the time this runs."""
+    the time this runs. actor is passed through so the audit trail on any
+    resulting packing-board re-queue attributes the person who advanced the
+    MO, not an anonymous system action."""
     try:
         from routes.packing_board_routes import _check_and_notify_backorder_stock
-        await _check_and_notify_backorder_stock(background_tasks)
+        await _check_and_notify_backorder_stock(background_tasks, actor=actor)
     except Exception as e:
         logger.warning("mo_backorder_recheck_failed", extra={"error": str(e)})
 
@@ -562,7 +564,7 @@ async def record_manufacturing_order_production(
                      user=current_user,
                      before={"state": mo["state"], "qty_producing": qty_producing},
                      after={"state": new_state, "qty_producing": new_qty})
-    await _recheck_backorder_stock(background_tasks)
+    await _recheck_backorder_stock(background_tasks, actor=current_user)
     return {"mo_id": mo_id, "state": new_state, "qty_producing": new_qty}
 
 
@@ -603,7 +605,7 @@ async def complete_manufacturing_order(
                      user=current_user,
                      before={"state": mo["state"], "qty_producing": mo.get("qty_producing")},
                      after={"state": "done", "qty_producing": mo.get("product_qty")})
-    await _recheck_backorder_stock(background_tasks)
+    await _recheck_backorder_stock(background_tasks, actor=current_user)
     return {"mo_id": mo_id, "state": "done"}
 
 

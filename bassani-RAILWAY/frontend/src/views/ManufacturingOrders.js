@@ -9,7 +9,7 @@
 // who need to look something up rather than glance at a screen.
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2, ClipboardEdit } from "lucide-react";
+import { RefreshCw, Monitor, HelpCircle, PlayCircle, CheckCircle2, ClipboardEdit, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
 import { useAuth } from "../AuthContext";
@@ -95,6 +95,118 @@ function MOGuideButton() {
   );
 }
 
+// ── Row actions — shared by the flat (By Product) and grouped (By Order)
+// views so Confirm / Update Status behave identically in both.
+
+function MOActions({ m, canManage, busyId, doConfirm, openUpdate }) {
+  if (!canManage) return null;
+  const isBusy = busyId === m.mo_id;
+  if (m.state === "draft") {
+    return (
+      <BtnSecondary
+        onClick={e => { e.stopPropagation(); doConfirm(m); }}
+        loading={isBusy}
+        disabled={isBusy}
+      >
+        <PlayCircle size={13} />Confirm
+      </BtnSecondary>
+    );
+  }
+  if (["confirmed", "progress", "to_close"].includes(m.state)) {
+    return (
+      <BtnPrimary
+        onClick={e => { e.stopPropagation(); openUpdate(m); }}
+        loading={isBusy}
+        disabled={isBusy}
+      >
+        <ClipboardEdit size={13} />Update Status
+      </BtnPrimary>
+    );
+  }
+  return null;
+}
+
+// ── By-Order view (default) — mirrors Backorders.js's OrderRow/groupBy
+// pattern exactly, so staff can see at a glance whether every product on an
+// order is ready, not just one MO in isolation, while each product's status
+// is still tracked and updated individually via MOActions above.
+
+function OrderGroupRow({ group, navigate, canManage, busyId, doConfirm, openUpdate }) {
+  const [expanded, setExpanded] = useState(true);
+  const multiLine = group.mos.length > 1;
+
+  return (
+    <>
+      <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+        <td className="p-3 w-8">
+          {multiLine ? (
+            <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600">
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          ) : null}
+        </td>
+        <td className="p-3 font-mono text-sm whitespace-nowrap">
+          {group.sale_order_id ? (
+            <button
+              onClick={() => navigate(`/orders/${group.sale_order_id}/passport`)}
+              className="text-bassani-700 hover:text-bassani-900 hover:underline font-medium flex items-center gap-1"
+            >
+              {group.order_ref}
+              <ExternalLink size={11} className="text-bassani-400" />
+            </button>
+          ) : (
+            <span className="text-gray-900">{group.order_ref || "—"}</span>
+          )}
+        </td>
+        <td className="p-3 text-sm text-gray-700 max-w-[180px] truncate">
+          {group.customer_name || "—"}
+        </td>
+        <td className="p-3 min-w-[280px]">
+          <div className="flex flex-wrap gap-1.5">
+            {group.mos.map(m => (
+              <span key={m.mo_id} className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${STATE_STYLE[m.state] || "bg-gray-100 text-gray-500"}`}>
+                {MO_STATE_LABEL[m.state] || m.state}
+              </span>
+            ))}
+          </div>
+        </td>
+        <td className="p-3 whitespace-nowrap">
+          {group.ticket ? (
+            <button
+              onClick={() => navigate(`/tickets/sales?ticket=${group.ticket.ticket_id}`)}
+              className="inline-flex items-center gap-1 text-xs text-bassani-600 hover:underline font-medium"
+            >
+              {group.ticket.ref}
+              <ExternalLink size={11} />
+            </button>
+          ) : (
+            <span className="text-xs text-gray-300">—</span>
+          )}
+        </td>
+      </tr>
+      {expanded && group.mos.map(m => (
+        <tr key={m.mo_id} className="bg-gray-50 border-b border-gray-100">
+          <td className="p-3" />
+          <td className="p-3 pl-8" colSpan={2}>
+            <p className="text-sm font-medium text-gray-900">{m.product_name || "—"}</p>
+            <p className="text-[10px] font-mono text-gray-400">{m.mo_name}</p>
+          </td>
+          <td className="p-3">
+            <div className="text-sm">
+              <span className="font-semibold text-gray-900">{fmtQty(m.qty_remaining)}</span>
+              <span className="text-gray-400"> remaining</span>
+              <p className="text-[10px] text-gray-400">{fmtQty(m.qty_producing)} / {fmtQty(m.qty_total)} produced</p>
+            </div>
+          </td>
+          <td className="p-3">
+            <MOActions m={m} canManage={canManage} busyId={busyId} doConfirm={doConfirm} openUpdate={openUpdate} />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 export default function ManufacturingOrders() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -102,6 +214,7 @@ export default function ManufacturingOrders() {
   const canManage = can("orders.manufacturing_manage");
   const [data,        setData       ] = useState([]);
   const [loading,     setLoading    ] = useState(true);
+  const [groupBy,     setGroupBy    ] = useState("order"); // "order" | "product" — defaults to order so staff see whether everything on an SO is ready, not just one product
   const [stateFilter, setStateFilter] = useState("");
   const [search,      setSearch     ] = useState("");
   const [soFilter,    setSoFilter   ] = useState(location.state?.soName || "");
@@ -206,6 +319,29 @@ export default function ManufacturingOrders() {
     return d;
   }, [data, stateFilter, soFilter, search]);
 
+  // Groups filtered MOs by sale order — one group per SO, sorted oldest-first
+  // by its oldest member (matches the age-first convention used everywhere
+  // else in this app) so a group with one urgent product is never buried
+  // behind a calmer multi-product one.
+  const orderGroups = useMemo(() => {
+    const map = new Map();
+    filtered.forEach(m => {
+      const key = m.order_ref || `mo-${m.mo_id}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          order_ref: m.order_ref, sale_order_id: m.sale_order_id,
+          customer_name: m.customer_name, ticket: m.ticket, mos: [],
+        });
+      }
+      map.get(key).mos.push(m);
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      const aOldest = Math.min(...a.mos.map(m => ageDays(m.create_date) ?? 0));
+      const bOldest = Math.min(...b.mos.map(m => ageDays(m.create_date) ?? 0));
+      return bOldest - aOldest;
+    });
+  }, [filtered]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TopBar
@@ -258,6 +394,20 @@ export default function ManufacturingOrders() {
 
         {/* Controls */}
         <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 gap-1">
+            <button
+              onClick={() => setGroupBy("order")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${groupBy === "order" ? "bg-bassani-600 text-white" : "text-gray-500 hover:text-gray-700"}`}
+            >
+              By Order
+            </button>
+            <button
+              onClick={() => setGroupBy("product")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${groupBy === "product" ? "bg-bassani-600 text-white" : "text-gray-500 hover:text-gray-700"}`}
+            >
+              By Product
+            </button>
+          </div>
           <FilterPill label="All" active={stateFilter === ""} onClick={() => setStateFilter("")} />
           {[
             { key: "draft",     label: `Draft (${stateCounts.draft})` },
@@ -278,6 +428,33 @@ export default function ManufacturingOrders() {
             <div className="py-16 text-center">
               <p className="text-sm font-medium text-gray-500">No manufacturing orders</p>
               <p className="text-xs text-gray-400 mt-1">Nothing currently needs producing for a customer order.</p>
+            </div>
+          ) : groupBy === "order" ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="p-3 w-8" />
+                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">SO Ref</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Products</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Ticket</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderGroups.map(group => (
+                    <OrderGroupRow
+                      key={group.order_ref || group.mos[0]?.mo_id}
+                      group={group}
+                      navigate={navigate}
+                      canManage={canManage}
+                      busyId={busyId}
+                      doConfirm={doConfirm}
+                      openUpdate={openUpdate}
+                    />
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <DataTable
@@ -327,32 +504,9 @@ export default function ManufacturingOrders() {
                   ) },
                 ...(canManage ? [{
                   id: "actions", header: "", enableSorting: false,
-                  cell: ({ row: { original: m } }) => {
-                    const isBusy = busyId === m.mo_id;
-                    if (m.state === "draft") {
-                      return (
-                        <BtnSecondary
-                          onClick={e => { e.stopPropagation(); doConfirm(m); }}
-                          loading={isBusy}
-                          disabled={isBusy}
-                        >
-                          <PlayCircle size={13} />Confirm
-                        </BtnSecondary>
-                      );
-                    }
-                    if (["confirmed", "progress", "to_close"].includes(m.state)) {
-                      return (
-                        <BtnPrimary
-                          onClick={e => { e.stopPropagation(); openUpdate(m); }}
-                          loading={isBusy}
-                          disabled={isBusy}
-                        >
-                          <ClipboardEdit size={13} />Update Status
-                        </BtnPrimary>
-                      );
-                    }
-                    return null;
-                  },
+                  cell: ({ row: { original: m } }) => (
+                    <MOActions m={m} canManage={canManage} busyId={busyId} doConfirm={doConfirm} openUpdate={openUpdate} />
+                  ),
                 }] : []),
               ]}
             />
