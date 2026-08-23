@@ -21,9 +21,9 @@ const THEME_STORAGE_KEY = "bassani_monitor_theme";
 export function useMonitorTheme() {
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+      return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
     } catch {
-      return "light";
+      return "dark";
     }
   });
 

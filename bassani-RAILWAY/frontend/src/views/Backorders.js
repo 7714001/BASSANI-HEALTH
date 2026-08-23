@@ -19,6 +19,14 @@ export const MO_STATE_LABEL = {
   done:        "Done",
 };
 
+// Mirrors ManufacturingOrders.js's ageDays() exactly — same Odoo magic-field
+// shape (`create_date`, "YYYY-MM-DD HH:MM:SS" UTC, no timezone suffix).
+function ageDays(createDate) {
+  if (!createDate) return null;
+  const ms = Date.now() - new Date(createDate.replace(" ", "T") + "Z").getTime();
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
+
 function StatePill({ state, label }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${STATE_STYLE[state] || "bg-gray-100 text-gray-500"}`}>
@@ -50,19 +58,19 @@ function ProductRow({ line }) {
 
 // ── By-Order view ─────────────────────────────────────────────────────────────
 
-function OrderRow({ entry, navigate }) {
-  const [expanded, setExpanded] = useState(false);
+function OrderRow({ entry, defaultExpanded, navigate }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const multiLine = entry.lines.length > 1;
+  const age = ageDays(entry.create_date);
 
   return (
     <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-      {/* Expand toggle (only when multiple lines) */}
+      {/* Expand toggle — always shown, same chevron pattern as Manufacturing
+          Orders' By Order view, even for a single-line entry (2026-08-23) */}
       <td className="p-3 w-8">
-        {multiLine ? (
-          <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600">
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-        ) : null}
+        <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
       </td>
 
       {/* Sale order ref — links to Order Passport */}
@@ -90,22 +98,30 @@ function OrderRow({ entry, navigate }) {
         {entry.customer_name || "—"}
       </td>
 
-      {/* Products outstanding */}
+      {/* Age — matches Manufacturing Orders' By Order view (2026-08-23) */}
+      <td className="p-3 whitespace-nowrap">
+        {age === null ? (
+          <span className="text-xs text-gray-300">—</span>
+        ) : (
+          <span className={`text-xs font-semibold ${age > 3 ? "text-red-600" : age > 1 ? "text-amber-600" : "text-gray-500"}`}>
+            {age}d
+          </span>
+        )}
+      </td>
+
+      {/* Products outstanding — collapsed shows just the first line + count */}
       <td className="p-3 min-w-[220px]">
         {expanded ? (
           <div className="space-y-0.5">
             {entry.lines.map((l, i) => <ProductRow key={i} line={l} />)}
           </div>
         ) : (
-          <ProductRow line={entry.lines[0] || { product_name: "—", qty_outstanding: 0 }} />
-        )}
-        {!expanded && multiLine && (
-          <button
-            onClick={() => setExpanded(true)}
-            className="text-[11px] text-bassani-600 hover:underline mt-0.5 block"
-          >
-            +{entry.lines.length - 1} more product{entry.lines.length > 2 ? "s" : ""}
-          </button>
+          <>
+            <ProductRow line={entry.lines[0] || { product_name: "—", qty_outstanding: 0 }} />
+            {multiLine && (
+              <p className="text-[11px] text-gray-400 mt-0.5">+{entry.lines.length - 1} more product{entry.lines.length > 2 ? "s" : ""}</p>
+            )}
+          </>
         )}
       </td>
 
@@ -406,6 +422,7 @@ export default function Backorders() {
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">SO Ref</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Picking</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Age</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Outstanding</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">State</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Expected</th>
@@ -413,8 +430,8 @@ export default function Backorders() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(entry => (
-                    <OrderRow key={entry.picking_id} entry={entry} navigate={navigate} />
+                  {filtered.map((entry, i) => (
+                    <OrderRow key={entry.picking_id} entry={entry} defaultExpanded={i === 0} navigate={navigate} />
                   ))}
                 </tbody>
               </table>

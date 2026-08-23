@@ -1062,7 +1062,7 @@ The Operations Monitor is a live, read-only display designed to run on a dedicat
 
 **No login is required.** Access is controlled by a secret URL token managed by the super admin.
 
-**Light/dark theme (2026-08-23):** the display opens in **light theme by default** — a sun/moon toggle in the top-right of the header switches to dark, and the choice is remembered on that browser/device for next time. A fullscreen button next to it hides the browser's own address bar and toolbar, useful for a TV driven by an ordinary browser rather than dedicated kiosk hardware.
+**Light/dark theme (2026-08-23):** the display opens in **dark theme by default** — a sun/moon toggle in the top-right of the header switches to light, and the choice is remembered on that browser/device for next time. A fullscreen button next to it hides the browser's own address bar and toolbar, useful for a TV driven by an ordinary browser rather than dedicated kiosk hardware.
 
 **Cards are grouped by order (2026-08-23):** if more than one card in the same column belongs to the same sale order — most commonly a delivery and its own re-queued backorder sitting in the packing stage together — they're nested under one shared, clickable header showing the order reference and customer, instead of appearing as two unrelated cards.
 
@@ -1127,7 +1127,7 @@ A second live, read-only big-screen display (2026-08-21), same idea as the Opera
 
 **No login is required.** Access is controlled by a secret URL token managed by the super admin.
 
-**Light/dark theme:** same toggle and fullscreen button as the Operations Monitor (2026-08-23), light by default. This board is company/application-focused rather than order-focused, so cards are not grouped the way the Operations and Manufacturing monitors are.
+**Light/dark theme:** same toggle and fullscreen button as the Operations Monitor (2026-08-23), dark by default. This board is company/application-focused rather than order-focused, so cards are not grouped the way the Operations and Manufacturing monitors are.
 
 ### Setting Up the Onboarding Monitor Display
 
@@ -1166,7 +1166,7 @@ A third live, read-only big-screen display (2026-08-22), for the GACP manufactur
 
 **No login is required.** Access is controlled by a secret URL token managed by the super admin, same as the other two monitors.
 
-**Light/dark theme and order grouping (2026-08-23):** same light-by-default theme toggle and fullscreen button as the Operations Monitor. This board already grouped Manufacturing Orders by their sale order — when a column holds more than one product for the same order, they're nested under one shared header (order reference + customer) instead of repeating that line per card; clicking the header (as well as any individual product card) now opens that order's Order Passport.
+**Light/dark theme and order grouping (2026-08-23):** same dark-by-default theme toggle and fullscreen button as the Operations Monitor. This board already grouped Manufacturing Orders by their sale order — when a column holds more than one product for the same order, they're nested under one shared header (order reference + customer) instead of repeating that line per card; clicking the header (as well as any individual product card) now opens that order's Order Passport.
 
 ### Setting Up the Manufacturing Monitor Display
 
@@ -1618,7 +1618,7 @@ Every backorder still waiting on stock at 17:00 is included automatically in a d
 - **Ready** — Odoo has reserved stock to this backorder; the order clerk can action it on the packing board.
 - **Waiting** — the backorder is blocked, waiting on an upstream picking or manufacturing order.
 
-**By Order view (default):** One row per backorder picking. Rows with multiple products collapse to show the first product with a "+N more" link — click to expand. Click the **sale order reference** (e.g. S00042) in the first column to open the Order Passport for that order — the full lifecycle view showing ticket stage, invoice, deliveries, and batch numbers. Each row also links to the portal Sales Ticket if one exists.
+**By Order view (default):** One row per backorder picking. Each row shows an **Age** column (days since the backorder was created, colour-coded amber past 1 day and red past 3) and a chevron to expand/collapse its products — rows with more than one product collapse to show just the first with a "+N more" note; only the first row on the page starts expanded, the rest start collapsed so the page reads as a summary at a glance (2026-08-23). Click the **sale order reference** (e.g. S00042) in the first column to open the Order Passport for that order — the full lifecycle view showing ticket stage, invoice, deliveries, and batch numbers. Each row also links to the portal Sales Ticket if one exists.
 
 **By Product view:** Aggregates by product across all waiting orders. Shows total units outstanding and how many orders are waiting. Useful for production planning — tells you the aggregate demand for each product before raising a manufacturing order. Click any row to expand and see which specific orders are waiting.
 
@@ -1630,7 +1630,7 @@ Go to **Manufacturing Orders** (under the Orders section in the sidebar, next to
 
 **This is not the same list as Backorders.** Backorders only shows orders where a delivery has already been attempted and split by a packer. A Manufacturing Order can exist well before that point — Odoo often creates it the moment a sale order is confirmed, depending on the product's own production setup. If you're looking for "what does GACP need to make right now, regardless of whether packing has started," use this page; if you're looking for "which deliveries are actually short right now," use Backorders.
 
-**By Order view (default):** one row per sale order, so you can confirm at a glance whether everything on that order is ready, not just one product in isolation. The row shows the order reference, customer, **Age** (days since the oldest product on the order was created — colour-coded amber past 1 day, red past 3), a single rollup **Status** pill, and the linked ticket. When every product on the order shares the same state, that state is the pill shown; when they don't (e.g. one product already In Progress while another is still Draft), the pill shows whichever product is furthest behind — labelled "Mixed — least advanced shown" — since the order as a whole isn't ready until its slowest product is. Hover the status to see every product's individual state. Click the chevron to expand any row (including a single-product order) and see each product's own quantity produced/remaining and its own Confirm/Update Status button.
+**By Order view (default):** one row per sale order, so you can confirm at a glance whether everything on that order is ready, not just one product in isolation. The row shows the order reference, customer, **Age** (days since the oldest product on the order was created — colour-coded amber past 1 day, red past 3), a single rollup **Status** pill, and the linked ticket. When every product on the order shares the same state, that state is the pill shown; when they don't (e.g. one product already In Progress while another is still Draft), the pill shows whichever product is furthest behind — labelled "Mixed — least advanced shown" — since the order as a whole isn't ready until its slowest product is. Hover the status to see every product's individual state. Click the chevron to expand any row (including a single-product order) and see each product's own quantity produced/remaining and its own Confirm/Update Status button. Only the first row on the page starts expanded (2026-08-23) — every other row starts collapsed so the page reads as a scannable summary rather than a wall of expanded products; expand any row you need a closer look at.
 
 **By Product view:** the original flat list — one row per Manufacturing Order regardless of which sale order it belongs to. Each row shows the product, MO reference, quantity produced vs. remaining, state (Draft / Confirmed / In Progress / To Close), the linked sale order and customer, a portal ticket reference if one exists, how many days the MO has been open, and its planned finish date.
 

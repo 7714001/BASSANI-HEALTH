@@ -246,7 +246,7 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
                 ("state", "in", ["confirmed", "assigned", "waiting"]),
                 ("picking_type_code", "=", "outgoing"),
             ],
-            fields=["id", "name", "origin", "state", "scheduled_date", "partner_id", "move_ids", "sale_id"],
+            fields=["id", "name", "origin", "state", "scheduled_date", "partner_id", "move_ids", "sale_id", "create_date"],
             order="scheduled_date asc",
             limit=200,
         )
@@ -361,6 +361,7 @@ async def list_backorders(current_user: dict = Depends(require_permission("order
             "state":            p["state"],
             "state_label":      _BACKORDER_STATE_LABELS.get(p["state"], p["state"]),
             "scheduled_date":   p.get("scheduled_date"),
+            "create_date":      p.get("create_date"),
             "lines":            lines,
             "ticket":           ticket_map.get(str(sale_order_id)) if sale_order_id else None,
         })

@@ -144,8 +144,8 @@ function MOActions({ m, canManage, busyId, doConfirm, openUpdate }) {
 // order is ready, not just one MO in isolation, while each product's status
 // is still tracked and updated individually via MOActions above.
 
-function OrderGroupRow({ group, navigate, canManage, busyId, doConfirm, openUpdate }) {
-  const [expanded, setExpanded] = useState(true);
+function OrderGroupRow({ group, defaultExpanded, navigate, canManage, busyId, doConfirm, openUpdate }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const isMixed = new Set(group.mos.map(m => m.state)).size > 1;
   const overall = rollupState(group.mos);
 
@@ -512,10 +512,11 @@ export default function ManufacturingOrders() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedGroups.map(group => (
+                    {pagedGroups.map((group, i) => (
                       <OrderGroupRow
                         key={group.order_ref || group.mos[0]?.mo_id}
                         group={group}
+                        defaultExpanded={i === 0}
                         navigate={navigate}
                         canManage={canManage}
                         busyId={busyId}
