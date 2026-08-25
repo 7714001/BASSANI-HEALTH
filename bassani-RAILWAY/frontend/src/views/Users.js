@@ -4,13 +4,14 @@ import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import {
   UserPlus, KeyRound, PowerOff, Power, Copy, Check,
-  ChevronDown, ChevronUp, ShieldCheck, Warehouse, Pencil, Trash2,
+  ChevronDown, ChevronUp, ShieldCheck, Warehouse, Pencil, Trash2, Building2,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, fmtDate,
   SearchBar, ChipRow, FilterPill,
 } from "../components/UI";
+import PortalLoginManageModal from "../components/PortalLoginManageModal";
 
 // ── Permission configuration ──────────────────────────────────────────────────
 
@@ -389,6 +390,9 @@ export default function Users() {
   const [roleFilter,   setRoleFilter  ] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [warehouses,   setWarehouses  ] = useState([]);
+  // Companies modal (customer-role rows only) — same component
+  // CustomerProfile.js's Portal Access table opens, keyed by email either way.
+  const [manageLoginEmail, setManageLoginEmail] = useState(null);
 
   useEffect(() => {
     api.get("/api/warehouses/").then(r => setWarehouses(r.data.warehouses || [])).catch(() => {});
@@ -810,6 +814,11 @@ export default function Users() {
                       <Warehouse size={12} />
                     </BtnSecondary>
                   )}
+                  {u.role === "customer" && (
+                    <BtnSecondary size="sm" onClick={() => setManageLoginEmail(u.username)} title="View/manage companies">
+                      <Building2 size={12} />
+                    </BtnSecondary>
+                  )}
                   <BtnSecondary size="sm" onClick={() => openReset(u)} title="Reset password">
                     <KeyRound size={12} />
                   </BtnSecondary>
@@ -1039,6 +1048,14 @@ export default function Users() {
             </>
           )}
         </Modal>
+      )}
+
+      {manageLoginEmail && (
+        <PortalLoginManageModal
+          email={manageLoginEmail}
+          onClose={() => setManageLoginEmail(null)}
+          onChanged={load}
+        />
       )}
 
       {/* ── Assign warehouse modal ── */}

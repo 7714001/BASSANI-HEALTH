@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
 import { Badge, BtnPrimary, BtnSecondary, BtnDanger, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
 import AddressAutocomplete from "../components/AddressAutocomplete";
+import PortalLoginManageModal from "../components/PortalLoginManageModal";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -494,6 +495,10 @@ export default function CustomerProfile() {
   // forward. Keyed by customer_company_partner_id; starts with everything
   // checked (today's default behaviour: add, touch nothing else).
   const [portalKeepCompanies, setPortalKeepCompanies] = useState(new Set());
+  // Manage modal (shows every company this login has, across all customer
+  // profiles, not just this one) — same component Users.js opens for its
+  // customer-role rows, keyed by email either way.
+  const [manageLoginEmail, setManageLoginEmail] = useState(null);
 
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
@@ -1183,24 +1188,34 @@ export default function CustomerProfile() {
                               {ct.portal_status === "not_provisioned" && <Badge color="gray">Not provisioned</Badge>}
                             </td>
                             <td className="px-5 py-3 text-right">
-                              {ct.portal_status === "active" && (
-                                <button
-                                  onClick={() => doTogglePortalStatus(ct.id, "deactivate")}
-                                  disabled={portalTogglingId === ct.id}
-                                  className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
-                                >
-                                  {portalTogglingId === ct.id ? "Working…" : "Deactivate"}
-                                </button>
-                              )}
-                              {ct.portal_status === "deactivated" && (
-                                <button
-                                  onClick={() => doTogglePortalStatus(ct.id, "reactivate")}
-                                  disabled={portalTogglingId === ct.id}
-                                  className="text-xs font-medium text-bassani-700 hover:text-bassani-800 disabled:opacity-50"
-                                >
-                                  {portalTogglingId === ct.id ? "Working…" : "Reactivate"}
-                                </button>
-                              )}
+                              <div className="flex items-center justify-end gap-3">
+                                {ct.portal_status !== "not_provisioned" && ct.email && (
+                                  <button
+                                    onClick={() => setManageLoginEmail(ct.email)}
+                                    className="text-xs font-medium text-gray-500 hover:text-gray-700"
+                                  >
+                                    Manage
+                                  </button>
+                                )}
+                                {ct.portal_status === "active" && (
+                                  <button
+                                    onClick={() => doTogglePortalStatus(ct.id, "deactivate")}
+                                    disabled={portalTogglingId === ct.id}
+                                    className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                                  >
+                                    {portalTogglingId === ct.id ? "Working…" : "Deactivate"}
+                                  </button>
+                                )}
+                                {ct.portal_status === "deactivated" && (
+                                  <button
+                                    onClick={() => doTogglePortalStatus(ct.id, "reactivate")}
+                                    disabled={portalTogglingId === ct.id}
+                                    className="text-xs font-medium text-bassani-700 hover:text-bassani-800 disabled:opacity-50"
+                                  >
+                                    {portalTogglingId === ct.id ? "Working…" : "Reactivate"}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1283,6 +1298,14 @@ export default function CustomerProfile() {
                 <BtnPrimary onClick={doGrantPortalAccess} loading={portalGranting}>Continue</BtnPrimary>
               </div>
             </Modal>
+          )}
+
+          {manageLoginEmail && (
+            <PortalLoginManageModal
+              email={manageLoginEmail}
+              onClose={() => setManageLoginEmail(null)}
+              onChanged={loadPortalAccess}
+            />
           )}
 
           {/* Documents */}

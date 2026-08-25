@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, U
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
+from bson import ObjectId
 from auth import get_current_user, require_admin, require_permission, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
@@ -513,6 +514,110 @@ async def search_all_customers(
         return {"customers": customers}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/portal-logins/{email}")
+async def get_portal_login_by_email(
+    email: str,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    """
+    Management view for a customer portal login, looked up by email rather
+    than scoped to one company's own profile page — the Portal Access table
+    on a single customer profile only ever shows that one company's own
+    status for a contact, with no way to see the *other* companies the same
+    login has (a company is only surfaced there via the narrower
+    `linked_elsewhere` hint). This endpoint returns the login's full
+    `companies` list in one place, for the "Manage" button on that table.
+
+    Uses `.find()`, not `.find_one()`, deliberately: `grant_portal_access`'s
+    existing-login check (`find_one` before insert) isn't race-proof against
+    two near-simultaneous grants on two different company profiles for the
+    same email — there's no unique index on `username` itself, only on
+    `companies.odoo_partner_id`. If that ever happens, two separate login
+    documents end up sharing one email, each holding only the company it was
+    granted against — exactly the state that makes a customer's own company
+    switcher only ever show one store no matter how many grants admins think
+    they've made. Returning every match here (instead of silently picking
+    one, the way login's own `authenticate_user` does) surfaces that split
+    directly so it can be merged via the endpoint below, rather than only
+    being discoverable by reading raw Mongo documents.
+    """
+    username = email.strip().lower()
+    docs = await col("users").find({"role": "customer", "username": username}).to_list(length=10)
+    if not docs:
+        raise HTTPException(status_code=404, detail="No portal login found for this email")
+    return {
+        "username": username,
+        "duplicate_logins": len(docs) > 1,
+        "logins": [
+            {
+                "id": str(d["_id"]),
+                "name": d.get("name"),
+                "active": d.get("active", True),
+                "last_login_at": d.get("last_login_at"),
+                "created_at": d.get("created_at"),
+                "companies": d.get("companies") or [],
+            }
+            for d in docs
+        ],
+    }
+
+
+class PortalLoginMergeBody(BaseModel):
+    keep_user_id: str
+    remove_user_id: str
+
+
+@router.post("/portal-logins/{email}/merge")
+async def merge_portal_logins(
+    email: str,
+    body: PortalLoginMergeBody,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    """
+    Repairs the duplicate-login split `get_portal_login_by_email` above can
+    surface: folds `remove_user_id`'s `companies` entries into
+    `keep_user_id`'s (skipping any `odoo_partner_id` already present — the
+    unique partial index on that field means a genuine overlap can't exist,
+    but a defensive skip costs nothing), then deletes the now-redundant
+    document. `keep_user_id` survives with its own password/login history
+    intact; whichever one the customer wasn't logging in with is the one to
+    remove — both usually work, but keeping the one with a real
+    `last_login_at` avoids resetting a password the customer already knows.
+    """
+    username = email.strip().lower()
+    try:
+        keep_oid, remove_oid = ObjectId(body.keep_user_id), ObjectId(body.remove_user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    if keep_oid == remove_oid:
+        raise HTTPException(status_code=400, detail="Cannot merge a login into itself")
+
+    keep_doc = await col("users").find_one({"_id": keep_oid, "role": "customer", "username": username})
+    remove_doc = await col("users").find_one({"_id": remove_oid, "role": "customer", "username": username})
+    if not keep_doc or not remove_doc:
+        raise HTTPException(status_code=404, detail="Both logins must exist and match this email")
+
+    existing_ids = {c.get("odoo_partner_id") for c in (keep_doc.get("companies") or [])}
+    to_add = [c for c in (remove_doc.get("companies") or []) if c.get("odoo_partner_id") not in existing_ids]
+
+    if to_add:
+        await col("users").update_one({"_id": keep_oid}, {"$push": {"companies": {"$each": to_add}}})
+    if not keep_doc.get("active_company_partner_id") and to_add:
+        await col("users").update_one(
+            {"_id": keep_oid},
+            {"$set": {"active_company_partner_id": to_add[0]["customer_company_partner_id"]}},
+        )
+    await col("users").delete_one({"_id": remove_oid})
+
+    await audit_log(
+        "customer.portal_logins_merged", "customer_portal_access", str(keep_oid),
+        entity_label=keep_doc.get("name") or username,
+        user=current_user,
+        detail={"removed_user_id": str(remove_oid), "companies_added": to_add},
+    )
+    return {"success": True, "companies_added": len(to_add)}
 
 
 @router.get("/{customer_id}")
