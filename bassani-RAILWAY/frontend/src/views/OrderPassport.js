@@ -799,7 +799,7 @@ export default function OrderPassport() {
           {/* ── Hero card ───────────────────────────────────────────────────── */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 lg:p-6 mb-4">
             <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs text-gray-400 mb-0.5">Order Reference</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-2xl sm:text-3xl font-mono font-bold text-gray-900">{order.name}</h1>
@@ -810,16 +810,41 @@ export default function OrderPassport() {
                 <p className="text-sm text-gray-600 mt-1">
                   {order.partner_id?.[1] || "Unknown customer"}
                   {partner.email && <span className="text-gray-400 ml-2">· {partner.email}</span>}
+                  {partner.phone && <span className="text-gray-400 ml-2">· {partner.phone}</span>}
                 </p>
+                {/* Address / Deliver To / Terms+VAT (2026-08-25) — folded into
+                    this compact block instead of a separate bordered "meta
+                    row" section below the KPI tiles, to keep the hero card
+                    shorter overall. "Date" was dropped entirely rather than
+                    repositioned — it's already shown as the Order Age tile's
+                    own "Placed {date}" caption below, so repeating it here
+                    added height without adding information. */}
+                {partner.street && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {[partner.street, partner.city, partner.zip].filter(Boolean).join(", ")}
+                  </p>
+                )}
+                {order.shipping_detail && (
+                  <p className="text-xs text-bassani-700 font-semibold mt-0.5">
+                    Deliver to: {[order.shipping_detail.name, order.shipping_detail.street, order.shipping_detail.street2, order.shipping_detail.city, order.shipping_detail.zip].filter(Boolean).join(", ")}
+                  </p>
+                )}
+                {(order.payment_term_id || partner.vat) && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {order.payment_term_id && <span>Terms: {order.payment_term_id[1]}</span>}
+                    {order.payment_term_id && partner.vat && <span className="mx-1.5">·</span>}
+                    {partner.vat && <span>VAT: {partner.vat}</span>}
+                  </p>
+                )}
               </div>
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <StatusBadge overall={overall_status} />
                 <p className="text-xs text-gray-400 mt-1.5 max-w-[220px]">{overall_status.detail}</p>
               </div>
             </div>
 
             {/* KPI stat tiles */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <StatCard label="Order Total" value={fmtR(order.amount_total)} />
               <StatCard
                 label="Outstanding"
@@ -850,47 +875,31 @@ export default function OrderPassport() {
                 sub={order.date_order ? `Placed ${fmtDate(order.date_order)}` : null}
               />
             </div>
-
-            {/* Meta row */}
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 border-t border-gray-50 pt-3">
-              {order.date_order   && <span>Date: <span className="text-gray-700 font-medium">{fmtDate(order.date_order)}</span></span>}
-              {order.payment_term_id && <span>Terms: <span className="text-gray-700 font-medium">{order.payment_term_id[1]}</span></span>}
-              {partner.phone     && <span>Phone: <span className="text-gray-700 font-medium">{partner.phone}</span></span>}
-              {partner.vat       && <span>VAT: <span className="text-gray-700 font-medium">{partner.vat}</span></span>}
-              {/* Address (2026-08-25) — billing partner.street/city/zip were
-                  already fetched by the backend but never rendered anywhere
-                  on this page until now. */}
-              {partner.street && (
-                <span>Address: <span className="text-gray-700 font-medium">
-                  {[partner.street, partner.city, partner.zip].filter(Boolean).join(", ")}
-                </span></span>
-              )}
-              {/* Deliver To (2026-08-25) — only shown when the order's own
-                  partner_shipping_id differs from the billing partner, i.e.
-                  a specific delivery address was chosen at checkout (the
-                  "Deliver To" picker, 2026-08-21); this page never surfaced
-                  that back until now. */}
-              {order.shipping_detail && (
-                <span className="text-bassani-700">Deliver To: <span className="font-semibold">
-                  {[order.shipping_detail.name, order.shipping_detail.street, order.shipping_detail.street2, order.shipping_detail.city, order.shipping_detail.zip].filter(Boolean).join(", ")}
-                </span></span>
-              )}
-            </div>
           </div>
 
-          {/* ── Two-column body: record (timeline/lines/deliveries) + sidebar ─── */}
+          {/* ── Order Timeline — full width (2026-08-25) ─────────────────────
+              Previously lived inside the two-column grid's main column,
+              squeezed to roughly (page width - 360px sidebar); the horizontal
+              stepper needs the room now that it always renders the full
+              8-11 step lifecycle rather than truncating early (see the
+              buildTimelineSteps() fix above). Sits above the two-column
+              grid instead, spanning the full max-w-6xl width. */}
+          <div className="mb-4">
+            {(isReseller || isCustomer) ? (
+              <HorizontalTimelineCard
+                order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders}
+                onUploadPop={ticket?.ticket_id && !ticket.exit_status ? () => popFileInputRef.current?.click() : null}
+              />
+            ) : (
+              <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
+            )}
+          </div>
+
+          {/* ── Two-column body: record (order lines/deliveries) + sidebar ─── */}
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
 
             {/* Main column */}
             <div className="space-y-4 min-w-0">
-              {(isReseller || isCustomer) ? (
-                <HorizontalTimelineCard
-                  order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders}
-                  onUploadPop={ticket?.ticket_id && !ticket.exit_status ? () => popFileInputRef.current?.click() : null}
-                />
-              ) : (
-                <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
-              )}
 
               {/* ── Order lines ──────────────────────────────────────────────── */}
               {order.lines?.length > 0 && (

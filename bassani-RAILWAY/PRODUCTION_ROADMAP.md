@@ -5371,6 +5371,10 @@ Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a
 - [x] **Delivery & Fulfilment section is now staff-only** (`!isReseller && !isCustomer`) per explicit product-owner direction — picking references, raw Odoo delivery state, and the delivery-slip PDF are internal warehouse detail; the timeline already gives reseller/customer the milestones that matter without the Odoo-facing mechanics
 - [x] **Two pre-existing dead links fixed in the same pass** (surfaced while gating the section above): the Order Lines table's per-line "outstanding" click-through, and the More Actions card's Packing Board Display/Backorders/Manufacturing Orders buttons, all pointed at staff-only `orders.view`-permission-gated pages that reseller/customer structurally can't reach — the data/badges still show for every role, only the click-throughs are now staff-gated
 
+**Same-day, sixth round — layout (product owner: timeline too cramped by the sidebar, hero card getting tall):**
+- [x] The order timeline (whichever variant the role renders) moved out of the two-column grid's main column into its own full-width block between the hero card and the two-column body — no longer squeezed to roughly page-width-minus-360px, which matters more now that it always shows its full 8-11 step lifecycle rather than a short list
+- [x] The hero card's separate bordered "Meta row" section (Date/Terms/Phone/VAT/Address/Deliver To) is gone — Phone folded onto the customer name/email line, Address/Deliver To/Terms+VAT became compact lines directly under it, and Date was dropped outright since the Order Age KPI tile's own caption already shows the placed-on date. Net effect: one fewer section, no separate border/padding, shorter hero card overall
+
 ---
 
 ### 25.2 — Account Activation Flow
