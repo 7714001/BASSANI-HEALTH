@@ -369,6 +369,45 @@ async def initialise_users():
         partialFilterExpression={"role": "customer"},
     )
 
+    # 2026-08-25 — closes the actual root gap behind two real incidents in
+    # one day: a customer login race that split one email across two
+    # documents (25.1.1), and a contact granted portal access under a
+    # completely wrong email that then collided with where that person's
+    # real staff login should have lived. `username`/`email` uniqueness had
+    # only ever been enforced at the application layer (a find_one-before-
+    # insert check, scattered across create_user/grant_portal_access/etc.,
+    # each race-vulnerable on its own) — never at the DB level. Same
+    # self-verify-before-enforcing pattern as the customer_ownership index
+    # above: a duplicate that predates this index must not crash startup,
+    # so check first and skip (logging loudly) rather than let create_index
+    # raise. `email` is sparse — many staff accounts (packer, warehouse
+    # floor logins) are created with no email at all, and that's legitimate,
+    # not a collision.
+    _dupe_usernames = await col("users").aggregate([
+        {"$group": {"_id": "$username", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+    ]).to_list(length=50)
+    if _dupe_usernames:
+        logger.warning(
+            "startup_duplicate_usernames_found — unique index skipped, resolve manually",
+            extra={"count": len(_dupe_usernames), "usernames": [d["_id"] for d in _dupe_usernames]},
+        )
+    else:
+        await col("users").create_index([("username", 1)], unique=True)
+
+    _dupe_emails = await col("users").aggregate([
+        {"$match": {"email": {"$exists": True, "$ne": None}}},
+        {"$group": {"_id": "$email", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+    ]).to_list(length=50)
+    if _dupe_emails:
+        logger.warning(
+            "startup_duplicate_emails_found — unique index skipped, resolve manually",
+            extra={"count": len(_dupe_emails), "emails": [d["_id"] for d in _dupe_emails]},
+        )
+    else:
+        await col("users").create_index([("email", 1)], unique=True, sparse=True)
+
 
 def _make_inbox_indexes(collection: str):
     """Return the standard index list for any inbox collection."""
