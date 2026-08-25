@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -224,12 +224,12 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
   if (inv) {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: inv.invoice_date, sub: inv.name });
     steps.push({
-      key: "paid", label: inv.payment_state === "paid" ? "Payment Received" : "Payment Pending",
+      key: "paid", label: inv.payment_state === "paid" ? "Balance Payment Received" : "Balance Payment Pending",
       icon: Check, state: inv.payment_state === "paid" ? "done" : "current",
     });
   } else {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "pending" });
-    steps.push({ key: "paid", label: "Payment Received", icon: Check, state: "pending" });
+    steps.push({ key: "paid", label: "Balance Payment Received", icon: Check, state: "pending" });
   }
 
   steps.push({
@@ -347,13 +347,26 @@ function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturin
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-1.5">
         <Clock size={12} />Order Timeline
       </p>
+      {/* Connectors are direct flex-grow siblings of the step blocks in this
+          row (2026-08-25 fix) — they were previously nested one level deeper,
+          inside each step's own [block+connector] wrapper div, which itself
+          had no flex-grow relative to this outer row. That wrapper's own
+          width was content-driven (shrink-to-fit), so the connector's
+          flex-1 had no leftover space within it to actually expand into —
+          the whole row rendered at bare min-content width (~focused, left-
+          aligned) regardless of how wide its container actually was, which
+          is what read as "fixed width." Flattening so connectors compete
+          directly for this row's real available width fixes that; overflow
+          behavior on narrow screens is unchanged (shrink-0 blocks and
+          min-w-[20px] connectors still just stop shrinking and the row
+          scrolls once content genuinely exceeds the container). */}
       <div className="flex items-start overflow-x-auto pb-1 -mx-1 px-1">
         {steps.map((s, i) => {
           const Icon = s.icon;
           const isLast = i === steps.length - 1;
           const connectorDone = s.state === "done";
           return (
-            <div key={s.key} className="flex items-start">
+            <Fragment key={s.key}>
               <div className="flex flex-col items-center text-center w-[84px] shrink-0">
                 <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${NODE_STYLE[s.state]}`}>
                   {s.state === "done" ? <Check size={14} /> : s.state === "skipped" ? <X size={14} /> : <Icon size={14} />}
@@ -381,7 +394,7 @@ function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturin
               {!isLast && (
                 <div className={`h-0.5 flex-1 min-w-[20px] mt-4 ${connectorDone ? "bg-bassani-600" : "bg-gray-200"}`} />
               )}
-            </div>
+            </Fragment>
           );
         })}
       </div>
@@ -1131,27 +1144,45 @@ export default function OrderPassport() {
                   the internal-only Sales Ticket card at this position in the
                   sidebar. Reorder/Make Recurring moved here from the toolbar;
                   Confirm Order stays in the toolbar since it's urgent/primary
-                  for a draft order rather than a routine management action. */}
-              {(isReseller || isCustomer) && (
-                <SideCard icon={Repeat} title="Actions">
-                  {(order.lines || []).length > 0 || (ticket?.ticket_id && !ticket.recurring_order_id) ? (
-                    <div className="space-y-2">
-                      {(order.lines || []).length > 0 && (
-                        <BtnSecondary onClick={doReorder} className="w-full justify-center">
-                          <RotateCcw size={13} />Reorder
-                        </BtnSecondary>
-                      )}
-                      {ticket?.ticket_id && !ticket.recurring_order_id && (
-                        <BtnSecondary onClick={() => setRecurringModalOpen(true)} className="w-full justify-center">
-                          <Repeat size={13} />Make Recurring
-                        </BtnSecondary>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-gray-400 py-2">No actions available for this order yet.</p>
-                  )}
-                </SideCard>
-              )}
+                  for a draft order rather than a routine management action.
+                  Upload Proof of Payment moved here too (2026-08-25, from its
+                  own card's header) so every self-service action on the
+                  order lives in one isolated place — the timeline's current
+                  Deposit step keeps its own "Upload proof of payment" link
+                  for quick access without hunting for this card. */}
+              {(isReseller || isCustomer) && (() => {
+                const canUploadPop = ticket?.ticket_id && !ticket.exit_status;
+                return (
+                  <SideCard icon={Repeat} title="Actions">
+                    {(order.lines || []).length > 0 || (ticket?.ticket_id && !ticket.recurring_order_id) || canUploadPop ? (
+                      <div className="space-y-2">
+                        {(order.lines || []).length > 0 && (
+                          <BtnSecondary onClick={doReorder} className="w-full justify-center">
+                            <RotateCcw size={13} />Reorder
+                          </BtnSecondary>
+                        )}
+                        {ticket?.ticket_id && !ticket.recurring_order_id && (
+                          <BtnSecondary onClick={() => setRecurringModalOpen(true)} className="w-full justify-center">
+                            <Repeat size={13} />Make Recurring
+                          </BtnSecondary>
+                        )}
+                        {canUploadPop && (
+                          <>
+                            <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} className="w-full justify-center">
+                              <Upload size={13} />Upload Proof of Payment
+                            </BtnSecondary>
+                            <p className="text-[11px] text-gray-400">
+                              Optional — we'll still confirm your payment through the usual process either way, but sharing it here can help speed things up.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 py-2">No actions available for this order yet.</p>
+                    )}
+                  </SideCard>
+                );
+              })()}
 
               {/* Sales Ticket card — internal staff only. Reseller/customer
                   never had a use for Odoo/pipeline-internal fields here
@@ -1298,54 +1329,39 @@ export default function OrderPassport() {
                 )}
               </SideCard>
 
-              {/* ── Proof of Payment (2026-08-21) ─────────────────────────────
-                  Reseller/customer: always shown once there's an active ticket
-                  to upload against, with the upload action and an explicit
-                  "this is optional" line so it never reads as a required step
-                  blocking their order. Staff/anyone without upload access:
-                  only shown once something has actually been uploaded
-                  (nothing to act on otherwise), read-only. */}
-              {((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0 ? (
-                <SideCard
-                  icon={Upload} title="Proof of Payment"
-                  action={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
-                    <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
-                      <Upload size={12} />Upload
-                    </BtnSecondary>
-                  )}
-                >
-                  {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
-                    <p className="text-xs text-gray-400">
-                      This is optional. We'll still confirm your payment through the usual process either way,
-                      but sharing proof of payment here can help speed things up.
-                    </p>
-                  )}
-                  {ticket?.pop_uploads?.length > 0 ? (
-                    <div className="space-y-2">
-                      {ticket.pop_uploads.map(u => (
-                        <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
-                            <p className="text-[11px] text-gray-400">
-                              {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => viewPop(u.id)}
-                            disabled={popViewingId === u.id}
-                            className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
-                          >
-                            {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
-                            View
-                          </button>
+              {/* ── Proof of Payment (2026-08-21; moved to a display-only
+                  card 2026-08-25) — the upload action itself now lives on
+                  the Actions card (for reseller/customer) so every
+                  self-service action on the order stays isolated to one
+                  place, and on the timeline's current Deposit step (for
+                  quick access without hunting for the Actions card). This
+                  card now only ever shows what's already been uploaded —
+                  for every role, not just staff — rather than always
+                  rendering once a ticket exists with nothing to show yet. */}
+              {ticket?.pop_uploads?.length > 0 && (
+                <SideCard icon={Upload} title="Proof of Payment">
+                  <div className="space-y-2">
+                    {ticket.pop_uploads.map(u => (
+                      <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
+                          <p className="text-[11px] text-gray-400">
+                            {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                          </p>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-gray-300">No files uploaded yet.</p>
-                  )}
+                        <button
+                          onClick={() => viewPop(u.id)}
+                          disabled={popViewingId === u.id}
+                          className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                        >
+                          {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                          View
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </SideCard>
-              ) : null}
+              )}
 
               {/* ── Invoice(s) ─────────────────────────────────────────────── */}
               {invoices.length > 0 ? (
