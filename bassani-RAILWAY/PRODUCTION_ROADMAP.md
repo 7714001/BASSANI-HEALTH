@@ -5396,6 +5396,14 @@ Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a
 - [x] `PUT /api/tickets/{ticket_id}/update-order` opened to customer — new `_require_ticket_editor` dependency applied to this one endpoint only (not `_require_ticket_driver`, which also gates create/cancel/send-quote and stays staff/reseller-only), plus a matching inline ownership check (same `_ticket_customer_partner_id` equality pattern used everywhere else) and the same "cannot change the customer" block reseller already had
 - [x] **Two real bugs found and fixed while extending this to customer:** the cart's toolbar Back button and its post-save redirect both unconditionally sent every edit-quote session to `/tickets/sales` — a page customer logins can't reach at all. Both now branch on `isCustomer`, returning to `/orders/{orderId}/passport` instead; reseller/staff behaviour unchanged
 
+**Same-day, twelfth round:**
+- [x] More Actions card hidden entirely for reseller/customer — its three role-conditional buttons (Packing Board Display/Backorders/Manufacturing Orders) were already staff-only, leaving "All Orders" as the only thing this role ever saw there; not worth a card for one button that duplicates the toolbar's own Back navigation. Staff view unaffected
+
+**Same-day, thirteenth round — sidebar reshuffle (all reseller/customer-only):**
+- [x] Proof of Payment moved to the top of the sidebar, above Actions — its content extracted into a single `popCard` variable (computed once) rendered at the top for this role and in its original post-Packing position for staff, so there's one implementation, just two possible positions
+- [x] Packing card hidden — packer name, packing slip number, and QA/RP approver names are internal detail the timeline's merged Packing/Compliance Sign-Off steps already summarize; matches the earlier Delivery & Fulfilment precedent
+- [x] Invoice(s) card renamed **"Quotes & Invoices"** and consolidated — View Quotation (moved from the toolbar) and View Pro-Forma Invoice (moved from the old empty-state) now sit as link-buttons at the top of this one always-present card, above the real invoice list or its empty-state text. Staff keep the original toolbar button and unchanged Invoice(s)/Invoice card
+
 ---
 
 ### 25.2 — Account Activation Flow

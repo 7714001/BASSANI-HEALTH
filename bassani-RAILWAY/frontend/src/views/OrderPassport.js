@@ -824,6 +824,63 @@ export default function OrderPassport() {
     ? Math.max(0, Math.floor((Date.now() - new Date(order.date_order).getTime()) / 86400000))
     : null;
 
+  // Proof of Payment card (2026-08-21; reverted to its own card with its own
+  // upload action 2026-08-25 — product owner's call that it reads better as
+  // a standalone card than folded into Actions). Computed once here, rather
+  // than inline in the sidebar JSX, so it can be *positioned* differently by
+  // role without duplicating its content logic — reseller/customer see it
+  // first in the sidebar (2026-08-25, product owner's call — it's the one
+  // thing most likely to need their attention), staff see it in its
+  // original position further down. Reseller/customer: always shown once
+  // there's an active ticket to upload against, with the upload action and
+  // an explicit "this is optional" line so it never reads as a required
+  // step blocking their order. Staff/anyone without upload access: only
+  // shown once something has actually been uploaded (nothing to act on
+  // otherwise), read-only. The timeline's own "Upload proof of payment"
+  // quick-access link on the current Deposit step is unrelated and
+  // unaffected — same underlying upload trigger, just a second entry point.
+  const popCard = (((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0) ? (
+    <SideCard
+      icon={Upload} title="Proof of Payment"
+      action={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+        <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
+          <Upload size={12} />Upload
+        </BtnSecondary>
+      )}
+    >
+      {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+        <p className="text-xs text-gray-400">
+          This is optional. We'll still confirm your payment through the usual process either way,
+          but sharing proof of payment here can help speed things up.
+        </p>
+      )}
+      {ticket?.pop_uploads?.length > 0 ? (
+        <div className="space-y-2">
+          {ticket.pop_uploads.map(u => (
+            <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
+                <p className="text-[11px] text-gray-400">
+                  {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                </p>
+              </div>
+              <button
+                onClick={() => viewPop(u.id)}
+                disabled={popViewingId === u.id}
+                className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+              >
+                {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                View
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-300">No files uploaded yet.</p>
+      )}
+    </SideCard>
+  ) : null;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
@@ -875,13 +932,17 @@ export default function OrderPassport() {
             className="hidden"
             onChange={e => handlePopUpload(e.target.files?.[0])}
           />
-          {/* Pro-Forma Invoice viewer moved into the Invoice(s) sidebar card
-              (2026-08-25) — that's where a customer actually looks for order
-              billing documents, and it fills the "no invoice yet" gap there
-              with something real to show instead of a bare empty state. */}
-          <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}>
-            <FileSearch size={13} /><span className="hidden sm:inline">{(isReseller || isCustomer) ? "View Quotation" : "View Quote (Odoo)"}</span>
-          </BtnSecondary>
+          {/* View Quotation / Pro-Forma Invoice both moved into the
+              "Quotes & Invoices" sidebar card for reseller/customer
+              (2026-08-25) — that's where this role actually looks for order
+              billing documents, consolidated with the real invoice list
+              rather than split between the toolbar and a sidebar card.
+              Staff keep the toolbar button, unchanged. */}
+          {!isReseller && !isCustomer && (
+            <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}>
+              <FileSearch size={13} /><span className="hidden sm:inline">View Quote (Odoo)</span>
+            </BtnSecondary>
+          )}
           <BtnSecondary onClick={load}>
             <RefreshCw size={13} /><span className="hidden sm:inline">Refresh</span>
           </BtnSecondary>
@@ -1179,6 +1240,12 @@ export default function OrderPassport() {
             {/* Sidebar — status/action cards, sticky on desktop */}
             <div className="space-y-4 lg:sticky lg:top-4">
 
+              {/* Proof of Payment first for reseller/customer (2026-08-25,
+                  product owner's call) — content/logic defined once above as
+                  popCard; staff see it further down, in its original
+                  position, unchanged. */}
+              {(isReseller || isCustomer) && popCard}
+
               {/* Actions card (2026-08-25) — reseller/customer only, replaces
                   the internal-only Sales Ticket card at this position in the
                   sidebar. Reorder/Make Recurring moved here from the toolbar;
@@ -1295,7 +1362,14 @@ export default function OrderPassport() {
                 </SideCard>
               )}
 
-              {/* Packing card */}
+              {/* Packing card (2026-08-25: staff only) — packer name, packing
+                  slip number, and QA/RP approver names are internal
+                  operational detail; the horizontal timeline's merged
+                  "Packing" and "Compliance Sign-Off" steps already give
+                  reseller/customer the milestones that matter (has it
+                  started, has it been approved) without the operational
+                  detail behind them. */}
+              {!isReseller && !isCustomer && (
               <SideCard
                 icon={Package} title="Packing"
                 action={packing && (
@@ -1354,64 +1428,89 @@ export default function OrderPassport() {
                   </div>
                 )}
               </SideCard>
+              )}
 
-              {/* ── Proof of Payment (2026-08-21; reverted to its own card
-                  with its own upload action 2026-08-25 — product owner's
-                  call that it reads better as a standalone card than folded
-                  into Actions). Reseller/customer: always shown once there's
-                  an active ticket to upload against, with the upload action
-                  and an explicit "this is optional" line so it never reads
-                  as a required step blocking their order. Staff/anyone
-                  without upload access: only shown once something has
-                  actually been uploaded (nothing to act on otherwise),
-                  read-only. The timeline's own "Upload proof of payment"
-                  quick-access link on the current Deposit step is unrelated
-                  and unaffected — same underlying upload trigger, just a
-                  second entry point. */}
-              {((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0 ? (
+              {/* Proof of Payment, staff position (2026-08-25) — content/
+                  logic defined once above as popCard; reseller/customer see
+                  it first in the sidebar instead (above the Actions card). */}
+              {!isReseller && !isCustomer && popCard}
+
+              {/* ── Quotes & Invoices (reseller/customer) / Invoice(s) (staff)
+                  ─────────────────────────────────────────────────────────
+                  2026-08-25: consolidated for reseller/customer into a
+                  single always-present card — View Quotation and View
+                  Pro-Forma Invoice moved here from the toolbar (View
+                  Quotation) and the invoice empty-state (Pro-Forma), so
+                  every order document lives in one place instead of split
+                  across the app bar and two different card states. Staff
+                  keep the original Invoice(s)/Invoice card unchanged below,
+                  reached via the toolbar's own "View Quote (Odoo)" button
+                  for the quotation instead. */}
+              {(isReseller || isCustomer) ? (
                 <SideCard
-                  icon={Upload} title="Proof of Payment"
-                  action={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
-                    <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
-                      <Upload size={12} />Upload
-                    </BtnSecondary>
+                  icon={FileText} title="Quotes & Invoices"
+                  action={invoices.length > 0 && (
+                    <button
+                      onClick={() => navigate("/invoices", { state: { openInvoiceId: invoices[0]?.invoice_id, filter: "all" } })}
+                      className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium">
+                      Open <ExternalLink size={11} />
+                    </button>
                   )}
                 >
-                  {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
-                    <p className="text-xs text-gray-400">
-                      This is optional. We'll still confirm your payment through the usual process either way,
-                      but sharing proof of payment here can help speed things up.
-                    </p>
-                  )}
-                  {ticket?.pop_uploads?.length > 0 ? (
-                    <div className="space-y-2">
-                      {ticket.pop_uploads.map(u => (
-                        <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
-                            <p className="text-[11px] text-gray-400">
-                              {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => viewPop(u.id)}
-                            disabled={popViewingId === u.id}
-                            className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
-                          >
-                            {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
-                            View
-                          </button>
-                        </div>
-                      ))}
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-1.5 pb-2.5 border-b border-gray-50">
+                      <button
+                        onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}
+                        className="flex items-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800"
+                      >
+                        <FileSearch size={12} />View Quotation
+                      </button>
+                      {/* Pro-forma is only ever real once the order's been
+                          confirmed — send_deposit_due_proforma() fires at
+                          that exact moment (8.47). */}
+                      {["sale", "done"].includes(order.state) && (
+                        <button
+                          onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}
+                          className="flex items-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800"
+                        >
+                          <FileText size={12} />View Pro-Forma Invoice
+                        </button>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-xs text-gray-300">No files uploaded yet.</p>
-                  )}
+                    {invoices.length > 0 ? (
+                      invoices.map(inv => (
+                        <div key={inv.invoice_id} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="font-mono text-sm font-semibold text-gray-800">{inv.name}</span>
+                              {inv.move_type === "out_refund" && (
+                                <span className="ml-2 text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">
+                                  Credit Note
+                                </span>
+                              )}
+                            </div>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${PAYMENT_COLOUR[inv.payment_state] || "bg-gray-100 text-gray-500"}`}>
+                              {PAYMENT_LABEL[inv.payment_state] || inv.payment_state}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                            <span>Amount: <span className="font-medium text-gray-800">{fmtR(inv.amount_total)}</span></span>
+                            {inv.payment_state !== "paid" && inv.amount_residual > 0 && (
+                              <span className="text-red-600 font-medium">Outstanding: {fmtR(inv.amount_residual)}</span>
+                            )}
+                            {inv.invoice_date && <span>Issued: <span className="text-gray-700">{fmtDate(inv.invoice_date)}</span></span>}
+                            {inv.due_date && <span>Due: <span className="font-medium text-gray-700">{fmtDate(inv.due_date)}</span></span>}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-gray-400">
+                        No final invoice yet — we raise this once your order has been packed and approved.
+                      </p>
+                    )}
+                  </div>
                 </SideCard>
-              ) : null}
-
-              {/* ── Invoice(s) ─────────────────────────────────────────────── */}
-              {invoices.length > 0 ? (
+              ) : invoices.length > 0 ? (
                 <SideCard
                   icon={FileText} title={`Invoice${invoices.length > 1 ? `s (${invoices.length})` : ""}`}
                   action={(
@@ -1453,77 +1552,50 @@ export default function OrderPassport() {
                         )}
                       </div>
                     ))}
-                    {/* Pro-Forma Invoice (2026-08-25) — kept available here even
-                        once a real invoice exists, as the historical record of
-                        the deposit-due amount that was actually emailed at
-                        confirm time; a real invoice covers the final amount,
-                        not necessarily the same figure. */}
-                    {(isReseller || isCustomer) && ["sale", "done"].includes(order.state) && (
-                      <button
-                        onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}
-                        className="flex items-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800 pt-1"
-                      >
-                        <FileText size={12} />View Pro-Forma Invoice
-                      </button>
-                    )}
                   </div>
                 </SideCard>
               ) : (
                 ["sale", "done"].includes(order.state) && (
                   <SideCard icon={FileText} title="Invoice">
-                    {(isReseller || isCustomer) ? (
-                      <div className="space-y-3">
-                        <p className="text-xs text-gray-400">
-                          No final invoice yet — we raise this once your order has been packed and approved.
-                          In the meantime, here's the pro-forma invoice showing the deposit amount due.
-                        </p>
-                        <BtnSecondary
-                          onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}
-                          className="w-full justify-center"
-                        >
-                          <FileText size={13} />View Pro-Forma Invoice
-                        </BtnSecondary>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400">No invoice raised yet.</p>
-                    )}
+                    <p className="text-xs text-gray-400">No invoice raised yet.</p>
                   </SideCard>
                 )
               )}
 
-              {/* ── More actions ─────────────────────────────────────────────
+              {/* ── More actions (2026-08-25: staff only) ───────────────────
                   Navigation not already covered by an inline "Open" link on
                   one of the cards above (Ticket/Packing/Invoices each carry
                   their own now) — the packing-board *display* screen is a
                   distinct destination from the packing board work queue
-                  ("Open board" above), so both stay. */}
+                  ("Open board" above), so both stay. Hidden entirely for
+                  reseller/customer — Packing Board Display/Backorders/
+                  Manufacturing Orders are all staff-only (orders.view,
+                  which those roles structurally never have), leaving only
+                  "All Orders" for this role, not worth a whole card on its
+                  own; "Back" in the toolbar already covers that navigation. */}
+              {!isReseller && !isCustomer && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">More Actions</p>
                 <BtnSecondary onClick={() => navigate("/orders")} className="w-full justify-center">
                   <Truck size={13} />All Orders
                 </BtnSecondary>
-                {/* Packing Board Display / Backorders / Manufacturing Orders
-                    (2026-08-25: staff only) — all three are internal
-                    operations screens gated by orders.view, which reseller/
-                    customer structurally never has (require_permission()
-                    excludes both roles outright); these were dead links for
-                    that role even before this pass. */}
-                {packing && !isReseller && !isCustomer && (
+                {packing && (
                   <BtnSecondary onClick={openPackingBoard} loading={packingBoardLoading} className="w-full justify-center">
                     <Package size={13} />Packing Board Display
                   </BtnSecondary>
                 )}
-                {hasBackorder && !isReseller && !isCustomer && (
+                {hasBackorder && (
                   <BtnSecondary onClick={() => navigate("/orders/backorders")} className="w-full justify-center">
                     <Clock size={13} />Backorders
                   </BtnSecondary>
                 )}
-                {manufacturing_orders?.length > 0 && !isReseller && !isCustomer && (
+                {manufacturing_orders?.length > 0 && (
                   <BtnSecondary onClick={() => navigate("/orders/manufacturing-orders", { state: { soName: order.name } })} className="w-full justify-center">
                     <Factory size={13} />Manufacturing Orders
                   </BtnSecondary>
                 )}
               </div>
+              )}
 
               {/* ── Need Help (2026-08-25) ────────────────────────────────────
                   Reseller/customer only. Every error toast on this page and
