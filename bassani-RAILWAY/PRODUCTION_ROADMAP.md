@@ -5404,6 +5404,9 @@ Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a
 - [x] Packing card hidden — packer name, packing slip number, and QA/RP approver names are internal detail the timeline's merged Packing/Compliance Sign-Off steps already summarize; matches the earlier Delivery & Fulfilment precedent
 - [x] Invoice(s) card renamed **"Quotes & Invoices"** and consolidated — View Quotation (moved from the toolbar) and View Pro-Forma Invoice (moved from the old empty-state) now sit as link-buttons at the top of this one always-present card, above the real invoice list or its empty-state text. Staff keep the original toolbar button and unchanged Invoice(s)/Invoice card
 
+**Same-day, fourteenth round — real bug found asking "does POP show for a draft order?":**
+- [x] It did, incorrectly. `popCard`'s gate never checked `order.state`, only that a ticket existed and wasn't closed — but a ticket exists the moment any order is created, draft included, so the card offered "upload proof of payment" before the order was even confirmed. New `canUploadPop` adds the same `["sale","done"]` confirmed-state requirement the Pro-Forma Invoice button already has. For a draft order, POP no longer renders at all and Actions is correctly the first sidebar card; POP only becomes first once the order is actually confirmed
+
 ---
 
 ### 25.2 — Account Activation Flow

@@ -831,24 +831,31 @@ export default function OrderPassport() {
   // role without duplicating its content logic — reseller/customer see it
   // first in the sidebar (2026-08-25, product owner's call — it's the one
   // thing most likely to need their attention), staff see it in its
-  // original position further down. Reseller/customer: always shown once
-  // there's an active ticket to upload against, with the upload action and
-  // an explicit "this is optional" line so it never reads as a required
-  // step blocking their order. Staff/anyone without upload access: only
-  // shown once something has actually been uploaded (nothing to act on
+  // original position further down. Reseller/customer: shown once there's
+  // an active ticket to upload against, with the upload action and an
+  // explicit "this is optional" line so it never reads as a required step
+  // blocking their order. Staff/anyone without upload access: only shown
+  // once something has actually been uploaded (nothing to act on
   // otherwise), read-only. The timeline's own "Upload proof of payment"
   // quick-access link on the current Deposit step is unrelated and
   // unaffected — same underlying upload trigger, just a second entry point.
-  const popCard = (((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0) ? (
+  // `canUploadPop` also requires the order to actually be confirmed
+  // (`["sale","done"]`, matching the Pro-Forma Invoice button's own gate)
+  // — found live 2026-08-25: a ticket exists the moment any order is
+  // created, draft or not (create_order always auto-creates one), so this
+  // card was incorrectly offering "upload proof of payment" on a still-
+  // draft order that has no deposit obligation yet at all.
+  const canUploadPop = (isReseller || isCustomer) && ["sale", "done"].includes(order.state) && ticket?.ticket_id && !ticket.exit_status;
+  const popCard = (canUploadPop || ticket?.pop_uploads?.length > 0) ? (
     <SideCard
       icon={Upload} title="Proof of Payment"
-      action={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+      action={canUploadPop && (
         <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
           <Upload size={12} />Upload
         </BtnSecondary>
       )}
     >
-      {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+      {canUploadPop && (
         <p className="text-xs text-gray-400">
           This is optional. We'll still confirm your payment through the usual process either way,
           but sharing proof of payment here can help speed things up.
