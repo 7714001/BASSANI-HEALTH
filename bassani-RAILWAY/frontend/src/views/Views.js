@@ -1396,7 +1396,7 @@ export function Orders() {
           setCartSubmitting(false);
           setCartCreditOverrideMsg(e.response.data?.detail || "This order is over the customer's credit limit.");
         } else {
-          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
+          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact us to proceed.", { duration: 10000 });
           toast("Your order was saved as a draft — you can confirm it once this is resolved.", { duration: 8000 });
           finishCartSubmit();
         }
@@ -2213,7 +2213,7 @@ export function Orders() {
                   <div>
                     <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
                     <p className="text-xs text-red-700 mt-1">
-                      This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
+                      This order cannot be partially fulfilled at this time. Please contact us directly to resolve the issue before confirming.
                     </p>
                   </div>
                 </div>
@@ -2223,7 +2223,7 @@ export function Orders() {
                 <div>
                   <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
+                    We'll ship available items now and fulfil the rest as soon as stock arrives. You'll receive a separate confirmation when the backorder is ready.
                   </p>
                 </div>
               </div>

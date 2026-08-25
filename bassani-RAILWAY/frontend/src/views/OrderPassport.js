@@ -173,17 +173,22 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
     return steps;
   }
 
-  if (!packing) return steps;
+  // No packing board entry yet (order is still awaiting deposit) — the
+  // timeline used to just stop here, which meant a customer whose order was
+  // only just confirmed saw a 3-step timeline with no sense of what happens
+  // next. Every remaining step below is still pushed, just as "pending"
+  // (greyed out) until its own data actually shows up, so the full lifecycle
+  // is visible from the moment an order is placed. `packing?.` throughout
+  // this block is what makes that safe.
+  steps.push({ key: "queued", label: "Queued for Packing", icon: Package, state: packing ? "done" : "pending" });
 
-  steps.push({ key: "queued", label: "Queued for Packing", icon: Package, state: "done" });
-
-  const packingDone = ["ready", "complete", "collected"].includes(packing.status);
+  const packingDone = !!packing && ["ready", "complete", "collected"].includes(packing.status);
   const packingStep = {
     key: "packing", label: "Packing", icon: Package,
-    state: packingDone ? "done" : (packing.status === "packing" ? "current" : "pending"),
-    by: packing.packer_name,
+    state: !packing ? "pending" : packingDone ? "done" : (packing.status === "packing" ? "current" : "pending"),
+    by: packing?.packer_name,
   };
-  if (packing.status === "waiting_stock") {
+  if (packing?.status === "waiting_stock") {
     packingStep.state = "current";
     packingStep.sub = "Awaiting stock";
   } else if (manufacturing_orders?.length > 0) {
@@ -191,7 +196,7 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
   }
   steps.push(packingStep);
 
-  if (["incomplete", "cancelled"].includes(packing.status)) {
+  if (packing && ["incomplete", "cancelled"].includes(packing.status)) {
     steps.push({
       key: "packing_halted",
       label: packing.status === "cancelled" ? "Packing Cancelled" : "Packing Incomplete",
@@ -202,18 +207,18 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
 
   steps.push({
     key: "qa", label: "QA Approved", icon: ClipboardCheck,
-    state: packing.qa_approved_at ? "done" : (packingDone || packing.status === "packing" ? "current" : "pending"),
-    at: packing.qa_approved_at, by: packing.qa_approved_by,
+    state: packing?.qa_approved_at ? "done" : (packingDone || packing?.status === "packing" ? "current" : "pending"),
+    at: packing?.qa_approved_at, by: packing?.qa_approved_by,
   });
   steps.push({
     key: "rp", label: "RP Approved", icon: ClipboardCheck,
-    state: packing.rp_approved_at ? "done" : (packing.qa_approved_at ? "current" : "pending"),
-    at: packing.rp_approved_at, by: packing.rp_approved_by,
+    state: packing?.rp_approved_at ? "done" : (packing?.qa_approved_at ? "current" : "pending"),
+    at: packing?.rp_approved_at, by: packing?.rp_approved_by,
   });
   steps.push({
     key: "ready", label: "Ready for Collection", icon: Truck,
     state: packingDone ? "done" : "pending",
-    at: packing.completed_at,
+    at: packing?.completed_at,
   });
 
   if (inv) {
@@ -222,14 +227,15 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
       key: "paid", label: inv.payment_state === "paid" ? "Payment Received" : "Payment Pending",
       icon: Check, state: inv.payment_state === "paid" ? "done" : "current",
     });
-  } else if (packingDone) {
+  } else {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "pending" });
+    steps.push({ key: "paid", label: "Payment Received", icon: Check, state: "pending" });
   }
 
   steps.push({
     key: "collected", label: "Collected", icon: CheckCircle2,
-    state: packing.collected_at ? "done" : (inv?.payment_state === "paid" || packing.status === "ready" ? "current" : "pending"),
-    at: packing.collected_at, by: packing.collected_by,
+    state: packing?.collected_at ? "done" : (inv?.payment_state === "paid" || packing?.status === "ready" ? "current" : "pending"),
+    at: packing?.collected_at, by: packing?.collected_by,
   });
 
   return steps;
@@ -290,7 +296,7 @@ function TimelineCard({ order, ticket, packing, invoices, manufacturing_orders }
 // status). Only the current step's "sub" note is shown, to keep the strip
 // compact rather than repeating detail every step already carries on its
 // own sidebar card (Packing, Invoice, etc).
-function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturing_orders }) {
+function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturing_orders, onUploadPop }) {
   const steps = buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders });
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
@@ -309,8 +315,22 @@ function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturin
                   {s.state === "done" ? <Check size={14} /> : s.state === "skipped" ? <X size={14} /> : <Icon size={14} />}
                 </div>
                 <p className={`text-[11px] font-semibold mt-1.5 leading-tight ${LABEL_STYLE[s.state]}`}>{s.label}</p>
-                {s.state === "current" && s.sub && (
-                  <p className="text-[10px] text-bassani-600 mt-0.5 leading-tight">{s.sub}</p>
+                {/* Deposit step, currently awaiting Finance: the next action
+                    is on the customer, not us, so surface it as a direct
+                    call-to-action here rather than the passive "Awaiting
+                    Finance" text — clicking opens the same uploader as the
+                    Proof of Payment card further down the page. */}
+                {s.state === "current" && s.key === "deposit" && onUploadPop ? (
+                  <button
+                    onClick={onUploadPop}
+                    className="text-[10px] font-semibold text-bassani-600 hover:text-bassani-800 underline underline-offset-2 mt-0.5 leading-tight"
+                  >
+                    Upload proof of payment
+                  </button>
+                ) : (
+                  s.state === "current" && s.sub && (
+                    <p className="text-[10px] text-bassani-600 mt-0.5 leading-tight">{s.sub}</p>
+                  )
                 )}
                 {s.at && <p className="text-[10px] text-gray-400 mt-0.5">{fmtDate(s.at)}</p>}
               </div>
@@ -608,7 +628,7 @@ export default function OrderPassport() {
         if (isReseller) {
           setCreditOverrideMsg(e.response.data?.detail || "This order is over the customer's credit limit.");
         } else {
-          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
+          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact us to proceed.", { duration: 10000 });
         }
       } else {
         toast.error(e.response?.data?.detail || "Failed to confirm order");
@@ -830,7 +850,10 @@ export default function OrderPassport() {
             {/* Main column */}
             <div className="space-y-4 min-w-0">
               {(isReseller || isCustomer) ? (
-                <HorizontalTimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
+                <HorizontalTimelineCard
+                  order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders}
+                  onUploadPop={ticket?.ticket_id && !ticket.exit_status ? () => popFileInputRef.current?.click() : null}
+                />
               ) : (
                 <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
               )}
@@ -1182,7 +1205,7 @@ export default function OrderPassport() {
                 >
                   {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
                     <p className="text-xs text-gray-400">
-                      This is optional. Bassani will still confirm your payment through the usual process either way,
+                      This is optional. We'll still confirm your payment through the usual process either way,
                       but sharing proof of payment here can help speed things up.
                     </p>
                   )}
@@ -1277,7 +1300,7 @@ export default function OrderPassport() {
                     {(isReseller || isCustomer) ? (
                       <div className="space-y-3">
                         <p className="text-xs text-gray-400">
-                          No final invoice yet — Bassani raises this once your order has been packed and approved.
+                          No final invoice yet — we raise this once your order has been packed and approved.
                           In the meantime, here's the pro-forma invoice showing the deposit amount due.
                         </p>
                         <BtnSecondary
@@ -1449,7 +1472,7 @@ export default function OrderPassport() {
                   <div>
                     <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
                     <p className="text-xs text-red-700 mt-1">
-                      This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
+                      This order cannot be partially fulfilled at this time. Please contact us directly to resolve the issue before confirming.
                     </p>
                   </div>
                 </div>
@@ -1459,7 +1482,7 @@ export default function OrderPassport() {
                 <div>
                   <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
+                    We'll ship available items now and fulfil the rest as soon as stock arrives. You'll receive a separate confirmation when the backorder is ready.
                   </p>
                 </div>
               </div>

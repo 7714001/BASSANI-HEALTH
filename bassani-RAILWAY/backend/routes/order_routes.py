@@ -2408,7 +2408,7 @@ async def self_cancel_order(order_id: int, background_tasks: BackgroundTasks, cu
     if order["state"] != "draft":
         raise HTTPException(
             status_code=400,
-            detail="This order has already been confirmed and can no longer be cancelled here. Please contact Bassani to cancel it.",
+            detail="This order has already been confirmed and can no longer be cancelled here. Please contact us to cancel it.",
         )
 
     return await _cancel_order_core(order_id, order.get("name", f"#{order_id}"), current_user, background_tasks)
