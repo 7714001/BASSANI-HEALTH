@@ -713,12 +713,29 @@ export default function OrderPassport() {
     (hasPartialDelivery && outstandingLines.length > 0);
 
   // KPI tiles — computed once, not re-derived per render inside JSX.
+  // Outstanding (2026-08-25 fix) — the real running balance still owed on
+  // the WHOLE order, not the sum of open invoice residuals. Those aren't
+  // the same thing: the down-payment invoice registered at deposit time is
+  // for the deposit amount only (e.g. 50% of the order) and shows residual
+  // 0 the moment it's paid, so summing residuals alone would read "R0
+  // outstanding" immediately after the deposit, while the real remaining
+  // balance is still the other 50%. Subtracting total-paid-so-far from the
+  // order total is correct regardless of how many invoices exist or how
+  // Odoo splits the deposit/final amounts across them. Still null (shown as
+  // "—") until at least one real invoice exists — i.e. until Finance has
+  // actually registered the deposit — matching the product owner's own
+  // framing: nothing to show the customer before that point.
+  // Known limitation, not handled: a credit note (move_type "out_refund")
+  // is summed the same as a normal invoice here rather than netted off
+  // separately — same limitation the Invoice(s) card below already has.
+  const totalPaid = invoices.reduce((s, i) => s + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
   const outstandingTotal = invoices.length > 0
-    ? invoices.reduce((s, i) => s + (i.amount_residual || 0), 0)
+    ? Math.max(0, (order.amount_total || 0) - totalPaid)
     : null;
-  const totalOrderedQty   = (order.lines || []).reduce((s, l) => s + (l.product_uom_qty || 0), 0);
-  const totalDeliveredQty = (order.lines || []).reduce((s, l) => s + (l.qty_delivered || 0), 0);
-  const fulfilPct = totalOrderedQty > 0 ? Math.round((totalDeliveredQty / totalOrderedQty) * 100) : null;
+  // Order age (2026-08-25, replaces the old "Fulfilled %" tile — see below).
+  const orderAgeDays = order.date_order
+    ? Math.max(0, Math.floor((Date.now() - new Date(order.date_order).getTime()) / 86400000))
+    : null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -807,13 +824,30 @@ export default function OrderPassport() {
               <StatCard
                 label="Outstanding"
                 value={outstandingTotal === null ? "—" : fmtR(outstandingTotal)}
+                sub={outstandingTotal === null ? "Shown once your deposit is registered" : "Balance still due"}
                 accent={outstandingTotal > 0 ? "text-red-600" : outstandingTotal === 0 ? "text-green-700" : undefined}
               />
-              <StatCard label="Items" value={order.lines?.length || 0} />
+              {/* Items (2026-08-25) — carries the stock-availability signal
+                  "Fulfilled %" used to gesture at, honestly this time: whether
+                  everything will ship together, from the same hasBackorder
+                  data the rest of the page already uses (Delivery &
+                  Fulfilment's own badge, the More Actions Backorders link). */}
               <StatCard
-                label="Fulfilled"
-                value={fulfilPct === null ? "—" : `${fulfilPct}%`}
-                accent={fulfilPct === 100 ? "text-green-700" : fulfilPct >= 1 ? "text-amber-600" : undefined}
+                label="Items"
+                value={order.lines?.length || 0}
+                sub={hasBackorder ? (outstandingLines.length > 0 ? `${outstandingLines.length} backordered` : "Some items backordered") : "All in stock"}
+              />
+              {/* Order Age (2026-08-25) — replaces "Fulfilled %", which read
+                  as "your order is X% done" when it actually only reflected
+                  Odoo's qty_delivered (updated at pick/delivery time, not
+                  order time) — a customer could see "100% Fulfilled" once
+                  packed and ready, before ever collecting or paying the
+                  balance, and reasonably conclude the order was finished.
+                  Age is a safe, unambiguous, non-redundant signal instead. */}
+              <StatCard
+                label="Order Age"
+                value={orderAgeDays === null ? "—" : orderAgeDays === 0 ? "Today" : orderAgeDays === 1 ? "1 day" : `${orderAgeDays} days`}
+                sub={order.date_order ? `Placed ${fmtDate(order.date_order)}` : null}
               />
             </div>
 
@@ -883,11 +917,17 @@ export default function OrderPassport() {
                           const ordered       = line.product_uom_qty || 0;
                           const delivered     = line.qty_delivered   || 0;
                           const isOutstanding = hasPartialDelivery && delivered < ordered;
+                          // Backorders (/orders/backorders) is a staff-only
+                          // permission-gated page — clicking through was a
+                          // dead link for reseller/customer even before this
+                          // pass; the "outstanding" badge itself still shows
+                          // for every role, just not clickable for this one.
+                          const canOpenBackorder = isOutstanding && !isReseller && !isCustomer;
                           return (
                             <tr
                               key={i}
-                              className={`${isOutstanding ? "bg-orange-50/40 cursor-pointer hover:bg-orange-100/60 transition-colors" : ""}`}
-                              onClick={isOutstanding ? () => navigate("/orders/backorders", { state: { soName: order.name } }) : undefined}
+                              className={`${isOutstanding ? "bg-orange-50/40" : ""} ${canOpenBackorder ? "cursor-pointer hover:bg-orange-100/60 transition-colors" : ""}`}
+                              onClick={canOpenBackorder ? () => navigate("/orders/backorders", { state: { soName: order.name } }) : undefined}
                             >
                               <td className="py-2 pr-3">
                                 <div className="flex items-start gap-2.5">
@@ -939,7 +979,13 @@ export default function OrderPassport() {
                 </div>
               )}
 
-              {/* ── Delivery & Fulfilment ────────────────────────────────────── */}
+              {/* ── Delivery & Fulfilment (2026-08-25: staff only) ─────────────
+                  Picking references, raw Odoo delivery state, and the
+                  delivery-slip PDF are internal warehouse/operations detail —
+                  a reseller/customer already gets the milestones that matter
+                  to them (Queued/Packing/Ready for Collection/Collected) from
+                  the timeline above, without the Odoo-facing mechanics. */}
+              {!isReseller && !isCustomer && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                   <Truck size={12} />Delivery & Fulfilment
@@ -1011,6 +1057,7 @@ export default function OrderPassport() {
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             {/* Sidebar — status/action cards, sticky on desktop */}
@@ -1328,17 +1375,23 @@ export default function OrderPassport() {
                 <BtnSecondary onClick={() => navigate("/orders")} className="w-full justify-center">
                   <Truck size={13} />All Orders
                 </BtnSecondary>
-                {packing && (
+                {/* Packing Board Display / Backorders / Manufacturing Orders
+                    (2026-08-25: staff only) — all three are internal
+                    operations screens gated by orders.view, which reseller/
+                    customer structurally never has (require_permission()
+                    excludes both roles outright); these were dead links for
+                    that role even before this pass. */}
+                {packing && !isReseller && !isCustomer && (
                   <BtnSecondary onClick={openPackingBoard} loading={packingBoardLoading} className="w-full justify-center">
                     <Package size={13} />Packing Board Display
                   </BtnSecondary>
                 )}
-                {hasBackorder && (
+                {hasBackorder && !isReseller && !isCustomer && (
                   <BtnSecondary onClick={() => navigate("/orders/backorders")} className="w-full justify-center">
                     <Clock size={13} />Backorders
                   </BtnSecondary>
                 )}
-                {manufacturing_orders?.length > 0 && (
+                {manufacturing_orders?.length > 0 && !isReseller && !isCustomer && (
                   <BtnSecondary onClick={() => navigate("/orders/manufacturing-orders", { state: { soName: order.name } })} className="w-full justify-center">
                     <Factory size={13} />Manufacturing Orders
                   </BtnSecondary>
