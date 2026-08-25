@@ -713,25 +713,25 @@ export default function OrderPassport() {
     (hasPartialDelivery && outstandingLines.length > 0);
 
   // KPI tiles — computed once, not re-derived per render inside JSX.
-  // Outstanding (2026-08-25 fix) — the real running balance still owed on
-  // the WHOLE order, not the sum of open invoice residuals. Those aren't
-  // the same thing: the down-payment invoice registered at deposit time is
-  // for the deposit amount only (e.g. 50% of the order) and shows residual
-  // 0 the moment it's paid, so summing residuals alone would read "R0
-  // outstanding" immediately after the deposit, while the real remaining
-  // balance is still the other 50%. Subtracting total-paid-so-far from the
-  // order total is correct regardless of how many invoices exist or how
-  // Odoo splits the deposit/final amounts across them. Still null (shown as
-  // "—") until at least one real invoice exists — i.e. until Finance has
-  // actually registered the deposit — matching the product owner's own
-  // framing: nothing to show the customer before that point.
+  // Outstanding (2026-08-25 fix, refined same day) — the real running
+  // balance still owed on the WHOLE order, not the sum of open invoice
+  // residuals. Those aren't the same thing: the down-payment invoice
+  // registered at deposit time is for the deposit amount only (e.g. 50% of
+  // the order) and shows residual 0 the moment it's paid, so summing
+  // residuals alone would read "R0 outstanding" immediately after the
+  // deposit, while the real remaining balance is still the other 50%.
+  // Subtracting total-paid-so-far from the order total is correct
+  // regardless of how many invoices exist or how Odoo splits the
+  // deposit/final amounts across them — and it's well-defined even before
+  // any invoice exists at all: if nothing has been registered yet,
+  // totalPaid is 0 and the full order total is, correctly, outstanding
+  // (nothing has been paid). No longer hidden behind a null/"—" state
+  // pre-deposit — that undersold what's actually owed.
   // Known limitation, not handled: a credit note (move_type "out_refund")
   // is summed the same as a normal invoice here rather than netted off
   // separately — same limitation the Invoice(s) card below already has.
   const totalPaid = invoices.reduce((s, i) => s + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
-  const outstandingTotal = invoices.length > 0
-    ? Math.max(0, (order.amount_total || 0) - totalPaid)
-    : null;
+  const outstandingTotal = Math.max(0, (order.amount_total || 0) - totalPaid);
   // Order age (2026-08-25, replaces the old "Fulfilled %" tile — see below).
   const orderAgeDays = order.date_order
     ? Math.max(0, Math.floor((Date.now() - new Date(order.date_order).getTime()) / 86400000))
@@ -848,19 +848,30 @@ export default function OrderPassport() {
               <StatCard label="Order Total" value={fmtR(order.amount_total)} />
               <StatCard
                 label="Outstanding"
-                value={outstandingTotal === null ? "—" : fmtR(outstandingTotal)}
-                sub={outstandingTotal === null ? "Shown once your deposit is registered" : "Balance still due"}
-                accent={outstandingTotal > 0 ? "text-red-600" : outstandingTotal === 0 ? "text-green-700" : undefined}
+                value={fmtR(outstandingTotal)}
+                sub={outstandingTotal === 0 ? "Paid in full" : totalPaid === 0 ? "Full amount due — no deposit registered yet" : "Balance still due"}
+                accent={outstandingTotal > 0 ? "text-red-600" : "text-green-700"}
               />
-              {/* Items (2026-08-25) — carries the stock-availability signal
-                  "Fulfilled %" used to gesture at, honestly this time: whether
-                  everything will ship together, from the same hasBackorder
-                  data the rest of the page already uses (Delivery &
-                  Fulfilment's own badge, the More Actions Backorders link). */}
+              {/* Items (2026-08-25, icon added same day) — carries the
+                  stock-availability signal "Fulfilled %" used to gesture at,
+                  honestly this time: whether everything will ship together,
+                  from the same hasBackorder data the rest of the page
+                  already uses (Delivery & Fulfilment's own badge, the More
+                  Actions Backorders link). */}
               <StatCard
                 label="Items"
                 value={order.lines?.length || 0}
-                sub={hasBackorder ? (outstandingLines.length > 0 ? `${outstandingLines.length} backordered` : "Some items backordered") : "All in stock"}
+                sub={hasBackorder ? (
+                  <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                    <AlertTriangle size={11} />
+                    {outstandingLines.length > 0 ? `${outstandingLines.length} backordered` : "Some items backordered"}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-green-600 font-medium">
+                    <CheckCircle2 size={11} />
+                    All in stock
+                  </span>
+                )}
               />
               {/* Order Age (2026-08-25) — replaces "Fulfilled %", which read
                   as "your order is X% done" when it actually only reflected

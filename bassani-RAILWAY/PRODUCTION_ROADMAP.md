@@ -5375,6 +5375,10 @@ Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a
 - [x] The order timeline (whichever variant the role renders) moved out of the two-column grid's main column into its own full-width block between the hero card and the two-column body — no longer squeezed to roughly page-width-minus-360px, which matters more now that it always shows its full 8-11 step lifecycle rather than a short list
 - [x] The hero card's separate bordered "Meta row" section (Date/Terms/Phone/VAT/Address/Deliver To) is gone — Phone folded onto the customer name/email line, Address/Deliver To/Terms+VAT became compact lines directly under it, and Date was dropped outright since the Order Age KPI tile's own caption already shows the placed-on date. Net effect: one fewer section, no separate border/padding, shorter hero card overall
 
+**Same-day, seventh round:**
+- [x] Outstanding no longer hides behind "—" before any deposit is registered — the formula already resolved to the full order total in that state (nothing paid yet), so the null special-case was removed outright rather than papered over; caption now reads "Full amount due — no deposit registered yet" / "Balance still due" / "Paid in full" depending on state
+- [x] Items tile's stock-status caption is now a real icon+text pair (green `CheckCircle2` for in stock, amber `AlertTriangle` for backordered) instead of plain text, passed as a JSX element into `StatCard`'s existing `sub` prop — no change to the shared `StatCard` component itself
+
 ---
 
 ### 25.2 — Account Activation Flow
