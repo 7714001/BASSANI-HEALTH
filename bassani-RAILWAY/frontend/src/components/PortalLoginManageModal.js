@@ -84,8 +84,10 @@ export default function PortalLoginManageModal({ email, onClose, onChanged, cont
       });
       if (res.errors?.length) {
         res.errors.forEach(e => toast.error(e.detail));
-      } else {
+      } else if (res.granted?.length || res.company_added?.length) {
         toast.success(`Added ${context.companyName} to this login`);
+      } else if (res.skipped_existing?.length) {
+        toast(`${context.companyName} was already granted to this login`, { icon: "ℹ️" });
       }
       load();
       onChanged?.();

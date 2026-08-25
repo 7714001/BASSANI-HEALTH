@@ -501,6 +501,13 @@ export default function CustomerProfile() {
   // contact row that was clicked ({ email, odooPartnerId }) so the modal can
   // offer "Add this company" using this page's own contact id.
   const [manageTarget, setManageTarget] = useState(null);
+  // "Remove (wrong account)" confirm — permanently unlinks a company/contact
+  // pair that a mismatched linked_username has revealed belongs to the
+  // wrong login (deactivate alone can't fix this: the idempotency check
+  // that blocks re-granting doesn't care whether the existing entry is
+  // active). Holds the contact row pending removal.
+  const [removeLinkConfirm, setRemoveLinkConfirm] = useState(null);
+  const [removingLink, setRemovingLink] = useState(false);
 
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
@@ -859,6 +866,21 @@ export default function CustomerProfile() {
     }
   };
 
+  const doRemoveLink = async () => {
+    const ct = removeLinkConfirm;
+    setRemoveLinkConfirm(null);
+    setRemovingLink(true);
+    try {
+      await api.delete(`/api/customers/${id}/portal-access/${ct.id}`);
+      toast.success("Link removed — this contact can now be granted to the correct account");
+      loadPortalAccess();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to remove link");
+    } finally {
+      setRemovingLink(false);
+    }
+  };
+
   if (loading) return <LoadingState />;
   if (!data)   return null;
 
@@ -1183,6 +1205,11 @@ export default function CustomerProfile() {
                                   Also has portal access to: {ct.linked_elsewhere.map(l => l.company_name).join(", ")}
                                 </p>
                               )}
+                              {ct.linked_username && ct.email && ct.linked_username !== ct.email.trim().toLowerCase() && (
+                                <p className="text-[11px] text-red-500 mt-0.5 font-medium">
+                                  Wrong account: this status belongs to {ct.linked_username}, not this contact's own email
+                                </p>
+                              )}
                             </td>
                             <td className="px-5 py-3">
                               {ct.portal_status === "active" && <Badge color="green">Active</Badge>}
@@ -1197,6 +1224,15 @@ export default function CustomerProfile() {
                                     className="text-xs font-medium text-gray-500 hover:text-gray-700"
                                   >
                                     Manage
+                                  </button>
+                                )}
+                                {ct.linked_username && ct.email && ct.linked_username !== ct.email.trim().toLowerCase() && (
+                                  <button
+                                    onClick={() => setRemoveLinkConfirm(ct)}
+                                    disabled={removingLink}
+                                    className="text-xs font-medium text-red-700 hover:text-red-800 disabled:opacity-50"
+                                  >
+                                    Remove (wrong account)
                                   </button>
                                 )}
                                 {ct.portal_status === "active" && (
@@ -1298,6 +1334,22 @@ export default function CustomerProfile() {
               <div className="flex justify-end gap-2 mt-4">
                 <BtnSecondary onClick={() => setPortalConfirmLinked(null)}>Cancel</BtnSecondary>
                 <BtnPrimary onClick={doGrantPortalAccess} loading={portalGranting}>Continue</BtnPrimary>
+              </div>
+            </Modal>
+          )}
+
+          {removeLinkConfirm && (
+            <Modal title="Remove Wrong-Account Link?" onClose={() => setRemoveLinkConfirm(null)}>
+              <p className="text-sm text-gray-600">
+                <span className="font-medium text-gray-800">{removeLinkConfirm.name}</span> is currently linked to{" "}
+                <span className="font-mono text-xs">{removeLinkConfirm.linked_username}</span>, not{" "}
+                <span className="font-mono text-xs">{removeLinkConfirm.email}</span>. This permanently removes that
+                link so this contact can be granted to the correct account instead. It doesn't affect any other
+                company that other login has access to.
+              </p>
+              <div className="flex justify-end gap-2 mt-4">
+                <BtnSecondary onClick={() => setRemoveLinkConfirm(null)}>Cancel</BtnSecondary>
+                <BtnDanger onClick={doRemoveLink}>Remove Link</BtnDanger>
               </div>
             </Modal>
           )}

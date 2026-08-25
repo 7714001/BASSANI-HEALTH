@@ -1135,8 +1135,15 @@ async def get_portal_access(
         u = users_map.get(c["id"])
         if not u:
             c["portal_status"] = "not_provisioned"
+            c["linked_username"] = None
         else:
             c["portal_status"] = "active" if u.get("active", True) else "deactivated"
+            # 2026-08-25: surfaces which login this status actually belongs
+            # to — found live that this can genuinely differ from the
+            # contact's own email above (a login mistakenly provisioned
+            # under the wrong address), which otherwise reads as "this
+            # contact's real email is provisioned" when it isn't.
+            c["linked_username"] = u.get("username")
         c["linked_elsewhere"] = linked_map.get((c.get("email") or "").strip().lower()) or []
 
     return {
@@ -1190,16 +1197,6 @@ async def grant_portal_access(
             errors.append({"contact_id": contact_id, "detail": "Not a contact of this company"})
             continue
 
-        # Multi-company logins (2026-08-21): the old check here was
-        # `{"odoo_partner_id": contact_id}` — a specific Odoo contact record
-        # can still only ever back one login (enforced below by the unique
-        # index on companies.odoo_partner_id too), so this stays a
-        # per-contact idempotency check, just against the array field.
-        existing_for_contact = await col("users").find_one({"role": "customer", "companies.odoo_partner_id": contact_id})
-        if existing_for_contact:
-            skipped_existing.append(contact_id)
-            continue
-
         contact_records = odoo.read("res.partner", [contact_id], fields=["id", "name", "email"])
         contact = contact_records[0] if contact_records else None
         if not contact or not contact.get("email"):
@@ -1207,6 +1204,34 @@ async def grant_portal_access(
                 "contact_id": contact_id,
                 "detail": "This contact has no email address on file. Add one to the contact in Odoo before granting portal access.",
             })
+            continue
+
+        # Multi-company logins (2026-08-21): the old check here was
+        # `{"odoo_partner_id": contact_id}` — a specific Odoo contact record
+        # can still only ever back one login (enforced below by the unique
+        # index on companies.odoo_partner_id too), so this stays a
+        # per-contact idempotency check, just against the array field.
+        # **2026-08-25 fix:** this used to treat any existing match as a
+        # silent no-op ("already granted, nothing to do") — correct only
+        # when the existing login's own email matches this contact's own
+        # email. A real incident showed the other case: this exact contact
+        # id already claimed by a DIFFERENT email's login entirely (e.g. an
+        # internal/test email used by mistake instead of the customer's real
+        # one), which is a genuine conflict an admin needs to know about and
+        # go resolve, not something safe to silently swallow — the intended
+        # grant never actually happens, and there was previously no signal
+        # that anything was wrong.
+        existing_for_contact = await col("users").find_one({"role": "customer", "companies.odoo_partner_id": contact_id})
+        if existing_for_contact:
+            this_email = contact["email"].strip().lower()
+            if existing_for_contact.get("username") == this_email:
+                skipped_existing.append(contact_id)
+            else:
+                errors.append({
+                    "contact_id": contact_id,
+                    "detail": f"This contact is already linked to a different portal login ({existing_for_contact.get('username')}). "
+                              f"Remove it from that login (Manage → Deactivate/remove that company) before granting it here.",
+                })
             continue
 
         username = contact["email"].strip().lower()
@@ -1353,6 +1378,49 @@ async def reactivate_portal_access(
         detail={"customer_company_partner_id": customer_id},
     )
     return {"success": True}
+
+
+@router.delete("/{customer_id}/portal-access/{contact_id}")
+async def remove_portal_access_link(
+    customer_id: int,
+    contact_id: int,
+    current_user: dict = Depends(require_permission("customers.manage_portal_access")),
+):
+    """
+    Permanently unlinks one company/contact pair from whichever login
+    currently holds it — deliberately distinct from deactivate/reactivate
+    above, which only flip the entry's `active` flag and leave it (and its
+    claim on the unique `companies.odoo_partner_id` index) in place.
+
+    Built after a real incident: a contact got granted portal access under
+    the wrong email (an internal address used by mistake instead of the
+    customer's real one), which silently blocked ever granting it correctly
+    afterward — `grant_portal_access`'s idempotency check matches on
+    `odoo_partner_id` alone, regardless of `active`, so deactivating the
+    wrong entry doesn't free it up. This does: it fully removes the array
+    element so the contact id can be granted again, to the right login.
+    """
+    user = await col("users").find_one(
+        {"role": "customer", "companies.odoo_partner_id": contact_id, "companies.customer_company_partner_id": customer_id}
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="No portal login found for this contact")
+    removed_entry = next(
+        (c for c in (user.get("companies") or [])
+         if c.get("odoo_partner_id") == contact_id and c.get("customer_company_partner_id") == customer_id),
+        None,
+    )
+    await col("users").update_one(
+        {"_id": user["_id"]},
+        {"$pull": {"companies": {"odoo_partner_id": contact_id, "customer_company_partner_id": customer_id}}},
+    )
+    await audit_log(
+        "customer.portal_access_removed", "customer_portal_access", str(user["_id"]),
+        entity_label=user.get("name") or user.get("username"),
+        user=current_user,
+        before=removed_entry,
+    )
+    return {"success": True, "username": user.get("username")}
 
 
 @router.put("/{customer_id}/warehouse")
