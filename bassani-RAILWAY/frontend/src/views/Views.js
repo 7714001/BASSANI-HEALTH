@@ -1423,8 +1423,12 @@ export function Orders() {
         });
         toast.success("Quote updated");
         setCartSheetOpen(false);
+        // Customer (2026-08-25) has no access to /tickets/sales — same fix
+        // as the toolbar Back button above, applied to the post-save
+        // redirect too.
+        const backTo = isCustomer && editQuote.orderId ? `/orders/${editQuote.orderId}/passport` : "/tickets/sales";
         setEditQuote(null);
-        navigate("/tickets/sales");
+        navigate(backTo);
       } catch (e) {
         toast.error(e.response?.data?.detail || "Failed to update quote");
       } finally {
@@ -1965,11 +1969,18 @@ export function Orders() {
                   cramped row even icon-only. */}
               <div className="hidden sm:block">
                 <BtnSecondary onClick={() => {
-                  if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
+                  // Customer editing a quote (2026-08-25) never has access to
+                  // /tickets/sales (staff/reseller-only) — this used to send
+                  // every editQuote session there regardless of role, a dead
+                  // link for a customer arriving from Order Passport instead
+                  // of Sales Tickets. Send them back to the order they were
+                  // editing instead.
+                  if (editQuote && isCustomer) { setEditQuote(null); navigate(editQuote.orderId ? `/orders/${editQuote.orderId}/passport` : "/orders"); }
+                  else if (editQuote || isReseller) { setEditQuote(null); navigate("/tickets/sales"); }
                   else setView("list");
                 }}>
                   <ChevronLeft size={14} className="shrink-0" />
-                  {editQuote || isReseller ? "Back to My Quotes" : "Back to Orders"}
+                  {editQuote && isCustomer ? "Back to Order" : editQuote || isReseller ? "Back to My Quotes" : "Back to Orders"}
                 </BtnSecondary>
               </div>
             </>

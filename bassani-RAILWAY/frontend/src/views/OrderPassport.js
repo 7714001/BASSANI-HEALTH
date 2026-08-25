@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle, Mail,
+  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle, Mail, Pencil,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
@@ -474,6 +474,36 @@ export default function OrderPassport() {
     });
   };
 
+  // Edit Quote (2026-08-25) — reuses the exact same cart editQuote flow
+  // SalesTickets.js's reseller-only Edit Quote button already hands off to
+  // (same navigation state shape: ticketId/orderId/customerName/customerId/
+  // lines), just reachable from Order Passport instead, and extended to
+  // customer too (see ticket_routes.py::_require_ticket_editor for the
+  // matching backend access change). Draft-only — Odoo locks a confirmed
+  // order's lines, same gate as Confirm/Cancel Order in the toolbar.
+  const doEditQuote = () => {
+    if (!data?.ticket?.ticket_id || !data?.order) return;
+    const order = data.order;
+    navigate("/orders", {
+      state: {
+        editQuote: {
+          ticketId:     data.ticket.ticket_id,
+          orderId:      order.id,
+          customerName: order.partner_id?.[1] || "",
+          customerId:   order.partner_id?.[0],
+          lines: (order.lines || []).map(l => ({
+            product_id:      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
+            product_uom_qty: l.product_uom_qty,
+            price_unit:      l.price_unit,
+            name:            l.name,
+            _sku:            "",
+            _taxRate:        0,
+          })),
+        },
+      },
+    });
+  };
+
   // Proof of Payment upload (2026-08-21) — evidence and a trigger only;
   // Finance still explicitly registers the deposit/balance payment
   // afterward via the existing ticket-pipeline flow, this just gets it in
@@ -803,6 +833,15 @@ export default function OrderPassport() {
           <ChevronLeft size={14} />Back
         </button>
         <div className="flex items-center gap-2">
+          {/* Edit Quote (2026-08-25) — draft only, same gate as Confirm/
+              Cancel below (Odoo locks a confirmed order's lines). Hands off
+              to the same cart editQuote flow SalesTickets.js's reseller-only
+              Edit Quote button already used, now also open to customer. */}
+          {(isReseller || isCustomer) && order.state === "draft" && ticket?.ticket_id && (
+            <BtnSecondary onClick={doEditQuote}>
+              <Pencil size={13} />Edit Quote
+            </BtnSecondary>
+          )}
           {/* Confirm Order (2026-08-25) — a draft order (e.g. placed via Save
               as Draft) previously had no confirm path on Passport at all; it
               only existed inside the OrderView.js modal the order list no
@@ -1145,44 +1184,31 @@ export default function OrderPassport() {
                   sidebar. Reorder/Make Recurring moved here from the toolbar;
                   Confirm Order stays in the toolbar since it's urgent/primary
                   for a draft order rather than a routine management action.
-                  Upload Proof of Payment moved here too (2026-08-25, from its
-                  own card's header) so every self-service action on the
-                  order lives in one isolated place — the timeline's current
-                  Deposit step keeps its own "Upload proof of payment" link
-                  for quick access without hunting for this card. */}
-              {(isReseller || isCustomer) && (() => {
-                const canUploadPop = ticket?.ticket_id && !ticket.exit_status;
-                return (
-                  <SideCard icon={Repeat} title="Actions">
-                    {(order.lines || []).length > 0 || (ticket?.ticket_id && !ticket.recurring_order_id) || canUploadPop ? (
-                      <div className="space-y-2">
-                        {(order.lines || []).length > 0 && (
-                          <BtnSecondary onClick={doReorder} className="w-full justify-center">
-                            <RotateCcw size={13} />Reorder
-                          </BtnSecondary>
-                        )}
-                        {ticket?.ticket_id && !ticket.recurring_order_id && (
-                          <BtnSecondary onClick={() => setRecurringModalOpen(true)} className="w-full justify-center">
-                            <Repeat size={13} />Make Recurring
-                          </BtnSecondary>
-                        )}
-                        {canUploadPop && (
-                          <>
-                            <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} className="w-full justify-center">
-                              <Upload size={13} />Upload Proof of Payment
-                            </BtnSecondary>
-                            <p className="text-[11px] text-gray-400">
-                              Optional — we'll still confirm your payment through the usual process either way, but sharing it here can help speed things up.
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 py-2">No actions available for this order yet.</p>
-                    )}
-                  </SideCard>
-                );
-              })()}
+                  Kept to order-level actions only (2026-08-25, reverted the
+                  same-day Upload Proof of Payment move) — POP is its own
+                  card again below, product owner's own call on how it reads
+                  visually; this card stays scoped to "actions on the order
+                  itself." */}
+              {(isReseller || isCustomer) && (
+                <SideCard icon={Repeat} title="Actions">
+                  {(order.lines || []).length > 0 || (ticket?.ticket_id && !ticket.recurring_order_id) ? (
+                    <div className="space-y-2">
+                      {(order.lines || []).length > 0 && (
+                        <BtnSecondary onClick={doReorder} className="w-full justify-center">
+                          <RotateCcw size={13} />Reorder
+                        </BtnSecondary>
+                      )}
+                      {ticket?.ticket_id && !ticket.recurring_order_id && (
+                        <BtnSecondary onClick={() => setRecurringModalOpen(true)} className="w-full justify-center">
+                          <Repeat size={13} />Make Recurring
+                        </BtnSecondary>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 py-2">No actions available for this order yet.</p>
+                  )}
+                </SideCard>
+              )}
 
               {/* Sales Ticket card — internal staff only. Reseller/customer
                   never had a use for Odoo/pipeline-internal fields here
@@ -1329,39 +1355,60 @@ export default function OrderPassport() {
                 )}
               </SideCard>
 
-              {/* ── Proof of Payment (2026-08-21; moved to a display-only
-                  card 2026-08-25) — the upload action itself now lives on
-                  the Actions card (for reseller/customer) so every
-                  self-service action on the order stays isolated to one
-                  place, and on the timeline's current Deposit step (for
-                  quick access without hunting for the Actions card). This
-                  card now only ever shows what's already been uploaded —
-                  for every role, not just staff — rather than always
-                  rendering once a ticket exists with nothing to show yet. */}
-              {ticket?.pop_uploads?.length > 0 && (
-                <SideCard icon={Upload} title="Proof of Payment">
-                  <div className="space-y-2">
-                    {ticket.pop_uploads.map(u => (
-                      <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
-                          <p className="text-[11px] text-gray-400">
-                            {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
-                          </p>
+              {/* ── Proof of Payment (2026-08-21; reverted to its own card
+                  with its own upload action 2026-08-25 — product owner's
+                  call that it reads better as a standalone card than folded
+                  into Actions). Reseller/customer: always shown once there's
+                  an active ticket to upload against, with the upload action
+                  and an explicit "this is optional" line so it never reads
+                  as a required step blocking their order. Staff/anyone
+                  without upload access: only shown once something has
+                  actually been uploaded (nothing to act on otherwise),
+                  read-only. The timeline's own "Upload proof of payment"
+                  quick-access link on the current Deposit step is unrelated
+                  and unaffected — same underlying upload trigger, just a
+                  second entry point. */}
+              {((isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status) || ticket?.pop_uploads?.length > 0 ? (
+                <SideCard
+                  icon={Upload} title="Proof of Payment"
+                  action={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+                    <BtnSecondary onClick={() => popFileInputRef.current?.click()} loading={popUploading} size="sm">
+                      <Upload size={12} />Upload
+                    </BtnSecondary>
+                  )}
+                >
+                  {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status && (
+                    <p className="text-xs text-gray-400">
+                      This is optional. We'll still confirm your payment through the usual process either way,
+                      but sharing proof of payment here can help speed things up.
+                    </p>
+                  )}
+                  {ticket?.pop_uploads?.length > 0 ? (
+                    <div className="space-y-2">
+                      {ticket.pop_uploads.map(u => (
+                        <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{u.filename}</p>
+                            <p className="text-[11px] text-gray-400">
+                              {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => viewPop(u.id)}
+                            disabled={popViewingId === u.id}
+                            className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                          >
+                            {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                            View
+                          </button>
                         </div>
-                        <button
-                          onClick={() => viewPop(u.id)}
-                          disabled={popViewingId === u.id}
-                          className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
-                        >
-                          {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
-                          View
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-300">No files uploaded yet.</p>
+                  )}
                 </SideCard>
-              )}
+              ) : null}
 
               {/* ── Invoice(s) ─────────────────────────────────────────────── */}
               {invoices.length > 0 ? (

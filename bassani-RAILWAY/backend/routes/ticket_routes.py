@@ -288,6 +288,27 @@ async def _require_ticket_driver(current_user: dict = Depends(get_current_user))
     raise HTTPException(status_code=403, detail="Access denied")
 
 
+async def _require_ticket_editor(current_user: dict = Depends(get_current_user)) -> dict:
+    """Staff with tickets.sales, OR any reseller/customer (ownership checked
+    separately inside the endpoint, via _assert_ticket_uploader_owns_ticket
+    below — reused here despite its "uploader" name since its logic is
+    role-generic, not upload-specific). 2026-08-25: `update_order_from_ticket`
+    (Edit Quote) moved onto this dependency instead of _require_ticket_driver
+    specifically to extend edit access to customer without touching
+    _require_ticket_driver itself, which also gates create/cancel/send-quote —
+    those three deliberately stay staff/reseller-only, unaffected by this."""
+    if current_user.get("is_super_admin") or current_user.get("role") == "super_admin":
+        return current_user
+    if current_user.get("role") in ("reseller", "customer"):
+        return current_user
+    if current_user.get("role") not in (ADMIN_ROLES | TICKET_ROLES):
+        raise HTTPException(status_code=403, detail="Access denied")
+    perms = current_user.get("permissions") or {}
+    if perms.get("tickets", {}).get("sales"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
 async def _require_ticket_uploader(current_user: dict = Depends(get_current_user)) -> dict:
     """Staff with tickets.sales/finance_confirm, OR any reseller/customer (for
     their own ticket — checked separately inside the endpoint, same split as
@@ -1144,13 +1165,19 @@ async def cancel_order_from_ticket(
 async def update_order_from_ticket(
     ticket_id: str,
     body: TicketOrderUpdate,
-    current_user: dict = Depends(_require_ticket_driver),
+    current_user: dict = Depends(_require_ticket_editor),
 ):
     """
     Replace line items on an existing draft/sent Odoo sale.order.
     The order must still be in quotation state — confirmed orders are locked
     in Odoo and cannot be edited here. Replaces all lines atomically:
     unlink existing, create new. Logs to ticket timeline and audit trail.
+
+    Customer role (2026-08-25): extended to this endpoint specifically (see
+    _require_ticket_editor's own comment for why not via _require_ticket_driver
+    itself) — a customer can now edit their own still-draft order's line
+    items, same "Edit Quote" flow a reseller already had via My Quotes,
+    reachable from their own Order Passport instead.
     """
     try:
         oid = ObjectId(ticket_id)
@@ -1160,6 +1187,7 @@ async def update_order_from_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     is_reseller_caller = current_user.get("role") == "reseller"
+    is_customer_caller = current_user.get("role") == "customer"
     if is_reseller_caller:
         rid = await _reseller_id_for_user(current_user)
         if not rid:
@@ -1167,6 +1195,11 @@ async def update_order_from_ticket(
         await _assert_reseller_owns_ticket(ticket, rid)
         if body.customer_id:
             raise HTTPException(status_code=403, detail="Resellers cannot change the customer on a quote")
+    elif is_customer_caller:
+        if _ticket_customer_partner_id(ticket) != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if body.customer_id:
+            raise HTTPException(status_code=403, detail="You cannot change the customer on your own order")
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
