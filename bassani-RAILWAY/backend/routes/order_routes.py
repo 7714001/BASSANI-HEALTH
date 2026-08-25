@@ -19,8 +19,10 @@ from services.email_service import (
     send_backorder_alert_internal,
     send_deposit_due_proforma,
 )
+from config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -1086,7 +1088,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         orders = odoo.read("sale.order", [resolved_id], fields=[
             "name", "state", "partner_id", "date_order", "amount_total",
             "amount_tax", "invoice_ids", "picking_ids", "payment_term_id",
-            "order_line",
+            "order_line", "partner_shipping_id",
         ])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
@@ -1114,6 +1116,25 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
                 fields=["name", "street", "city", "zip", "email", "phone", "vat"])
             if partners:
                 order["partner_detail"] = partners[0]
+        except Exception:
+            pass
+
+    # Delivery/collection address (2026-08-25) — only fetched+returned when it
+    # actually differs from the billing partner above, matching the "Deliver
+    # To" picker added to checkout (2026-08-21, `shipping_address_id` on
+    # OrderCreate) which this page never surfaced back until now. Odoo always
+    # sets partner_shipping_id (defaults to the billing partner itself when
+    # no separate delivery address was chosen), so the equality check is what
+    # actually distinguishes "an explicit delivery address was picked" from
+    # "just use my usual address."
+    shipping = order.get("partner_shipping_id")
+    billing = order.get("partner_id")
+    if shipping and billing and shipping[0] != billing[0]:
+        try:
+            ship_rows = odoo.read("res.partner", [shipping[0]],
+                fields=["name", "street", "street2", "city", "zip"])
+            if ship_rows:
+                order["shipping_detail"] = ship_rows[0]
         except Exception:
             pass
 
@@ -1362,6 +1383,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         "product_images": product_images,
         "manufacturing_orders": mos,
         "overall_status": overall_status,
+        "support_email":  settings.support_email,
     }
 
 
@@ -2285,22 +2307,13 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
         )
 
 
-@router.put("/{order_id}/cancel")
-async def cancel_order(order_id: int, background_tasks: BackgroundTasks, current_user: dict = Depends(require_permission("orders.cancel"))):
-    """Cancel a sales order in Odoo and void the related commission record.
-    Only quotations (draft/sent) may be cancelled — a confirmed order already has
-    an invoice and possibly a packing board entry in flight, so it must be handled
-    manually rather than silently voided."""
+async def _cancel_order_core(order_id: int, order_ref: str, current_user: dict, background_tasks: BackgroundTasks) -> dict:
+    """Shared cancel logic — same _confirm_order_core-style extraction so
+    the staff endpoint and the reseller/customer self-cancel endpoint below
+    can never drift apart on what "cancel" actually does (void commission,
+    audit log, notify the reseller). Callers have already resolved/validated
+    the order and checked access before calling this."""
     odoo = get_odoo_client()
-    rows = odoo.read("sale.order", [order_id], fields=["state", "name"])
-    if not rows:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if rows[0]["state"] not in ("draft", "sent"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only quotations (not yet confirmed) can be cancelled this way",
-        )
-    order_ref = rows[0].get("name", f"#{order_id}")
     try:
         odoo.execute("sale.order", "action_cancel", [order_id])
     except Exception as e:
@@ -2332,3 +2345,70 @@ async def cancel_order(order_id: int, background_tasks: BackgroundTasks, current
             )
 
     return {"success": True}
+
+
+@router.put("/{order_id}/cancel")
+async def cancel_order(order_id: int, background_tasks: BackgroundTasks, current_user: dict = Depends(require_permission("orders.cancel"))):
+    """Staff-driven cancel entry point. Only quotations (draft/sent) may be
+    cancelled — a confirmed order already has an invoice and possibly a
+    packing board entry in flight, so it must be handled manually rather
+    than silently voided. See _cancel_order_core for the shared logic;
+    self_cancel_order below calls the same core for the narrower
+    reseller/customer self-service path."""
+    odoo = get_odoo_client()
+    rows = odoo.read("sale.order", [order_id], fields=["state", "name"])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if rows[0]["state"] not in ("draft", "sent"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only quotations (not yet confirmed) can be cancelled this way",
+        )
+    return await _cancel_order_core(order_id, rows[0].get("name", f"#{order_id}"), current_user, background_tasks)
+
+
+async def _require_self_cancel_access(current_user: dict = Depends(get_current_user)) -> dict:
+    """Reseller/customer self-cancel access — deliberately its own narrow
+    role check, not require_permission() (which structurally excludes both
+    external roles entirely, by design — see _require_confirm_access's own
+    comment on this) and not _require_confirm_access (that's scoped to the
+    orders.confirm permission, a different capability for staff)."""
+    if current_user.get("role") not in ("reseller", "customer"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return current_user
+
+
+@router.put("/{order_id}/self-cancel")
+async def self_cancel_order(order_id: int, background_tasks: BackgroundTasks, current_user: dict = Depends(_require_self_cancel_access)):
+    """Reseller/customer cancel of their own still-unconfirmed order
+    (2026-08-25) — deliberately stricter than staff's own `/cancel`
+    (draft-only, not draft/sent): once an order is confirmed it can carry
+    stock reservations, the deposit gate, and commission implications a
+    customer shouldn't be able to unilaterally undo, so that path still
+    goes through Bassani via the staff-only endpoint above."""
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "partner_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order = rows[0]
+
+    partner = order.get("partner_id")
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        reseller_id = reseller["id"] if reseller else None
+        if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:  # customer
+        if not partner or partner[0] != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    if order["state"] != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="This order has already been confirmed and can no longer be cancelled here. Please contact Bassani to cancel it.",
+        )
+
+    return await _cancel_order_core(order_id, order.get("name", f"#{order_id}"), current_user, background_tasks)

@@ -2210,7 +2210,7 @@ If more than one person at a company has portal access, they all see the exact s
 After adding products to the cart, a customer has two options:
 
 - **Place Order** — submits and confirms the order in one step. The portal checks stock first: if everything is in stock, it confirms right away; if something isn't, a summary shows what ships now versus what's backordered, with a button to confirm anyway or hold off. If the account is over its credit limit, the customer is told to contact Bassani directly — there's no self-service override.
-- **Save as Draft** — creates the order without confirming it, for when the customer isn't ready to commit yet. A saved draft appears in My Orders — open it (the same Order Passport view used to track every order) and a **Confirm Order** button is available in the toolbar for whenever they're ready.
+- **Save as Draft** — creates the order without confirming it, for when the customer isn't ready to commit yet. A saved draft appears in My Orders — open it (the same Order Passport view used to track every order) and a **Confirm Order** button is available in the toolbar for whenever they're ready. A **Cancel Order** button sits right next to it if they've changed their mind entirely — this only works while the order is still a draft; once confirmed, cancelling requires contacting Bassani.
 
 Either way, the order exists the moment either button is clicked — cancelling out of the stock or credit check just leaves it as a draft rather than losing it.
 
@@ -2225,6 +2225,8 @@ Either way, the order exists the moment either button is clicked — cancelling 
 - **Order comfortably from a phone.** On a phone or narrow tablet, the catalogue filters tuck behind a "Filters" button and the order summary becomes a slim bar pinned to the bottom of the screen showing the item count and total — tap it to review the full order, change quantities, or submit. This is the same cart as on a laptop, just laid out to fit a smaller screen; nothing about placing an order works differently.
 - **Upload proof of payment (2026-08-21).** On any order's page (Order Passport, opened from My Orders), a "Proof of Payment" card lets the customer upload a photo or PDF of their payment confirmation. **This is optional** — Bassani will still confirm payment through the usual process either way — but sharing it can help speed things up, since it puts the file straight in front of Finance instead of them having to be told separately. Uploaded files stay listed there with a "View" link.
 - **View the pro-forma invoice (2026-08-25).** Once an order is confirmed, a "View Pro-Forma Invoice" button appears on its page — this opens the exact document already emailed showing the 50% deposit amount due, so it can be found again without searching an inbox.
+- **See where the order is going (2026-08-25).** An order's page shows the delivery/collection address at the top — either the account's usual registered address, or the specific "Deliver To" address picked at checkout if a different one was chosen.
+- **Get help (2026-08-25).** Every order's page has a "Need Help?" card with a direct email link to Bassani support, for whenever a question about that specific order comes up.
 
 ---
 

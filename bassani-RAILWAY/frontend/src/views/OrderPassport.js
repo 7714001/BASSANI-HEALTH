@@ -6,10 +6,10 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle,
+  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle, Mail,
 } from "lucide-react";
 import {
-  fmtDate, BtnSecondary, BtnPrimary, Modal,
+  fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
   FormGroup, Input, Select, LoadingState, OdooPdfViewerModal, StatCard,
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
@@ -618,6 +618,30 @@ export default function OrderPassport() {
     }
   };
 
+  // Self-cancel (2026-08-25) — reseller/customer, draft-only. Deliberately a
+  // separate, narrower endpoint (PUT /{order_id}/self-cancel) from the
+  // staff-only PUT /{order_id}/cancel — once an order is confirmed it can
+  // carry stock reservations/deposit-gate/commission implications a customer
+  // shouldn't be able to unilaterally undo, so that stays a "contact
+  // Bassani" case, same as every other confirmed-order edge case in this app.
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [cancelling,    setCancelling   ] = useState(false);
+
+  const doCancelOrder = async () => {
+    if (!data?.order?.id) return;
+    setCancelling(true);
+    try {
+      await api.put(`/api/orders/${data.order.id}/self-cancel`);
+      toast.success("Order cancelled");
+      setCancelConfirm(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to cancel order");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -657,7 +681,7 @@ export default function OrderPassport() {
 
   if (!data) return null;
 
-  const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status } = data;
+  const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status, support_email } = data;
   const partner            = order.partner_detail || {};
   const hasPartialDelivery = deliveries.some(d => d.state === "done");
   const outstandingLines   = (order.lines || []).filter(
@@ -695,6 +719,14 @@ export default function OrderPassport() {
             <BtnPrimary onClick={() => doConfirmOrder(false)} loading={confirming}>
               <CheckCircle2 size={13} />Confirm Order
             </BtnPrimary>
+          )}
+          {/* Self-cancel (2026-08-25) — draft only, matches the Confirm
+              Order gate exactly; a confirmed order still goes through
+              Bassani (contact via the Need Help card below). */}
+          {(isReseller || isCustomer) && order.state === "draft" && (
+            <BtnDanger onClick={() => setCancelConfirm(true)}>
+              <X size={13} />Cancel Order
+            </BtnDanger>
           )}
           {/* Reorder / Make Recurring moved into the sidebar Actions card
               (2026-08-25, in place of the internal-only Sales Ticket card for
@@ -771,6 +803,24 @@ export default function OrderPassport() {
               {order.payment_term_id && <span>Terms: <span className="text-gray-700 font-medium">{order.payment_term_id[1]}</span></span>}
               {partner.phone     && <span>Phone: <span className="text-gray-700 font-medium">{partner.phone}</span></span>}
               {partner.vat       && <span>VAT: <span className="text-gray-700 font-medium">{partner.vat}</span></span>}
+              {/* Address (2026-08-25) — billing partner.street/city/zip were
+                  already fetched by the backend but never rendered anywhere
+                  on this page until now. */}
+              {partner.street && (
+                <span>Address: <span className="text-gray-700 font-medium">
+                  {[partner.street, partner.city, partner.zip].filter(Boolean).join(", ")}
+                </span></span>
+              )}
+              {/* Deliver To (2026-08-25) — only shown when the order's own
+                  partner_shipping_id differs from the billing partner, i.e.
+                  a specific delivery address was chosen at checkout (the
+                  "Deliver To" picker, 2026-08-21); this page never surfaced
+                  that back until now. */}
+              {order.shipping_detail && (
+                <span className="text-bassani-700">Deliver To: <span className="font-semibold">
+                  {[order.shipping_detail.name, order.shipping_detail.street, order.shipping_detail.street2, order.shipping_detail.city, order.shipping_detail.zip].filter(Boolean).join(", ")}
+                </span></span>
+              )}
             </div>
           </div>
 
@@ -1272,6 +1322,30 @@ export default function OrderPassport() {
                 )}
               </div>
 
+              {/* ── Need Help (2026-08-25) ────────────────────────────────────
+                  Reseller/customer only. Every error toast on this page and
+                  in the checkout flow ("contact Bassani directly") previously
+                  pointed the customer somewhere with no actual contact detail
+                  on screen — this closes that gap with the same address
+                  already used as the fallback recipient across the backend's
+                  own notification emails (settings.support_email). */}
+              {(isReseller || isCustomer) && support_email && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1.5">
+                    <Mail size={12} />Need Help?
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Questions about this order? Get in touch and we'll help.
+                  </p>
+                  <a
+                    href={`mailto:${support_email}?subject=${encodeURIComponent(`Order ${order.name}`)}`}
+                    className="flex items-center justify-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800 border border-bassani-100 bg-bassani-50 rounded-xl px-3 py-2"
+                  >
+                    <Mail size={13} />{support_email}
+                  </a>
+                </div>
+              )}
+
             </div>
           </div>
 
@@ -1457,6 +1531,17 @@ export default function OrderPassport() {
             <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => { setCreditOverrideMsg(null); doConfirmOrder(true, true); }}>
               Confirm Anyway
             </BtnPrimary>
+          </div>
+        </Modal>
+      )}
+      {cancelConfirm && (
+        <Modal title="Cancel Order" onClose={() => setCancelConfirm(false)}>
+          <p className="text-sm text-gray-600 mb-4">
+            Cancel order <strong>{order.name}</strong>? This can't be undone — you'll need to place a new order if you change your mind.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setCancelConfirm(false)}>Keep Order</BtnSecondary>
+            <BtnDanger onClick={doCancelOrder} loading={cancelling}>Cancel Order</BtnDanger>
           </div>
         </Modal>
       )}
