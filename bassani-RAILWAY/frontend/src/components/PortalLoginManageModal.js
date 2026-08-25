@@ -18,13 +18,26 @@ import { Badge, BtnSecondary, BtnDanger, Modal, LoadingState, fmtDate } from "./
 // docstring in customer_routes.py). `GET /portal-logins/{email}` returns
 // every matching document instead of picking one, so a split shows up here
 // directly instead of only being discoverable by reading raw Mongo data.
-export default function PortalLoginManageModal({ email, onClose, onChanged }) {
+// `context`, when passed, is the specific company/contact combination the
+// modal was opened from — { customerCompanyPartnerId, companyName,
+// odooPartnerId }. It exists because the normal Grant Access checkbox on a
+// company's own Portal Access table only appears when that page's own
+// status lookup says "not provisioned" — if that lookup is ever wrong for a
+// given contact (status shows "active" when the login actually has no entry
+// for this company at all), the checkbox never renders and there is no way
+// to grant it through the normal flow. Passing `context` adds a direct
+// "Add this company" action that calls the exact same grant endpoint
+// (`POST .../portal-access`) with this specific contact id, bypassing that
+// checkbox gate entirely. Only CustomerProfile.js passes this — Users.js's
+// bare login rows have no "current company" to offer.
+export default function PortalLoginManageModal({ email, onClose, onChanged, context }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState(null);
   const [keepId, setKeepId] = useState(null);
   const [confirmingMerge, setConfirmingMerge] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -58,6 +71,31 @@ export default function PortalLoginManageModal({ email, onClose, onChanged }) {
     }
   };
 
+  const contextAlreadyLinked = !!(context && data && data.logins.some(
+    l => (l.companies || []).some(c => c.customer_company_partner_id === context.customerCompanyPartnerId)
+  ));
+
+  const addCurrentCompany = async () => {
+    if (!context) return;
+    setAdding(true);
+    try {
+      const { data: res } = await api.post(`/api/customers/${context.customerCompanyPartnerId}/portal-access`, {
+        contact_ids: [context.odooPartnerId],
+      });
+      if (res.errors?.length) {
+        res.errors.forEach(e => toast.error(e.detail));
+      } else {
+        toast.success(`Added ${context.companyName} to this login`);
+      }
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add company");
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const doMerge = async () => {
     if (!keepId) return;
     setMerging(true);
@@ -88,6 +126,22 @@ export default function PortalLoginManageModal({ email, onClose, onChanged }) {
         <p className="text-sm text-gray-400 py-4">Could not load this login.</p>
       ) : (
         <div className="space-y-4">
+          {context && !contextAlreadyLinked && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3.5 py-3 text-xs text-blue-800 flex items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">This login doesn't have {context.companyName} yet</p>
+                <p className="text-blue-700 mt-0.5">
+                  {data.duplicate_logins
+                    ? "Merge the duplicate logins below first, then add this company."
+                    : "Add it directly here — this bypasses the checkbox on this page's own Portal Access table."}
+                </p>
+              </div>
+              <BtnSecondary size="sm" onClick={addCurrentCompany} disabled={adding || data.duplicate_logins}>
+                {adding ? "Adding…" : "Add This Company"}
+              </BtnSecondary>
+            </div>
+          )}
+
           {data.duplicate_logins && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-3 text-xs text-amber-800 space-y-2.5">
               <p className="font-semibold">Two separate login records share this email</p>

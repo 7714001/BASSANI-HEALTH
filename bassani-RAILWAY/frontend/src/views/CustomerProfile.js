@@ -497,8 +497,10 @@ export default function CustomerProfile() {
   const [portalKeepCompanies, setPortalKeepCompanies] = useState(new Set());
   // Manage modal (shows every company this login has, across all customer
   // profiles, not just this one) — same component Users.js opens for its
-  // customer-role rows, keyed by email either way.
-  const [manageLoginEmail, setManageLoginEmail] = useState(null);
+  // customer-role rows, keyed by email either way. Holds the specific
+  // contact row that was clicked ({ email, odooPartnerId }) so the modal can
+  // offer "Add this company" using this page's own contact id.
+  const [manageTarget, setManageTarget] = useState(null);
 
   // ── Upload request ─────────────────────────────────────────────────────────
   const [uploadRequest,        setUploadRequest       ] = useState(null);
@@ -1191,7 +1193,7 @@ export default function CustomerProfile() {
                               <div className="flex items-center justify-end gap-3">
                                 {ct.portal_status !== "not_provisioned" && ct.email && (
                                   <button
-                                    onClick={() => setManageLoginEmail(ct.email)}
+                                    onClick={() => setManageTarget({ email: ct.email, odooPartnerId: ct.id })}
                                     className="text-xs font-medium text-gray-500 hover:text-gray-700"
                                   >
                                     Manage
@@ -1300,11 +1302,16 @@ export default function CustomerProfile() {
             </Modal>
           )}
 
-          {manageLoginEmail && (
+          {manageTarget && (
             <PortalLoginManageModal
-              email={manageLoginEmail}
-              onClose={() => setManageLoginEmail(null)}
+              email={manageTarget.email}
+              onClose={() => setManageTarget(null)}
               onChanged={loadPortalAccess}
+              context={{
+                customerCompanyPartnerId: parseInt(id, 10),
+                companyName: c.name,
+                odooPartnerId: manageTarget.odooPartnerId,
+              }}
             />
           )}
 
