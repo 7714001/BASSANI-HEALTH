@@ -287,17 +287,61 @@ function TimelineCard({ order, ticket, packing, invoices, manufacturing_orders }
   );
 }
 
+// ── Customer-facing step collapse (2026-08-25) — the vertical staff
+// timeline tracks every operational sub-stage (Queued for Packing vs
+// Packing, QA vs RP approval, Invoice Raised as its own event); a customer
+// doesn't act on any of those individually and doesn't need to track them
+// separately. This runs AFTER buildTimelineSteps() rather than duplicating
+// its state logic — it only ever merges/drops nodes from that same
+// already-computed array, so the customer view can never disagree with
+// staff's about what state an order is actually in, just displays it
+// coarser. Queued+Packing → one "Packing" node; QA+RP → one "Compliance
+// Sign-Off" node (a real invoice already exists once QA/RP approve — see
+// the "Invoice Raised" drop below — but it's not a step the customer acts
+// on, so it isn't split out here either); "Invoice Raised" is dropped
+// outright rather than merged, since it always renders as "done" the
+// moment it exists at all (a real Odoo invoice, either the deposit
+// down-payment invoice or the final delivery invoice raised at
+// mark_complete) and carries no state of its own worth surfacing — the
+// step that actually varies, Payment Received/Pending, still shows.
+function collapseTimelineForCustomer(steps) {
+  const byKey = Object.fromEntries(steps.map(s => [s.key, s]));
+  const merge = (aKey, bKey, label) => {
+    const a = byKey[aKey], b = byKey[bKey];
+    if (!a || !b) return null;
+    const state = b.state === "done" ? "done" : (a.state !== "pending" ? "current" : "pending");
+    return {
+      key: `${aKey}_${bKey}`, label, icon: b.icon,
+      state, at: b.at || a.at, by: b.by || a.by,
+      sub: state === "current" ? (b.sub || a.sub) : undefined,
+    };
+  };
+  const result = [];
+  for (const s of steps) {
+    if (s.key === "packing" && byKey.queued) continue; // folded into the merge below
+    if (s.key === "rp" && byKey.qa) continue; // folded into the merge below
+    if (s.key === "invoice") continue; // dropped — see comment above
+    if (s.key === "queued") { result.push(merge("queued", "packing", "Packing") || s); continue; }
+    if (s.key === "qa") { result.push(merge("qa", "rp", "Compliance Sign-Off") || s); continue; }
+    result.push(s);
+  }
+  return result;
+}
+
 // ── Horizontal timeline (2026-08-25) — reseller/customer variant of
-// TimelineCard above, same buildTimelineSteps() data so the two never
-// disagree about what stage an order is at. A vertical, date-and-note-heavy
-// timeline suits staff working the pipeline; a customer just wants an
-// at-a-glance lifecycle overview with future steps visibly greyed out, the
-// familiar horizontal-stepper pattern (courier tracking, e-commerce order
-// status). Only the current step's "sub" note is shown, to keep the strip
-// compact rather than repeating detail every step already carries on its
-// own sidebar card (Packing, Invoice, etc).
+// TimelineCard above, same buildTimelineSteps() data (run through
+// collapseTimelineForCustomer() above) so the two never disagree about what
+// stage an order is at. A vertical, date-and-note-heavy timeline suits
+// staff working the pipeline; a customer just wants an at-a-glance
+// lifecycle overview with future steps visibly greyed out, the familiar
+// horizontal-stepper pattern (courier tracking, e-commerce order status).
+// Only the current step's "sub" note is shown, to keep the strip compact
+// rather than repeating detail every step already carries on its own
+// sidebar card (Packing, Invoice, etc).
 function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturing_orders, onUploadPop }) {
-  const steps = buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders });
+  const steps = collapseTimelineForCustomer(
+    buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders })
+  );
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-1.5">
@@ -849,7 +893,7 @@ export default function OrderPassport() {
               <StatCard
                 label="Outstanding"
                 value={fmtR(outstandingTotal)}
-                sub={outstandingTotal === 0 ? "Paid in full" : totalPaid === 0 ? "Full amount due — no deposit registered yet" : "Balance still due"}
+                sub={outstandingTotal === 0 ? "Paid in full" : totalPaid === 0 ? "No deposit registered yet" : "Balance still due"}
                 accent={outstandingTotal > 0 ? "text-red-600" : "text-green-700"}
               />
               {/* Items (2026-08-25, icon added same day) — carries the
