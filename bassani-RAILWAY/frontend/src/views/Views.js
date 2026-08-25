@@ -882,16 +882,6 @@ export function Orders() {
   const [creatingTicket,        setCreatingTicket       ] = useState(new Set());
   const [ticketPreflightModal,  setTicketPreflightModal ] = useState(null); // { orderId, orderName, has_linked_ticket, existing_ticket_id, unlinked_tickets }
 
-  // ── Customer self-service order confirm (Phase 25) ──────────────────────
-  // Staff/reseller confirm from the Sales Ticket pipeline (SalesTickets.js);
-  // a customer has no access to that internal-facing page, so this is a
-  // smaller, self-contained equivalent — same stock-check-first API calls,
-  // no credit-override affordance (a customer can't self-authorise past
-  // their own credit block, unlike the staff/reseller "Confirm Anyway" flow).
-  const [confirming,       setConfirming      ] = useState(false);
-  const [stockCheckModal,  setStockCheckModal ] = useState(false);
-  const [stockCheckData,   setStockCheckData  ] = useState(null);
-
   // ── Reseller order cart (place a new order) ──────────────────────────────
   // Resellers only — staff use the Sales Ticket quote builder instead (they
   // know product names/SKUs and type-search; resellers need to browse a
@@ -1614,50 +1604,21 @@ export function Orders() {
   useEffect(() => { load(); }, [load]);
 
   const openDetail = async (order) => {
+    // Reseller/customer (2026-08-25): route to the Order Passport — the
+    // shared, role-scoped order tracking page (timeline, ticket/deposit
+    // status, POP upload, invoices) — instead of the OrderView.js print/
+    // invoice mockup below, which has none of that. Staff keep the existing
+    // in-page detail view with its internal actions (Create Sales Ticket etc).
+    if (isReseller || isCustomer) {
+      navigate(`/orders/${order.id}/passport`);
+      return;
+    }
     setDetail(order);
     setView("detail");
     try {
       const r = await api.get(`/api/orders/${order.id}`);
       setDetail(r.data);
     } catch { /* keep showing basic data */ }
-  };
-
-  // ── Customer self-service confirm (Phase 25) — mirrors the stock-check-
-  // first flow SalesTickets.js uses for staff/resellers, but simplified: no
-  // credit-override retry (a customer over their credit limit is told to
-  // contact Bassani, not offered a self-override).
-  const doConfirmOrder = async (skipStockCheck = false) => {
-    if (!detail?.id) return;
-    if (!skipStockCheck) {
-      setConfirming(true);
-      try {
-        const { data } = await api.get(`/api/orders/${detail.id}/stock-check`);
-        setStockCheckData(data);
-        setStockCheckModal(true);
-      } catch {
-        setStockCheckModal(false);
-        await doConfirmOrder(true);
-        return;
-      } finally {
-        setConfirming(false);
-      }
-      return;
-    }
-    setConfirming(true);
-    try {
-      await api.put(`/api/orders/${detail.id}/confirm`);
-      toast.success("Order confirmed. You'll receive an email shortly with your 50% deposit invoice.");
-      setStockCheckModal(false);
-      await openDetail(detail);
-    } catch (e) {
-      if (e.response?.status === 402) {
-        toast.error(e.response.data.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
-      } else {
-        toast.error(e.response?.data?.detail || "Failed to confirm order");
-      }
-    } finally {
-      setConfirming(false);
-    }
   };
 
   // ── Create a Sales Ticket for an existing Odoo order ────────────────────
@@ -1716,101 +1677,11 @@ export function Orders() {
 
   const STATUSES = ["all","draft","sale","done","cancel"];
 
-  // ── Detail / order view ───────────────────────────────────────────────────
+  // ── Detail / order view (staff only — reseller/customer are routed to the
+  // Order Passport by openDetail above) ────────────────────────────────────
   if (view === "detail" && detail) {
     return (
-      <>
-        <OrderView
-          order={detail}
-          isAdmin={isCustomer}
-          canConfirmOrder={isCustomer}
-          canCancelOrder={false}
-          onConfirm={() => doConfirmOrder(false)}
-          confirming={confirming}
-          onClose={() => { setView("list"); setDetail(null); }}
-        />
-        {stockCheckModal && stockCheckData && (
-          <Modal title="Confirm Order" onClose={() => { setStockCheckModal(false); setStockCheckData(null); }}>
-            {stockCheckData.is_partial ? (
-              <>
-                {stockCheckData.invoice_policy_block && (
-                  <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
-                    <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
-                      <p className="text-xs text-red-700 mt-1">
-                        This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
-                  <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-3 mb-4">
-                  {stockCheckData.lines.filter(l => !l.will_backorder).length > 0 && (
-                    <div>
-                      <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Ships now</p>
-                      <div className="space-y-1">
-                        {stockCheckData.lines.filter(l => !l.will_backorder).map((l, i) => (
-                          <div key={i} className="flex items-center justify-between text-xs bg-green-50 rounded-lg px-3 py-1.5">
-                            <span className="text-gray-700">{l.name}</span>
-                            <span className="font-medium text-green-700">{l.qty_available} units</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {stockCheckData.lines.filter(l => l.will_backorder).length > 0 && (
-                    <div>
-                      <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Backordered</p>
-                      <div className="space-y-1">
-                        {stockCheckData.lines.filter(l => l.will_backorder).map((l, i) => (
-                          <div key={i} className="flex items-center justify-between text-xs bg-amber-50 rounded-lg px-3 py-1.5">
-                            <span className="text-gray-700">{l.name}</span>
-                            <span className="font-medium text-amber-700">{l.qty_available} of {l.qty_ordered} in stock</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
-                    Cancel
-                  </BtnSecondary>
-                  {!stockCheckData.invoice_policy_block && (
-                    <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
-                      Confirm — Create Backorder
-                    </BtnPrimary>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
-                  <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
-                  <p className="text-sm text-green-800">All items are in stock. This order will be fulfilled in full.</p>
-                </div>
-                <div className="flex gap-2">
-                  <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
-                    Cancel
-                  </BtnSecondary>
-                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
-                    Confirm Order
-                  </BtnPrimary>
-                </div>
-              </>
-            )}
-          </Modal>
-        )}
-      </>
+      <OrderView order={detail} onClose={() => { setView("list"); setDetail(null); }} />
     );
   }
 
@@ -2534,15 +2405,41 @@ export function Orders() {
             { accessorKey:"date_order", header:"Date", meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=><span className="text-xs text-gray-500">{o.date_order?.split("T")[0]}</span> },
             { accessorKey:"amount_untaxed", header:"Amount", meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=>fmtR(o.amount_untaxed) },
             { accessorKey:"amount_total", header:"Total", cell:({row:{original:o}})=><span className="font-semibold">{fmtR(o.amount_total)}</span> },
-            { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=><Badge status={o.state} /> },
+            { id:"state", header:"Status", enableSorting:false, cell:({row:{original:o}})=>{
+              if (!isReseller && !isCustomer) return <Badge status={o.state} />;
+              // Reseller/customer (2026-08-25): a single combined, business-
+              // language pipeline stage — staff get the raw Odoo state here
+              // plus separate Sales Ticket/Packing columns below, but Odoo's
+              // 4-state model (Quotation/Confirmed/Done/Cancelled) reads
+              // identically for the entire multi-week deposit → packing →
+              // QA/RP → collection pipeline, which is exactly what this
+              // role needs to actually see progress on. Packing status wins
+              // when present (it's the furthest-along signal); falls back
+              // to ticket status, then the raw order state for a still-
+              // unconfirmed draft.
+              const t = o.linked_ticket;
+              const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Collection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
+              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"green", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
+              if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
+              if (t) {
+                const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
+                const EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
+                const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
+                const STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
+                return t.exit_status
+                  ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
+                  : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
+              }
+              return <Badge status={o.state} />;
+            } },
             { id:"invoice", header:"Payment", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:o}})=><Badge status={o.invoice_status} /> },
             ...(!isReseller && !isCustomer?[{ id:"ticket", header:"Sales Ticket", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const t = o.linked_ticket;
               if (!t) return <span className="text-xs text-gray-300">—</span>;
               const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
               const EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
-              const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
-              const STATUS_LABEL = { open:"Open", quote:"Quote", sale_order:"Sale Order", invoice:"Invoice", confirmed_wip:"WIP", ready_for_collection:"Ready", incomplete:"Incomplete" };
+              const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
+              const STATUS_LABEL = { open:"Open", quote:"Quote", sale_order:"Sale Order", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice", confirmed_wip:"WIP", ready_for_collection:"Ready", incomplete:"Incomplete" };
               return t.exit_status
                 ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                 : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;

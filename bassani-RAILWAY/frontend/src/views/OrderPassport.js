@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw, Upload, Loader2, Factory, X,
+  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, Modal,
@@ -82,7 +82,8 @@ const PACK_LABEL = {
 };
 
 const TICKET_STATUS_LABEL = {
-  open: "Inquiry Open", quote: "Building Quote", sale_order: "Awaiting Deposit",
+  open: "Inquiry Open", quote: "Building Quote",
+  sale_order: "Awaiting Deposit", awaiting_deposit: "Awaiting Deposit",
   invoice: "Invoice Raised", confirmed_wip: "In Progress",
   ready_for_collection: "Ready for Collection", incomplete: "Incomplete",
   queued: "Queued for Packing", packing: "Being Packed", waiting_stock: "Awaiting Stock",
@@ -147,11 +148,20 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
 
   if (!ticket) return steps;
 
-  const depositDone = !!packing || !["open", "quote", "sale_order"].includes(ticket.status);
+  // "sale_order" is an older/transitional status value still written by a
+  // couple of other code paths (ticket creation, the Odoo-state auto-sync);
+  // the live confirm flow (_confirm_order_core, order_routes.py) writes
+  // "awaiting_deposit" directly — both mean the same thing here: confirmed,
+  // deposit not yet registered. Missing "awaiting_deposit" from this check
+  // was a real bug (found 2026-08-25) that showed Deposit Registered as
+  // already done the moment an order was confirmed, before Finance had
+  // touched it.
+  const AWAITING_DEPOSIT_STATUSES = ["sale_order", "awaiting_deposit"];
+  const depositDone = !!packing || !["open", "quote", ...AWAITING_DEPOSIT_STATUSES].includes(ticket.status);
   steps.push({
     key: "deposit", label: "Deposit Registered", icon: FileText,
-    state: depositDone ? "done" : (ticket.status === "sale_order" ? "current" : "pending"),
-    sub: !depositDone && ticket.status === "sale_order" ? "Awaiting Finance" : null,
+    state: depositDone ? "done" : (AWAITING_DEPOSIT_STATUSES.includes(ticket.status) ? "current" : "pending"),
+    sub: !depositDone && AWAITING_DEPOSIT_STATUSES.includes(ticket.status) ? "Awaiting Finance" : null,
   });
 
   const ticketHalted = ticket.exit_status && ticket.exit_status !== "complete";
@@ -506,6 +516,64 @@ export default function OrderPassport() {
     }
   };
 
+  // Confirm Order (2026-08-25) — reseller/customer's "My Orders" list now
+  // routes here for the order detail (previously the OrderView.js invoice
+  // mockup), so Passport needs its own confirm entry point for a still-draft
+  // order (e.g. one placed via Save as Draft). Ported from Views.js::Orders()'s
+  // stock-check-first flow. Reseller gets the same "Confirm Anyway" credit
+  // override SalesTickets.js's staff/reseller confirm already offers; a
+  // customer does not and is told to contact Bassani instead (Phase 25
+  // convention, unchanged from the old OrderView-based flow).
+  const [confirming,        setConfirming       ] = useState(false);
+  const [stockCheckModal,   setStockCheckModal  ] = useState(false);
+  const [stockCheckData,    setStockCheckData   ] = useState(null);
+  const [creditOverrideMsg, setCreditOverrideMsg] = useState(null);
+
+  const doConfirmOrder = async (skipStockCheck = false, overrideCredit = false) => {
+    if (!data?.order?.id) return;
+    if (!skipStockCheck) {
+      setConfirming(true);
+      try {
+        const { data: sc } = await api.get(`/api/orders/${data.order.id}/stock-check`);
+        setStockCheckData(sc);
+        setStockCheckModal(true);
+      } catch {
+        setStockCheckModal(false);
+        await doConfirmOrder(true);
+        return;
+      } finally {
+        setConfirming(false);
+      }
+      return;
+    }
+    setConfirming(true);
+    try {
+      await api.put(
+        `/api/orders/${data.order.id}/confirm`,
+        null,
+        { params: overrideCredit ? { override_credit: true } : {} },
+      );
+      toast.success("Order confirmed. You'll receive an email shortly with your 50% deposit invoice.");
+      setStockCheckModal(false);
+      setStockCheckData(null);
+      setCreditOverrideMsg(null);
+      load();
+    } catch (e) {
+      if (e.response?.status === 402) {
+        setStockCheckModal(false);
+        if (isReseller) {
+          setCreditOverrideMsg(e.response.data?.detail || "This order is over the customer's credit limit.");
+        } else {
+          toast.error(e.response.data?.detail || "This order is over your credit limit. Please contact Bassani to proceed.", { duration: 10000 });
+        }
+      } else {
+        toast.error(e.response?.data?.detail || "Failed to confirm order");
+      }
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -579,6 +647,15 @@ export default function OrderPassport() {
               they have no access to the ticket pipeline UI those live on. Kept as
               icon+label at every width since they're the primary self-service
               actions for this role. */}
+          {/* Confirm Order (2026-08-25) — a draft order (e.g. placed via Save
+              as Draft) previously had no confirm path on Passport at all; it
+              only existed inside the OrderView.js modal the order list no
+              longer opens for this role. */}
+          {(isReseller || isCustomer) && order.state === "draft" && (
+            <BtnPrimary onClick={() => doConfirmOrder(false)} loading={confirming}>
+              <CheckCircle2 size={13} />Confirm Order
+            </BtnPrimary>
+          )}
           {(isReseller || isCustomer) && (order.lines || []).length > 0 && (
             <BtnSecondary onClick={doReorder}>
               <RotateCcw size={13} />Reorder
@@ -600,9 +677,18 @@ export default function OrderPassport() {
             onChange={e => handlePopUpload(e.target.files?.[0])}
           />
           {/* Secondary actions — icon-only below sm so a reseller/customer's
-              4-button toolbar never wraps or overflows on a phone. */}
-          <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Odoo quote` })}>
-            <FileSearch size={13} /><span className="hidden sm:inline">View Quote (Odoo)</span>
+              toolbar never wraps or overflows on a phone. */}
+          {/* Only once the order has actually been confirmed (order.state
+              "sale"/"done") — that's the exact moment send_deposit_due_proforma()
+              generates and emails this report (8.47); showing it for a still-
+              draft order would offer a document that was never actually sent. */}
+          {(isReseller || isCustomer) && ["sale", "done"].includes(order.state) && (
+            <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}>
+              <FileText size={13} /><span className="hidden sm:inline">View Pro-Forma Invoice</span>
+            </BtnSecondary>
+          )}
+          <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}>
+            <FileSearch size={13} /><span className="hidden sm:inline">{(isReseller || isCustomer) ? "View Quotation" : "View Quote (Odoo)"}</span>
           </BtnSecondary>
           <BtnSecondary onClick={load}>
             <RefreshCw size={13} /><span className="hidden sm:inline">Refresh</span>
@@ -1186,6 +1272,101 @@ export default function OrderPassport() {
               </div>
             </>
           )}
+        </Modal>
+      )}
+      {stockCheckModal && stockCheckData && (
+        <Modal title="Confirm Order" onClose={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+          {stockCheckData.is_partial ? (
+            <>
+              {stockCheckData.invoice_policy_block && (
+                <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
+                  <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-red-800">Partial fulfilment blocked</p>
+                    <p className="text-xs text-red-700 mt-1">
+                      This order cannot be partially fulfilled at this time. Please contact Bassani directly to resolve the issue before confirming.
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
+                <AlertTriangle size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Some items are not in stock</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Bassani will ship available items now and fulfil the rest as soon as stock arrives. You will receive a separate confirmation when the backorder is ready.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3 mb-4">
+                {stockCheckData.lines.filter(l => !l.will_backorder).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Ships now</p>
+                    <div className="space-y-1">
+                      {stockCheckData.lines.filter(l => !l.will_backorder).map((l, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs bg-green-50 rounded-lg px-3 py-1.5">
+                          <span className="text-gray-700">{l.name}</span>
+                          <span className="font-medium text-green-700">{l.qty_available} units</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {stockCheckData.lines.filter(l => l.will_backorder).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Backordered</p>
+                    <div className="space-y-1">
+                      {stockCheckData.lines.filter(l => l.will_backorder).map((l, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs bg-amber-50 rounded-lg px-3 py-1.5">
+                          <span className="text-gray-700">{l.name}</span>
+                          <span className="font-medium text-amber-700">{l.qty_available} of {l.qty_ordered} in stock</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                  Cancel
+                </BtnSecondary>
+                {!stockCheckData.invoice_policy_block && (
+                  <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
+                    Confirm — Create Backorder
+                  </BtnPrimary>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl p-3 mb-4">
+                <CheckCircle2 size={15} className="text-green-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-green-800">All items are in stock. This order will be fulfilled in full.</p>
+              </div>
+              <div className="flex gap-2">
+                <BtnSecondary className="flex-1 justify-center" onClick={() => { setStockCheckModal(false); setStockCheckData(null); }}>
+                  Cancel
+                </BtnSecondary>
+                <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => doConfirmOrder(true)}>
+                  Confirm Order
+                </BtnPrimary>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+      {creditOverrideMsg && (
+        <Modal title="Over Credit Limit" onClose={() => setCreditOverrideMsg(null)}>
+          <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
+            <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-red-800">{creditOverrideMsg}</p>
+          </div>
+          <div className="flex gap-2">
+            <BtnSecondary className="flex-1 justify-center" onClick={() => setCreditOverrideMsg(null)}>Cancel</BtnSecondary>
+            <BtnPrimary className="flex-1 justify-center" loading={confirming} onClick={() => { setCreditOverrideMsg(null); doConfirmOrder(true, true); }}>
+              Confirm Anyway
+            </BtnPrimary>
+          </div>
         </Modal>
       )}
       {pdfView && (

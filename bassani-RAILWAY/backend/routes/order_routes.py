@@ -891,6 +891,48 @@ async def get_order_quote_pdf(order_id: str, current_user: dict = Depends(get_cu
     )
 
 
+@router.get("/{order_id}/proforma-pdf")
+async def get_order_proforma_pdf(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Odoo's native Pro-Forma Invoice report (sale.report_saleorder_pro_forma)
+    for in-portal viewing — the same report send_deposit_due_proforma() emails
+    automatically at confirm time (8.47). Lets a reseller/customer re-view the
+    deposit-due document without digging through their inbox. Unlike quote-pdf,
+    this carries a reseller/customer ownership check (Phase 7.13/25) since it's
+    reachable from the customer-facing Order Passport, not just staff screens."""
+    odoo = get_odoo_client()
+    try:
+        resolved_id = _order_int_id(odoo, order_id)
+        rows = odoo.read("sale.order", [resolved_id], fields=["name", "partner_id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if current_user.get("role") == "reseller":
+        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
+        reseller_id = reseller["id"] if reseller else None
+        partner = rows[0].get("partner_id")
+        if not partner or not await is_partner_owned_by(reseller_id, partner[0]):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user.get("role") == "customer":
+        partner = rows[0].get("partner_id")
+        if not partner or partner[0] != current_user.get("customer_company_partner_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [resolved_id])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch pro-forma invoice from Odoo: {str(e)}")
+    filename = f"{rows[0]['name'].replace('/', '-')}-proforma.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 @router.get("/{order_id}/deliveries/{picking_id}/pdf")
 async def get_delivery_pdf(order_id: str, picking_id: int, current_user: dict = Depends(get_current_user)):
     """Odoo's own rendered Delivery Slip PDF for one picking on this order —
