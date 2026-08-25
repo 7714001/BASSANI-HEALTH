@@ -281,6 +281,50 @@ function TimelineCard({ order, ticket, packing, invoices, manufacturing_orders }
   );
 }
 
+// ── Horizontal timeline (2026-08-25) — reseller/customer variant of
+// TimelineCard above, same buildTimelineSteps() data so the two never
+// disagree about what stage an order is at. A vertical, date-and-note-heavy
+// timeline suits staff working the pipeline; a customer just wants an
+// at-a-glance lifecycle overview with future steps visibly greyed out, the
+// familiar horizontal-stepper pattern (courier tracking, e-commerce order
+// status). Only the current step's "sub" note is shown, to keep the strip
+// compact rather than repeating detail every step already carries on its
+// own sidebar card (Packing, Invoice, etc).
+function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturing_orders }) {
+  const steps = buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders });
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-1.5">
+        <Clock size={12} />Order Timeline
+      </p>
+      <div className="flex items-start overflow-x-auto pb-1 -mx-1 px-1">
+        {steps.map((s, i) => {
+          const Icon = s.icon;
+          const isLast = i === steps.length - 1;
+          const connectorDone = s.state === "done";
+          return (
+            <div key={s.key} className="flex items-start">
+              <div className="flex flex-col items-center text-center w-[84px] shrink-0">
+                <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${NODE_STYLE[s.state]}`}>
+                  {s.state === "done" ? <Check size={14} /> : s.state === "skipped" ? <X size={14} /> : <Icon size={14} />}
+                </div>
+                <p className={`text-[11px] font-semibold mt-1.5 leading-tight ${LABEL_STYLE[s.state]}`}>{s.label}</p>
+                {s.state === "current" && s.sub && (
+                  <p className="text-[10px] text-bassani-600 mt-0.5 leading-tight">{s.sub}</p>
+                )}
+                {s.at && <p className="text-[10px] text-gray-400 mt-0.5">{fmtDate(s.at)}</p>}
+              </div>
+              {!isLast && (
+                <div className={`h-0.5 flex-1 min-w-[20px] mt-4 ${connectorDone ? "bg-bassani-600" : "bg-gray-200"}`} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── QA / RP approval row ──────────────────────────────────────────────────────
 function ApprovalRow({ label, by, at }) {
   return (
@@ -641,31 +685,21 @@ export default function OrderPassport() {
           <ChevronLeft size={14} />Back
         </button>
         <div className="flex items-center gap-2">
-          {/* Reorder / Make Recurring (2026-08-21) — reseller/customer self-service,
-              reusing exactly the same cart/endpoint staff and resellers already use
-              elsewhere, just reachable from the customer's own Order Passport since
-              they have no access to the ticket pipeline UI those live on. Kept as
-              icon+label at every width since they're the primary self-service
-              actions for this role. */}
           {/* Confirm Order (2026-08-25) — a draft order (e.g. placed via Save
               as Draft) previously had no confirm path on Passport at all; it
               only existed inside the OrderView.js modal the order list no
-              longer opens for this role. */}
+              longer opens for this role. Stays in the toolbar (not the new
+              Actions card below) since it's urgent/primary for a draft order,
+              not a routine management action like Reorder/Make Recurring. */}
           {(isReseller || isCustomer) && order.state === "draft" && (
             <BtnPrimary onClick={() => doConfirmOrder(false)} loading={confirming}>
               <CheckCircle2 size={13} />Confirm Order
             </BtnPrimary>
           )}
-          {(isReseller || isCustomer) && (order.lines || []).length > 0 && (
-            <BtnSecondary onClick={doReorder}>
-              <RotateCcw size={13} />Reorder
-            </BtnSecondary>
-          )}
-          {(isReseller || isCustomer) && ticket?.ticket_id && !ticket.recurring_order_id && (
-            <BtnSecondary onClick={() => setRecurringModalOpen(true)}>
-              <Repeat size={13} />Make Recurring
-            </BtnSecondary>
-          )}
+          {/* Reorder / Make Recurring moved into the sidebar Actions card
+              (2026-08-25, in place of the internal-only Sales Ticket card for
+              this role) — kept toolbar down to just Confirm Order + document
+              viewers, which is where a customer actually looks first. */}
           {/* Proof of Payment upload (2026-08-21) — moved out of the toolbar
               into its own card below (with room to explain it's optional),
               rather than a bare button here with no context. */}
@@ -676,17 +710,10 @@ export default function OrderPassport() {
             className="hidden"
             onChange={e => handlePopUpload(e.target.files?.[0])}
           />
-          {/* Secondary actions — icon-only below sm so a reseller/customer's
-              toolbar never wraps or overflows on a phone. */}
-          {/* Only once the order has actually been confirmed (order.state
-              "sale"/"done") — that's the exact moment send_deposit_due_proforma()
-              generates and emails this report (8.47); showing it for a still-
-              draft order would offer a document that was never actually sent. */}
-          {(isReseller || isCustomer) && ["sale", "done"].includes(order.state) && (
-            <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}>
-              <FileText size={13} /><span className="hidden sm:inline">View Pro-Forma Invoice</span>
-            </BtnSecondary>
-          )}
+          {/* Pro-Forma Invoice viewer moved into the Invoice(s) sidebar card
+              (2026-08-25) — that's where a customer actually looks for order
+              billing documents, and it fills the "no invoice yet" gap there
+              with something real to show instead of a bare empty state. */}
           <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}>
             <FileSearch size={13} /><span className="hidden sm:inline">{(isReseller || isCustomer) ? "View Quotation" : "View Quote (Odoo)"}</span>
           </BtnSecondary>
@@ -752,7 +779,11 @@ export default function OrderPassport() {
 
             {/* Main column */}
             <div className="space-y-4 min-w-0">
-              <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
+              {(isReseller || isCustomer) ? (
+                <HorizontalTimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
+              ) : (
+                <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
+              )}
 
               {/* ── Order lines ──────────────────────────────────────────────── */}
               {order.lines?.length > 0 && (
@@ -912,84 +943,116 @@ export default function OrderPassport() {
             {/* Sidebar — status/action cards, sticky on desktop */}
             <div className="space-y-4 lg:sticky lg:top-4">
 
-              {/* Sales Ticket card */}
-              <SideCard
-                icon={FileText} title="Sales Ticket"
-                action={ticket && (
-                  <button
-                    onClick={() => navigate("/tickets/sales", { state: { openTicketId: ticket.ticket_id } })}
-                    className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium">
-                    Open <ExternalLink size={11} />
-                  </button>
-                )}
-              >
-                {ticket ? (
-                  <div className="space-y-1.5 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Ref</span>
-                      <span className="font-mono font-medium text-gray-700">{ticket.ref}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Stage</span>
-                      <StagePill color={ticketStageColor(ticket)}>{ticketStageLabel(ticket)}</StagePill>
-                    </div>
-                    {/* Order type — reseller vs internal */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Type</span>
-                      {ticket.source === "reseller" ? (
-                        <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
-                          Reseller Order
-                        </span>
-                      ) : (
-                        <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
-                          Internal Order
-                        </span>
+              {/* Actions card (2026-08-25) — reseller/customer only, replaces
+                  the internal-only Sales Ticket card at this position in the
+                  sidebar. Reorder/Make Recurring moved here from the toolbar;
+                  Confirm Order stays in the toolbar since it's urgent/primary
+                  for a draft order rather than a routine management action. */}
+              {(isReseller || isCustomer) && (
+                <SideCard icon={Repeat} title="Actions">
+                  {(order.lines || []).length > 0 || (ticket?.ticket_id && !ticket.recurring_order_id) ? (
+                    <div className="space-y-2">
+                      {(order.lines || []).length > 0 && (
+                        <BtnSecondary onClick={doReorder} className="w-full justify-center">
+                          <RotateCcw size={13} />Reorder
+                        </BtnSecondary>
+                      )}
+                      {ticket?.ticket_id && !ticket.recurring_order_id && (
+                        <BtnSecondary onClick={() => setRecurringModalOpen(true)} className="w-full justify-center">
+                          <Repeat size={13} />Make Recurring
+                        </BtnSecondary>
                       )}
                     </div>
-                    {ticket.reseller_name && (
+                  ) : (
+                    <p className="text-xs text-gray-400 py-2">No actions available for this order yet.</p>
+                  )}
+                </SideCard>
+              )}
+
+              {/* Sales Ticket card — internal staff only. Reseller/customer
+                  never had a use for Odoo/pipeline-internal fields here
+                  (assigned staff, internal notes, "who placed this"), and
+                  the Actions card above gives them the self-service actions
+                  that actually matter to them. */}
+              {!isReseller && !isCustomer && (
+                <SideCard
+                  icon={FileText} title="Sales Ticket"
+                  action={ticket && (
+                    <button
+                      onClick={() => navigate("/tickets/sales", { state: { openTicketId: ticket.ticket_id } })}
+                      className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium">
+                      Open <ExternalLink size={11} />
+                    </button>
+                  )}
+                >
+                  {ticket ? (
+                    <div className="space-y-1.5 text-sm">
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Reseller</span>
-                        <span className="text-gray-700 font-medium">{ticket.reseller_name}</span>
+                        <span className="text-gray-500">Ref</span>
+                        <span className="font-mono font-medium text-gray-700">{ticket.ref}</span>
                       </div>
-                    )}
-                    {ticket.customer_name && (
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Customer</span>
-                        <span className="text-gray-700">{ticket.customer_name}</span>
+                        <span className="text-gray-500">Stage</span>
+                        <StagePill color={ticketStageColor(ticket)}>{ticketStageLabel(ticket)}</StagePill>
                       </div>
-                    )}
-                    {ticket.assigned_to && (
+                      {/* Order type — reseller vs internal */}
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Assigned to</span>
-                        <span className="text-gray-700">{ticket.assigned_to}</span>
+                        <span className="text-gray-500">Type</span>
+                        {ticket.source === "reseller" ? (
+                          <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
+                            Reseller Order
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
+                            Internal Order
+                          </span>
+                        )}
                       </div>
-                    )}
-                    {ticket.notes && (
-                      <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-2 py-1.5 mt-1 italic">
-                        {ticket.notes}
-                      </p>
-                    )}
-                    {ticket.incomplete_reason && (
-                      <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-2 py-1.5 mt-1">
-                        {ticket.incomplete_reason}
-                      </p>
-                    )}
-                    <div className="flex items-center justify-between pt-1 text-[11px] text-gray-400">
-                      {ticket.created_at && <span>Created {fmtDate(ticket.created_at)}</span>}
-                      {ticket.updated_at && <span>Updated {fmtDate(ticket.updated_at)}</span>}
+                      {ticket.reseller_name && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Reseller</span>
+                          <span className="text-gray-700 font-medium">{ticket.reseller_name}</span>
+                        </div>
+                      )}
+                      {ticket.customer_name && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Customer</span>
+                          <span className="text-gray-700">{ticket.customer_name}</span>
+                        </div>
+                      )}
+                      {ticket.assigned_to && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Assigned to</span>
+                          <span className="text-gray-700">{ticket.assigned_to}</span>
+                        </div>
+                      )}
+                      {ticket.notes && (
+                        <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-2 py-1.5 mt-1 italic">
+                          {ticket.notes}
+                        </p>
+                      )}
+                      {ticket.incomplete_reason && (
+                        <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-2 py-1.5 mt-1">
+                          {ticket.incomplete_reason}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between pt-1 text-[11px] text-gray-400">
+                        {ticket.created_at && <span>Created {fmtDate(ticket.created_at)}</span>}
+                        {ticket.updated_at && <span>Updated {fmtDate(ticket.updated_at)}</span>}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-4 space-y-3">
-                    <p className="text-xs text-gray-400">No portal ticket for this order.</p>
-                    {can("tickets.sales") && order.state === "sale" && (
-                      <BtnPrimary onClick={createTicket} loading={creatingTicket} className="w-full justify-center">
-                        Create Sales Ticket
-                      </BtnPrimary>
-                    )}
-                  </div>
-                )}
-              </SideCard>
+                  ) : (
+                    <div className="text-center py-4 space-y-3">
+                      <p className="text-xs text-gray-400">No portal ticket for this order.</p>
+                      {can("tickets.sales") && order.state === "sale" && (
+                        <BtnPrimary onClick={createTicket} loading={creatingTicket} className="w-full justify-center">
+                          Create Sales Ticket
+                        </BtnPrimary>
+                      )}
+                    </div>
+                  )}
+                </SideCard>
+              )}
 
               {/* Packing card */}
               <SideCard
@@ -1143,12 +1206,40 @@ export default function OrderPassport() {
                         )}
                       </div>
                     ))}
+                    {/* Pro-Forma Invoice (2026-08-25) — kept available here even
+                        once a real invoice exists, as the historical record of
+                        the deposit-due amount that was actually emailed at
+                        confirm time; a real invoice covers the final amount,
+                        not necessarily the same figure. */}
+                    {(isReseller || isCustomer) && ["sale", "done"].includes(order.state) && (
+                      <button
+                        onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}
+                        className="flex items-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800 pt-1"
+                      >
+                        <FileText size={12} />View Pro-Forma Invoice
+                      </button>
+                    )}
                   </div>
                 </SideCard>
               ) : (
-                order.state === "sale" && (
+                ["sale", "done"].includes(order.state) && (
                   <SideCard icon={FileText} title="Invoice">
-                    <p className="text-xs text-gray-400">No invoice raised yet.</p>
+                    {(isReseller || isCustomer) ? (
+                      <div className="space-y-3">
+                        <p className="text-xs text-gray-400">
+                          No final invoice yet — Bassani raises this once your order has been packed and approved.
+                          In the meantime, here's the pro-forma invoice showing the deposit amount due.
+                        </p>
+                        <BtnSecondary
+                          onClick={() => setPdfView({ url: `/api/orders/${orderId}/proforma-pdf`, title: `${order.name} — Pro-Forma Invoice` })}
+                          className="w-full justify-center"
+                        >
+                          <FileText size={13} />View Pro-Forma Invoice
+                        </BtnSecondary>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">No invoice raised yet.</p>
+                    )}
                   </SideCard>
                 )
               )}

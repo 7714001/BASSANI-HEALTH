@@ -2198,7 +2198,7 @@ A customer's portal is deliberately simple — four items in the sidebar:
 
 - **Dashboard** — a summary of their own recent orders and account status. They never see business-wide figures, other customers' data, or anything reseller- or staff-facing.
 - **Products** — the same browsable catalogue a Sales Agent's customers see: search, filter by category, add to cart.
-- **My Orders** — every order placed on the account, whether they placed it themselves, a colleague at the same company placed it, or Bassani staff placed it on their behalf. Clicking an order opens the same Order Passport view staff use to track its progress.
+- **My Orders** — every order placed on the account, whether they placed it themselves, a colleague at the same company placed it, or Bassani staff placed it on their behalf. Clicking an order opens its Order Passport page — a simplified version of the same page staff use to track progress, showing a horizontal step-by-step overview of the order's lifecycle (future steps shown greyed out until reached) instead of the more detailed internal view, with an **Actions** section for Reorder and Make Recurring in place of anything Bassani-internal.
 - **Invoices** — every invoice for the account, with the same PDF download available elsewhere in the portal.
 
 If more than one person at a company has portal access, they all see the exact same orders and invoices — a company account is shared, not split per person, **including orders Bassani staff place on the customer's behalf** — a customer's My Orders list is never limited to only what they personally placed. Placing an order never asks "who is this for" the way a Sales Agent's cart does — a customer login only ever orders for its own account.
