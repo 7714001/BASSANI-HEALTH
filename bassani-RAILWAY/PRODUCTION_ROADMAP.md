@@ -1012,6 +1012,16 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Admin Products table (`Views.js`) gets a new leading thumbnail column; clicking it (`products.manage` only) opens `ProductImageModal`
 - [x] `ResellerCatalog.js`, `ProductPickerDrawer.js` (quote builder Browse Products), and `ProductLineRow.js` (per-row search, quote builder + reseller cart) all show the thumbnail read-only alongside the existing product name
 
+#### 7.16 — Bassani Portal Sales Agent Sync — Added 2026-08-26
+
+> Tristan (Bassani) added a custom field in Odoo Studio, `res.partner.x_studio_bassani_portal_sales_agent`, purely for Bassani's own internal accounting/reporting: who at Bassani (or which reseller) is responsible for a given customer's business. He separately configured `account.move` (invoices) to pull this via a Studio *related* field — confirmed live via a read-only `fields_get()` schema check that it's `related: partner_id.x_studio_bassani_portal_sales_agent`, `store: False`, so it automatically mirrors the contact's value on every invoice with zero portal-side invoice writes needed. The portal's only job is keeping the contact-level field correct.
+
+- [x] New `backend/portal_sales_agent.py` — `sync_portal_sales_agent(ticket)`, best-effort/non-fatal (logged, never blocks the triggering ticket action)
+- [x] Reseller-sourced ticket → the customer's *owning* reseller (`ownership.py::get_owning_reseller_id()`, not the placement-only `ticket.reseller_id`), falling back to the ticket's own stored `reseller_name` if ownership lookup is empty
+- [x] Direct/internal or customer-self-service ticket → whoever the ticket is currently assigned to; unassigned → no write at all (never blanks an existing value, never writes a placeholder)
+- [x] Last write wins — a new ticket's own determination overwrites whatever was already on the contact; deliberately not a per-invoice history (confirmed accepted with the product owner — the underlying Odoo field can't be one either, since it's a live, unstored related field)
+- [x] Wired into five trigger points: `ticket_routes.py`'s `create_ticket`, `create_ticket_from_order`, `reassign_ticket`, `update_ticket_stage`'s "Assign to me" path, and `order_routes.py`'s `create_order` (reseller orders + staff-placed orders; a customer's own self-placed order correctly leaves it untouched)
+
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email
 - [x] `GET /api/suppliers/{id}/profile` returns partner details, vendor bills, purchase orders, goods receipts, and products supplied
@@ -1031,6 +1041,8 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Uploading an image on a product writes it to Odoo's `product.template.image_1920` and it appears in Odoo's own product form
 - [x] A product's thumbnail shows up on the admin Products table, reseller catalogue, quote builder Browse Products drawer, and per-row product search without a page reload after upload
 - [x] Removing a product's image reverts all four surfaces to the placeholder
+- [x] Creating, reassigning, or onboarding a Sales ticket writes the correct name into `res.partner.x_studio_bassani_portal_sales_agent` for that customer, and every invoice for that customer shows it automatically via Odoo's own related-field mirror — no portal-side invoice write required
+- [x] An unassigned customer ticket never writes a blank/placeholder value, and never blanks a name already recorded
 
 ---
 

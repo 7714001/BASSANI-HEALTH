@@ -13,6 +13,7 @@ from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
 from credit import credit_status
 from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
+from portal_sales_agent import sync_portal_sales_agent
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
@@ -1836,7 +1837,7 @@ async def create_order(
             if _is_reseller_order
             else f"Portal order — {_role} ({current_user.get('username', '')})"
         )
-        _ticket_ins = await col("tickets").insert_one({
+        _ticket_doc = {
             "type": "sales",
             "source": "reseller" if _is_reseller_order else "portal",
             "customer_id": effective_partner_id,
@@ -1863,8 +1864,15 @@ async def create_order(
             }],
             "created_at": _now_t,
             "updated_at": _now_t,
-        })
+        }
+        _ticket_ins = await col("tickets").insert_one(_ticket_doc)
         _created_ticket_id = str(_ticket_ins.inserted_id)
+        # 2026-08-26 — see portal_sales_agent.py; covers reseller orders (the
+        # owning reseller's name) and any order a staff member placed
+        # directly on a customer's behalf (that staff member's name). A
+        # customer's own self-placed order leaves _assigned unset, so this
+        # is a no-op for that case per "unassigned → no write."
+        await sync_portal_sales_agent(_ticket_doc)
     except Exception as _te:
         print(f"⚠️  Auto-ticket creation failed for order {odoo_order_id}: {_te}")
 

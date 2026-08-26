@@ -34,6 +34,7 @@ from services.notification_service import notify_ticket_assigned
 from services.email_service import send_ticket_assigned, send_pop_uploaded_notification
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
+from portal_sales_agent import sync_portal_sales_agent
 
 logger = logging.getLogger(__name__)
 
@@ -458,6 +459,7 @@ async def create_ticket(
     result = await col("tickets").insert_one(doc)
     await audit_log("ticket.create", "ticket", str(result.inserted_id), entity_label=_cust["name"],
                     user=current_user, after={"status": "open", "customer_id": body.customer_id, "is_sample": is_sample})
+    await sync_portal_sales_agent(doc)  # 2026-08-26 — see portal_sales_agent.py
     await notify_ticket_assigned("sales", _cust["name"], doc["assigned_to"])
     await broadcast_monitor_refresh()
     return {"success": True, "ticket_id": str(result.inserted_id)}
@@ -910,6 +912,13 @@ async def update_ticket_stage(
     )
     await broadcast_monitor_refresh()
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    # 2026-08-26 — this endpoint also handles "Assign to me" (body.assigned_to
+    # only, no status change) — another trigger point for portal_sales_agent.py.
+    # Only fires when an assignee was actually set (body.assigned_to truthy),
+    # matching "unassigned → no write" — clearing an assignment never touches
+    # the Odoo field.
+    if body.assigned_to:
+        await sync_portal_sales_agent({**ticket, **updates})
     if _au and _au.get("email"):
         background_tasks.add_task(
             send_ticket_assigned,
@@ -2425,6 +2434,7 @@ async def create_ticket_from_order(
         user=current_user,
         after={"status": initial_status, "order_id": body.order_id, "order_name": order["name"]},
     )
+    await sync_portal_sales_agent(doc)  # 2026-08-26 — see portal_sales_agent.py
     await notify_ticket_assigned("sales", customer_name, current_user["id"])
     return {"success": True, "ticket_id": str(result.inserted_id), "status": initial_status}
 
@@ -2614,6 +2624,10 @@ async def reassign_ticket(
     )
 
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    # 2026-08-26 — reassignment is one of the trigger points for
+    # portal_sales_agent.py; pass the ticket with its just-written new
+    # assignee, not the stale pre-reassign copy fetched above.
+    await sync_portal_sales_agent({**ticket, "assigned_to": body.assigned_to, "assigned_to_name": new_name})
 
     # Push notification to new assignee
     background_tasks.add_task(
