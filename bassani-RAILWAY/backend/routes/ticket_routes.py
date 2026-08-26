@@ -1674,7 +1674,22 @@ async def upload_proof_of_payment(
 
     from routes.settings_routes import get_email_routing
     routing = await get_email_routing()
-    notify = routing.get("pop_uploaded_to") or []
+    notify = list(routing.get("pop_uploaded_to") or [])
+
+    # Also notify the sales clerk this ticket is assigned to (2026-08-25) —
+    # additive to the configured routing list, not a replacement for it: the
+    # configured addresses must always be attempted regardless of whether
+    # the ticket happens to be assigned, and an unassigned ticket just means
+    # there's no extra address to add, not that the send should be skipped.
+    assignee_id = ticket.get("assigned_to")
+    if assignee_id:
+        try:
+            assignee = await col("users").find_one({"_id": ObjectId(assignee_id)}, {"email": 1})
+        except Exception:
+            assignee = None
+        if assignee and assignee.get("email") and assignee["email"] not in notify:
+            notify.append(assignee["email"])
+
     if notify:
         ticket_ref = ticket.get("orders_ticket_ref") or str(oid)
         background_tasks.add_task(

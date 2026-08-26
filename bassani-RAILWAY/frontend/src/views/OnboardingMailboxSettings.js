@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
+import { Loader2, Save, Trash2, Wifi, WifiOff, AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, Modal, BtnPrimary, BtnSecondary, BtnDanger, LoadingState } from "../components/UI";
@@ -37,16 +37,32 @@ function Field({ label, hint, children }) {
   );
 }
 
+// Show/hide toggle for type="password" (2026-08-25) — same treatment as
+// the shared Input component in UI.js, applied here since this file keeps
+// its own local TextInput rather than importing the shared one.
 function TextInput({ value, onChange, placeholder, type = "text", ...rest }) {
+  const [revealed, setRevealed] = useState(false);
+  const baseClassName = "w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-bassani-400 focus:ring-2 focus:ring-bassani-100 placeholder-gray-400 bg-white transition-all";
+  if (type !== "password") {
+    return (
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={baseClassName} {...rest} />
+    );
+  }
   return (
-    <input
-      type={type}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-bassani-400 focus:ring-2 focus:ring-bassani-100 placeholder-gray-400 bg-white transition-all"
-      {...rest}
-    />
+    <div className="relative">
+      <input type={revealed ? "text" : "password"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={`${baseClassName} pr-9`} {...rest} />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setRevealed(r => !r)}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        aria-label={revealed ? "Hide password" : "Show password"}
+      >
+        {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
   );
 }
 

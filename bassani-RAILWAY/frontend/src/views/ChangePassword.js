@@ -2,7 +2,34 @@ import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, Eye, EyeOff } from "lucide-react";
+
+// Show/hide toggle (2026-08-25) — a customer setting a new password had no
+// way to confirm what they'd actually typed before submitting.
+function PasswordField({ value, onChange, placeholder, autoComplete }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={revealed ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className="w-full border border-gray-200 rounded-xl px-4 py-3 pr-10 text-sm focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 bg-white transition-all"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setRevealed(r => !r)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        aria-label={revealed ? "Hide password" : "Show password"}
+      >
+        {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
 
 export default function ChangePassword() {
   const { user, changePassword } = useAuth();
@@ -70,35 +97,29 @@ export default function ChangePassword() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">Temporary Password</label>
-              <input
-                type="password"
+              <PasswordField
                 value={form.current}
                 onChange={(e) => setForm({ ...form, current: e.target.value })}
                 placeholder="Enter your temporary password"
                 autoComplete="current-password"
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 bg-white transition-all"
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">New Password</label>
-              <input
-                type="password"
+              <PasswordField
                 value={form.next}
                 onChange={(e) => setForm({ ...form, next: e.target.value })}
                 placeholder="Min. 8 characters"
                 autoComplete="new-password"
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 bg-white transition-all"
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">Confirm New Password</label>
-              <input
-                type="password"
+              <PasswordField
                 value={form.confirm}
                 onChange={(e) => setForm({ ...form, confirm: e.target.value })}
                 placeholder="Repeat new password"
                 autoComplete="new-password"
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 bg-white transition-all"
               />
             </div>
             <button

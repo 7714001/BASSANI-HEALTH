@@ -1,8 +1,36 @@
 import { useState } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
-import { CheckCircle, AlertCircle } from "lucide-react";
+import { CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
+
+// Show/hide toggle (2026-08-25) — no way to confirm what was actually typed
+// before submitting a new password.
+function PasswordField({ value, onChange, placeholder, autoComplete, className, required }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={revealed ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        required={required}
+        className={`${className} pr-10`}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setRevealed(r => !r)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        aria-label={revealed ? "Hide password" : "Show password"}
+      >
+        {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
 
 const LEFT_PANEL = (
   <div className="hidden md:flex md:w-72 bg-slate-900 flex-col justify-between p-8 flex-shrink-0">
@@ -114,8 +142,7 @@ export default function ResetPassword() {
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">
                 New password
               </label>
-              <input
-                type="password"
+              <PasswordField
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
@@ -128,8 +155,7 @@ export default function ResetPassword() {
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">
                 Confirm new password
               </label>
-              <input
-                type="password"
+              <PasswordField
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder="Re-enter new password"

@@ -14,6 +14,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
   Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle, Building2, Factory,
+  Eye, EyeOff,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -974,10 +975,30 @@ export function FormGroup({ label, children, required }) {
   );
 }
 
-export function Input({ ...props }) {
+// Show/hide toggle for any type="password" Input (2026-08-25) — a customer
+// setting a new password had no way to confirm what they'd actually typed.
+// Every other type renders exactly as before, unchanged; only "password"
+// gets the wrapper + toggle button, so this can't regress any of the many
+// other Input usages across the app.
+export function Input({ type, className = "", ...props }) {
+  const [revealed, setRevealed] = useState(false);
+  const baseClassName = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 bg-gray-50 focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 transition-all placeholder-gray-400";
+  if (type !== "password") {
+    return <input {...props} type={type} className={`${baseClassName} ${className}`} />;
+  }
   return (
-    <input {...props}
-      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 bg-gray-50 focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 transition-all placeholder-gray-400" />
+    <div className="relative">
+      <input {...props} type={revealed ? "text" : "password"} className={`${baseClassName} pr-9 ${className}`} />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setRevealed(r => !r)}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        aria-label={revealed ? "Hide password" : "Show password"}
+      >
+        {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
   );
 }
 

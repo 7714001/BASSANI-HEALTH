@@ -130,7 +130,6 @@ function StagePill({ color, children }) {
 // fields the API already returns — never invents a timestamp it doesn't have.
 function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders }) {
   const steps = [];
-  const inv = invoices?.[0];
 
   steps.push({ key: "placed", label: "Order Placed", icon: FileText, state: "done", at: order.date_order });
 
@@ -221,11 +220,27 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
     at: packing?.completed_at,
   });
 
-  if (inv) {
-    steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: inv.invoice_date, sub: inv.name });
+  // The real "final" delivery invoice (the one carrying the order's line
+  // items and the remaining balance) is only ever created in Odoo at
+  // mark_complete, after QA+RP sign off — see the "Invoice timing" business
+  // rule. Before that, `invoices` only ever contains the down-payment
+  // deposit invoice (register_deposit), which is created AND paid
+  // immediately the moment a deposit is registered. Using invoices[0]
+  // unconditionally here (fixed 2026-08-26) meant Invoice Raised/Balance
+  // Payment/Collected all lit up the instant a deposit was registered,
+  // regardless of packing/QA/RP state, because the deposit invoice's own
+  // payment_state is "paid" from the start. Gate on packingDone (the same
+  // signal "Ready for Collection" above already uses) so these three steps
+  // can never go "done" before the final invoice actually exists; once it
+  // does, invoices[] holds both, and the final one is created after the
+  // deposit one, so it's the last entry.
+  const finalInv = packingDone ? invoices?.[invoices.length - 1] : null;
+
+  if (finalInv) {
+    steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name });
     steps.push({
-      key: "paid", label: inv.payment_state === "paid" ? "Balance Payment Received" : "Balance Payment Pending",
-      icon: Check, state: inv.payment_state === "paid" ? "done" : "current",
+      key: "paid", label: finalInv.payment_state === "paid" ? "Balance Payment Received" : "Balance Payment Pending",
+      icon: Check, state: finalInv.payment_state === "paid" ? "done" : "current",
     });
   } else {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "pending" });
@@ -234,7 +249,7 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
 
   steps.push({
     key: "collected", label: "Collected", icon: CheckCircle2,
-    state: packing?.collected_at ? "done" : (inv?.payment_state === "paid" || packing?.status === "ready" ? "current" : "pending"),
+    state: packing?.collected_at ? "done" : (finalInv?.payment_state === "paid" || packing?.status === "ready" ? "current" : "pending"),
     at: packing?.collected_at, by: packing?.collected_by,
   });
 

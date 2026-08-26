@@ -5407,6 +5407,11 @@ Rescoped and built 2026-08-21 once the real requirement was confirmed: **not** a
 **Same-day, fourteenth round — real bug found asking "does POP show for a draft order?":**
 - [x] It did, incorrectly. `popCard`'s gate never checked `order.state`, only that a ticket existed and wasn't closed — but a ticket exists the moment any order is created, draft included, so the card offered "upload proof of payment" before the order was even confirmed. New `canUploadPop` adds the same `["sale","done"]` confirmed-state requirement the Pro-Forma Invoice button already has. For a draft order, POP no longer renders at all and Actions is correctly the first sidebar card; POP only becomes first once the order is actually confirmed
 
+**Same-day, fifteenth round — POP upload notification reaches the assigned clerk too:**
+- [x] Confirmed the `pop_uploaded_to` email routing key already existed (8.56) and already sent a real email to its admin-configured recipients (Settings > Email Notifications) — asked for thinking it might not exist; the actual gap was that nothing also notified whoever the ticket was assigned to
+- [x] `upload_proof_of_payment` (`ticket_routes.py`) now resolves `ticket.assigned_to` (a portal user id) to that user's email and adds it to the notify list, deduped, alongside the configured routing addresses — additive, not a replacement. The configured addresses are always attempted regardless of assignment; an unassigned ticket simply has no extra address to add, never a reason to skip the send
+- [ ] **Operational, not code:** for `sales@bassanihealth.com` to actually receive this, an admin needs to add it to the `pop_uploaded_to` field under Settings > Email Notifications — per this codebase's standing convention, recipient addresses are never hardcoded in route files
+
 ---
 
 ### 25.2 — Account Activation Flow

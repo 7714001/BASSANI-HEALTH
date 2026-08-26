@@ -1,7 +1,34 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import { useNavigate, Link } from "react-router-dom";
-import { Mail, AlertCircle } from "lucide-react";
+import { Mail, AlertCircle, Eye, EyeOff } from "lucide-react";
+
+// Show/hide toggle (2026-08-25) — no way to confirm what was actually typed
+// before submitting.
+function PasswordField({ value, onChange, placeholder, autoComplete, className }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={revealed ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={`${className} pr-10`}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setRevealed(r => !r)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        aria-label={revealed ? "Hide password" : "Show password"}
+      >
+        {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
 
 const LEFT_PANEL = (
   <div className="hidden md:flex md:w-72 bg-slate-900 flex-col justify-between p-8 flex-shrink-0">
@@ -165,8 +192,7 @@ export default function Login() {
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">Password</label>
-              <input
-                type="password"
+              <PasswordField
                 value={form.password}
                 onChange={(e) => { setError(""); setForm({ ...form, password: e.target.value }); }}
                 placeholder="Enter password"
