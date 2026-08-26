@@ -1186,6 +1186,24 @@ export default function OrderPassport() {
                       </tfoot>
                     </table>
                   </div>
+                  {/* Paid-in-full-via-deposit note (2026-08-26) — found live:
+                      a staff member registering 100% upfront (the "Fixed
+                      Amount" deposit option already supports this) saw only
+                      the down-payment invoice and its single line item, and
+                      reasonably asked whether a proper final invoice would
+                      ever be generated. It will — automatically, at
+                      mark_complete, same as every order regardless of
+                      deposit % (see the "Invoice timing" business rule) —
+                      this just sets that expectation up front rather than
+                      leaving it to be discovered/asked about. Heuristic:
+                      exactly one invoice exists and it already covers the
+                      full order total — this note naturally stops appearing
+                      the moment a second (final) invoice is created. */}
+                  {invoices.length === 1 && totalPaid > 0 && outstandingTotal === 0 && (
+                    <p className="text-[11px] text-gray-400 mt-2 px-1">
+                      Paid in full via deposit. The final invoice reflecting the completed order will be generated automatically once packing, QA, and RP sign-off are complete.
+                    </p>
+                  )}
                 </div>
               )}
 

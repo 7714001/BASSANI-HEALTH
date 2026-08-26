@@ -1382,6 +1382,27 @@ export default function SalesTickets() {
                                 </div>
                               </>
                             )}
+                            {/* Paid-in-full-via-deposit note (2026-08-26) —
+                                found live: a staff member registering 100%
+                                upfront (the "Fixed Amount" deposit option
+                                already supports this, see its own helper
+                                text in the Register Deposit modal) saw only
+                                the down-payment invoice and its one line
+                                item, and reasonably asked whether a proper
+                                final invoice would ever be generated. It
+                                will, automatically, at mark_complete, same
+                                as every order regardless of deposit % (see
+                                the "Invoice timing" business rule) — this
+                                just sets that expectation up front. Same
+                                heuristic as OrderPassport.js: exactly one
+                                invoice exists and it already covers the full
+                                order total; stops appearing once a second
+                                (final) invoice exists. */}
+                            {detailInvoices.length === 1 && detailTotalPaid > 0 && detailOutstanding === 0 && (
+                              <p className="text-[11px] text-gray-400 pt-1">
+                                Paid in full via deposit. The final invoice reflecting the completed order will be generated automatically once packing, QA, and RP sign-off are complete.
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
