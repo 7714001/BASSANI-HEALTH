@@ -1076,7 +1076,33 @@ async def create_order_from_ticket(
         after={"order_id": odoo_order_id, "status": "quote"},
     )
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
-    return {"success": True, "odoo_order_id": odoo_order_id}
+
+    # Auto-send the quote the moment it's built (2026-08-26) — product owner:
+    # staff shouldn't need a separate "Send Quote" click right after this one;
+    # by the time they're deciding what to do next, the quote should already
+    # be in the customer's inbox and the next real decision is Confirm Order.
+    # Re-reads the ticket doc rather than reusing the pre-creation `ticket`
+    # variable above, since _send_quote_impl requires order_id to already be
+    # set. Never fails or rolls back order creation on a send failure — same
+    # non-blocking-failure convention as _queue_packing_board's
+    # packing_board_queue_error and 8.55's welcome-pack-send-after-approval —
+    # the order was already committed in Odoo by the time this runs.
+    quote_sent = False
+    send_warning = None
+    try:
+        ticket_after = await col("tickets").find_one({"_id": oid})
+        send_result = await _send_quote_impl(ticket_id, oid, ticket_after, current_user)
+        quote_sent = bool(send_result.get("email_sent"))
+        send_warning = send_result.get("warning")
+    except HTTPException as e:
+        send_warning = e.detail if isinstance(e.detail, str) else "Failed to send the quote automatically"
+    except Exception as e:
+        send_warning = f"Failed to send the quote automatically: {e}"
+
+    result: dict = {"success": True, "odoo_order_id": odoo_order_id, "quote_sent": quote_sent}
+    if send_warning:
+        result["warning"] = send_warning
+    return result
 
 
 @router.post("/{ticket_id}/cancel-order")
@@ -1327,28 +1353,21 @@ async def update_order_from_ticket(
     return {"success": True, "odoo_order_id": order_id}
 
 
-@router.post("/{ticket_id}/send-quote")
-async def send_quote(
-    ticket_id: str,
-    current_user: dict = Depends(_require_ticket_driver),
-):
-    """Email the PDF quotation to the customer via Odoo's built-in quotation
-    template. Marks the Odoo order as 'sent' and stamps quote_sent_at on the
-    ticket. Idempotent — safe to call again after edits (resend)."""
-    try:
-        oid = ObjectId(ticket_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid ticket ID")
-    ticket = await col("tickets").find_one({"_id": oid})
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    if current_user.get("role") == "reseller":
-        rid = await _reseller_id_for_user(current_user)
-        if not rid:
-            raise HTTPException(status_code=403, detail="Access denied")
-        await _assert_reseller_owns_ticket(ticket, rid)
-    if ticket.get("exit_status"):
-        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict) -> dict:
+    """Core of the quote-send flow — extracted 2026-08-26 so
+    create_order_from_ticket can automatically send the quote the moment
+    it's built, rather than leaving it to a separate manual "Send Quote"
+    click afterward (product owner: the quote should already be in the
+    customer's inbox by the time staff decide the next step is Confirm
+    Order, not Send Quote). Shared with the standalone POST
+    /{ticket_id}/send-quote endpoint below, which callers still use for a
+    deliberate resend after editing an already-sent quote — one
+    implementation either way, so an Odoo mail-template change never has
+    to be made twice. Caller is responsible for the ticket-lookup/exit-
+    status/reseller-ownership checks; this assumes `ticket` already
+    reflects order_id being set (create_order_from_ticket re-reads its own
+    just-updated ticket doc before calling this, rather than reusing its
+    pre-creation in-memory copy)."""
     if not ticket.get("order_id"):
         raise HTTPException(status_code=400, detail="No linked order — build a quote first")
 
@@ -1422,6 +1441,33 @@ async def send_quote(
     if warning:
         result["warning"] = warning
     return result
+
+
+@router.post("/{ticket_id}/send-quote")
+async def send_quote(
+    ticket_id: str,
+    current_user: dict = Depends(_require_ticket_driver),
+):
+    """Email the PDF quotation to the customer via Odoo's built-in quotation
+    template. Marks the Odoo order as 'sent' and stamps quote_sent_at on the
+    ticket. Idempotent — safe to call again after edits (resend); this is
+    the deliberate-resend path, since create_order_from_ticket already sends
+    the quote automatically the moment it's built."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if current_user.get("role") == "reseller":
+        rid = await _reseller_id_for_user(current_user)
+        if not rid:
+            raise HTTPException(status_code=403, detail="Access denied")
+        await _assert_reseller_owns_ticket(ticket, rid)
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    return await _send_quote_impl(ticket_id, oid, ticket, current_user)
 
 
 @router.get("/{ticket_id}/existing-invoices")

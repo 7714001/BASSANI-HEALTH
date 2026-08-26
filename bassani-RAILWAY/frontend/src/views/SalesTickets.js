@@ -916,7 +916,10 @@ export default function SalesTickets() {
         });
         toast.success("Quote updated in Odoo");
       } else {
-        await api.post(`/api/tickets/${tid}/create-order`, {
+        // create-order now also sends the quote automatically (2026-08-26)
+        // — the next real decision for staff is Confirm Order, not a
+        // separate Send Quote click right after this one.
+        const { data } = await api.post(`/api/tickets/${tid}/create-order`, {
           order_line: linePayload,
           warehouse_id:        quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined,
           partner_shipping_id: quoteShippingId  ? parseInt(quoteShippingId) : undefined,
@@ -924,7 +927,13 @@ export default function SalesTickets() {
           payment_term_id:     quotePaymentTermId ? parseInt(quotePaymentTermId) : undefined,
           note: quoteNote || undefined,
         });
-        toast.success("Quote created in Odoo — ticket advanced to Quote stage");
+        if (data.warning) {
+          toast(`Quote created — ${data.warning}`, { icon: "⚠️", duration: 8000 });
+        } else if (data.quote_sent) {
+          toast.success("Quote created and sent to the customer");
+        } else {
+          toast.success("Quote created in Odoo — ticket advanced to Quote stage");
+        }
       }
       setQuoteMode("create");
       setView("detail");
