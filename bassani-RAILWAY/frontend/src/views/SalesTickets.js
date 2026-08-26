@@ -1131,32 +1131,38 @@ export default function SalesTickets() {
   // where the full amount was already registered as a "deposit" (the Fixed
   // Amount option supports this) has no real balance left to register, even
   // though payment_confirmed_at is set.
+  // `detail` is null on the list view (only populated once a ticket is
+  // opened, view === "detail") — this whole computation runs on every
+  // render regardless of which view is active, so every `detail.` access
+  // below must be `detail?.` or the list view crashes the entire component
+  // on mount (found live 2026-08-26: "Cannot read properties of null
+  // (reading 'order_id')", the ticket list stuck on a permanent spinner).
   let nextAction = null;
-  if (detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && !detail.quote_sent_at) {
+  if (detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && !detail?.quote_sent_at) {
     nextAction = {
       key: "sendQuote", icon: Send, label: sending ? "Sending…" : "Send Quote",
       desc: "Send this quote to the customer for review before confirming.",
       onClick: sendQuote, disabled: sending,
     };
-  } else if (detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder) {
+  } else if (detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder) {
     nextAction = {
       key: "confirmOrder", icon: CheckCircle2, label: confirming ? "Confirming…" : "Confirm Order",
       desc: "Confirm this order to move it toward a deposit and packing.",
       onClick: () => confirmOrder(), disabled: confirming,
     };
-  } else if (!detail.is_sample && detail.status === "awaiting_deposit" && !detail.payment_confirmed_at && canFinance) {
+  } else if (!detail?.is_sample && detail?.status === "awaiting_deposit" && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
       key: "registerDeposit", icon: DollarSign, label: "Register Deposit",
       desc: "A deposit is required before this order can be queued for packing.",
       onClick: openDepositModal,
     };
-  } else if (!detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance) {
+  } else if (!detail?.is_sample && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
       key: "confirmPayment", icon: CreditCard, label: saving ? "Confirming…" : "Confirm Payment",
       desc: "Confirm the payment already registered against this order's invoice.",
       onClick: confirmPayment, disabled: saving,
     };
-  } else if (!detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && detailOutstanding > 0) {
+  } else if (!detail?.is_sample && detail?.payment_confirmed_at && detail?.order_id && canFinance && detailOutstanding > 0) {
     nextAction = {
       key: "registerBalance", icon: CreditCard, label: "Register Balance Payment",
       desc: "A balance remains outstanding on this order.",
@@ -1167,7 +1173,7 @@ export default function SalesTickets() {
   // No urgent action for this viewer — say what's actually happening instead,
   // so the card never reads as broken or empty when nobody needs to act.
   let waitingText = null;
-  if (!nextAction && !detail.exit_status) {
+  if (!nextAction && detail && !detail.exit_status) {
     if (!detail.order_id) {
       waitingText = "No quote built yet.";
     } else if (packingEntry?.status === "waiting_stock") {
@@ -1195,23 +1201,23 @@ export default function SalesTickets() {
   // child, and (b) whichever action is currently shown as the Next Step
   // above is excluded from this flat-list rendering rather than shown twice.
   const showEditQuote         = detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive;
-  const showSendQuote         = detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
-  const showConfirmOrderBtn   = detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
-  const showRegisterDeposit   = !detail.is_sample && detail.status === "awaiting_deposit" && !detail.payment_confirmed_at && canFinance && nextAction?.key !== "registerDeposit";
-  const showConfirmPaymentBtn = !detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
+  const showSendQuote         = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
+  const showConfirmOrderBtn   = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
+  const showRegisterDeposit   = !detail?.is_sample && detail?.status === "awaiting_deposit" && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "registerDeposit";
+  const showConfirmPaymentBtn = !detail?.is_sample && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
   // detailOutstanding > 0 is the direct fix for the bug this round started
   // from: this button used to show for any ticket with payment_confirmed_at
   // set, even one where the full amount was already registered as the
   // "deposit" (the Fixed Amount option supports that), leaving nothing
   // actually outstanding to register.
-  const showRegisterBalance   = !detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && detailOutstanding > 0 && nextAction?.key !== "registerBalance";
-  const showMarkPopReviewed   = detail.pop_awaiting_review && canFinance;
-  const showMakeRecurring     = detail.order_id && !detail.recurring_order_id && canDrive;
-  const showInvoiceActions    = !detail.is_sample && detail.invoice_id && !isReseller && canFinance;
-  const showResetInvoice      = showInvoiceActions && !detail.payment_confirmed_at;
-  const showCancelQuote       = detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive;
-  const showLinkOrder         = !detail.order_id && canDrive;
-  const showNotInterested     = !detail.order_id && canDrive;
+  const showRegisterBalance   = !detail?.is_sample && detail?.payment_confirmed_at && detail?.order_id && canFinance && detailOutstanding > 0 && nextAction?.key !== "registerBalance";
+  const showMarkPopReviewed   = detail?.pop_awaiting_review && canFinance;
+  const showMakeRecurring     = detail?.order_id && !detail?.recurring_order_id && canDrive;
+  const showInvoiceActions    = !detail?.is_sample && detail?.invoice_id && !isReseller && canFinance;
+  const showResetInvoice      = showInvoiceActions && !detail?.payment_confirmed_at;
+  const showCancelQuote       = detail?.order_id && PRE_CONFIRM.has(detail?.status) && canDrive;
+  const showLinkOrder         = !detail?.order_id && canDrive;
+  const showNotInterested     = !detail?.order_id && canDrive;
 
   const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested;
   const showPaymentGroup   = showRegisterDeposit || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
