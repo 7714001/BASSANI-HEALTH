@@ -7,7 +7,7 @@
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -61,6 +61,7 @@ const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "in
 
 export default function OrdersTickets() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { can, user } = useAuth();
   const canOrders = can("tickets.orders");
   const canQa     = can("tickets.qa_approve");
@@ -149,6 +150,20 @@ export default function OrdersTickets() {
       setDetailLoading(false);
     }
   };
+
+  // Deep-link support (2026-08-26) — SalesTickets.js and OrderPassport.js can
+  // now jump straight to a specific Order Ticket instead of dropping staff on
+  // the bare list and making them hunt for it. openDetail() only ever needs
+  // order_id (optionally odoo_picking_id, omitted here — resolves to the
+  // primary entry, the same default every packing_board endpoint already
+  // falls back to), so this fires immediately on mount rather than waiting
+  // for the board's own list to load first, matching SalesTickets.js's
+  // equivalent openTicketId pattern in spirit but simpler since no local
+  // match lookup is needed.
+  useEffect(() => {
+    const targetOrderId = location.state?.openOrderId;
+    if (targetOrderId) openDetail({ order_id: targetOrderId, odoo_picking_id: location.state?.openPickingId });
+  }, []); // eslint-disable-line
 
   const refreshDetail = async (order_id, pickingId = detail?.odoo_picking_id) => {
     try {

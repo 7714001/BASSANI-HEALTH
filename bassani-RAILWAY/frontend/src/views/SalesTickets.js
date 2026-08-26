@@ -2025,12 +2025,33 @@ export default function SalesTickets() {
                       queued/ready timestamps all duplicated what the
                       timeline's own steps already show); this compact card
                       keeps only what the timeline doesn't carry: who packed
-                      it and who approved it. */}
-                  {detail.orders_ticket_ref && packingEntry && (packingEntry.packer_name || packingEntry.qa_approved_by || packingEntry.rp_approved_by || packingEntry.incomplete_reason) && (
+                      it and who approved it. Card's own show-condition
+                      widened the same day (2026-08-26, second round) so it
+                      renders — with a "Not yet packed" placeholder if there's
+                      nothing else to show — the moment a packing board entry
+                      exists at all, since it's now also the home for the
+                      "Open Order Ticket" deep link, which should be reachable
+                      before a packer's even been assigned. */}
+                  {detail.orders_ticket_ref && packingEntry && (
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-1.5">
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5 mb-1">
-                        <Package size={12} className="text-gray-400" />Packing Detail
-                      </p>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                          <Package size={12} className="text-gray-400" />Packing Detail
+                        </p>
+                        {/* Quick access to the linked Order Ticket (2026-08-26)
+                            — OrdersTickets.js now supports deep-linking
+                            straight to a specific entry via location.state,
+                            so this jumps to it directly instead of dropping
+                            staff on the bare packing board list. */}
+                        <button
+                          onClick={() => navigate("/tickets/orders", {
+                            state: { openOrderId: detail.orders_ticket_ref, openPickingId: packingEntry.odoo_picking_id },
+                          })}
+                          className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium shrink-0"
+                        >
+                          Open Order Ticket <ExternalLink size={11} />
+                        </button>
+                      </div>
                       {packingEntry.packer_name && (
                         <p className="text-xs text-gray-500 flex items-center gap-1.5">
                           <UserPlus size={11} className="text-gray-400 shrink-0" />Packed by {packingEntry.packer_name}
@@ -2048,6 +2069,9 @@ export default function SalesTickets() {
                       )}
                       {packingEntry.incomplete_reason && (
                         <p className="text-xs text-orange-600">Reason: {packingEntry.incomplete_reason}</p>
+                      )}
+                      {!packingEntry.packer_name && !packingEntry.qa_approved_by && !packingEntry.rp_approved_by && !packingEntry.incomplete_reason && (
+                        <p className="text-xs text-gray-300">Not yet packed.</p>
                       )}
                     </div>
                   )}
@@ -3320,6 +3344,24 @@ export default function SalesTickets() {
                       className="inline-flex items-center gap-1 text-xs font-mono text-bassani-600 hover:text-bassani-800 hover:underline"
                     >
                       {t.order_name}
+                      <ExternalLink size={10} />
+                    </button>
+                  )
+                  : <span className="text-xs text-gray-300">—</span>
+              },
+              // Order Ticket (2026-08-26) — quick access to the linked
+              // packing board entry (a separate pipeline from the SO #/
+              // Order Passport link above), once one exists. Deep-links
+              // straight into OrdersTickets.js's own detail view instead of
+              // dropping staff on the bare board list.
+              { id: "order_ticket", header: "Order Ticket", meta: { className: "hidden lg:table-cell" }, cell: ({ row: { original: t } }) =>
+                t.orders_ticket_ref
+                  ? (
+                    <button
+                      onClick={e => { e.stopPropagation(); navigate("/tickets/orders", { state: { openOrderId: t.orders_ticket_ref } }); }}
+                      className="inline-flex items-center gap-1 text-xs font-mono text-bassani-600 hover:text-bassani-800 hover:underline"
+                    >
+                      {t.orders_ticket_ref}
                       <ExternalLink size={10} />
                     </button>
                   )
