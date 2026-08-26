@@ -649,15 +649,35 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
 
         # Get line items
         if order.get("order_line"):
-            lines = odoo.read(
-                "sale.order.line",
-                order["order_line"],
-                fields=[
-                    "product_id", "name", "product_uom_qty",
-                    "price_unit", "price_subtotal", "qty_delivered", "qty_invoiced",
-                ],
-            )
-            order["lines"] = lines
+            _line_fields = [
+                "product_id", "name", "product_uom_qty",
+                "price_unit", "price_subtotal", "qty_delivered", "qty_invoiced",
+                "display_type", "is_downpayment",
+            ]
+            try:
+                lines = odoo.read("sale.order.line", order["order_line"], fields=_line_fields)
+            except Exception:
+                # display_type/is_downpayment unexpectedly invalid on this
+                # Odoo version — degrade to the original field set rather
+                # than losing order lines entirely; the filter below just
+                # becomes a no-op since neither key is present.
+                lines = odoo.read("sale.order.line", order["order_line"], fields=_line_fields[:-2])
+            # Registering a deposit (8.47) has Odoo's own advance-payment
+            # wizard write two extra lines onto the SALE ORDER itself: a
+            # section-header line ("Down Payments", blank — display_type=
+            # "line_section") and the actual down-payment product line
+            # (is_downpayment=True). Both are Odoo bookkeeping artifacts, not
+            # products the customer ordered — Odoo itself excludes them from
+            # order.amount_total's own computation, so keeping them here
+            # would make the visible line subtotals sum to more than the
+            # Order Total shown beneath them. The deposit is already shown
+            # via the Payments Received / Balance Due breakdown (built from
+            # the real invoice), so these are filtered out entirely rather
+            # than displayed as if they were ordered products (2026-08-26).
+            order["lines"] = [
+                l for l in lines
+                if not l.get("display_type") and not l.get("is_downpayment")
+            ]
 
         # Lot/batch numbers — read from stock.move.line via the first outgoing picking.
         # Lots are only assigned after packing, so this may be empty for un-packed orders.
@@ -1169,10 +1189,31 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     product_images: dict = {}
     if order.get("order_line"):
         try:
-            lines = odoo.read("sale.order.line", order["order_line"], fields=[
+            _line_fields = [
                 "product_id", "name", "product_uom_qty", "price_unit",
                 "price_subtotal", "qty_delivered", "qty_invoiced",
-            ])
+                "display_type", "is_downpayment",
+            ]
+            try:
+                lines = odoo.read("sale.order.line", order["order_line"], fields=_line_fields)
+            except Exception:
+                # display_type/is_downpayment unexpectedly invalid on this
+                # Odoo version — degrade to the original field set; the
+                # filter below becomes a no-op since neither key is present.
+                lines = odoo.read("sale.order.line", order["order_line"], fields=_line_fields[:-2])
+            # Registering a deposit (8.47) has Odoo's own advance-payment
+            # wizard write two extra lines onto the SALE ORDER itself: a
+            # section-header line ("Down Payments", blank — display_type=
+            # "line_section") and the actual down-payment product line
+            # (is_downpayment=True). Both are Odoo bookkeeping artifacts, not
+            # products the customer ordered — Odoo itself excludes them from
+            # order.amount_total's own computation, so keeping them here
+            # would make the visible line subtotals sum to more than the
+            # Order Total shown beneath them. The deposit is already shown
+            # via the Payments Received / Balance Due breakdown (built from
+            # the real invoice), so these are filtered out entirely rather
+            # than displayed as if they were ordered products (2026-08-26).
+            lines = [l for l in lines if not l.get("display_type") and not l.get("is_downpayment")]
             order["lines"] = lines
             # Thumbnails for the Order Lines table — same image_128 field
             # product_routes.py already uses for every other product list in
