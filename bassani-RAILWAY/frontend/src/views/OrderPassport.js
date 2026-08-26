@@ -1168,10 +1168,44 @@ export default function OrderPassport() {
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-gray-200">
-                          <td colSpan={4} className="pt-2 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 hidden sm:table-cell">Total</td>
-                          <td colSpan={2} className="pt-2 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 sm:hidden">Total</td>
-                          <td className="pt-2 text-right tabular-nums font-bold text-gray-900">{fmtR(order.amount_total)}</td>
+                          <td colSpan={4} className="pt-2 text-right text-gray-400 pr-3 hidden sm:table-cell">Subtotal (excl. VAT)</td>
+                          <td colSpan={2} className="pt-2 text-right text-gray-400 pr-3 sm:hidden">Subtotal (excl. VAT)</td>
+                          <td className="pt-2 text-right tabular-nums text-gray-600">{fmtR((order.amount_total || 0) - (order.amount_tax || 0))}</td>
                         </tr>
+                        <tr>
+                          <td colSpan={4} className="pt-1 text-right text-gray-400 pr-3 hidden sm:table-cell">VAT</td>
+                          <td colSpan={2} className="pt-1 text-right text-gray-400 pr-3 sm:hidden">VAT</td>
+                          <td className="pt-1 text-right tabular-nums text-gray-600">{fmtR(order.amount_tax)}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={4} className="pt-1 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 hidden sm:table-cell">Order Total</td>
+                          <td colSpan={2} className="pt-1 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 sm:hidden">Order Total</td>
+                          <td className="pt-1 text-right tabular-nums font-bold text-gray-900">{fmtR(order.amount_total)}</td>
+                        </tr>
+                        {/* Deposit/payment breakdown (2026-08-26) — once a
+                            payment exists against this order (typically the
+                            50% deposit), show the running invoice-style calc
+                            rather than just the flat order total, so the
+                            deposit and what's still owed are visible right
+                            next to the line items rather than only on the
+                            Outstanding KPI tile further up the page. Reuses
+                            totalPaid/outstandingTotal, already computed
+                            above for that tile — same numbers, just shown in
+                            context here too, never a second calculation. */}
+                        {totalPaid > 0 && (
+                          <>
+                            <tr>
+                              <td colSpan={4} className="pt-1 text-right text-green-700 pr-3 hidden sm:table-cell">Less: Payments Received</td>
+                              <td colSpan={2} className="pt-1 text-right text-green-700 pr-3 sm:hidden">Less: Payments Received</td>
+                              <td className="pt-1 text-right tabular-nums text-green-700">-{fmtR(totalPaid)}</td>
+                            </tr>
+                            <tr className="border-t border-gray-200">
+                              <td colSpan={4} className="pt-1 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 hidden sm:table-cell">Balance Due</td>
+                              <td colSpan={2} className="pt-1 text-right text-gray-500 font-semibold uppercase tracking-wide text-[10px] pr-3 sm:hidden">Balance Due</td>
+                              <td className={`pt-1 text-right tabular-nums font-bold ${outstandingTotal > 0 ? "text-red-600" : "text-green-700"}`}>{fmtR(outstandingTotal)}</td>
+                            </tr>
+                          </>
+                        )}
                       </tfoot>
                     </table>
                   </div>
