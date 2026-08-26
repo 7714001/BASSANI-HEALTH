@@ -482,6 +482,25 @@ export default function OrdersTickets() {
         ) : (
           <main className="flex-1 overflow-y-auto p-6">
             <div className="max-w-7xl mx-auto">
+
+              {/* Order Timeline (2026-08-26) — full width, same placement
+                  OrderPassport.js and SalesTickets.js already use for this
+                  shared component, rather than squeezed into the 1/3-width
+                  sidebar column below. `ticket` is synthesized rather than
+                  fetched: a packing_board entry existing at all already
+                  guarantees (8.47's universal deposit gate) the linked
+                  ticket is at confirmed_wip with no exit_status, so this is
+                  accurate, not a guess. */}
+              <div className="mb-4">
+                <HorizontalTimelineCard
+                  order={detailOrder || { state: "sale", date_order: detail.queued_at }}
+                  ticket={{ status: "confirmed_wip", exit_status: null, incomplete_reason: null }}
+                  packing={detail}
+                  invoices={detailOrder?.invoices || []}
+                  manufacturing_orders={mos}
+                />
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
 
                 {/* ── Left: Order document ── */}
@@ -798,25 +817,10 @@ export default function OrdersTickets() {
                     </div>
                   )}
 
-                  {/* Order Timeline (2026-08-26) — shared with Order Passport
-                      and Sales Tickets so all three pages tell the identical
-                      story. `ticket` is synthesized rather than fetched: a
-                      packing_board entry existing at all already guarantees
-                      (8.47's universal deposit gate) the linked ticket is at
-                      confirmed_wip with no exit_status, so this is accurate,
-                      not a guess. */}
-                  <HorizontalTimelineCard
-                    order={detailOrder || { state: "sale", date_order: detail.queued_at }}
-                    ticket={{ status: "confirmed_wip", exit_status: null, incomplete_reason: null }}
-                    packing={detail}
-                    invoices={detailOrder?.invoices || []}
-                    manufacturing_orders={mos}
-                  />
-
-                  {/* Sign-Off Detail — the timeline above merges QA+RP into a
-                      single "Compliance Sign-Off" node and only ever keeps
-                      one approver's name, which isn't enough for a
-                      compliance-adjacent record where QA and RP are always
+                  {/* Sign-Off Detail — the full-width timeline above merges
+                      QA+RP into a single "Compliance Sign-Off" node and only
+                      ever keeps one approver's name, which isn't enough for
+                      a compliance-adjacent record where QA and RP are always
                       two different people. Kept as its own compact card,
                       same reasoning as SalesTickets.js's "Packing Detail"
                       card alongside its own copy of this timeline. */}
