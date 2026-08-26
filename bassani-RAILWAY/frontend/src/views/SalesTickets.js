@@ -1984,7 +1984,19 @@ export default function SalesTickets() {
                       card. */}
                   {(() => {
                     const hasQuoteSection   = !!detail.order_id;
-                    const hasInvoiceSection = !isReseller && !!detail.invoice_id;
+                    // Also shown when Odoo has a real invoice for this order
+                    // that the ticket never tracked (2026-08-26, found live)
+                    // — an order confirmed/invoiced directly in Odoo (rather
+                    // than through the portal's own register-deposit flow)
+                    // advances the ticket's status via get_ticket's auto-sync
+                    // block, but that sync only ever writes ticket.status —
+                    // it reads the order's invoice_ids from Odoo and discards
+                    // them, never backfilling detail.invoice_id. Without this,
+                    // the Payments Received/Balance Due figure on the Order
+                    // Lines footer (sourced live from detailOrder.invoices,
+                    // independent of detail.invoice_id) could show a real
+                    // deduction with no invoice visible anywhere to explain it.
+                    const hasInvoiceSection = !isReseller && (!!detail.invoice_id || detailInvoices.length > 0);
                     return (
                       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -2016,33 +2028,69 @@ export default function SalesTickets() {
                         {hasInvoiceSection && (
                           <div className={`space-y-1 ${hasQuoteSection ? "pt-2 border-t border-gray-50" : ""}`}>
                             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Invoice</p>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs text-gray-600">Invoice #{detail.invoice_id}</span>
-                              <button
-                                onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
-                                className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
-                              >
-                                <FileSearch size={10} />View
-                              </button>
-                            </div>
-                            {detail.invoice_sent_at && (
-                              <p className="text-[11px] text-blue-600 flex items-center gap-1.5">
-                                <ReceiptText size={10} />Sent {fmtDate(detail.invoice_sent_at)}
-                              </p>
-                            )}
-                            {detail.payment_confirmed_at && (
-                              <p className="text-[11px] text-green-600 flex items-center gap-1.5">
-                                <CheckCircle2 size={10} />
-                                {detail.payment_confirmed_by === "auto"
-                                  ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
-                                  : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
-                                }
-                              </p>
-                            )}
-                            {detail.credit_note_name && (
-                              <p className="text-[11px] text-orange-600 flex items-center gap-1.5">
-                                <FileX size={10} />Credit note {detail.credit_note_name}
-                              </p>
+                            {detail.invoice_id ? (
+                              <>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs text-gray-600">Invoice #{detail.invoice_id}</span>
+                                  <button
+                                    onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
+                                    className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
+                                  >
+                                    <FileSearch size={10} />View
+                                  </button>
+                                </div>
+                                {detail.invoice_sent_at && (
+                                  <p className="text-[11px] text-blue-600 flex items-center gap-1.5">
+                                    <ReceiptText size={10} />Sent {fmtDate(detail.invoice_sent_at)}
+                                  </p>
+                                )}
+                                {detail.payment_confirmed_at && (
+                                  <p className="text-[11px] text-green-600 flex items-center gap-1.5">
+                                    <CheckCircle2 size={10} />
+                                    {detail.payment_confirmed_by === "auto"
+                                      ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
+                                      : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
+                                    }
+                                  </p>
+                                )}
+                                {detail.credit_note_name && (
+                                  <p className="text-[11px] text-orange-600 flex items-center gap-1.5">
+                                    <FileX size={10} />Credit note {detail.credit_note_name}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              // Real invoice(s) exist in Odoo but this ticket
+                              // never registered one through the portal (order
+                              // confirmed/invoiced directly in Odoo) — list
+                              // them directly from detailInvoices so the
+                              // Payments Received figure below is never
+                              // unexplained. Register Deposit's own
+                              // "existing invoices" check will offer to link
+                              // one of these instead of creating a duplicate.
+                              <div className="space-y-1.5">
+                                <p className="text-[11px] text-amber-600 flex items-center gap-1.5">
+                                  <AlertTriangle size={10} className="shrink-0" />
+                                  Found in Odoo, not yet linked to this ticket
+                                </p>
+                                {detailInvoices.map(inv => (
+                                  <div key={inv.invoice_id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-2 py-1.5">
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-medium text-gray-800 truncate">{inv.name}</p>
+                                      <p className="text-[10px] text-gray-400">
+                                        {inv.payment_state === "paid" ? "Paid" : inv.payment_state === "partial" ? "Partially paid" : "Outstanding"}
+                                        {inv.amount_residual > 0 && ` · ${fmtR(inv.amount_residual)} due`}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => setPdfView({ url: `/api/invoices/${inv.invoice_id}/pdf`, title: `${inv.name} — Odoo original` })}
+                                      className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
+                                    >
+                                      <FileSearch size={10} />View
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
                         )}
@@ -2736,6 +2784,21 @@ export default function SalesTickets() {
             <p className="text-xs text-gray-500 mb-4">
               Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds.
             </p>
+            {/* Explicit loading banner (2026-08-26) — the submit button was
+                already disabled for this entire window (depositDetailsLoading
+                covers all three parallel fetches, including the existing-
+                invoices check below, and only clears once all of them
+                resolve), so a duplicate deposit was never actually possible
+                here. But the only visible loading cue was the Payment Method
+                dropdown further down, which didn't read as "we're also
+                checking whether this order already has an invoice" — just as
+                a slow field. Made the safety visible instead of just real. */}
+            {depositDetailsLoading && (
+              <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 flex items-center gap-2">
+                <Loader2 size={13} className="animate-spin text-gray-400 shrink-0" />
+                <p className="text-xs text-gray-500">Checking Odoo for existing invoices and payment methods…</p>
+              </div>
+            )}
             {existingInvoices.length > 0 && (
               <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
                 <p className="text-xs font-semibold text-blue-800">
