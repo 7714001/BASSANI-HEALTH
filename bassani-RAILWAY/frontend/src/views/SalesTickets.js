@@ -25,6 +25,7 @@ import {
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
+import { HorizontalTimelineCard } from "../components/OrderTimeline";
 import OrderView from "./OrderView";
 
 const fmtR = (n) =>
@@ -82,17 +83,6 @@ const ORDER_STATE_COLOR = {
   draft: "gray", sent: "amber", sale: "blue", done: "green", cancel: "red",
 };
 
-const PACK_STATUS_LABEL = {
-  queued: "Queued", packing: "Packing", ready: "Ready for Inspection",
-  complete: "Ready for Collection", collected: "Collected", incomplete: "Incomplete",
-  cancelled: "Cancelled", waiting_stock: "Waiting for Stock",
-};
-const PACK_STATUS_COLOR = {
-  queued: "gray", packing: "amber", ready: "blue",
-  complete: "green", collected: "teal", incomplete: "orange",
-  cancelled: "red", waiting_stock: "amber",
-};
-
 // Reseller-facing labels — plain English, no internal system terms
 const R_STATUS_LABEL = {
   quote:                "Draft",
@@ -108,30 +98,6 @@ const R_STATUS_COLOR = {
   ready_for_collection: "green", partially_fulfilled: "amber", incomplete: "orange",
 };
 const R_EXIT_LABEL = { not_interested: "Cancelled", cancelled: "Cancelled", complete: "Complete" };
-const R_PACK_LABEL = {
-  queued: "Preparing your order", packing: "Being packed",
-  ready: "Packed — awaiting final checks", complete: "Fulfilled",
-  incomplete: "Issue — contact Bassani", cancelled: "Cancelled",
-  waiting_stock: "Awaiting restocking",
-};
-
-// Steps shown in the reseller progress tracker (in detail view)
-const R_STEPS = [
-  { key: "draft",      label: "Quote Created"    },
-  { key: "confirmed",  label: "Order Confirmed"  },
-  { key: "packing",    label: "Being Packed"     },
-  { key: "ready",      label: "Fulfilment Ready" },
-  { key: "complete",   label: "Complete"         },
-];
-const resellerStep = (ticket, packing) => {
-  if (ticket.exit_status === "complete")                                         return 4;
-  if (ticket.exit_status)                                                        return -1;
-  if (ticket.status === "partially_fulfilled")                                   return 3;
-  if (ticket.status === "ready_for_collection" || packing?.status === "ready")  return 3;
-  if (ticket.status === "confirmed_wip")    return packing ? 2 : 1;
-  if (ticket.status === "sale_order")       return 1;
-  return 0;
-};
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
@@ -257,7 +223,10 @@ export default function SalesTickets() {
   const [mos,        setMos       ] = useState([]);
   const [mosLoading, setMosLoading] = useState(false);
   const [packingEntry,   setPackingEntry  ] = useState(null);
-  const [packingLoading, setPackingLoading] = useState(false);
+  // Loading state itself is no longer rendered (Packing Detail's trimmed
+  // card, 2026-08-26, has no loading indicator) — setter kept since the
+  // fetch effect below still tracks it, unnamed getter avoids an unused-var.
+  const [, setPackingLoading] = useState(false);
 
   const [stageForm, setStageForm]       = useState({ status: "", order_id: "", invoice_id: "", note: "", incomplete_reason: "" });
   const [saving, setSaving]             = useState(false);
@@ -1150,6 +1119,104 @@ export default function SalesTickets() {
   const detailTotalPaid   = detailInvoices.reduce((s, i) => s + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
   const detailOutstanding = Math.max(0, (detailOrder?.amount_total || 0) - detailTotalPaid);
 
+  // ── Next Step (2026-08-26) ───────────────────────────────────────────────────
+  // Enterprise-pattern single "what do I do now" indicator (Salesforce Path /
+  // HubSpot deal stage / Zendesk ticket sidebar all converge on this shape).
+  // Computed from the exact same gate conditions the Actions card buttons
+  // below use — never a second, possibly-drifting copy of the rules — just
+  // reordered into priority order so the single most urgent/blocking action
+  // surfaces here with its own primary button, reusing the identical handler
+  // the matching Actions row calls. `detailOutstanding > 0` on the balance
+  // check is the same fix applied to the Actions row itself below: a ticket
+  // where the full amount was already registered as a "deposit" (the Fixed
+  // Amount option supports this) has no real balance left to register, even
+  // though payment_confirmed_at is set.
+  let nextAction = null;
+  if (detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && !detail.quote_sent_at) {
+    nextAction = {
+      key: "sendQuote", icon: Send, label: sending ? "Sending…" : "Send Quote",
+      desc: "Send this quote to the customer for review before confirming.",
+      onClick: sendQuote, disabled: sending,
+    };
+  } else if (detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder) {
+    nextAction = {
+      key: "confirmOrder", icon: CheckCircle2, label: confirming ? "Confirming…" : "Confirm Order",
+      desc: "Confirm this order to move it toward a deposit and packing.",
+      onClick: () => confirmOrder(), disabled: confirming,
+    };
+  } else if (!detail.is_sample && detail.status === "awaiting_deposit" && !detail.payment_confirmed_at && canFinance) {
+    nextAction = {
+      key: "registerDeposit", icon: DollarSign, label: "Register Deposit",
+      desc: "A deposit is required before this order can be queued for packing.",
+      onClick: openDepositModal,
+    };
+  } else if (!detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance) {
+    nextAction = {
+      key: "confirmPayment", icon: CreditCard, label: saving ? "Confirming…" : "Confirm Payment",
+      desc: "Confirm the payment already registered against this order's invoice.",
+      onClick: confirmPayment, disabled: saving,
+    };
+  } else if (!detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && detailOutstanding > 0) {
+    nextAction = {
+      key: "registerBalance", icon: CreditCard, label: "Register Balance Payment",
+      desc: "A balance remains outstanding on this order.",
+      onClick: openBalanceModal,
+    };
+  }
+
+  // No urgent action for this viewer — say what's actually happening instead,
+  // so the card never reads as broken or empty when nobody needs to act.
+  let waitingText = null;
+  if (!nextAction && !detail.exit_status) {
+    if (!detail.order_id) {
+      waitingText = "No quote built yet.";
+    } else if (packingEntry?.status === "waiting_stock") {
+      waitingText = "Order is queued for packing but waiting on stock.";
+    } else if (packingEntry?.status === "queued") {
+      waitingText = "Order is queued for packing — no action needed from Sales.";
+    } else if (packingEntry?.status === "packing") {
+      waitingText = "Order is currently being packed.";
+    } else if (packingEntry && !packingEntry.qa_approved_at) {
+      waitingText = "Awaiting QA approval.";
+    } else if (packingEntry && packingEntry.qa_approved_at && !packingEntry.rp_approved_at) {
+      waitingText = "Awaiting RP approval.";
+    } else if (["ready", "complete", "collected"].includes(packingEntry?.status)) {
+      waitingText = "Order packed and invoiced — awaiting customer collection.";
+    } else if (detail.status === "awaiting_deposit" && detail.payment_confirmed_at) {
+      waitingText = "Deposit registered — waiting for the order to reach the packing board.";
+    } else {
+      waitingText = "No action needed right now.";
+    }
+  }
+
+  // ── Actions card grouping (2026-08-26) ───────────────────────────────────────
+  // Same gate expressions the buttons themselves use below — computed once
+  // here so (a) a group's header only renders when it actually has a visible
+  // child, and (b) whichever action is currently shown as the Next Step
+  // above is excluded from this flat-list rendering rather than shown twice.
+  const showEditQuote         = detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive;
+  const showSendQuote         = detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
+  const showConfirmOrderBtn   = detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
+  const showRegisterDeposit   = !detail.is_sample && detail.status === "awaiting_deposit" && !detail.payment_confirmed_at && canFinance && nextAction?.key !== "registerDeposit";
+  const showConfirmPaymentBtn = !detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
+  // detailOutstanding > 0 is the direct fix for the bug this round started
+  // from: this button used to show for any ticket with payment_confirmed_at
+  // set, even one where the full amount was already registered as the
+  // "deposit" (the Fixed Amount option supports that), leaving nothing
+  // actually outstanding to register.
+  const showRegisterBalance   = !detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && detailOutstanding > 0 && nextAction?.key !== "registerBalance";
+  const showMarkPopReviewed   = detail.pop_awaiting_review && canFinance;
+  const showMakeRecurring     = detail.order_id && !detail.recurring_order_id && canDrive;
+  const showInvoiceActions    = !detail.is_sample && detail.invoice_id && !isReseller && canFinance;
+  const showResetInvoice      = showInvoiceActions && !detail.payment_confirmed_at;
+  const showCancelQuote       = detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive;
+  const showLinkOrder         = !detail.order_id && canDrive;
+  const showNotInterested     = !detail.order_id && canDrive;
+
+  const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested;
+  const showPaymentGroup   = showRegisterDeposit || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
+  const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
+
   // ── Quote totals ──────────────────────────────────────────────────────────
   const quoteSubtotal = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
   const quoteVat      = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (l._tax_rate / 100), 0);
@@ -1542,83 +1609,70 @@ export default function SalesTickets() {
                 {/* ── Right sidebar: status + actions + timeline ── */}
                 <div className="space-y-4">
 
-                  {/* Reseller: progress tracker */}
-                  {isReseller && (() => {
-                    const step = resellerStep(detail, packingEntry);
-                    const cancelled = step === -1;
-                    return (
-                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Order Progress</p>
-                        {cancelled ? (
-                          <div className="flex items-center gap-2 text-sm text-red-500">
-                            <XCircle size={16} />
-                            <span className="font-medium">{R_EXIT_LABEL[detail.exit_status] || "Cancelled"}</span>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {R_STEPS.map((s, i) => {
-                              const done   = i < step;
-                              const active = i === step;
-                              return (
-                                <div key={s.key} className="flex items-center gap-2.5">
-                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold
-                                    ${done   ? "bg-bassani-600 text-white"
-                                    : active ? "bg-bassani-100 border-2 border-bassani-600 text-bassani-600"
-                                             : "bg-gray-100 text-gray-300"}`}>
-                                    {done ? "✓" : i + 1}
-                                  </div>
-                                  <span className={`text-xs ${done ? "text-gray-400 line-through" : active ? "font-semibold text-gray-800" : "text-gray-300"}`}>
-                                    {s.label}
-                                    {active && packingEntry && R_PACK_LABEL[packingEntry.status] && (
-                                      <span className="block text-[10px] font-normal text-bassani-600 mt-0.5">
-                                        {R_PACK_LABEL[packingEntry.status]}
-                                      </span>
-                                    )}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {/* Partial fulfilment split — shown to reseller when first delivery is ready */}
-                        {detail.status === "partially_fulfilled" && packingEntry?.items?.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
-                            {packingEntry.items.filter(i => !i.is_backordered).length > 0 && (
-                              <div>
-                                <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1">Shipping now</p>
-                                {packingEntry.items.filter(i => !i.is_backordered).map((i, idx) => (
-                                  <div key={idx} className="flex justify-between text-[11px] text-gray-600 py-0.5">
-                                    <span>{i.name}</span>
-                                    <span className="font-medium">{i.qty_reserved ?? i.qty} units</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {packingEntry.items.filter(i => i.is_backordered).length > 0 && (
-                              <div>
-                                <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1">Backordered</p>
-                                {packingEntry.items.filter(i => i.is_backordered).map((i, idx) => (
-                                  <div key={idx} className="flex justify-between text-[11px] text-gray-500 py-0.5">
-                                    <span>{i.name}</span>
-                                    <span className="font-medium text-amber-600">{Math.round((i.qty_ordered ?? i.qty) - (i.qty_reserved ?? 0))} units</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {detail.payment_confirmed_at && (
-                          <p className="text-[11px] text-green-600 flex items-center gap-1.5 mt-3 pt-3 border-t border-gray-100">
-                            <CheckCircle2 size={11} />
-                            {detail.payment_confirmed_by === "auto"
-                              ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
-                              : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
-                            }
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {/* Next Step (2026-08-26) — enterprise-pattern single "what do
+                      I do now" indicator, the first thing any role sees on this
+                      page. See the nextAction/waitingText computation above for
+                      the priority order this reflects. */}
+                  {!detail.exit_status && (
+                    <div className="bg-white rounded-2xl shadow-sm border-2 border-bassani-100 p-4 space-y-2">
+                      <p className="text-xs font-semibold text-bassani-600 uppercase tracking-wide flex items-center gap-1.5">
+                        <Clock size={12} />Next Step
+                      </p>
+                      {nextAction ? (
+                        <>
+                          <p className="text-sm text-gray-600">{nextAction.desc}</p>
+                          <BtnPrimary onClick={nextAction.onClick} disabled={nextAction.disabled} className="w-full justify-center mt-1">
+                            <nextAction.icon size={14} />{nextAction.label}
+                          </BtnPrimary>
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-500">{waitingText}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Order Timeline — shared with Order Passport (2026-08-26),
+                      replaces the old reseller-only vertical stepper and the
+                      staff-only Packing Status card below; every role now sees
+                      the identical timeline, consistent with Order Passport. */}
+                  {detailOrder && (
+                    <HorizontalTimelineCard
+                      order={detailOrder} ticket={detail} packing={packingEntry}
+                      invoices={detailInvoices} manufacturing_orders={mos}
+                    />
+                  )}
+
+                  {/* Partial fulfilment split — reseller only, shown when the
+                      first delivery is ready. Preserved from the old stepper
+                      card as its own standalone card now that the stepper
+                      itself is gone. */}
+                  {isReseller && detail.status === "partially_fulfilled" && packingEntry?.items?.length > 0 && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Delivery Split</p>
+                      {packingEntry.items.filter(i => !i.is_backordered).length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1">Shipping now</p>
+                          {packingEntry.items.filter(i => !i.is_backordered).map((i, idx) => (
+                            <div key={idx} className="flex justify-between text-[11px] text-gray-600 py-0.5">
+                              <span>{i.name}</span>
+                              <span className="font-medium">{i.qty_reserved ?? i.qty} units</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {packingEntry.items.filter(i => i.is_backordered).length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1">Backordered</p>
+                          {packingEntry.items.filter(i => i.is_backordered).map((i, idx) => (
+                            <div key={idx} className="flex justify-between text-[11px] text-gray-500 py-0.5">
+                              <span>{i.name}</span>
+                              <span className="font-medium text-amber-600">{Math.round((i.qty_ordered ?? i.qty) - (i.qty_reserved ?? 0))} units</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Status & Details */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
@@ -1867,45 +1921,35 @@ export default function SalesTickets() {
                     </div>}
                   </div>
 
-                  {/* Packing Status — read-only visibility for sales */}
-                  {detail.orders_ticket_ref && (
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                      <div className="flex items-center gap-1.5">
-                        <Package size={13} className="text-gray-400" />
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Packing Status</p>
-                      </div>
-                      {packingLoading ? (
-                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
-                          <Loader2 size={11} className="animate-spin" />Loading…
+                  {/* Packing Detail (2026-08-26, trimmed from the former
+                      Packing Status card) — the shared Order Timeline above
+                      now owns "what stage, when" (status badge, QA/RP dates,
+                      queued/ready timestamps all duplicated what the
+                      timeline's own steps already show); this compact card
+                      keeps only what the timeline doesn't carry: who packed
+                      it and who approved it. */}
+                  {detail.orders_ticket_ref && packingEntry && (packingEntry.packer_name || packingEntry.qa_approved_by || packingEntry.rp_approved_by || packingEntry.incomplete_reason) && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-1.5">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5 mb-1">
+                        <Package size={12} className="text-gray-400" />Packing Detail
+                      </p>
+                      {packingEntry.packer_name && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <UserPlus size={11} className="text-gray-400 shrink-0" />Packed by {packingEntry.packer_name}
                         </p>
-                      ) : packingEntry ? (
-                        <div className="space-y-2">
-                          <Badge color={PACK_STATUS_COLOR[packingEntry.status]}>{PACK_STATUS_LABEL[packingEntry.status] || packingEntry.status}</Badge>
-                          <div className="space-y-1.5">
-                            <p className="text-xs text-gray-500 flex items-center gap-1.5">
-                              <UserPlus size={11} className="text-gray-400 shrink-0" />
-                              {packingEntry.packer_name
-                                ? packingEntry.packer_name
-                                : <span className="text-amber-600">Awaiting packer assignment</span>}
-                            </p>
-                            <p className="text-xs flex items-center gap-1.5">
-                              {packingEntry.qa_approved_at
-                                ? <><CheckCircle2 size={11} className="text-green-500 shrink-0" /><span className="text-gray-500">QA approved by {packingEntry.qa_approved_by} {fmtDate(packingEntry.qa_approved_at)}</span></>
-                                : <><Clock size={11} className="text-gray-400 shrink-0" /><span className="text-gray-400">QA approval pending</span></>}
-                            </p>
-                            <p className="text-xs flex items-center gap-1.5">
-                              {packingEntry.rp_approved_at
-                                ? <><CheckCircle2 size={11} className="text-green-500 shrink-0" /><span className="text-gray-500">RP approved by {packingEntry.rp_approved_by} {fmtDate(packingEntry.rp_approved_at)}</span></>
-                                : <><Clock size={11} className="text-gray-400 shrink-0" /><span className="text-gray-400">RP approval pending</span></>}
-                            </p>
-                            {packingEntry.queued_at && <p className="text-[10px] text-gray-400">Queued {fmtDate(packingEntry.queued_at)}</p>}
-                            {packingEntry.assigned_at && <p className="text-[10px] text-gray-400">Packing started {fmtDate(packingEntry.assigned_at)}</p>}
-                            {packingEntry.ready_at && <p className="text-[10px] text-green-600">Ready {fmtDate(packingEntry.ready_at)}</p>}
-                            {packingEntry.incomplete_reason && <p className="text-[10px] text-orange-600">Reason: {packingEntry.incomplete_reason}</p>}
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400">Packing information unavailable.</p>
+                      )}
+                      {packingEntry.qa_approved_by && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <CheckCircle2 size={11} className="text-green-500 shrink-0" />QA approved by {packingEntry.qa_approved_by}
+                        </p>
+                      )}
+                      {packingEntry.rp_approved_by && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <CheckCircle2 size={11} className="text-green-500 shrink-0" />RP approved by {packingEntry.rp_approved_by}
+                        </p>
+                      )}
+                      {packingEntry.incomplete_reason && (
+                        <p className="text-xs text-orange-600">Reason: {packingEntry.incomplete_reason}</p>
                       )}
                     </div>
                   )}
@@ -1918,7 +1962,11 @@ export default function SalesTickets() {
                       </div>
                       <div className="p-2">
 
-                        {detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                        {/* ── Order group ── */}
+                        {showOrderGroup && (
+                          <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold text-gray-300 uppercase tracking-wide">Order</p>
+                        )}
+                        {showEditQuote && (
                           <button
                             onClick={() => {
                               if (isReseller) {
@@ -1950,7 +1998,7 @@ export default function SalesTickets() {
                           </button>
                         )}
 
-                        {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && (
+                        {showSendQuote && (
                           <button onClick={sendQuote} disabled={sending} className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors text-left ${detailOrder.state === "draft" && detail.quote_sent_at ? "text-amber-700 hover:bg-amber-50" : "text-gray-700 hover:bg-gray-50"}`}>
                             <Send size={14} className={`shrink-0 ${detailOrder.state === "draft" && detail.quote_sent_at ? "text-amber-400" : "text-gray-400"}`} />
                             <span className="flex-1">{sending ? "Sending…" : (detail.quote_sent_at ? (detailOrder.state === "draft" ? "Send Updated Quote" : "Resend Quote") : "Send Quote")}</span>
@@ -1960,28 +2008,61 @@ export default function SalesTickets() {
                           </button>
                         )}
 
-                        {detail.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && (
+                        {showConfirmOrderBtn && (
                           <button onClick={() => confirmOrder()} disabled={confirming} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg transition-colors text-left">
                             <CheckCircle2 size={14} className="text-green-500 shrink-0" />
                             {confirming ? "Confirming…" : "Confirm Order"}
                           </button>
                         )}
 
+                        {/* 8.46 — Make this order recurring, once a quote/order exists */}
+                        {showMakeRecurring && (
+                          <button onClick={() => setRecurringModalOpen(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <Repeat size={14} className="text-gray-400 shrink-0" />Make Recurring
+                          </button>
+                        )}
+
+                        {(showCancelQuote || showLinkOrder || showNotInterested) && (
+                          <div className="my-1 border-t border-gray-100" />
+                        )}
+
+                        {showCancelQuote && (
+                          <button onClick={cancelQuote} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors text-left">
+                            <Ban size={14} className="shrink-0" />Cancel Quote
+                          </button>
+                        )}
+
+                        {showLinkOrder && (
+                          <button onClick={openLinkOrderModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <Link2 size={14} className="text-gray-400 shrink-0" />Link Existing Order
+                          </button>
+                        )}
+
+                        {showNotInterested && (
+                          <button onClick={() => markExit("not_interested")} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <XCircle size={14} className="shrink-0" />Not Interested
+                          </button>
+                        )}
+
+                        {/* ── Payment group ── */}
+                        {showPaymentGroup && (
+                          <p className={`px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-300 uppercase tracking-wide ${showOrderGroup ? "mt-1 border-t border-gray-50" : ""}`}>Payment</p>
+                        )}
                         {/* 8.47 — the only path onto the packing board: a registered 50% deposit */}
-                        {!detail.is_sample && detail.status === "awaiting_deposit" && !detail.payment_confirmed_at && canFinance && (
+                        {showRegisterDeposit && (
                           <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
                           </button>
                         )}
 
-                        {!detail.is_sample && detail.invoice_id && !detail.payment_confirmed_at && canFinance && (
+                        {showConfirmPaymentBtn && (
                           <button onClick={confirmPayment} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-amber-500 shrink-0" />
                             {saving ? "Confirming…" : "Confirm Payment"}
                           </button>
                         )}
 
-                        {!detail.is_sample && detail.payment_confirmed_at && detail.order_id && canFinance && (
+                        {showRegisterBalance && (
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
                           </button>
@@ -1991,29 +2072,23 @@ export default function SalesTickets() {
                             a payment (register-deposit/register-payment already clear
                             this automatically on success, so this covers only the
                             no-payment-needed case, e.g. a duplicate upload). */}
-                        {detail.pop_awaiting_review && canFinance && (
+                        {showMarkPopReviewed && (
                           <button onClick={markPopReviewed} disabled={markingPopReviewed} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
                             <Upload size={14} className="text-amber-500 shrink-0" />
                             {markingPopReviewed ? "Marking…" : "Mark POP Reviewed"}
                           </button>
                         )}
 
-                        {/* 8.46 — Make this order recurring, once a quote/order exists */}
-                        {detail.order_id && !detail.recurring_order_id && canDrive && (
-                          <button onClick={() => setRecurringModalOpen(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
-                            <Repeat size={14} className="text-gray-400 shrink-0" />Make Recurring
-                          </button>
-                        )}
-
-                        {/* 8.24 — Invoice lifecycle actions */}
-                        {!detail.is_sample && detail.invoice_id && !isReseller && canFinance && (
+                        {/* ── Documents group — 8.24 invoice lifecycle actions ── */}
+                        {showDocumentsGroup && (
                           <>
+                            <p className={`px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-300 uppercase tracking-wide ${(showOrderGroup || showPaymentGroup) ? "mt-1 border-t border-gray-50" : ""}`}>Documents</p>
                             <button onClick={sendInvoice} disabled={sendingInvoice} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
                               {sendingInvoice ? <Loader2 size={14} className="shrink-0 animate-spin" /> : <Send size={14} className="text-blue-500 shrink-0" />}
                               {detail.invoice_sent_at ? "Resend Invoice" : "Send Invoice"}
                             </button>
 
-                            {!detail.payment_confirmed_at && (
+                            {showResetInvoice && (
                               <button onClick={() => setResetDraftConfirm(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition-colors text-left">
                                 <RotateCcw size={14} className="shrink-0" />Reset Invoice to Draft
                               </button>
@@ -2022,29 +2097,6 @@ export default function SalesTickets() {
                               <FileX size={14} className="text-orange-500 shrink-0" />Raise Credit Note
                             </button>
                           </>
-                        )}
-
-                        {/* Divider before destructive actions */}
-                        {((detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive) || (!detail.order_id && canDrive)) && (
-                          <div className="my-1 border-t border-gray-100" />
-                        )}
-
-                        {detail.order_id && PRE_CONFIRM.has(detail.status) && canDrive && (
-                          <button onClick={cancelQuote} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors text-left">
-                            <Ban size={14} className="shrink-0" />Cancel Quote
-                          </button>
-                        )}
-
-                        {!detail.order_id && canDrive && (
-                          <button onClick={openLinkOrderModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
-                            <Link2 size={14} className="text-gray-400 shrink-0" />Link Existing Order
-                          </button>
-                        )}
-
-                        {!detail.order_id && canDrive && (
-                          <button onClick={() => markExit("not_interested")} disabled={saving} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 rounded-lg transition-colors text-left">
-                            <XCircle size={14} className="shrink-0" />Not Interested
-                          </button>
                         )}
 
                         {/* Admin override — collapsible */}
