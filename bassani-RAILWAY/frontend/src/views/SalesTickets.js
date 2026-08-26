@@ -16,6 +16,7 @@ import {
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
   Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -1703,8 +1704,18 @@ export default function SalesTickets() {
                     </div>
                   )}
 
-                  {/* Status & Details */}
+                  {/* Ticket Status (2026-08-26, split from the old
+                      monolithic "Status & Details" card — product owner:
+                      that card mixed five unrelated things with no visual
+                      separation, hard to read for anyone untrained on this
+                      page) — status, blocking alerts, and who the order is
+                      for. Kept merged with customer info rather than a
+                      fourth separate card (product owner's call: 3 cards on
+                      the right, not 4). */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                      <ClipboardCheck size={12} className="text-gray-400" />Ticket Status
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       {detail.exit_status
                         ? <Badge color={EXIT_COLOR[detail.exit_status]}>{isReseller ? (R_EXIT_LABEL[detail.exit_status] || detail.exit_status) : EXIT_LABEL[detail.exit_status]}</Badge>
@@ -1734,44 +1745,6 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
-                    {/* Proof of Payment (2026-08-21; brought fully inline
-                        2026-08-26) — every uploaded file gets its own "View"
-                        button here (same presigned-URL fetch OrderPassport.js's
-                        popCard already uses, via viewPop() above), rather than
-                        a summary that sent staff to Order Passport just to open
-                        a file. This page is the full working view for staff
-                        processing a ticket; Order Passport is for barcode-scan/
-                        order-number lookup, not a step routine ticket actions
-                        should ever require leaving here for. */}
-                    {detail.pop_uploads?.length > 0 && (
-                      <div className={`rounded-lg border ${detail.pop_awaiting_review ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100"} p-2.5 space-y-2`}>
-                        <p className={`text-xs font-semibold flex items-center gap-1.5 ${detail.pop_awaiting_review ? "text-amber-700" : "text-gray-500"}`}>
-                          <Upload size={13} className={`shrink-0 ${detail.pop_awaiting_review ? "text-amber-500" : "text-gray-400"}`} />
-                          {detail.pop_uploads.length} proof of payment file{detail.pop_uploads.length > 1 ? "s" : ""} uploaded
-                          {!detail.pop_awaiting_review && " (reviewed)"}
-                        </p>
-                        <div className="space-y-1.5">
-                          {detail.pop_uploads.map(u => (
-                            <div key={u.id} className="flex items-center justify-between gap-3 bg-white border border-gray-100 rounded-lg px-2.5 py-1.5">
-                              <div className="min-w-0">
-                                <p className="text-xs font-medium text-gray-800 truncate">{u.filename}</p>
-                                <p className="text-[10px] text-gray-400">
-                                  {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => viewPop(u.id)}
-                                disabled={popViewingId === u.id}
-                                className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
-                              >
-                                {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
-                                View
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                     {detail.is_sample && (
                       <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                         <span className="font-semibold">Sample order</span>
@@ -1786,7 +1759,7 @@ export default function SalesTickets() {
                         <span>{detail.reseller_name}</span>
                       </div>
                     )}
-                    <div className="space-y-2">
+                    <div className="space-y-2 pt-1 border-t border-gray-50">
                       {detail.customer_company_id ? (
                         <>
                           <div>
@@ -1841,6 +1814,65 @@ export default function SalesTickets() {
                           )}
                         </>
                       )}
+                    </div>
+                  </div>
+
+                  {/* Proof of Payment (2026-08-21; brought fully inline
+                      2026-08-26; promoted to its own card same day) — every
+                      uploaded file gets its own "View" button (same
+                      presigned-URL fetch OrderPassport.js's popCard already
+                      uses, via viewPop() above). Given its own card, not
+                      nested inside a denser one, so the amber "awaiting
+                      review" state can't get lost — and a plain-language
+                      subtitle so a new user doesn't mistake an upload for an
+                      actual payment confirmation. */}
+                  {detail.pop_uploads?.length > 0 && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                        <Upload size={12} className="text-gray-400" />Proof of Payment
+                      </p>
+                      <p className="text-[11px] text-gray-400">
+                        Uploaded by the customer as evidence. Finance still confirms the actual payment separately.
+                      </p>
+                      {detail.pop_awaiting_review && (
+                        <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                          Awaiting review
+                        </p>
+                      )}
+                      <div className="space-y-1.5">
+                        {detail.pop_uploads.map(u => (
+                          <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-2.5 py-1.5">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-gray-800 truncate">{u.filename}</p>
+                              <p className="text-[10px] text-gray-400">
+                                {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => viewPop(u.id)}
+                              disabled={popViewingId === u.id}
+                              className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                            >
+                              {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                              View
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Documents & Assignment (2026-08-26, split from the old
+                      "Status & Details" card) — reference links and the
+                      document trail (who's seen what, when), plus who owns
+                      the ticket. Lower-priority reference info a trained
+                      agent checks occasionally, not something that needs to
+                      compete with Ticket Status / Proof of Payment above. */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                      <FileSearch size={12} className="text-gray-400" />Documents & Assignment
+                    </p>
+                    <div className="space-y-2">
                       {detail.order_id && (
                         <p className="text-xs text-gray-400 flex items-center gap-1.5">
                           {isReseller ? "Order" : "Odoo SO"} #{detail.order_id}
