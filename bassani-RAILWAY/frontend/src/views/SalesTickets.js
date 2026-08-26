@@ -27,6 +27,7 @@ import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 import { HorizontalTimelineCard } from "../components/OrderTimeline";
+import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import OrderView from "./OrderView";
 
 const fmtR = (n) =>
@@ -1550,63 +1551,21 @@ export default function SalesTickets() {
                         </div>
                       </div>
 
-                      {/* Delivery & Fulfilment — 7.1 + 7.5 */}
-                      {(deliveriesLoading || deliveries.length > 0) && (
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                          <div className="px-5 py-3 border-b border-gray-50 flex items-center gap-2">
-                            <span className="text-xs font-semibold text-gray-600">Delivery & Fulfilment</span>
-                            {deliveries.some(d => d.is_backorder) && (
-                              <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">Backorders present</span>
-                            )}
-                          </div>
-                          {deliveriesLoading ? (
-                            <p className="px-5 py-4 text-xs text-gray-400">Loading deliveries…</p>
-                          ) : (
-                            <div className="divide-y divide-gray-50">
-                              {deliveries.map(d => (
-                                <div key={d.id} className="px-5 py-3 space-y-2">
-                                  <div className="flex flex-wrap items-center gap-3">
-                                    <span className="font-mono text-xs font-semibold text-bassani-700">{d.name}</span>
-                                    {d.is_backorder && (
-                                      <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">Backorder</span>
-                                    )}
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                                      d.state === "done"     ? "bg-green-50 text-green-700"  :
-                                      d.state === "assigned" ? "bg-blue-50 text-blue-700"    :
-                                      d.state === "cancel"   ? "bg-gray-100 text-gray-400"   :
-                                                               "bg-amber-50 text-amber-700"
-                                    }`}>{d.state_label}</span>
-                                    {d.date_done && <span className="text-xs text-gray-400">Delivered {fmtDate(d.date_done)}</span>}
-                                    {d.scheduled_date && d.state !== "done" && <span className="text-xs text-gray-400">Expected {fmtDate(d.scheduled_date)}</span>}
-                                    {d.tracking_ref && <span className="text-xs text-gray-500 font-mono">{d.tracking_ref}</span>}
-                                  </div>
-                                  {d.lines.length > 0 && (
-                                    <div className="space-y-0.5 pl-1">
-                                      {d.lines.map((l, i) => {
-                                        const lineLots = detailOrder?.lot_map?.[l.product_id] || [];
-                                        return (
-                                        <div key={i} className="flex items-start gap-2 text-xs text-gray-500">
-                                          <span className="flex-1 truncate">{l.product_name}</span>
-                                          <span className="shrink-0 tabular-nums">
-                                            {l.qty_done}/{l.qty_ordered} units
-                                            {l.qty_done < l.qty_ordered && (
-                                              <span className="text-orange-500 ml-1">({l.qty_ordered - l.qty_done} outstanding)</span>
-                                            )}
-                                          </span>
-                                          {lineLots.length > 0 && (
-                                            <span className="shrink-0 font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">{lineLots.join(", ")}</span>
-                                          )}
-                                        </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* Delivery & Fulfilment — 7.1 + 7.5; shared component
+                          (2026-08-26) with OrderPassport.js's identical card
+                          — see DeliveryFulfilmentCard.js for the full
+                          redesign rationale. Gained a "View Slip" PDF action
+                          here as a side effect of unifying (Passport already
+                          had one, this page didn't) — matches this page's
+                          own established role as the full working view, not
+                          a detour through Order Passport for routine
+                          document access. */}
+                      <DeliveryFulfilmentCard
+                        deliveries={deliveries}
+                        loading={deliveriesLoading}
+                        lotMap={detailOrder?.lot_map || {}}
+                        onViewSlip={d => setPdfView({ url: `/api/orders/${detail.order_id}/deliveries/${d.id}/pdf`, title: `${d.name} — Odoo delivery slip` })}
+                      />
 
                       {/* Production Status — any MO linked to this order, shown as soon as one
                           exists (2026-08-23), not just once it's already caused a backorder */}

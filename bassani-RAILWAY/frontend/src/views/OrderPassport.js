@@ -14,6 +14,7 @@ import {
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 import { HorizontalTimelineCard, ticketStageLabel } from "../components/OrderTimeline";
+import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -43,14 +44,6 @@ const STATUS_COLOURS = {
   red:    { bg: "bg-red-50",    border: "border-red-200",    text: "text-red-800",    dot: "bg-red-500"    },
   gray:   { bg: "bg-gray-50",   border: "border-gray-200",   text: "text-gray-600",   dot: "bg-gray-400"   },
   purple: { bg: "bg-purple-50", border: "border-purple-200", text: "text-purple-800", dot: "bg-purple-500" },
-};
-
-const PICKING_COLOUR = {
-  done:      "bg-green-50 text-green-700",
-  assigned:  "bg-blue-50 text-blue-700",
-  confirmed: "bg-amber-50 text-amber-700",
-  waiting:   "bg-orange-50 text-orange-700",
-  cancel:    "bg-gray-100 text-gray-400",
 };
 
 const PAYMENT_COLOUR = {
@@ -940,79 +933,16 @@ export default function OrderPassport() {
                   delivery-slip PDF are internal warehouse/operations detail —
                   a reseller/customer already gets the milestones that matter
                   to them (Queued/Packing/Ready for Collection/Collected) from
-                  the timeline above, without the Odoo-facing mechanics. */}
+                  the timeline above, without the Odoo-facing mechanics.
+                  Shared component (2026-08-26) with SalesTickets.js's
+                  identical card — see DeliveryFulfilmentCard.js for the
+                  redesign rationale. */}
               {!isReseller && !isCustomer && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                  <Truck size={12} />Delivery & Fulfilment
-                  {hasBackorder && (
-                    <span className="ml-auto text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold normal-case tracking-normal">
-                      Backorders present
-                    </span>
-                  )}
-                </p>
-                {deliveries.length === 0 ? (
-                  <p className="text-xs text-gray-400 py-2">No deliveries created yet.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {deliveries.map(d => {
-                      const colour = PICKING_COLOUR[d.state] || "bg-gray-100 text-gray-500";
-                      return (
-                        <div key={d.id} className="border border-gray-100 rounded-xl p-3 space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-xs font-semibold text-gray-800">{d.name}</span>
-                            {d.is_backorder && (
-                              <span className="text-[10px] bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full font-semibold">
-                                Backorder
-                              </span>
-                            )}
-                            {d.backorder_ref && (
-                              <span className="text-[10px] text-gray-400">of {d.backorder_ref}</span>
-                            )}
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${colour}`}>
-                              {d.state_label}
-                            </span>
-                            <button
-                              onClick={() => setPdfView({ url: `/api/orders/${orderId}/deliveries/${d.id}/pdf`, title: `${d.name} — Odoo delivery slip` })}
-                              className="flex items-center gap-1 text-[10px] font-semibold text-bassani-600 hover:text-bassani-700"
-                            >
-                              <FileSearch size={11} />Slip
-                            </button>
-                            {d.date_done && (
-                              <span className="text-xs text-gray-400 ml-auto">Delivered {fmtDate(d.date_done)}</span>
-                            )}
-                            {d.scheduled_date && d.state !== "done" && (
-                              <span className="text-xs text-gray-400 ml-auto">Expected {fmtDate(d.scheduled_date)}</span>
-                            )}
-                          </div>
-                          {d.lines.length > 0 && (
-                            <div className="space-y-0.5 border-t border-gray-50 pt-2">
-                              {d.lines.map((l, i) => {
-                                const lots = lot_map[l.product_id] || [];
-                                const outstanding = l.qty_done < l.qty_ordered;
-                                return (
-                                  <div key={i} className="flex items-start gap-2 text-xs text-gray-500">
-                                    <span className="flex-1 truncate">{l.product_name}</span>
-                                    <span className={`shrink-0 tabular-nums ${outstanding ? "text-orange-600 font-medium" : ""}`}>
-                                      {l.qty_done}/{l.qty_ordered}
-                                      {outstanding && <span className="ml-1 text-[10px]">({l.qty_ordered - l.qty_done} outstanding)</span>}
-                                    </span>
-                                    {lots.length > 0 && (
-                                      <span className="shrink-0 font-mono text-[10px] text-bassani-600 bg-bassani-50 px-1.5 py-0.5 rounded">
-                                        {lots.join(", ")}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                <DeliveryFulfilmentCard
+                  deliveries={deliveries}
+                  lotMap={lot_map}
+                  onViewSlip={d => setPdfView({ url: `/api/orders/${orderId}/deliveries/${d.id}/pdf`, title: `${d.name} — Odoo delivery slip` })}
+                />
               )}
             </div>
 
