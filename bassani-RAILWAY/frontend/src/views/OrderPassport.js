@@ -266,65 +266,31 @@ const LABEL_STYLE = {
   done: "text-gray-800", current: "text-bassani-700", pending: "text-gray-400", skipped: "text-red-600",
 };
 
-function TimelineCard({ order, ticket, packing, invoices, manufacturing_orders }) {
-  const steps = buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders });
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-1.5">
-        <Clock size={12} />Order Timeline
-      </p>
-      <div>
-        {steps.map((s, i) => {
-          const Icon = s.icon;
-          const isLast = i === steps.length - 1;
-          const connectorDone = s.state === "done";
-          return (
-            <div key={s.key} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 ${NODE_STYLE[s.state]}`}>
-                  {s.state === "done" ? <Check size={13} /> : s.state === "skipped" ? <X size={13} /> : <Icon size={13} />}
-                </div>
-                {!isLast && <div className={`w-0.5 flex-1 min-h-[1.25rem] my-0.5 ${connectorDone ? "bg-bassani-600" : "bg-gray-200"}`} />}
-              </div>
-              <div className={`min-w-0 ${isLast ? "pb-0" : "pb-4"} flex-1`}>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                  <p className={`text-sm font-semibold ${LABEL_STYLE[s.state]}`}>{s.label}</p>
-                  {s.at && <span className="text-xs text-gray-400 shrink-0">{fmtDate(s.at)}</span>}
-                </div>
-                {s.sub && <p className="text-xs text-gray-500 mt-0.5">{s.sub}</p>}
-                {s.by && <p className="text-xs text-gray-400 mt-0.5">by {s.by}</p>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Customer-facing step collapse (2026-08-25) — the vertical staff
-// timeline tracks every operational sub-stage (Queued for Packing vs
-// QA vs RP approval, Invoice Raised as its own event); a customer doesn't
-// act on any of those individually and doesn't need to track them
-// separately. This runs AFTER buildTimelineSteps() rather than duplicating
-// its state logic — it only ever merges/drops nodes from that same
-// already-computed array, so the customer view can never disagree with
-// staff's about what state an order is actually in, just displays it
-// coarser. QA+RP → one "Compliance Sign-Off" node (a real invoice already
-// exists once QA/RP approve — see the "Invoice Raised" drop below — but
-// it's not a step the customer acts on, so it isn't split out here
-// either); "Invoice Raised" is dropped outright rather than merged, since
-// it always renders as "done" the moment it exists at all (a real Odoo
-// invoice, either the deposit down-payment invoice or the final delivery
-// invoice raised at mark_complete) and carries no state of its own worth
-// surfacing — the step that actually varies, Payment Received/Pending,
-// still shows. **Queued for Packing kept as its own step (2026-08-26,
-// reverted from an earlier Queued+Packing merge)** — product owner
-// feedback: it's a real, distinguishable milestone (the order sits queued
-// until Bassani's orders team explicitly clicks "Mark as Packing" to
-// actually start work on it), not internal minutiae the way QA/RP's two
-// separate sign-offs are, so collapsing it away lost a meaningful signal.
-function collapseTimelineForCustomer(steps) {
+// ── Step collapse for the shared horizontal timeline (2026-08-25, made
+// universal 2026-08-26 — every role now sees the same horizontal timeline,
+// see HorizontalTimelineCard's own comment below) — buildTimelineSteps()
+// tracks every operational sub-stage individually (Queued for Packing,
+// Packing, QA approval, RP approval, Invoice Raised as its own event);
+// this trims a couple of them that carry no independently useful state, so
+// the strip stays scannable rather than showing every internal micro-step.
+// Runs AFTER buildTimelineSteps() rather than duplicating its state logic —
+// it only ever merges/drops nodes from that same already-computed array, so
+// this view can never disagree about what state an order is actually in,
+// only display it coarser. QA+RP → one "Compliance Sign-Off" node (two
+// near-simultaneous internal sign-offs, not something anyone needs to track
+// separately); "Invoice Raised" is dropped outright rather than merged,
+// since it always renders as "done" the moment it exists at all (a real
+// Odoo invoice, either the deposit down-payment invoice or the final
+// delivery invoice raised at mark_complete) and carries no state of its own
+// worth surfacing — the step that actually varies, Payment Received/Pending,
+// still shows. **Queued for Packing stays its own step, never merged with
+// Packing (2026-08-26, reverted from an earlier Queued+Packing merge)** —
+// product owner feedback: it's a real, distinguishable milestone (the order
+// sits queued until Bassani's orders team explicitly clicks "Mark as
+// Packing" to actually start work on it), not internal minutiae the way
+// QA/RP's two separate sign-offs are, so collapsing it away lost a
+// meaningful signal.
+function collapseTimelineSteps(steps) {
   const byKey = Object.fromEntries(steps.map(s => [s.key, s]));
   const merge = (aKey, bKey, label) => {
     const a = byKey[aKey], b = byKey[bKey];
@@ -346,18 +312,20 @@ function collapseTimelineForCustomer(steps) {
   return result;
 }
 
-// ── Horizontal timeline (2026-08-25) — reseller/customer variant of
-// TimelineCard above, same buildTimelineSteps() data (run through
-// collapseTimelineForCustomer() above) so the two never disagree about what
-// stage an order is at. A vertical, date-and-note-heavy timeline suits
-// staff working the pipeline; a customer just wants an at-a-glance
-// lifecycle overview with future steps visibly greyed out, the familiar
-// horizontal-stepper pattern (courier tracking, e-commerce order status).
-// Only the current step's "sub" note is shown, to keep the strip compact
-// rather than repeating detail every step already carries on its own
-// sidebar card (Packing, Invoice, etc).
+// ── Horizontal timeline (2026-08-25; used for every role since 2026-08-26) —
+// an at-a-glance lifecycle overview with future steps visibly greyed out,
+// the familiar horizontal-stepper pattern (courier tracking, e-commerce
+// order status). Originally reseller/customer-only, with staff seeing a
+// separate dense, dated, vertical list (the now-removed TimelineCard) — the
+// product owner asked for parity so every role looks at the exact same
+// timeline. Same buildTimelineSteps() data throughout, run through
+// collapseTimelineSteps() above, so this can never disagree with any other
+// card on the page about what stage an order is at. Only the current step's
+// "sub" note is shown, to keep the strip compact rather than repeating
+// detail every step already carries on its own sidebar card (Packing,
+// Invoice, etc).
 function HorizontalTimelineCard({ order, ticket, packing, invoices, manufacturing_orders, onUploadPop }) {
-  const steps = collapseTimelineForCustomer(
+  const steps = collapseTimelineSteps(
     buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_orders })
   );
   return (
@@ -1078,14 +1046,20 @@ export default function OrderPassport() {
               buildTimelineSteps() fix above). Sits above the two-column
               grid instead, spanning the full max-w-6xl width. */}
           <div className="mb-4">
-            {(isReseller || isCustomer) ? (
-              <HorizontalTimelineCard
-                order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders}
-                onUploadPop={ticket?.ticket_id && !ticket.exit_status ? () => popFileInputRef.current?.click() : null}
-              />
-            ) : (
-              <TimelineCard order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders} />
-            )}
+            {/* Staff now get the same horizontal timeline as reseller/customer
+                (2026-08-26, product owner: the two views were needlessly
+                different) — the old dense/dated vertical TimelineCard was
+                removed outright rather than kept unused (unused React
+                component definitions trip react-app's no-unused-vars ESLint
+                rule, which CRA promotes to a build-breaking error under
+                CI=true). onUploadPop stays reseller/customer-only since
+                staff already have their own Register Deposit action
+                elsewhere on this page; the CTA link just doesn't render
+                when it's not passed. */}
+            <HorizontalTimelineCard
+              order={order} ticket={ticket} packing={packing} invoices={invoices} manufacturing_orders={manufacturing_orders}
+              onUploadPop={(isReseller || isCustomer) && ticket?.ticket_id && !ticket.exit_status ? () => popFileInputRef.current?.click() : null}
+            />
           </div>
 
           {/* ── Two-column body: record (order lines/deliveries) + sidebar ─── */}

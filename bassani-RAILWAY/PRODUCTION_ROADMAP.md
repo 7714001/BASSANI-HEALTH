@@ -36,6 +36,7 @@
 | 23 | Operations Monitors | 🟢 Complete | 23.0/23.1 complete — 2026-07-15; 23.2 complete — 2026-08-21 (columns merged 2026-08-22); 23.3 complete — 2026-08-22; 23.4 complete — 2026-08-22; 23.5 complete — 2026-08-22; 23.6 complete — 2026-08-23 (shared `MonitorKit.js`, light/dark theme with dark default — flipped from an initial light default the same day per product-owner feedback that dark suits a TV board better, fullscreen toggle, Bassani branding, Operations board grouped by order/SO to match Manufacturing's existing grouping — see CLAUDE.md for the full breakdown) |
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.1.1 complete (2026-08-25) — portal login management + duplicate-login merge tool, reachable from the customer profile and Users screen. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
+| 26 | Sage Business Cloud Accounting Sync | 🔴 Not Started | Architecture fully designed 2026-08-26 (evaluated and rejected the `tl_sage_connector` Odoo App Store module — manual-trigger only, no sales-order/stock coverage, unconfirmed Sage Business Cloud Accounting compatibility). Odoo stays master; Sage receives a one-way mirror of contacts/products/invoices/vendor bills, and only payment/reconciliation status flows back. Full staged/shadow-mode-first rollout plan below (26.1–26.7); deliberately not started yet — revisit once ready to run the technical spike against Bassani's real Sage sandbox |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -5478,3 +5479,142 @@ New `client_type: "whatsapp_bot"` on `api_clients` (Phase 14's credential system
 ### Notes
 
 > **2026-08-19 — Phase rescoped after Nick shared Bassani's actual requirements list for the bot.** The original scope (bot is purely read-only, hands off to the portal for everything else) undersold what was actually being asked for — most of the list (catalogue browsing, building an order request, quote delivery, recurring orders, request routing) turned out to already exist in some form (the ticket pipeline, 8.54's quote-PDF generation, 8.46's recurring-order accept flow, the email-routing config pattern) and just needed a WhatsApp-facing API surface, not new business logic. The one genuine decision was "capture quotation approval" — confirmed explicitly that the bot facilitates and delivers, but the magic-link tap (into the authenticated, 2FA'd portal) is still what actually captures approval and passes it to the ERP, preserving the same boundary used everywhere else in Phases 14/24/25: a chat reply is not a strong enough proof of intent for a controlled-substance order, no matter how conversational the surrounding experience is. Also added multi-company/branch identification (25.4) once "identify the correct company/store associated with an order" surfaced the existing "one contact, several branches" pattern already handled elsewhere in onboarding — the bot has to ask, not assume, when a contact maps to more than one account.
+
+---
+
+## Phase 26 — Sage Business Cloud Accounting Sync
+
+**Goal:** Bassani currently runs Odoo (stock, and historically finance) and Sage Business Cloud Accounting (finance) in parallel, re-capturing the same records by hand in both systems. Sync records Odoo originates (contacts, products, customer invoices, vendor bills) to Sage automatically, and sync payment/reconciliation status performed in Sage back into Odoo, without ever turning the portal or Sage into a second competing financial ledger.
+**Estimate:** Not yet sized — depends on the technical spike outcomes below
+**Status:** 🔴 Not Started — architecture designed and confirmed with the product owner 2026-08-26; deliberately paused here to revisit in a few days, not proceeding to implementation yet
+**Completed:** —
+
+### Context
+
+Bassani sent an Odoo App Store connector to evaluate: `tl_sage_connector` (Techloyce, $799 one-time, Odoo Enterprise). **Rejected after inspection** — it's manual-trigger-only (not the automatic sync asked for), covers only contacts/products/invoices with zero sales-order or stock coverage, never confirms compatibility with Sage Business Cloud Accounting specifically (its only compatibility clue references Sage 200, a different product/API family entirely), is single-user by default, and ships as 1,701 lines of code with 60 days of support. Not something to put a licensed medicinal distributor's books on. This phase is a custom-built integration within this codebase instead.
+
+Two decisions were confirmed with the product owner before this plan was drafted:
+1. **Odoo stays master.** Nothing about the "Odoo is the financial source of truth, the portal never becomes a parallel ledger" architecture principle changes. Sage receives a one-way mirror of contacts/products/invoices/vendor bills that Odoo originates — Sage never originates these.
+2. **Sage becomes the bank-reconciliation system.** Bassani's accountants will reconcile bank statements in Sage going forward, not in this portal. That means the *only* thing that flows back from Sage into Odoo is payment/reconciliation status, and it means Phase 22 (Automated Bank Reconciliation)'s CSV-import + manual-match UI becomes redundant once this ships — while its 15-minute `check_invoice_payments()` auto-confirm poll does not, since it just reflects whatever payment state Odoo ends up with regardless of who/what wrote it.
+
+Research confirmed two hard technical facts about Sage Business Cloud Accounting (REST API v3.1) that shape the whole design: its OAuth2 flow is **authorization_code only** (an admin must interactively log into Sage and consent — there is no app-only/client-credentials option, unlike the Microsoft Graph integration already in this codebase), and its refresh tokens **rotate on every single use** — a lost or double-spent refresh token is an unrecoverable failure requiring a human to redo the consent flow from scratch, with no fallback. It also confirmed a real, pre-existing gap in this codebase: every integration credential today (Graph client secret, IMAP/SMTP passwords) is stored in **plaintext** in MongoDB, only masked in API responses. Acceptable for a mailbox password; not acceptable for a bearer credential to Bassani's live accounting system — this phase introduces real at-rest encryption for the first time (`cryptography.fernet.Fernet`, already a transitive dependency via `python-jose[cryptography]`, keyed from a new Railway env var never stored alongside the ciphertext).
+
+The existing `vault_odoo.py` GACP module (Phase 13) is the strongest architectural precedent in this codebase for exactly this kind of problem: a `GACP_ODOO_WRITES=off|on` mode switch, every intended external write staged as an `ops` array on the record that would exist anyway (not a separate abstract outbox), an `odoo_sync: staged|done|error` status field, and a dedicated flush endpoint that replays staged/error rows idempotently. This phase copies that shape directly for both the push and pull directions — build and prove out the entire pipeline in a non-live "shadow" mode before ever writing to Bassani's real Sage account or real Odoo payment records, exactly as the Vault module did before flipping live Odoo writes on.
+
+---
+
+### 26.0 — Architecture Summary (reference, not a build step)
+
+Two independent, loosely-coupled directions, both gated behind mode flags mirroring `vault_odoo.py`'s `GACP_ODOO_WRITES`:
+
+- **Push (Odoo → Sage, one-way mirror):** contacts, products, customer invoices, vendor bills — triggered at existing Odoo-write chokepoints already documented in `CLAUDE.md` (onboarding approval, product create, deposit/final invoice posting, commission vendor-bill posting). Every push is staged first (a Mongo doc, not a live call), replayed by a drain job — never a synchronous call inside a user-facing request.
+- **Pull (Sage → Odoo, payment/reconciliation status only):** a poll loop reads Sage's paid/reconciled invoices, maps them back to the Odoo `account.move` via an entity-mapping collection, and — only once trust is established through a shadow-mode burn-in — calls `account.payment.register`, the exact same Odoo wizard call `bank_recon_routes.py::match_line` already uses today for a human-confirmed bank match.
+
+**Reconciliation safety net (added 2026-08-26, following a design discussion with the product owner):** chokepoint-based push only fires from code inside the portal's own routes — a record created or edited directly in Odoo (the emergency-only "log into Odoo directly" path this system otherwise avoids by design) would never be enqueued and would silently never reach Sage under the push design alone. Rather than relying purely on chokepoints, add a second, coarser-grained job that periodically re-scans Odoo's own `write_date` on the relevant models against `sage_entity_map`/`sage_sync_queue` and enqueues anything stale or missing — this makes the whole pipeline self-healing rather than dependent on every chokepoint firing correctly every time. This is the same "event-driven primary + periodic reconciliation safety net" shape already proven elsewhere in this exact codebase: the Graph mailbox integration runs on real-time webhooks but also has a 30-minute `_graph_reconcile_loop()` catch-up sweep (`server.py`), added after a real incident where the webhook alone silently missed a stretch of messages. Two deliberately different cadences, not one job on one schedule:
+- The **Sage → Odoo payment-status poll stays fast** (~15 minutes, matching the existing bank-recon poll cadence) — this direction is business-critical, since it's what tells the portal a deposit is paid and the order can move to the packing board. Slowing it down would be a real regression, not a simplification.
+- The **Odoo-side catch-up sweep runs on a much coarser schedule** (nightly), since it only exists to catch the rare/emergency-only case of a direct-Odoo edit that bypassed the portal — being up to a business day behind on that specific edge case is an acceptable trade-off.
+- **A manual "Sync Now" trigger** (already in the Settings UI design below) lets an admin force either sweep immediately rather than waiting on its schedule, for whenever something needs to go across sooner.
+
+Both directions share one OAuth/credential module (`backend/services/sage_client.py`) and one sync-orchestration module (`backend/services/sage_sync_service.py`). The only Odoo write this feature ever originates is a payment registration keyed off a Sage-confirmed reconciliation — structurally identical to what a human already does today via the Bank Reconciliation screen, just automated and audited.
+
+**New MongoDB collections:**
+- `sage_config` — singleton, Fernet-encrypted OAuth token/credential store (`access_token_enc`, `refresh_token_enc`, `client_secret_enc`, `token_expires_at`, `status: disconnected|connected|refresh_failed`)
+- `sage_company_map` — Odoo `company_id` ↔ Sage `business_id` mapping (Sage's multi-business-per-login model, selected via a request header per call)
+- `sage_entity_map` — Odoo record ↔ Sage record id cross-reference (`entity_type`, `odoo_id`, `sage_id`, `content_hash` for no-op re-push detection, `status: staged|pushed|error|stale`)
+- `sage_sync_queue` — the outbox, modeled directly on `vault_odoo.py`'s `ops`/`odoo_sync` shape (`direction: push|pull`, `op: {kind, payload, depends_on}`, `sage_sync: staged|done|error|needs_review`)
+
+**New backend modules:**
+- `backend/services/sage_client.py` — OAuth authorization_code exchange, a single `asyncio.Lock`-guarded proactive refresh loop (the *sole* place a refresh is ever attempted, so two concurrent callers can never both spend the same rotating refresh token), Fernet encryption, a `sage_request()` call wrapper mirroring `odoo_client.py::fetch_report_pdf()`'s "try cached → refresh once → retry once" shape.
+- `backend/services/sage_sync_service.py` — `enqueue_*` functions (always run, pure, mode-independent), `drain_push_queue()` (mirrors `production_routes.py::sync_staged`), `poll_sage_payments()` / `apply_pull_payment()` (the pull direction, reusing `bank_recon_routes.py::match_line`'s wizard call and race-guard), `reconcile_odoo_direct_edits()` (the nightly catch-up sweep — diffs Odoo `write_date` against `sage_entity_map`, enqueues anything stale or never staged, same self-healing role as `graph_subscription.py`'s reconciliation sweep).
+
+**New Settings UI:** Settings > Integrations > Sage (new `backend/routes/sage_routes.py`) — OAuth "Connect to Sage" flow (a genuinely new browser-redirect + callback pattern, no precedent in this codebase), company↔business mapping, connection health, manual "Sync Now," and a new `frontend/src/views/SageSyncDashboard.js` reusing `BankReconciliation.js`'s proven list/drill-in/status-badge/modal shape.
+
+**New permissions:** `settings.manage_sage` (connect/disconnect, company mapping — admin-only, defaults `False` everywhere) and `finance.sage_sync_manage` (dashboard review/retry/approve — defaults `True` for the `finance` role, matching `bank_reconciliation`'s existing default). Both added to `auth.py` and mirrored in `Users.js` per the codebase's standing three-places permission rule.
+
+---
+
+### 26.1 — OAuth Connection + Encrypted Credential Storage
+
+- [ ] `backend/services/sage_client.py` built: `build_authorize_url()`, `exchange_code_for_tokens()`, `get_access_token()`/`_do_refresh()` under a single `asyncio.Lock`, `sage_request()` call wrapper
+- [ ] `sage_config` collection with Fernet-encrypted token fields; `SAGE_TOKEN_ENCRYPTION_KEY` Railway env var
+- [ ] Proactive refresh background loop registered from `server.py` (same shape as `initialise_payment_check`), refreshing ~3 minutes ahead of the 5-minute access-token expiry
+- [ ] A failed refresh sets `status: "refresh_failed"` and pages immediately via `sentry_sdk.capture_exception` (no recoverable-tier warning first — there is no fallback once a rotating refresh token is lost)
+- [ ] Settings > Integrations > Sage: "Connect to Sage" full-page-redirect flow, `GET /api/sage/oauth/callback` (new — no precedent in this codebase), company↔Sage-business mapping UI
+- [ ] End-to-end test against Bassani's real Sage sandbox; confirm the Mongo doc holds ciphertext, not plaintext; confirm the refresh loop survives a real or forced token expiry with zero manual intervention
+
+---
+
+### 26.2 — Contact + Product Reference Sync (staged only)
+
+- [ ] `sage_entity_map` + `sage_sync_queue` collections created with indexes
+- [ ] Onboarding-approval (`onboarding_routes.py`, `res.partner` create) and product-create (`product_routes.py`) chokepoints call `enqueue_contact_push`/`enqueue_product_push`
+- [ ] `SageSyncDashboard.js` shows the staged queue (read-only at this stage)
+- [ ] `SAGE_SYNC_WRITES=off` — nothing yet touches the live Sage API
+
+---
+
+### 26.3 — Invoice Push (shadow/staged mode)
+
+- [ ] Deposit-invoice (`ticket_routes.py::register_deposit`) and final-delivery-invoice (`packing_board_routes.py::complete_entry`) chokepoints enqueue with correct `depends_on` contact/product ordering
+- [ ] `drain_push_queue()` fully built and tested against a Sage **sandbox** company (never production Bassani data at this stage)
+- [ ] Idempotency confirmed: re-running drain on an already-pushed row is a no-op via `content_hash`, not a duplicate Sage record
+- [ ] `reconcile_odoo_direct_edits()` nightly catch-up sweep built and tested alongside the chokepoint push: create/edit a record directly in Odoo (bypassing the portal) against the sandbox company and confirm the next sweep enqueues it correctly, on top of the chokepoint-driven rows
+- [ ] `SAGE_SYNC_WRITES` stays `off` in production throughout this sub-phase
+
+---
+
+### 26.4 — Invoice Push Goes Live
+
+- [ ] `SAGE_SYNC_WRITES=on` for real Bassani companies
+- [ ] Defined trust-monitoring period (dashboard watched for `error`/`stale` rows) before declaring stable
+- [ ] Vendor bills deliberately not included yet
+
+---
+
+### 26.5 — Vendor Bill Push (Commission)
+
+- [ ] `commission_routes.py::mark_statement_paid` chokepoint wired to `enqueue_vendor_bill_push`, reusing the proven 26.3/26.4 pipeline unchanged
+
+---
+
+### 26.6 — Payment Pull-Back (shadow mode)
+
+- [ ] **Technical spike required first** — confirm against Bassani's real Sage sandbox: (1) whether Sage exposes a reliable "updated since" filter on invoices/transactions for incremental polling, or a bounded full-scan fallback is needed; (2) whether a Sage payment/transaction payload exposes which bank account it posted against, needed to auto-resolve the Odoo journal; (3) Sage's real rate limits; (4) whether Sage exposes exact partial-payment allocation amounts or only a boolean paid/not-paid at invoice level
+- [ ] `poll_sage_payments()` running on a 15-minute schedule (matching `check_invoice_payments()`'s existing cadence) with `SAGE_PAYMENT_PULLBACK_WRITES=shadow` — safety checks (re-read race guard, amount/tolerance check) run and their result is recorded on the queue row, but no Odoo write happens yet
+- [ ] Dashboard shows "would write" rows with reasoning; Finance reviews a defined number of real reconciliation cycles performed in Sage's own sandbox UI before any live write is attempted
+- [ ] Deliberately crafted edge cases verified: already-paid invoice (no-op), partial payment, amount mismatch (all route to `needs_review`, never guessed at)
+
+---
+
+### 26.7 — Payment Pull-Back Goes Live (manual-approve gate) + Phase 22 CSV-Import UI Retired
+
+- [ ] `SAGE_PAYMENT_PULLBACK_WRITES=on` — every pull-back write requires an explicit dashboard "Approve & Write" click (`approved_by` populated on the audit entry); full automatic write is a later, not-yet-numbered sub-phase pending its own product-owner sign-off, mirroring how `check_invoice_payments()` itself only became a trusted unattended auto-confirm after a long observed trust period
+- [ ] `check_invoice_payments()` and its 15-minute poll left completely unchanged — confirmed to compose correctly regardless of whether the underlying Odoo payment was registered by a human, the old CSV auto-match, or the new Sage pull-back
+- [ ] Phase 22's CSV-import + manual-match UI and nav item removed; `finance.bank_reconciliation` permission key retained but no longer granted (avoids touching historical user docs for no benefit)
+- [ ] `CLAUDE.md`, this roadmap, the user manual, and the executive overview all updated per the Document Maintenance rule
+
+---
+
+### Open Risks / Technical Spike Items (must be resolved before 26.6, flagged now so they aren't forgotten)
+
+The API research behind this plan is from public Sage documentation and third-party integration guides, not a hands-on read of Bassani's own Sage account — confirm each of the following directly against Bassani's real Sage sandbox before the affected sub-phase starts:
+
+1. Reliable "updated since" filtering on Sage's invoice/transaction endpoints for incremental polling
+2. Whether a Sage payment/transaction payload exposes which bank account it posted against (needed to auto-resolve the Odoo journal for `account.payment.register`)
+3. Exact REST endpoint paths/required fields for creating contacts, products, sales invoices, and purchase invoices in Sage Business Cloud Accounting v3.1
+4. Sage's actual rate limits, to size drain batch size and poll frequency
+5. Exact multi-business request-header name/format
+6. OAuth redirect URI pre-registration in Sage's app console (confirm Railway's portal URL, plus any staging domain), and whether Sage's authorization_code flow supports a `state` CSRF param
+7. Whether a lost refresh-token response has any grace-window recovery, or is truly an immediate hard failure — shapes how urgently `refresh_failed` needs to page
+8. Whether Sage exposes exact partial-payment allocation amounts, or only a boolean paid/not-paid at invoice level
+
+### Critical Files (for whoever picks this up)
+
+- `backend/services/vault_odoo.py` + `backend/routes/production_routes.py::sync_staged` — the staged-queue template this feature's persistence model is copied from
+- `backend/services/graph_client.py` + `backend/services/graph_subscription.py` — nearest OAuth token-lifecycle and failure-escalation precedent
+- `backend/routes/bank_recon_routes.py::match_line` — the exact `account.payment.register` wizard call and race-guard the pull-back write reuses
+- `backend/odoo_client.py` — `OdooClient`/`odoo()` conventions; `fetch_report_pdf()` is the template for a cached-token-with-refresh external HTTP client
+- `backend/warehouse_context.py` — the company-scoping convention `sage_company_map` mirrors
+- `backend/middleware/audit.py::audit_log()` — canonical audit writer for every push enqueue and pull-back write
+- `backend/auth.py` + `frontend/src/views/Users.js` — three-places permission model for the two new permission keys
+- `frontend/src/views/BankReconciliation.js` — UI shape `SageSyncDashboard.js` is built on
