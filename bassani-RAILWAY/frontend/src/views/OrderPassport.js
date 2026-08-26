@@ -304,21 +304,26 @@ function TimelineCard({ order, ticket, packing, invoices, manufacturing_orders }
 
 // ── Customer-facing step collapse (2026-08-25) — the vertical staff
 // timeline tracks every operational sub-stage (Queued for Packing vs
-// Packing, QA vs RP approval, Invoice Raised as its own event); a customer
-// doesn't act on any of those individually and doesn't need to track them
+// QA vs RP approval, Invoice Raised as its own event); a customer doesn't
+// act on any of those individually and doesn't need to track them
 // separately. This runs AFTER buildTimelineSteps() rather than duplicating
 // its state logic — it only ever merges/drops nodes from that same
 // already-computed array, so the customer view can never disagree with
 // staff's about what state an order is actually in, just displays it
-// coarser. Queued+Packing → one "Packing" node; QA+RP → one "Compliance
-// Sign-Off" node (a real invoice already exists once QA/RP approve — see
-// the "Invoice Raised" drop below — but it's not a step the customer acts
-// on, so it isn't split out here either); "Invoice Raised" is dropped
-// outright rather than merged, since it always renders as "done" the
-// moment it exists at all (a real Odoo invoice, either the deposit
-// down-payment invoice or the final delivery invoice raised at
-// mark_complete) and carries no state of its own worth surfacing — the
-// step that actually varies, Payment Received/Pending, still shows.
+// coarser. QA+RP → one "Compliance Sign-Off" node (a real invoice already
+// exists once QA/RP approve — see the "Invoice Raised" drop below — but
+// it's not a step the customer acts on, so it isn't split out here
+// either); "Invoice Raised" is dropped outright rather than merged, since
+// it always renders as "done" the moment it exists at all (a real Odoo
+// invoice, either the deposit down-payment invoice or the final delivery
+// invoice raised at mark_complete) and carries no state of its own worth
+// surfacing — the step that actually varies, Payment Received/Pending,
+// still shows. **Queued for Packing kept as its own step (2026-08-26,
+// reverted from an earlier Queued+Packing merge)** — product owner
+// feedback: it's a real, distinguishable milestone (the order sits queued
+// until Bassani's orders team explicitly clicks "Mark as Packing" to
+// actually start work on it), not internal minutiae the way QA/RP's two
+// separate sign-offs are, so collapsing it away lost a meaningful signal.
 function collapseTimelineForCustomer(steps) {
   const byKey = Object.fromEntries(steps.map(s => [s.key, s]));
   const merge = (aKey, bKey, label) => {
@@ -333,10 +338,8 @@ function collapseTimelineForCustomer(steps) {
   };
   const result = [];
   for (const s of steps) {
-    if (s.key === "packing" && byKey.queued) continue; // folded into the merge below
     if (s.key === "rp" && byKey.qa) continue; // folded into the merge below
     if (s.key === "invoice") continue; // dropped — see comment above
-    if (s.key === "queued") { result.push(merge("queued", "packing", "Packing") || s); continue; }
     if (s.key === "qa") { result.push(merge("qa", "rp", "Compliance Sign-Off") || s); continue; }
     result.push(s);
   }
