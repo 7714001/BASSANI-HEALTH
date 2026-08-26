@@ -542,6 +542,11 @@ async def list_tickets(
 
     # Batch-resolve order_id integers to human-readable SO names (e.g. S00045).
     # Single Odoo call for all linked orders — non-fatal if Odoo is unavailable.
+    # Logged rather than silently swallowed (2026-08-26, found live — the SO #
+    # column was blank for every single ticket, with nothing anywhere to
+    # explain why; this bare `except: pass` was the only thing in the whole
+    # request that could have caused that, so it's now visible in logs the
+    # next time it fires instead of degrading invisibly).
     order_ids = list({t["order_id"] for t in tickets if t.get("order_id")})
     if order_ids:
         try:
@@ -551,8 +556,9 @@ async def list_tickets(
             for t in tickets:
                 if t.get("order_id"):
                     t["order_name"] = order_name_map.get(t["order_id"])
-        except Exception:
-            pass  # degrade gracefully — list still works, names just absent
+        except Exception as e:
+            logger.warning("list_tickets_order_name_resolve_failed order_ids=%s error=%s", order_ids, e)
+            # degrade gracefully — list still works, names just absent
 
     return {"tickets": [_serialize(t) for t in tickets], "total": len(tickets)}
 
