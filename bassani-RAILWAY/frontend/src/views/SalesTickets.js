@@ -1815,113 +1815,11 @@ export default function SalesTickets() {
                         </>
                       )}
                     </div>
-                  </div>
 
-                  {/* Proof of Payment (2026-08-21; brought fully inline
-                      2026-08-26; promoted to its own card same day) — every
-                      uploaded file gets its own "View" button (same
-                      presigned-URL fetch OrderPassport.js's popCard already
-                      uses, via viewPop() above). Given its own card, not
-                      nested inside a denser one, so the amber "awaiting
-                      review" state can't get lost — and a plain-language
-                      subtitle so a new user doesn't mistake an upload for an
-                      actual payment confirmation. */}
-                  {detail.pop_uploads?.length > 0 && (
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
-                        <Upload size={12} className="text-gray-400" />Proof of Payment
-                      </p>
-                      <p className="text-[11px] text-gray-400">
-                        Uploaded by the customer as evidence. Finance still confirms the actual payment separately.
-                      </p>
-                      {detail.pop_awaiting_review && (
-                        <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
-                          Awaiting review
-                        </p>
-                      )}
-                      <div className="space-y-1.5">
-                        {detail.pop_uploads.map(u => (
-                          <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-2.5 py-1.5">
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium text-gray-800 truncate">{u.filename}</p>
-                              <p className="text-[10px] text-gray-400">
-                                {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => viewPop(u.id)}
-                              disabled={popViewingId === u.id}
-                              className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
-                            >
-                              {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
-                              View
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Documents & Assignment (2026-08-26, split from the old
-                      "Status & Details" card) — reference links and the
-                      document trail (who's seen what, when), plus who owns
-                      the ticket. Lower-priority reference info a trained
-                      agent checks occasionally, not something that needs to
-                      compete with Ticket Status / Proof of Payment above. */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
-                      <FileSearch size={12} className="text-gray-400" />Documents & Assignment
-                    </p>
-                    <div className="space-y-2">
-                      {detail.order_id && (
-                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
-                          {isReseller ? "Order" : "Odoo SO"} #{detail.order_id}
-                          {!isReseller && (
-                            <button
-                              onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `SO #${detail.order_id} — Odoo original` })}
-                              className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-medium"
-                            >
-                              <FileSearch size={10} />View
-                            </button>
-                          )}
-                        </p>
-                      )}
-                      {!isReseller && detail.invoice_id && (
-                        <p className="text-xs text-gray-400 flex items-center gap-1.5">
-                          Invoice #{detail.invoice_id}
-                          <button
-                            onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
-                            className="flex items-center gap-0.5 text-bassani-600 hover:text-bassani-700 font-medium"
-                          >
-                            <FileSearch size={10} />View
-                          </button>
-                        </p>
-                      )}
-                      {!isReseller && detail.credit_note_name && (
-                        <p className="text-xs text-orange-600 flex items-center gap-1.5">
-                          <FileX size={11} />Credit note {detail.credit_note_name}
-                        </p>
-                      )}
-                      {detail.quote_sent_at && (
-                        <p className="text-xs text-blue-600 flex items-center gap-1.5">
-                          <Send size={11} />Quote sent {fmtDate(detail.quote_sent_at)}
-                        </p>
-                      )}
-                      {!isReseller && detail.invoice_sent_at && (
-                        <p className="text-xs text-blue-600 flex items-center gap-1.5">
-                          <ReceiptText size={11} />Invoice sent {fmtDate(detail.invoice_sent_at)}
-                        </p>
-                      )}
-                      {!isReseller && detail.payment_confirmed_at && (
-                        <p className="text-xs text-green-600 flex items-center gap-1.5">
-                          <CheckCircle2 size={11} />
-                          {detail.payment_confirmed_by === "auto"
-                            ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
-                            : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
-                          }
-                        </p>
-                      )}
-                    </div>
+                    {/* Assigned to (2026-08-26, moved down from the old
+                        Documents & Assignment card) — who owns the ticket
+                        belongs with "what state is this ticket in," not
+                        buried under document reference links. */}
                     {!isReseller && <div className="pt-2 border-t border-gray-100 space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         {detail.assigned_to_name
@@ -1993,6 +1891,133 @@ export default function SalesTickets() {
                       )}
                     </div>}
                   </div>
+
+                  {/* Proof of Payment (2026-08-21; brought fully inline
+                      2026-08-26; promoted to its own card same day) — every
+                      uploaded file gets its own "View" button (same
+                      presigned-URL fetch OrderPassport.js's popCard already
+                      uses, via viewPop() above). Given its own card, not
+                      nested inside a denser one, so the amber "awaiting
+                      review" state can't get lost — and a plain-language
+                      subtitle so a new user doesn't mistake an upload for an
+                      actual payment confirmation. */}
+                  {detail.pop_uploads?.length > 0 && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                        <Upload size={12} className="text-gray-400" />Proof of Payment
+                      </p>
+                      <p className="text-[11px] text-gray-400">
+                        Uploaded by the customer as evidence. Finance still confirms the actual payment separately.
+                      </p>
+                      {detail.pop_awaiting_review && (
+                        <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                          Awaiting review
+                        </p>
+                      )}
+                      <div className="space-y-1.5">
+                        {detail.pop_uploads.map(u => (
+                          <div key={u.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-2.5 py-1.5">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-gray-800 truncate">{u.filename}</p>
+                              <p className="text-[10px] text-gray-400">
+                                {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => viewPop(u.id)}
+                              disabled={popViewingId === u.id}
+                              className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                            >
+                              {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                              View
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quotes & Invoices (2026-08-26, reworked from "Documents
+                      & Assignment" — product owner: that name was unclear
+                      about what it actually held, and Assigned To has moved
+                      into Ticket Status above). Grouped by document
+                      (Quotation / Invoice) rather than one flat list of
+                      reference numbers and dates, so it reads as "here's the
+                      quote, here's the invoice, here's what happened to
+                      each" instead of an undifferentiated stack of facts.
+                      Every underlying field/gate is unchanged from the old
+                      card. */}
+                  {(() => {
+                    const hasQuoteSection   = !!detail.order_id;
+                    const hasInvoiceSection = !isReseller && !!detail.invoice_id;
+                    return (
+                      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                          <FileSearch size={12} className="text-gray-400" />Quotes & Invoices
+                        </p>
+
+                        {hasQuoteSection && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Quotation</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-600">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</span>
+                              {!isReseller && (
+                                <button
+                                  onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `SO #${detail.order_id} — Odoo original` })}
+                                  className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
+                                >
+                                  <FileSearch size={10} />View
+                                </button>
+                              )}
+                            </div>
+                            {detail.quote_sent_at && (
+                              <p className="text-[11px] text-blue-600 flex items-center gap-1.5">
+                                <Send size={10} />Sent {fmtDate(detail.quote_sent_at)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {hasInvoiceSection && (
+                          <div className={`space-y-1 ${hasQuoteSection ? "pt-2 border-t border-gray-50" : ""}`}>
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Invoice</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-600">Invoice #{detail.invoice_id}</span>
+                              <button
+                                onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
+                                className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
+                              >
+                                <FileSearch size={10} />View
+                              </button>
+                            </div>
+                            {detail.invoice_sent_at && (
+                              <p className="text-[11px] text-blue-600 flex items-center gap-1.5">
+                                <ReceiptText size={10} />Sent {fmtDate(detail.invoice_sent_at)}
+                              </p>
+                            )}
+                            {detail.payment_confirmed_at && (
+                              <p className="text-[11px] text-green-600 flex items-center gap-1.5">
+                                <CheckCircle2 size={10} />
+                                {detail.payment_confirmed_by === "auto"
+                                  ? <>Auto-confirmed from bank {fmtDate(detail.payment_confirmed_at)}</>
+                                  : <>Payment confirmed {fmtDate(detail.payment_confirmed_at)}</>
+                                }
+                              </p>
+                            )}
+                            {detail.credit_note_name && (
+                              <p className="text-[11px] text-orange-600 flex items-center gap-1.5">
+                                <FileX size={10} />Credit note {detail.credit_note_name}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {!hasQuoteSection && !hasInvoiceSection && (
+                          <p className="text-xs text-gray-300">No documents yet.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Packing Detail (2026-08-26, trimmed from the former
                       Packing Status card) — the shared Order Timeline above
