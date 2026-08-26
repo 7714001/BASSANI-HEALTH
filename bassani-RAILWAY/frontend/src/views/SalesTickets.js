@@ -618,6 +618,25 @@ export default function SalesTickets() {
     finally { setMarkingPopReviewed(false); }
   };
 
+  // View a Proof of Payment file (2026-08-26) — same presigned-URL fetch
+  // OrderPassport.js's popCard already uses; brought here so staff can
+  // actually open a POP file without leaving the ticket for the passport,
+  // matching this page's role as the full working view (Order Passport is
+  // for barcode-scan/order-number lookup, not a step staff should need for
+  // routine ticket actions).
+  const [popViewingId, setPopViewingId] = useState(null);
+  const viewPop = async (uploadId) => {
+    setPopViewingId(uploadId);
+    try {
+      const { data: res } = await api.get(`/api/tickets/${detail.id}/pop/${uploadId}/download`);
+      window.open(res.url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to open file");
+    } finally {
+      setPopViewingId(null);
+    }
+  };
+
   const sendQuote = async () => {
     setSending(true);
     try {
@@ -1715,29 +1734,41 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
-                    {/* Proof of Payment (2026-08-21) — full file list + view links
-                        live on the order's Order Passport page (shared with
-                        staff/reseller/customer); this is just a compact
-                        summary + deep link so the ticket detail doesn't
-                        duplicate that presigned-URL-fetching UI a second time. */}
+                    {/* Proof of Payment (2026-08-21; brought fully inline
+                        2026-08-26) — every uploaded file gets its own "View"
+                        button here (same presigned-URL fetch OrderPassport.js's
+                        popCard already uses, via viewPop() above), rather than
+                        a summary that sent staff to Order Passport just to open
+                        a file. This page is the full working view for staff
+                        processing a ticket; Order Passport is for barcode-scan/
+                        order-number lookup, not a step routine ticket actions
+                        should ever require leaving here for. */}
                     {detail.pop_uploads?.length > 0 && (
-                      <div className={`flex items-start gap-2 text-xs rounded-lg px-2.5 py-2 border ${detail.pop_awaiting_review ? "text-amber-700 bg-amber-50 border-amber-100" : "text-gray-500 bg-gray-50 border-gray-100"}`}>
-                        <Upload size={13} className={`shrink-0 mt-0.5 ${detail.pop_awaiting_review ? "text-amber-500" : "text-gray-400"}`} />
-                        <div>
-                          <p className="font-semibold">
-                            {detail.pop_uploads.length} proof of payment file{detail.pop_uploads.length > 1 ? "s" : ""} uploaded
-                            {!detail.pop_awaiting_review && " (reviewed)"}
-                          </p>
-                          <p className="mt-0.5">
-                            Latest: {detail.pop_uploads[detail.pop_uploads.length - 1].filename}
-                            {" · "}{fmtDate(detail.pop_uploads[detail.pop_uploads.length - 1].uploaded_at)}
-                          </p>
-                          {detail.order_id && (
-                            <button onClick={() => navigate(`/orders/${detail.order_id}/passport`)}
-                              className="font-medium underline mt-0.5">
-                              View files in Order Passport
-                            </button>
-                          )}
+                      <div className={`rounded-lg border ${detail.pop_awaiting_review ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100"} p-2.5 space-y-2`}>
+                        <p className={`text-xs font-semibold flex items-center gap-1.5 ${detail.pop_awaiting_review ? "text-amber-700" : "text-gray-500"}`}>
+                          <Upload size={13} className={`shrink-0 ${detail.pop_awaiting_review ? "text-amber-500" : "text-gray-400"}`} />
+                          {detail.pop_uploads.length} proof of payment file{detail.pop_uploads.length > 1 ? "s" : ""} uploaded
+                          {!detail.pop_awaiting_review && " (reviewed)"}
+                        </p>
+                        <div className="space-y-1.5">
+                          {detail.pop_uploads.map(u => (
+                            <div key={u.id} className="flex items-center justify-between gap-3 bg-white border border-gray-100 rounded-lg px-2.5 py-1.5">
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-gray-800 truncate">{u.filename}</p>
+                                <p className="text-[10px] text-gray-400">
+                                  {fmtDate(u.uploaded_at)}{u.uploaded_by_name ? ` · ${u.uploaded_by_name}` : ""}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => viewPop(u.id)}
+                                disabled={popViewingId === u.id}
+                                className="text-xs font-medium text-bassani-600 hover:text-bassani-800 shrink-0 flex items-center gap-1"
+                              >
+                                {popViewingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <ExternalLink size={11} />}
+                                View
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
