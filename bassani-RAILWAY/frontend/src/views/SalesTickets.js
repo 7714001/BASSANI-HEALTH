@@ -2073,7 +2073,20 @@ export default function SalesTickets() {
                                   <AlertTriangle size={10} className="shrink-0" />
                                   Found in Odoo, not yet linked to this ticket
                                 </p>
-                                {detailInvoices.map(inv => (
+                                {detailInvoices.map(inv => {
+                                  // Only offer the one-click Link action on an
+                                  // invoice that could actually succeed —
+                                  // matches use_existing_invoice's own
+                                  // server-side checks (posted customer
+                                  // invoice with real payment against it), so
+                                  // a draft, credit note, or fully-unpaid
+                                  // invoice never shows a button that would
+                                  // just error. Deliberately still a click,
+                                  // never automatic — see the comment on
+                                  // hasInvoiceSection above for why.
+                                  const canLink = inv.move_type === "out_invoice" && inv.state === "posted"
+                                    && ["paid", "partial", "in_payment"].includes(inv.payment_state);
+                                  return (
                                   <div key={inv.invoice_id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-2 py-1.5">
                                     <div className="min-w-0">
                                       <p className="text-xs font-medium text-gray-800 truncate">{inv.name}</p>
@@ -2082,14 +2095,28 @@ export default function SalesTickets() {
                                         {inv.amount_residual > 0 && ` · ${fmtR(inv.amount_residual)} due`}
                                       </p>
                                     </div>
-                                    <button
-                                      onClick={() => setPdfView({ url: `/api/invoices/${inv.invoice_id}/pdf`, title: `${inv.name} — Odoo original` })}
-                                      className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
-                                    >
-                                      <FileSearch size={10} />View
-                                    </button>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <button
+                                        onClick={() => setPdfView({ url: `/api/invoices/${inv.invoice_id}/pdf`, title: `${inv.name} — Odoo original` })}
+                                        className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium"
+                                      >
+                                        <FileSearch size={10} />View
+                                      </button>
+                                      {canLink && (
+                                        <button
+                                          onClick={() => useExistingInvoice(inv.invoice_id)}
+                                          disabled={usingExistingInvoiceId === inv.invoice_id}
+                                          className="flex items-center gap-0.5 text-xs text-green-700 hover:text-green-800 font-medium disabled:opacity-50"
+                                        >
+                                          {usingExistingInvoiceId === inv.invoice_id
+                                            ? <Loader2 size={10} className="animate-spin" />
+                                            : <Link2 size={10} />}
+                                          Link
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                ))}
+                                  ); })}
                               </div>
                             )}
                           </div>
