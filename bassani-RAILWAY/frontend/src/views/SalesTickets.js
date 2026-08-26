@@ -1140,6 +1140,16 @@ export default function SalesTickets() {
     finally { setBalanceSaving(false); }
   };
 
+  // ── Order detail payment breakdown (2026-08-26) ─────────────────────────────
+  // Same Payments Received / Balance Due calc as OrderPassport.js's Order
+  // Lines footer — detailOrder.invoices comes from get_order (order_routes.py),
+  // extended the same day to return invoices in the same shape
+  // get_order_passport already did, so this is the identical formula, not a
+  // second implementation of it.
+  const detailInvoices    = detailOrder?.invoices || [];
+  const detailTotalPaid   = detailInvoices.reduce((s, i) => s + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
+  const detailOutstanding = Math.max(0, (detailOrder?.amount_total || 0) - detailTotalPaid);
+
   // ── Quote totals ──────────────────────────────────────────────────────────
   const quoteSubtotal = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
   const quoteVat      = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (l._tax_rate / 100), 0);
@@ -1349,9 +1359,29 @@ export default function SalesTickets() {
                               <span>{fmtR(detailOrder.amount_tax)}</span>
                             </div>
                             <div className="pt-3 border-t border-gray-100 flex justify-between">
-                              <span className="text-base font-bold text-gray-900">Total</span>
+                              <span className="text-base font-bold text-gray-900">Order Total</span>
                               <span className="text-base font-bold text-bassani-700">{fmtR(detailOrder.amount_total)}</span>
                             </div>
+                            {/* Payments Received / Balance Due (2026-08-26) —
+                                only shown once a payment exists against the
+                                order (typically the 50% deposit), mirroring
+                                OrderPassport.js's Order Lines footer so staff
+                                see the same running balance a customer/reseller
+                                already sees on their own order view. */}
+                            {detailTotalPaid > 0 && (
+                              <>
+                                <div className="flex justify-between text-sm text-green-700">
+                                  <span>Less: Payments Received</span>
+                                  <span className="font-medium">-{fmtR(detailTotalPaid)}</span>
+                                </div>
+                                <div className="pt-3 border-t border-gray-100 flex justify-between">
+                                  <span className="text-base font-bold text-gray-900">Balance Due</span>
+                                  <span className={`text-base font-bold ${detailOutstanding > 0 ? "text-red-600" : "text-green-700"}`}>
+                                    {fmtR(detailOutstanding)}
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>

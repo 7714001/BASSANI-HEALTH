@@ -57,6 +57,7 @@ ORDER_FIELDS = [
     "amount_tax", "amount_total", "state", "invoice_status",
     "order_line", "note", "user_id", "warehouse_id",
     "partner_invoice_id", "partner_shipping_id", "payment_term_id",
+    "invoice_ids",
 ]
 
 
@@ -686,6 +687,32 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
                 order["lot_map"] = lot_map
         except Exception:
             pass  # Non-fatal — lot display degrades gracefully
+
+        # Invoices (2026-08-26) — same shape as get_order_passport's own
+        # invoice block, added here so the ticket detail page (SalesTickets.js,
+        # which fetches this endpoint rather than the passport one) can show
+        # the same Payments Received / Balance Due breakdown staff-side.
+        order["invoices"] = []
+        invoice_ids = order.get("invoice_ids") or []
+        if invoice_ids:
+            try:
+                inv_rows = odoo.read("account.move", invoice_ids, fields=[
+                    "name", "state", "payment_state", "amount_total",
+                    "amount_residual", "invoice_date", "invoice_date_due", "move_type",
+                ])
+                order["invoices"] = [{
+                    "invoice_id":      inv["id"],
+                    "name":            inv["name"],
+                    "state":           inv["state"],
+                    "move_type":       inv.get("move_type"),
+                    "payment_state":   inv["payment_state"],
+                    "amount_total":    inv["amount_total"],
+                    "amount_residual": inv.get("amount_residual", 0),
+                    "invoice_date":    inv.get("invoice_date"),
+                    "due_date":        inv.get("invoice_date_due"),
+                } for inv in inv_rows]
+            except Exception:
+                pass  # Non-fatal — totals block degrades to no payment breakdown
 
         # Overlay commission data
         comm_data = await col("order_commissions").find_one(
