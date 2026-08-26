@@ -1281,8 +1281,20 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────
+    # Fixed 2026-08-26, found live — a real order sitting at packing.status
+    # "queued" showed every packing-derived timeline step as pending. Root
+    # cause: packing_board.order_id is stored everywhere else in the
+    # codebase (_queue_packing_board, packing_board_routes.py, ticket_routes.py)
+    # as str(<int Odoo sale.order id>), e.g. "764" — but this lookup matched
+    # on order["name"] (e.g. "S00764") instead, which is never present in
+    # the collection and so never matched anything. packing was silently
+    # None on every single passport load, not just this one order — every
+    # packing-derived field on this page (the whole packing/QA/RP/collected
+    # portion of the timeline, the Packing sidebar card, has_backorder,
+    # etc.) was affected, not only the "queued" step's own state logic
+    # fixed earlier today.
     packing_entry = await col("packing_board").find_one(
-        {"order_id": order.get("name", order_id)},
+        {"order_id": str(resolved_id)},
         {"_id": 0, "status": 1, "packer_name": 1, "ps_num": 1,
          "qa_approved_by": 1, "qa_approved_at": 1,
          "rp_approved_by": 1, "rp_approved_at": 1,
