@@ -1316,6 +1316,21 @@ export default function SalesTickets() {
                   </p>
                 </div>
               )}
+
+              {/* ── Order Timeline — full width (2026-08-26) ──────────────────
+                  Moved out of the 1/3-width sidebar, where it rendered
+                  visibly squeezed, to its own full-width block above the
+                  two-column layout — same placement OrderPassport.js already
+                  uses for the identical shared component. */}
+              {detailOrder && (
+                <div className="mb-4">
+                  <HorizontalTimelineCard
+                    order={detailOrder} ticket={detail} packing={packingEntry}
+                    invoices={detailInvoices} manufacturing_orders={mos}
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
 
                 {/* ── Left: Order document (2/3 width) ── */}
@@ -1635,17 +1650,6 @@ export default function SalesTickets() {
                         <p className="text-sm text-gray-500">{waitingText}</p>
                       )}
                     </div>
-                  )}
-
-                  {/* Order Timeline — shared with Order Passport (2026-08-26),
-                      replaces the old reseller-only vertical stepper and the
-                      staff-only Packing Status card below; every role now sees
-                      the identical timeline, consistent with Order Passport. */}
-                  {detailOrder && (
-                    <HorizontalTimelineCard
-                      order={detailOrder} ticket={detail} packing={packingEntry}
-                      invoices={detailInvoices} manufacturing_orders={mos}
-                    />
                   )}
 
                   {/* Partial fulfilment split — reseller only, shown when the
