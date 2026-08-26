@@ -179,7 +179,22 @@ function buildTimelineSteps({ order, ticket, packing, invoices, manufacturing_or
   // (greyed out) until its own data actually shows up, so the full lifecycle
   // is visible from the moment an order is placed. `packing?.` throughout
   // this block is what makes that safe.
-  steps.push({ key: "queued", label: "Queued for Packing", icon: Package, state: packing ? "done" : "pending" });
+  // Fixed 2026-08-26, found live on a real order sitting at "queued": this
+  // never had a "current" branch at all — any packing entry existing at
+  // all (including one freshly created at status "queued" itself) marked
+  // this step "done" outright, so the order's actual current step never
+  // highlighted anywhere on the timeline (Packing stayed "pending" right
+  // behind it, since it only lights up once status === "packing"). A
+  // backorder entry can also sit at "waiting_stock" before it's even
+  // reached the queue (see the Order pipeline "waiting_stock" business
+  // rule) — that's still "pending" here, not "current" or "done".
+  steps.push({
+    key: "queued", label: "Queued for Packing", icon: Package,
+    state: !packing ? "pending"
+      : packing.status === "waiting_stock" ? "pending"
+      : packing.status === "queued" ? "current"
+      : "done",
+  });
 
   const packingDone = !!packing && ["ready", "complete", "collected"].includes(packing.status);
   const packingStep = {
