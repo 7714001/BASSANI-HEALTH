@@ -20,7 +20,9 @@ import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   OdooPdfViewerModal, openMonitorDisplay,
+  AgeTierBadge, AgeTierDot, AgePriorityStrip,
 } from "../components/UI";
+import { HorizontalTimelineCard } from "../components/OrderTimeline";
 
 // canvas → PNG data URL so the barcode survives innerHTML → new window print copy
 function BarcodeImg({ text, style }) {
@@ -77,7 +79,19 @@ export default function OrdersTickets() {
     setLoading(true);
     try {
       const r = await api.get("/api/packing/board");
-      setEntries(r.data.entries || []);
+      // The backend's get_board_state() sorts oldest-first (queued_at
+      // ascending) — correct and deliberate for the physical warehouse-
+      // floor display it also feeds via WebSocket (packers should tackle
+      // the oldest job first), but the opposite of every other admin list
+      // in this portal, including Sales Tickets. Re-sorted here, on this
+      // page only, rather than changing the shared backend function and
+      // risking the floor display's genuinely correct FIFO order
+      // (2026-08-26, found live — newest-queued orders were landing at the
+      // bottom of this table).
+      const sorted = [...(r.data.entries || [])].sort((a, b) =>
+        new Date(b.queued_at || 0) - new Date(a.queued_at || 0)
+      );
+      setEntries(sorted);
     } catch { toast.error("Failed to load orders tickets"); }
     finally { setLoading(false); }
   }, []);
@@ -100,6 +114,7 @@ export default function OrdersTickets() {
   const [mos,        setMos       ] = useState([]);
   const [mosLoading, setMosLoading] = useState(false);
   const [orderLotMap, setOrderLotMap] = useState({});
+  const [detailOrder, setDetailOrder] = useState(null);
   const [qtyPackedEdits,  setQtyPackedEdits ] = useState({});  // sku → draft string
   const [qtyPackedSaving, setQtyPackedSaving] = useState(new Set());
   const [purgeConfirm,    setPurgeConfirm   ] = useState(false);
@@ -122,10 +137,13 @@ export default function OrdersTickets() {
   }, [detail?.order_id]);
 
   // Fetch confirmed lot assignments for on-screen display (done pickings only)
+  // — also captures the full order response (2026-08-26) so the shared
+  // Order Timeline (below) can read order.state/date_order/invoices without
+  // a second fetch.
   useEffect(() => {
-    if (!detail?.order_id) { setOrderLotMap({}); return; }
+    if (!detail?.order_id) { setOrderLotMap({}); setDetailOrder(null); return; }
     api.get(`/api/orders/${detail.order_id}`)
-      .then(r => setOrderLotMap(r.data.lot_map || {}))
+      .then(r => { setOrderLotMap(r.data.lot_map || {}); setDetailOrder(r.data); })
       .catch(() => {});
   }, [detail?.order_id]);
 
@@ -360,6 +378,84 @@ export default function OrdersTickets() {
     const isTerminal   = detail ? TERMINAL.has(detail.status) : false;
     const bothApproved = !!(detail?.qa_approved_at && detail?.rp_approved_at);
 
+    // ── Next Step (2026-08-26) — every role-gated primary action this page
+    // can offer collapses into one computed action, same pattern as
+    // SalesTickets.js's own Next Step hero, rather than up to six stacked
+    // cards (one per role/status combination) all fighting for attention.
+    // `waitingText` covers the case where something is genuinely next, just
+    // not for the viewer's own role, or nothing further is needed at all.
+    let nextAction = null;
+    let waitingText = null;
+    if (detail) {
+      if (detail.status === "queued") {
+        if (canOrders) {
+          nextAction = {
+            label: "Mark as Packing", icon: Package,
+            onClick: () => act("mark-packing", detail.order_id),
+            desc: "Assign a packer above, then move to active packing. The floor board will update.",
+          };
+        } else {
+          waitingText = "Queued for packing.";
+        }
+      } else if (detail.status === "packing") {
+        if (canOrders) {
+          nextAction = {
+            label: "Mark as Ready", icon: CheckCircle2,
+            onClick: () => act("mark-ready", detail.order_id),
+            desc: "Once the packer has reported back and all items are ticked, move to Ready for QA and RP inspection.",
+          };
+        } else {
+          waitingText = "Currently being packed.";
+        }
+      } else if (detail.status === "ready") {
+        if (canQa && !detail.qa_approved_at) {
+          nextAction = {
+            label: "QA Approve", icon: ShieldCheck,
+            onClick: () => act("qa-approve", detail.order_id),
+            desc: "Review the packed order and confirm QA sign-off.",
+          };
+        } else if (canRp && !detail.rp_approved_at) {
+          nextAction = {
+            label: "RP Approve", icon: Stethoscope,
+            onClick: () => act("rp-approve", detail.order_id),
+            desc: "Review and provide Responsible Pharmacist sign-off.",
+          };
+        } else if (!bothApproved) {
+          waitingText = "Waiting for QA and RP to approve before this order can be completed.";
+        } else if (canOrders) {
+          nextAction = {
+            label: "Mark Complete", icon: CheckCircle2, onClick: handleComplete,
+            desc: "Both QA and RP have signed off. Complete this order.",
+          };
+        } else {
+          waitingText = "Packed and approved. Waiting for an Orders Clerk to mark this order complete.";
+        }
+      } else if (detail.status === "complete" && !detail.collected_at) {
+        if (canOrders) {
+          nextAction = {
+            label: "Mark as Collected", icon: Truck,
+            onClick: () => handleCollect(detail.odoo_picking_id || null),
+            desc: detail.has_pending_invoice
+              ? "Customer has collected this delivery. Marking as collected will create the invoice in Odoo for the items delivered."
+              : "Confirm the customer has collected this order.",
+          };
+        } else {
+          waitingText = "Ready for collection.";
+        }
+      } else if (detail.status === "complete" && detail.collected_at) {
+        waitingText = `Collected ${fmtDate(detail.collected_at)} by ${detail.collected_by}${detail.invoice_name ? ` · Invoice ${detail.invoice_name}` : ""}.`;
+      } else if (detail.status === "waiting_stock") {
+        if (canOrders) {
+          nextAction = {
+            label: "Check Stock Availability", icon: RefreshCw, onClick: handleCheckStock,
+            desc: "This is a backorder. Check whether stock has become available in Odoo.",
+          };
+        } else {
+          waitingText = "Backorder, awaiting stock reservation in Odoo.";
+        }
+      }
+    }
+
     return (
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
         <TopBar
@@ -367,11 +463,6 @@ export default function OrdersTickets() {
           subtitle={detail ? `${detail.ps_num} — ${STATUS_LABEL[detail.status] || detail.status}` : ""}
           actions={
             <div className="flex items-center gap-2">
-              {user?.is_super_admin && (
-                <BtnDanger onClick={() => setPurgeConfirm(true)} disabled={purging}>
-                  {purging ? "Purging…" : "Purge Test Data"}
-                </BtnDanger>
-              )}
               {detail && detail.order_id && detail.odoo_picking_id && (
                 <BtnSecondary
                   onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/deliveries/${detail.odoo_picking_id}/pdf`, title: `${detail.dn_num || detail.ps_num} — Odoo original` })}
@@ -673,46 +764,70 @@ export default function OrdersTickets() {
                 {/* ── Right sidebar ── */}
                 <div className="space-y-4">
 
-                  {/* Status + timestamps */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>
-                      {detail.total_units != null && (
-                        <span className="text-xs text-gray-400">{detail.total_units} unit{detail.total_units !== 1 ? "s" : ""}</span>
+                  {/* Next Step (2026-08-26) — the single computed primary
+                      action for this page, replacing what used to be up to
+                      six separately-colored role-gated cards stacked on top
+                      of each other. Same pattern as SalesTickets.js's own
+                      Next Step hero. Rendered under the same "complete still
+                      counts as active" gate the old action stack used, since
+                      Mark as Collected still needs to show at that stage. */}
+                  {(!isTerminal || detail.status === "complete") && (
+                    <div className="bg-white rounded-2xl shadow-sm border-2 border-bassani-100 p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-bassani-600 uppercase tracking-wide flex items-center gap-1.5">
+                          <Clock size={12} />Next Step
+                        </p>
+                        <AgeTierBadge tier={detail.age_tier} />
+                      </div>
+                      {nextAction ? (
+                        <>
+                          <p className="text-xs text-gray-500">{nextAction.desc}</p>
+                          <BtnPrimary
+                            onClick={nextAction.onClick}
+                            loading={busyId === detail.order_id || busyId === "check-stock"}
+                            className="w-full justify-center mt-1"
+                          >
+                            <nextAction.icon size={13} />{nextAction.label}
+                          </BtnPrimary>
+                        </>
+                      ) : (
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                          {waitingText || "No action needed right now."}
+                        </p>
                       )}
                     </div>
-                    <div className="pt-2 border-t border-gray-100 space-y-1.5">
-                      {[
-                        { label: "Queued",     at: detail.queued_at },
-                        { label: "Packing",    at: detail.assigned_at },
-                        { label: "Ready",      at: detail.ready_at },
-                        { label: "Completed",  at: detail.completed_at },
-                        { label: "Incomplete", at: detail.incomplete_at },
-                      ].filter(e => e.at).map((e, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-xs">
-                          <Clock size={10} className="text-gray-300 shrink-0" />
-                          <span className="text-gray-500 font-medium">{e.label}:</span>
-                          <span className="text-gray-400">{fmtDate(e.at)}</span>
-                        </div>
-                      ))}
-                      {detail.status === "complete" && detail.delivery_validated === true && (
-                        <div className="flex items-center gap-1.5 text-xs pt-0.5">
-                          <Truck size={10} className="text-green-400 shrink-0" />
-                          <span className="text-green-600 font-medium">Delivery validated in Odoo</span>
-                        </div>
-                      )}
-                      {detail.status === "complete" && detail.delivery_validated === false && (
-                        <div className="flex items-center gap-1.5 text-xs pt-0.5">
-                          <Truck size={10} className="text-amber-400 shrink-0" />
-                          <span className="text-amber-600 font-medium">Delivery not validated in Odoo</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  )}
 
-                  {/* QA + RP approval status */}
+                  {/* Order Timeline (2026-08-26) — shared with Order Passport
+                      and Sales Tickets so all three pages tell the identical
+                      story. `ticket` is synthesized rather than fetched: a
+                      packing_board entry existing at all already guarantees
+                      (8.47's universal deposit gate) the linked ticket is at
+                      confirmed_wip with no exit_status, so this is accurate,
+                      not a guess. */}
+                  <HorizontalTimelineCard
+                    order={detailOrder || { state: "sale", date_order: detail.queued_at }}
+                    ticket={{ status: "confirmed_wip", exit_status: null, incomplete_reason: null }}
+                    packing={detail}
+                    invoices={detailOrder?.invoices || []}
+                    manufacturing_orders={mos}
+                  />
+
+                  {/* Sign-Off Detail — the timeline above merges QA+RP into a
+                      single "Compliance Sign-Off" node and only ever keeps
+                      one approver's name, which isn't enough for a
+                      compliance-adjacent record where QA and RP are always
+                      two different people. Kept as its own compact card,
+                      same reasoning as SalesTickets.js's "Packing Detail"
+                      card alongside its own copy of this timeline. */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-100">
-                    <div className="px-4 py-3 flex items-center justify-between gap-3">
+                    {detail.total_units != null && (
+                      <div className="px-4 py-2.5 flex items-center justify-between gap-3">
+                        <span className="text-xs text-gray-400">Units</span>
+                        <span className="text-xs text-gray-600 font-medium">{detail.total_units}</span>
+                      </div>
+                    )}
+                    <div className="px-4 py-2.5 flex items-center justify-between gap-3">
                       <span className="text-xs text-gray-500 flex items-center gap-1.5 shrink-0">
                         <ShieldCheck size={13} />QA
                       </span>
@@ -720,7 +835,7 @@ export default function OrdersTickets() {
                         ? <span className="text-xs text-green-600 text-right">{detail.qa_approved_by} — {fmtDate(detail.qa_approved_at)}</span>
                         : <span className="text-xs text-gray-400">Pending</span>}
                     </div>
-                    <div className="px-4 py-3 flex items-center justify-between gap-3">
+                    <div className="px-4 py-2.5 flex items-center justify-between gap-3">
                       <span className="text-xs text-gray-500 flex items-center gap-1.5 shrink-0">
                         <Stethoscope size={13} />RP
                       </span>
@@ -728,75 +843,19 @@ export default function OrdersTickets() {
                         ? <span className="text-xs text-green-600 text-right">{detail.rp_approved_by} — {fmtDate(detail.rp_approved_at)}</span>
                         : <span className="text-xs text-gray-400">Pending</span>}
                     </div>
+                    {detail.status === "complete" && detail.delivery_validated != null && (
+                      <div className="px-4 py-2.5 flex items-center gap-1.5">
+                        <Truck size={12} className={detail.delivery_validated ? "text-green-400 shrink-0" : "text-amber-400 shrink-0"} />
+                        <span className={`text-xs font-medium ${detail.delivery_validated ? "text-green-600" : "text-amber-600"}`}>
+                          {detail.delivery_validated ? "Delivery validated in Odoo" : "Delivery not validated in Odoo"}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Role-gated action cards. "complete" is deliberately treated as
-                      non-terminal here even though it's in TERMINAL (which still
-                      correctly locks packer/qty/lot editing above) — it means
-                      "ready for collection," not "done": Mark as Collected, the
-                      collected_at display, and Override Stage all still need to
-                      render at this stage. */}
+                  {/* Secondary / less-frequent actions */}
                   {(!isTerminal || detail.status === "complete") && (
                     <div className="space-y-3">
-
-                      {/* orders_clerk: queued → packing */}
-                      {canOrders && detail.status === "queued" && (
-                        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
-                          <p className="text-xs text-blue-700 mb-3">
-                            Assign a packer above, then move to active packing. The floor board will update.
-                          </p>
-                          <BtnPrimary
-                            onClick={() => act("mark-packing", detail.order_id)}
-                            loading={busyId === detail.order_id}
-                            className="w-full justify-center"
-                          >
-                            <Package size={13} />Mark as Packing
-                          </BtnPrimary>
-                        </div>
-                      )}
-
-                      {/* orders_clerk: packing → ready */}
-                      {canOrders && detail.status === "packing" && (
-                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
-                          <p className="text-xs text-amber-700 mb-3">
-                            Once the packer has reported back and all items are ticked, move to Ready for QA and RP inspection.
-                          </p>
-                          <BtnPrimary
-                            onClick={() => act("mark-ready", detail.order_id)}
-                            loading={busyId === detail.order_id}
-                            className="w-full justify-center"
-                          >
-                            <CheckCircle2 size={13} />Mark as Ready
-                          </BtnPrimary>
-                        </div>
-                      )}
-
-                      {/* orders_clerk: ready → complete (only once both approved) */}
-                      {canOrders && detail.status === "ready" && (
-                        <div className={`rounded-2xl p-4 ${bothApproved ? "bg-green-50 border border-green-100" : "bg-white shadow-sm border border-gray-100"}`}>
-                          {bothApproved ? (
-                            <>
-                              <p className="text-xs text-green-700 mb-3">
-                                Both QA and RP have signed off. Complete this order.
-                              </p>
-                              <BtnPrimary
-                                onClick={handleComplete}
-                                loading={busyId === detail.order_id}
-                                className="w-full justify-center"
-                              >
-                                <CheckCircle2 size={13} />Mark Complete
-                              </BtnPrimary>
-                            </>
-                          ) : (
-                            <div className="flex items-start gap-2">
-                              <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-                              <p className="text-xs text-gray-500">
-                                Waiting for QA and RP to approve before this order can be completed.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       {/* orders_clerk: report packing issue (packing or ready) */}
                       {canOrders && ["packing", "ready"].includes(detail.status) && (
@@ -810,62 +869,6 @@ export default function OrdersTickets() {
                           >
                             <AlertTriangle size={13} />Report Packing Issue
                           </BtnSecondary>
-                        </div>
-                      )}
-
-                      {/* qa_manager: approve when ready */}
-                      {canQa && detail.status === "ready" && !detail.qa_approved_at && (
-                        <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-                          <p className="text-xs text-indigo-700 mb-3">
-                            Review the packed order and confirm QA sign-off.
-                          </p>
-                          <BtnPrimary
-                            onClick={() => act("qa-approve", detail.order_id)}
-                            loading={busyId === detail.order_id}
-                            className="w-full justify-center"
-                          >
-                            <ShieldCheck size={13} />QA Approve
-                          </BtnPrimary>
-                        </div>
-                      )}
-
-                      {/* responsible_pharmacist: approve when ready */}
-                      {canRp && detail.status === "ready" && !detail.rp_approved_at && (
-                        <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4">
-                          <p className="text-xs text-purple-700 mb-3">
-                            Review and provide Responsible Pharmacist sign-off.
-                          </p>
-                          <BtnPrimary
-                            onClick={() => act("rp-approve", detail.order_id)}
-                            loading={busyId === detail.order_id}
-                            className="w-full justify-center"
-                          >
-                            <Stethoscope size={13} />RP Approve
-                          </BtnPrimary>
-                        </div>
-                      )}
-
-                      {/* orders_clerk: mark as collected — every delivery (full or partial) needs this explicit step */}
-                      {canOrders && detail.status === "complete" && !detail.collected_at && (
-                        <div className="bg-teal-50 border border-teal-100 rounded-2xl p-4">
-                          <p className="text-xs text-teal-700 mb-3">
-                            {detail.has_pending_invoice
-                              ? "Customer has collected this delivery. Marking as collected will create the invoice in Odoo for the items delivered."
-                              : "Confirm the customer has collected this order."}
-                          </p>
-                          {detail.collected_at ? (
-                            <p className="text-xs text-green-600 flex items-center gap-1.5">
-                              <CheckCircle2 size={12} />Collected {fmtDate(detail.collected_at)} by {detail.collected_by}
-                            </p>
-                          ) : (
-                            <BtnPrimary
-                              onClick={() => handleCollect(detail.odoo_picking_id || null)}
-                              loading={busyId === detail.order_id}
-                              className="w-full justify-center"
-                            >
-                              <Truck size={13} />Mark as Collected
-                            </BtnPrimary>
-                          )}
                         </div>
                       )}
 
@@ -914,9 +917,12 @@ export default function OrdersTickets() {
                         </div>
                       )}
 
-                      {/* Waiting stock — backorder entry info + check stock button */}
+                      {/* Waiting stock — backorder entry info. The "Check stock
+                          availability" action itself now lives in the Next
+                          Step hero above (same status, canOrders-gated), so
+                          this card is informational only. */}
                       {detail.status === "waiting_stock" && (
-                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3">
+                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
                           <div className="flex items-start gap-2">
                             <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
                             <div>
@@ -926,28 +932,6 @@ export default function OrdersTickets() {
                               </p>
                             </div>
                           </div>
-                          {canOrders && (
-                            <BtnSecondary
-                              onClick={handleCheckStock}
-                              loading={busyId === "check-stock"}
-                              className="w-full justify-center text-amber-700 border-amber-200 hover:bg-amber-100"
-                            >
-                              <RefreshCw size={13} />Check stock availability
-                            </BtnSecondary>
-                          )}
-                        </div>
-                      )}
-
-                      {/* collected_at display for complete backorder entries */}
-                      {detail.status === "complete" && detail.collected_at && (
-                        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
-                          <p className="text-xs text-green-700 flex items-center gap-1.5">
-                            <CheckCircle2 size={13} className="shrink-0" />
-                            Collected {fmtDate(detail.collected_at)} by {detail.collected_by}
-                            {detail.invoice_name && (
-                              <span className="ml-1 font-mono text-green-600">· {detail.invoice_name}</span>
-                            )}
-                          </p>
                         </div>
                       )}
 
@@ -971,6 +955,25 @@ export default function OrdersTickets() {
                           </BtnPrimary>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Danger Zone (super_admin only) — moved out of the TopBar
+                      (2026-08-26) to sit with the other secondary/destructive
+                      actions, and deliberately NOT inside the isTerminal gate
+                      above: purging test data is most useful on exactly the
+                      broken/terminal entries that gate hides everything else
+                      for. */}
+                  {user?.is_super_admin && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-red-100 p-4 space-y-2">
+                      <p className="text-xs font-semibold text-red-400 uppercase tracking-wide">Danger Zone</p>
+                      <BtnDanger
+                        onClick={() => setPurgeConfirm(true)}
+                        disabled={purging}
+                        className="w-full justify-center"
+                      >
+                        {purging ? "Purging…" : "Purge Test Data"}
+                      </BtnDanger>
                     </div>
                   )}
                 </div>
@@ -1059,6 +1062,10 @@ export default function OrdersTickets() {
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
+        {/* Priority strip (2026-08-26) — same overdue/at-risk counts a
+            viewer would see rolled up on the Operations Monitor for these
+            same orders. */}
+        {!loading && <AgePriorityStrip items={entries} className="mb-3" />}
         {!loading && entries.length > 0 && (
           <div className="mb-4 flex flex-wrap gap-1.5">
             {["queued", "packing", "ready", "complete", "incomplete", "waiting_stock"].map(s => (
@@ -1101,6 +1108,7 @@ export default function OrdersTickets() {
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: e } }) => (
                 <div className="flex items-center gap-1.5">
+                  <AgeTierDot tier={e.age_tier} />
                   <Badge color={STATUS_COLOR[e.status]}>{STATUS_LABEL[e.status] || e.status}</Badge>
                   {e.is_backorder && (
                     <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>

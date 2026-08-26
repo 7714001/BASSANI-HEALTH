@@ -20,6 +20,7 @@ from services.email_service import (
     send_backorder_alert_internal,
     send_deposit_due_proforma,
 )
+from services.age_tier import board_entry_age_fields, ticket_age_fields
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -1300,7 +1301,8 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "qa_approved_by": 1, "qa_approved_at": 1,
          "rp_approved_by": 1, "rp_approved_at": 1,
          "collected_by": 1, "collected_at": 1,
-         "completed_at": 1, "incomplete_reason": 1, "updated_at": 1},
+         "completed_at": 1, "incomplete_reason": 1, "updated_at": 1,
+         "queued_at": 1},
     )
     packing_out = None
     if packing_entry:
@@ -1320,7 +1322,21 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "completed_at":   _dt(packing_entry.get("completed_at")),
             "incomplete_reason": packing_entry.get("incomplete_reason"),
             "updated_at":     _dt(packing_entry.get("updated_at")),
+            **board_entry_age_fields(packing_entry),
         }
+
+    # Priority/urgency signal (2026-08-26) — the same age_tier a viewer would
+    # see on this exact order's card on the Operations Monitor right now:
+    # the packing board entry's own tier once one exists (it's the more
+    # current clock), else the ticket's pre-packing tier. Powers Order
+    # Passport's "Order Age" KPI tile and the Sales/Orders Tickets pages'
+    # age badges — all read from the identical services/age_tier.py logic
+    # so none of them can ever disagree about the same order's urgency.
+    age_out = (
+        {"age_tier": packing_out["age_tier"], "hours_elapsed": packing_out.get("hours_elapsed"), "deadline_hours": packing_out.get("deadline_hours")}
+        if packing_out and packing_out.get("age_tier")
+        else (ticket_age_fields(ticket) if ticket else {"age_tier": None})
+    )
 
     # ── Invoices (all, not just first) ────────────────────────────────────────
     invoices_out = []
@@ -1465,6 +1481,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         "manufacturing_orders": mos,
         "overall_status": overall_status,
         "support_email":  settings.support_email,
+        **age_out,
     }
 
 

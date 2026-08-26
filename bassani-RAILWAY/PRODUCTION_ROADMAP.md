@@ -5161,6 +5161,29 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 
 ---
 
+### 23.7 — Age/Priority Signal on the Admin Screens — Complete 2026-08-26
+
+**Goal:** the Operations Monitor's overdue/at-risk logic previously lived only in `monitor_routes.py`, so staff working Sales Tickets or Orders Tickets directly (the screens they actually spend their day in) had no indication an order in front of them was already flashing red on the TV board. Requested directly by the product owner while reviewing the Orders Tickets redesign (23.x's sibling round, same day): "should we not be showing similar details on the sales/order tickets, linking back to the KPI cards on Order Passport."
+
+- [x] `backend/services/age_tier.py` — new shared module: `age_tier()`/`age_fields()` (33%/66%/100%-of-deadline thresholds, 72h/48h deadlines), extracted verbatim from `monitor_routes.py`, which now imports from here instead of carrying its own copy
+- [x] `ticket_age_fields(ticket)` — same deadline map as `monitor_routes.py`'s `_QUOTE_STATUS_DEADLINE` (open/quote 48h, sale_order/awaiting_deposit 72h, on `created_at`); returns no tier for confirmed_wip and later, since the packing board entry's own clock is the truer signal once one exists
+- [x] `board_entry_age_fields(entry)` — mirrors `monitor_routes.py`'s `_board_card`/`_board_ready_card` clock choice (72h on `queued_at`, or on `completed_at` once `status == "complete"`); returns no tier once collected/incomplete/cancelled/cleared
+- [x] `ticket_routes.py`'s `_serialize()` now attaches `age_tier`/`hours_elapsed`/`deadline_hours` to every ticket — covers both `list_tickets` and `get_ticket` from one chokepoint
+- [x] `packing_board_routes.py`'s new `_with_age()` attaches the same fields — covers `get_board_state()` (both `GET /board` and the floor-display WebSocket) and `get_entry()`
+- [x] `order_routes.py`'s `get_order_passport` computes `age_tier` for the whole passport response — the packing entry's tier once one exists, else the ticket's — so Order Passport, Sales Tickets, and Orders Tickets can never disagree about the same order's urgency
+- [x] `components/UI.js` — `AgeTierBadge`, `AgeTierDot`, `AgePriorityStrip`, `ageTierTextClass`: Tailwind-based (green/amber/orange/red), deliberately separate from `MonitorKit.js`'s raw-hex palette tuned for a dark TV board
+- [x] `SalesTickets.js` and `OrdersTickets.js` list pages: `AgeTierDot` next to the Stage/Status badge, `AgePriorityStrip` ("N Overdue · N At Risk") above the table
+- [x] `SalesTickets.js` and `OrdersTickets.js` detail pages: `AgeTierBadge` in the Next Step hero header
+- [x] `OrderPassport.js`'s "Order Age" KPI tile now colors its value text and carries a badge from the passport response's own `age_tier`, instead of always rendering neutral gray regardless of how overdue the order actually was
+
+### Definition of Done
+- [x] The same order's age tier can never disagree across the Operations Monitor, Sales Tickets, Orders Tickets, and Order Passport — all four read from the identical `services/age_tier.py` logic and deadline constants
+- [x] A ticket/entry with no meaningful tier (post-packing-board Sales tickets; collected/incomplete/cancelled/cleared packing entries) shows no badge, not a stale or default one
+- [x] List pages show zero UI when there are no overdue/at-risk rows, not an empty "0 Overdue" strip
+- [x] `npm run build` compiles cleanly; backend files byte-compile cleanly
+
+---
+
 ## Phase 24 — Named Patient & Section 21 Compliance Archive (Cannati)
 
 **Goal:** Give Bassani a durable, structured, read-only compliance archive of named-patient Section 21 applications and scripts originating from Cannati (a store on the Cannaverse platform that Bassani itself operates), closing the "Named Patient → Script → SAHPRA Section 21 Authorisation" gap at the end of the batch traceability chain (Phase 13) that the existing `s21script` flat-string check was already flagged as too thin to satisfy.  

@@ -23,12 +23,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from auth import require_admin
 from database import col
 from odoo_client import get_odoo_client
+from services.age_tier import OVERDUE_HOURS, QUOTE_HOURS, hours_elapsed as _hours_elapsed, age_tier as _age_tier
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
 NO_ID         = {"_id": 0}
-OVERDUE_HOURS = 72
-QUOTE_HOURS   = 48   # softer deadline for unconfirmed quotes
 _TERMINAL     = {"complete", "cancelled", "collected", "cleared"}
 
 
@@ -112,16 +111,9 @@ def _iso(dt) -> str | None:
     return _utc(dt).isoformat() if dt else None
 
 
-def _hours_elapsed(since: datetime) -> float:
-    return (datetime.now(timezone.utc) - _utc(since)).total_seconds() / 3600
-
-
-def _age_tier(elapsed: float, deadline: float) -> str:
-    pct = elapsed / deadline
-    if pct >= 1.0:   return "overdue"
-    if pct >= 0.66:  return "urgent"
-    if pct >= 0.33:  return "warning"
-    return "ok"
+# _hours_elapsed/_age_tier/OVERDUE_HOURS/QUOTE_HOURS now imported from
+# services/age_tier.py (2026-08-26) — kept under these same local names so
+# every call site below is unchanged; see that module's docstring for why.
 
 
 def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False, has_mo_pending: bool = False) -> dict:

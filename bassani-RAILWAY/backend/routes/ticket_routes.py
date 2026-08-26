@@ -35,6 +35,7 @@ from services.email_service import send_ticket_assigned, send_pop_uploaded_notif
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
+from services.age_tier import ticket_age_fields
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,10 @@ class ReassignBody(BaseModel):
 
 def _serialize(t: dict) -> dict:
     t["id"] = str(t.pop("_id"))
+    # age_tier (2026-08-26) — same deadline/clock logic monitor_routes.py
+    # uses for the Operations Monitor's Quotes/Deposit columns, so this
+    # ticket's badge can never disagree with its own card on that board.
+    t.update(ticket_age_fields(t))
     return t
 
 

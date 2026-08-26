@@ -40,6 +40,7 @@ from services.email_service import (
     send_rp_approval_needed,
 )
 from services.notification_service import notify_ticket_handoff
+from services.age_tier import board_entry_age_fields
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
@@ -102,6 +103,16 @@ manager = BoardManager()
 
 # ── Board state helpers ───────────────────────────────────────────────────────
 
+def _with_age(entry: dict) -> dict:
+    """Attach age_tier/hours_elapsed/deadline_hours to a packing_board entry
+    — same clock/deadline choice services/age_tier.py's board_entry_age_fields
+    (shared with monitor_routes.py's own _board_card) already uses for the
+    public Operations Monitor (2026-08-26), so this page's age badge can
+    never disagree with that board's."""
+    entry.update(board_entry_age_fields(entry))
+    return entry
+
+
 async def get_board_state(warehouse_id: Optional[int] = None) -> list:
     query: dict = {"status": {"$ne": "cleared"}}
     if warehouse_id is not None:
@@ -112,7 +123,7 @@ async def get_board_state(warehouse_id: Optional[int] = None) -> list:
         .sort("queued_at", 1)
         .to_list(length=100)
     )
-    return entries
+    return [_with_age(e) for e in entries]
 
 
 async def push_update(entry: dict):
@@ -1258,7 +1269,7 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
         entry = await col("packing_board").find_one({**_entry_query(order_id, picking_id), "reseller_id": rid}, NO_ID)
         if not entry:
             raise HTTPException(status_code=403, detail="Access denied")
-        return entry
+        return _with_age(entry)
     # Staff: enforce board access
     if not (
         current_user.get("is_super_admin")
@@ -1269,7 +1280,7 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
     entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-    return entry
+    return _with_age(entry)
 
 
 @router.post("/adopt")

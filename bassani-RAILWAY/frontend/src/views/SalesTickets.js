@@ -22,6 +22,7 @@ import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal, openMonitorDisplay,
+  AgeTierBadge, AgeTierDot, AgePriorityStrip,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -1650,9 +1651,12 @@ export default function SalesTickets() {
                       the priority order this reflects. */}
                   {!detail.exit_status && (
                     <div className="bg-white rounded-2xl shadow-sm border-2 border-bassani-100 p-4 space-y-2">
-                      <p className="text-xs font-semibold text-bassani-600 uppercase tracking-wide flex items-center gap-1.5">
-                        <Clock size={12} />Next Step
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-bassani-600 uppercase tracking-wide flex items-center gap-1.5">
+                          <Clock size={12} />Next Step
+                        </p>
+                        <AgeTierBadge tier={detail.age_tier} />
+                      </div>
                       {nextAction ? (
                         <>
                           <p className="text-sm text-gray-600">{nextAction.desc}</p>
@@ -3324,6 +3328,11 @@ export default function SalesTickets() {
               </span>
             )}
           </div>
+          {/* Priority strip (2026-08-26) — the same overdue/at-risk counts a
+              viewer would see rolled up on the Operations Monitor for these
+              same tickets, so priority is visible on the list itself rather
+              than only on the TV board. */}
+          {!loading && <AgePriorityStrip items={tickets} />}
           {!loading && tickets.length > 0 && (
             <ChipRow>
               {FORWARD_STATUSES.map(s => (
@@ -3370,11 +3379,14 @@ export default function SalesTickets() {
                   )}
                 </p>
               )},
-              { id: "status", header: "Status", cell: ({ row: { original: t } }) =>
-                t.exit_status
-                  ? <Badge color={t.exit_status === "complete" ? "green" : "red"}>{R_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
-                  : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>
-              },
+              { id: "status", header: "Status", cell: ({ row: { original: t } }) => (
+                <div className="flex items-center gap-1.5">
+                  <AgeTierDot tier={t.age_tier} />
+                  {t.exit_status
+                    ? <Badge color={t.exit_status === "complete" ? "green" : "red"}>{R_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
+                    : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>}
+                </div>
+              )},
               { id: "order_ref", header: "Order Ref", cell: ({ row: { original: t } }) =>
                 t.order_name
                   ? <span className="text-xs font-mono text-gray-500">{t.order_name}</span>
@@ -3415,23 +3427,26 @@ export default function SalesTickets() {
                   )}
                 </div>
               )},
-              { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
-                t.exit_status
-                  ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
-                  : (t.odoo_order_state === "cancel" || t.packing_board_queue_error)
-                    ? (
-                      <div className="flex flex-col gap-0.5">
-                        <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
-                        {t.odoo_order_state === "cancel" && (
-                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
-                        )}
-                        {t.packing_board_queue_error && (
-                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Not Queued</Badge>
-                        )}
-                      </div>
-                    )
-                    : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
-              },
+              { id: "status", header: "Stage", cell: ({ row: { original: t } }) => (
+                <div className="flex items-center gap-1.5">
+                  <AgeTierDot tier={t.age_tier} />
+                  {t.exit_status
+                    ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
+                    : (t.odoo_order_state === "cancel" || t.packing_board_queue_error)
+                      ? (
+                        <div className="flex flex-col gap-0.5">
+                          <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+                          {t.odoo_order_state === "cancel" && (
+                            <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
+                          )}
+                          {t.packing_board_queue_error && (
+                            <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Not Queued</Badge>
+                          )}
+                        </div>
+                      )
+                      : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>}
+                </div>
+              )},
               { id: "so_ref", header: "SO #", meta: { className: "hidden md:table-cell" }, cell: ({ row: { original: t } }) =>
                 t.order_name
                   ? (

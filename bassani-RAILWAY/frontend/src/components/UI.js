@@ -1054,12 +1054,80 @@ const COLOR_STYLES = {
   indigo: "bg-indigo-50 text-indigo-700",
 };
 
-export function Badge({ status, label, color, children }) {
+export function Badge({ status, label, color, children, className = "" }) {
   const style = color
     ? (COLOR_STYLES[color] || "bg-gray-100 text-gray-600")
     : (STATUS_STYLES[status?.toLowerCase()] || "bg-gray-100 text-gray-600");
   const text = children ?? label ?? (status ? status.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "—");
-  return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${style}`}>{text}</span>;
+  return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${style} ${className}`}>{text}</span>;
+}
+
+// ── Age / priority tier (2026-08-26) ─────────────────────────────────────────
+// Shared across SalesTickets.js, OrdersTickets.js, and OrderPassport.js.
+// The tier value itself (ok/warning/urgent/overdue) always comes from the
+// backend (services/age_tier.py), which uses the identical deadline/clock
+// logic already driving the Operations Monitor's own age badges — this file
+// only owns how that value is drawn in the admin UI's light Tailwind theme
+// (distinct from MonitorKit.js's own raw-hex palette, tuned for a dark TV
+// board). A null/unrecognised tier renders nothing, not a fallback badge —
+// most ticket/order statuses (confirmed_wip and later, or terminal states)
+// deliberately carry no tier at all; see the backend module for why.
+const AGE_TIER_META = {
+  ok:      { color: "green",  label: "On Track" },
+  warning: { color: "amber",  label: "Attention" },
+  urgent:  { color: "orange", label: "At Risk" },
+  overdue: { color: "red",    label: "Overdue" },
+};
+const AGE_TIER_DOT = {
+  ok: "bg-green-500", warning: "bg-amber-500", urgent: "bg-orange-500", overdue: "bg-red-500",
+};
+
+const AGE_TIER_TEXT = {
+  ok: "text-green-600", warning: "text-amber-600", urgent: "text-orange-600", overdue: "text-red-600",
+};
+// Value-text color for a StatCard/KPI-tile-style number — e.g. Order
+// Passport's "Order Age" tile, so its color agrees with the same order's
+// badge everywhere else rather than always rendering neutral gray.
+export function ageTierTextClass(tier) {
+  return AGE_TIER_TEXT[tier] || null;
+}
+
+export function AgeTierBadge({ tier, className = "" }) {
+  const meta = AGE_TIER_META[tier];
+  if (!meta) return null;
+  return <Badge color={meta.color} className={className}>{meta.label}</Badge>;
+}
+
+// Compact colored dot for a table row — cheaper on space than a full badge
+// when the row already carries a status column of its own.
+export function AgeTierDot({ tier, title }) {
+  if (!AGE_TIER_DOT[tier]) return null;
+  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${AGE_TIER_DOT[tier]}`} title={title || AGE_TIER_META[tier]?.label} />;
+}
+
+// List-page priority strip — "N Overdue · N At Risk" above the table, so a
+// list this app already sorts newest-first doesn't hide which rows actually
+// need attention right now. Same counts a viewer would see rolled up on the
+// Operations Monitor for these same records. Renders nothing once both
+// counts are zero, rather than an empty "0 Overdue" strip every day.
+export function AgePriorityStrip({ items, className = "" }) {
+  const overdue = items.filter(i => i.age_tier === "overdue").length;
+  const atRisk  = items.filter(i => i.age_tier === "urgent").length;
+  if (overdue === 0 && atRisk === 0) return null;
+  return (
+    <div className={`flex items-center gap-3 text-xs ${className}`}>
+      {overdue > 0 && (
+        <span className="flex items-center gap-1.5 font-semibold text-red-600">
+          <span className="w-2 h-2 rounded-full bg-red-500" />{overdue} Overdue
+        </span>
+      )}
+      {atRisk > 0 && (
+        <span className="flex items-center gap-1.5 font-semibold text-orange-600">
+          <span className="w-2 h-2 rounded-full bg-orange-500" />{atRisk} At Risk
+        </span>
+      )}
+    </div>
+  );
 }
 
 // ── Product thumbnail ────────────────────────────────────────────────────────

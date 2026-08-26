@@ -11,6 +11,7 @@ import {
 import {
   fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
   FormGroup, Input, Select, LoadingState, OdooPdfViewerModal, StatCard,
+  ageTierTextClass, AgeTierBadge,
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 import { HorizontalTimelineCard, ticketStageLabel } from "../components/OrderTimeline";
@@ -495,7 +496,7 @@ export default function OrderPassport() {
 
   if (!data) return null;
 
-  const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status, support_email } = data;
+  const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status, support_email, age_tier } = data;
   const partner            = order.partner_detail || {};
   const hasPartialDelivery = deliveries.some(d => d.state === "done");
   const outstandingLines   = (order.lines || []).filter(
@@ -754,7 +755,13 @@ export default function OrderPassport() {
               <StatCard
                 label="Order Age"
                 value={orderAgeDays === null ? "—" : orderAgeDays === 0 ? "Today" : orderAgeDays === 1 ? "1 day" : `${orderAgeDays} days`}
-                sub={order.date_order ? `Placed ${fmtDate(order.date_order)}` : null}
+                accent={ageTierTextClass(age_tier)}
+                sub={
+                  <span className="flex items-center gap-1.5">
+                    {order.date_order && `Placed ${fmtDate(order.date_order)}`}
+                    <AgeTierBadge tier={age_tier} />
+                  </span>
+                }
               />
             </div>
           </div>
