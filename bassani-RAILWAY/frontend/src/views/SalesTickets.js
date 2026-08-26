@@ -996,6 +996,7 @@ export default function SalesTickets() {
   // A 50% deposit is the gate that lets an order reach the packing board —
   // the ticket sits at awaiting_deposit until Finance registers it here.
   const [depositModal, setDepositModal]     = useState(false);
+  const [depositDetailsLoading, setDepositDetailsLoading] = useState(false);
   const [depositJournals, setDepositJournals] = useState([]);
   const [depositForm, setDepositForm]       = useState({ invoice_type: "fixed", amount: "", percentage: "", date: "", journal_id: "", note: "" });
   const [depositSaving, setDepositSaving]   = useState(false);
@@ -1006,32 +1007,46 @@ export default function SalesTickets() {
   const [existingInvoices, setExistingInvoices] = useState([]);
   const [usingExistingInvoiceId, setUsingExistingInvoiceId] = useState(null);
 
-  const openDepositModal = async () => {
+  // Opens the modal immediately (2026-08-26, found live — the three parallel
+  // fetches below, especially the Odoo payment-journals call, took long
+  // enough that clicking "Register Deposit" looked like the app had hung,
+  // with nothing on screen to stop a user clicking it again) rather than
+  // waiting for all three to resolve first. The Payment Method dropdown and
+  // submit button show their own loading state via depositDetailsLoading
+  // until the data actually lands.
+  const openDepositModal = () => {
     const today = new Date().toISOString().split("T")[0];
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     setExistingInvoices([]);
-    try {
-      const [journalRes, orderRes, existingRes] = await Promise.all([
-        api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
-        detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
-        api.get(`/api/tickets/${detail.id}/existing-invoices`).catch(() => ({ data: { invoices: [] } })),
-      ]);
-      const journals = journalRes.data.journals || [];
-      setDepositJournals(journals);
-      const orderTotal = orderRes?.data?.amount_total || 0;
-      setDepositForm(f => ({
-        ...f,
-        amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
-        journal_id: journals[0]?.id ? String(journals[0].id) : "",
-      }));
-      setExistingInvoices(existingRes.data.invoices || []);
-      setDepositModal(true);
-    } catch (e) {
-      // Don't open a modal we just told the user is broken — no payment
-      // methods would show, and the "required field" validation on submit
-      // would be a confusing second error on top of this one.
-      toast.error(e.response?.data?.detail || "Failed to load deposit details");
-    }
+    setDepositJournals([]);
+    setDepositModal(true);
+    setDepositDetailsLoading(true);
+    (async () => {
+      try {
+        const [journalRes, orderRes, existingRes] = await Promise.all([
+          api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
+          detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
+          api.get(`/api/tickets/${detail.id}/existing-invoices`).catch(() => ({ data: { invoices: [] } })),
+        ]);
+        const journals = journalRes.data.journals || [];
+        setDepositJournals(journals);
+        const orderTotal = orderRes?.data?.amount_total || 0;
+        setDepositForm(f => ({
+          ...f,
+          amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
+          journal_id: journals[0]?.id ? String(journals[0].id) : "",
+        }));
+        setExistingInvoices(existingRes.data.invoices || []);
+      } catch (e) {
+        // Same "don't leave a modal open that we just told the user is
+        // broken" intent as before — now closes it back out instead of
+        // never having opened it.
+        toast.error(e.response?.data?.detail || "Failed to load deposit details");
+        setDepositModal(false);
+      } finally {
+        setDepositDetailsLoading(false);
+      }
+    })();
   };
 
   const useExistingInvoice = async (invoiceId) => {
@@ -1078,31 +1093,42 @@ export default function SalesTickets() {
 
   // ── Balance Payment Registration ─────────────────────────────────────────
   const [balanceModal, setBalanceModal]     = useState(false);
+  const [balanceDetailsLoading, setBalanceDetailsLoading] = useState(false);
   const [balanceJournals, setBalanceJournals] = useState([]);
   const [balanceForm, setBalanceForm]       = useState({ amount: "", date: "", journal_id: "", note: "" });
   const [balanceSaving, setBalanceSaving]   = useState(false);
   const [balanceInfo, setBalanceInfo]       = useState(null); // {amount_residual, invoice_name}
 
-  const openBalanceModal = async () => {
+  // Same fix as openDepositModal above (2026-08-26) — opens immediately
+  // instead of waiting on the Odoo payment-journals fetch first.
+  const openBalanceModal = () => {
     const today = new Date().toISOString().split("T")[0];
     setBalanceForm({ amount: "", date: today, journal_id: "", note: "" });
     setBalanceInfo(null);
-    try {
-      const [journalRes, balanceRes] = await Promise.all([
-        api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
-        api.get(`/api/tickets/${detail.id}/invoice-balance`),
-      ]);
-      const journals = journalRes.data.journals || [];
-      setBalanceJournals(journals);
-      const info = balanceRes.data;
-      setBalanceInfo(info);
-      setBalanceForm(f => ({
-        ...f,
-        amount:     info.amount_residual > 0 ? info.amount_residual.toFixed(2) : "",
-        journal_id: journals[0]?.id ? String(journals[0].id) : "",
-      }));
-    } catch { toast.error("Failed to load invoice balance"); }
+    setBalanceJournals([]);
     setBalanceModal(true);
+    setBalanceDetailsLoading(true);
+    (async () => {
+      try {
+        const [journalRes, balanceRes] = await Promise.all([
+          api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
+          api.get(`/api/tickets/${detail.id}/invoice-balance`),
+        ]);
+        const journals = journalRes.data.journals || [];
+        setBalanceJournals(journals);
+        const info = balanceRes.data;
+        setBalanceInfo(info);
+        setBalanceForm(f => ({
+          ...f,
+          amount:     info.amount_residual > 0 ? info.amount_residual.toFixed(2) : "",
+          journal_id: journals[0]?.id ? String(journals[0].id) : "",
+        }));
+      } catch {
+        toast.error("Failed to load invoice balance");
+      } finally {
+        setBalanceDetailsLoading(false);
+      }
+    })();
   };
 
   const registerBalance = async () => {
@@ -2774,13 +2800,19 @@ export default function SalesTickets() {
                 onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))} />
             </FormGroup>
             <FormGroup label="Payment Method" required>
-              <Select value={depositForm.journal_id}
-                onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}>
-                <option value="">— Select —</option>
-                {depositJournals.map(j => (
-                  <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
-                ))}
-              </Select>
+              {depositDetailsLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 px-3 py-2 border border-gray-100 rounded-lg bg-gray-50">
+                  <Loader2 size={13} className="animate-spin" />Loading payment methods…
+                </div>
+              ) : (
+                <Select value={depositForm.journal_id}
+                  onChange={e => setDepositForm(f => ({ ...f, journal_id: e.target.value }))}>
+                  <option value="">— Select —</option>
+                  {depositJournals.map(j => (
+                    <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
+                  ))}
+                </Select>
+              )}
             </FormGroup>
             <FormGroup label="Note">
               <Input value={depositForm.note}
@@ -2789,7 +2821,7 @@ export default function SalesTickets() {
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerDeposit} disabled={depositSaving}>
+              <BtnPrimary onClick={registerDeposit} disabled={depositSaving || depositDetailsLoading}>
                 {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
                 Register in Odoo
               </BtnPrimary>
@@ -2828,15 +2860,21 @@ export default function SalesTickets() {
               />
             </FormGroup>
             <FormGroup label="Payment Method" required>
-              <Select
-                value={balanceForm.journal_id}
-                onChange={e => setBalanceForm(f => ({ ...f, journal_id: e.target.value }))}
-              >
-                <option value="">— Select —</option>
-                {balanceJournals.map(j => (
-                  <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
-                ))}
-              </Select>
+              {balanceDetailsLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 px-3 py-2 border border-gray-100 rounded-lg bg-gray-50">
+                  <Loader2 size={13} className="animate-spin" />Loading payment methods…
+                </div>
+              ) : (
+                <Select
+                  value={balanceForm.journal_id}
+                  onChange={e => setBalanceForm(f => ({ ...f, journal_id: e.target.value }))}
+                >
+                  <option value="">— Select —</option>
+                  {balanceJournals.map(j => (
+                    <option key={j.id} value={j.id}>{j.display_label || j.name}</option>
+                  ))}
+                </Select>
+              )}
             </FormGroup>
             <FormGroup label="Note">
               <Input
@@ -2847,7 +2885,7 @@ export default function SalesTickets() {
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setBalanceModal(false)} disabled={balanceSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerBalance} loading={balanceSaving}>Register in Odoo</BtnPrimary>
+              <BtnPrimary onClick={registerBalance} loading={balanceSaving} disabled={balanceDetailsLoading}>Register in Odoo</BtnPrimary>
             </div>
           </Modal>
         )}
