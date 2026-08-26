@@ -1078,10 +1078,6 @@ const AGE_TIER_META = {
   urgent:  { color: "orange", label: "At Risk" },
   overdue: { color: "red",    label: "Overdue" },
 };
-const AGE_TIER_DOT = {
-  ok: "bg-green-500", warning: "bg-amber-500", urgent: "bg-orange-500", overdue: "bg-red-500",
-};
-
 const AGE_TIER_TEXT = {
   ok: "text-green-600", warning: "text-amber-600", urgent: "text-orange-600", overdue: "text-red-600",
 };
@@ -1096,13 +1092,6 @@ export function AgeTierBadge({ tier, className = "" }) {
   const meta = AGE_TIER_META[tier];
   if (!meta) return null;
   return <Badge color={meta.color} className={className}>{meta.label}</Badge>;
-}
-
-// Compact colored dot for a table row — cheaper on space than a full badge
-// when the row already carries a status column of its own.
-export function AgeTierDot({ tier, title }) {
-  if (!AGE_TIER_DOT[tier]) return null;
-  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${AGE_TIER_DOT[tier]}`} title={title || AGE_TIER_META[tier]?.label} />;
 }
 
 // List-page priority strip — "N Overdue · N At Risk" above the table, so a

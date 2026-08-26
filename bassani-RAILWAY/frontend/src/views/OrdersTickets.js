@@ -20,7 +20,7 @@ import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   OdooPdfViewerModal, openMonitorDisplay,
-  AgeTierBadge, AgeTierDot, AgePriorityStrip,
+  AgeTierBadge, AgePriorityStrip,
 } from "../components/UI";
 import { HorizontalTimelineCard } from "../components/OrderTimeline";
 
@@ -1112,13 +1112,15 @@ export default function OrdersTickets() {
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: e } }) => (
                 <div className="flex items-center gap-1.5">
-                  <AgeTierDot tier={e.age_tier} />
                   <Badge color={STATUS_COLOR[e.status]}>{STATUS_LABEL[e.status] || e.status}</Badge>
                   {e.is_backorder && (
                     <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>
                   )}
                 </div>
               )},
+              { id: "age", header: "Age", cell: ({ row: { original: e } }) =>
+                e.age_tier ? <AgeTierBadge tier={e.age_tier} /> : <span className="text-xs text-gray-300">—</span>
+              },
               { accessorKey: "packer_name", header: "Packer", cell: ({ row: { original: e } }) =>
                 e.packer_name || <span className="text-gray-300">—</span>
               },

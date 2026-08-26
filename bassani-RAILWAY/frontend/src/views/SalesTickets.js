@@ -22,7 +22,7 @@ import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal, openMonitorDisplay,
-  AgeTierBadge, AgeTierDot, AgePriorityStrip,
+  AgeTierBadge, AgePriorityStrip,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -3379,14 +3379,14 @@ export default function SalesTickets() {
                   )}
                 </p>
               )},
-              { id: "status", header: "Status", cell: ({ row: { original: t } }) => (
-                <div className="flex items-center gap-1.5">
-                  <AgeTierDot tier={t.age_tier} />
-                  {t.exit_status
-                    ? <Badge color={t.exit_status === "complete" ? "green" : "red"}>{R_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
-                    : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>}
-                </div>
-              )},
+              { id: "status", header: "Status", cell: ({ row: { original: t } }) =>
+                t.exit_status
+                  ? <Badge color={t.exit_status === "complete" ? "green" : "red"}>{R_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
+                  : <Badge color={R_STATUS_COLOR[t.status] || "gray"}>{R_STATUS_LABEL[t.status] || t.status}</Badge>
+              },
+              { id: "age", header: "Age", cell: ({ row: { original: t } }) =>
+                t.age_tier ? <AgeTierBadge tier={t.age_tier} /> : <span className="text-xs text-gray-300">—</span>
+              },
               { id: "order_ref", header: "Order Ref", cell: ({ row: { original: t } }) =>
                 t.order_name
                   ? <span className="text-xs font-mono text-gray-500">{t.order_name}</span>
@@ -3427,26 +3427,26 @@ export default function SalesTickets() {
                   )}
                 </div>
               )},
-              { id: "status", header: "Stage", cell: ({ row: { original: t } }) => (
-                <div className="flex items-center gap-1.5">
-                  <AgeTierDot tier={t.age_tier} />
-                  {t.exit_status
-                    ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
-                    : (t.odoo_order_state === "cancel" || t.packing_board_queue_error)
-                      ? (
-                        <div className="flex flex-col gap-0.5">
-                          <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
-                          {t.odoo_order_state === "cancel" && (
-                            <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
-                          )}
-                          {t.packing_board_queue_error && (
-                            <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Not Queued</Badge>
-                          )}
-                        </div>
-                      )
-                      : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>}
-                </div>
-              )},
+              { id: "status", header: "Stage", cell: ({ row: { original: t } }) =>
+                t.exit_status
+                  ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
+                  : (t.odoo_order_state === "cancel" || t.packing_board_queue_error)
+                    ? (
+                      <div className="flex flex-col gap-0.5">
+                        <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+                        {t.odoo_order_state === "cancel" && (
+                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Order Cancelled</Badge>
+                        )}
+                        {t.packing_board_queue_error && (
+                          <Badge color="red"><AlertTriangle size={9} className="inline mr-0.5" />Not Queued</Badge>
+                        )}
+                      </div>
+                    )
+                    : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>
+              },
+              { id: "age", header: "Age", cell: ({ row: { original: t } }) =>
+                t.age_tier ? <AgeTierBadge tier={t.age_tier} /> : <span className="text-xs text-gray-300">—</span>
+              },
               { id: "so_ref", header: "SO #", meta: { className: "hidden md:table-cell" }, cell: ({ row: { original: t } }) =>
                 t.order_name
                   ? (
