@@ -542,16 +542,25 @@ async def list_tickets(
 
     # Batch-resolve order_id integers to human-readable SO names (e.g. S00045).
     # Single Odoo call for all linked orders — non-fatal if Odoo is unavailable.
-    # Logged rather than silently swallowed (2026-08-26, found live — the SO #
-    # column was blank for every single ticket, with nothing anywhere to
-    # explain why; this bare `except: pass` was the only thing in the whole
-    # request that could have caused that, so it's now visible in logs the
-    # next time it fires instead of degrading invisibly).
+    # Root cause found live 2026-08-26 (SO # column blank for every single
+    # ticket, not just the affected one): this used odoo.read(order_ids, ...),
+    # a direct pass-through to Odoo's own `read()` ORM method (confirmed in
+    # odoo_client.py) — which raises MissingError for the *entire* batch if
+    # even one id in it no longer exists in Odoo (easy to end up with: test
+    # data cleanup, an order deleted directly in Odoo, a stale order_id left
+    # on a ticket). One bad id in the shared list-wide batch poisoned every
+    # other ticket's SO # too. Switched to search_read() with an `id in [...]`
+    # domain instead — same resilient pattern already used elsewhere in this
+    # codebase (e.g. order_routes.py's SO-name lookups) — which never raises
+    # for a missing/inaccessible id, it just omits it from the results, so
+    # one stale reference no longer takes down every other ticket's SO # with
+    # it. The exception logging (rather than a bare `except: pass`) is kept
+    # as defense in depth for a genuine Odoo connectivity failure.
     order_ids = list({t["order_id"] for t in tickets if t.get("order_id")})
     if order_ids:
         try:
             odoo = get_odoo_client()
-            so_records = odoo.read("sale.order", order_ids, fields=["id", "name"])
+            so_records = odoo.search_read("sale.order", domain=[("id", "in", order_ids)], fields=["id", "name"], limit=len(order_ids))
             order_name_map = {r["id"]: r["name"] for r in so_records}
             for t in tickets:
                 if t.get("order_id"):
