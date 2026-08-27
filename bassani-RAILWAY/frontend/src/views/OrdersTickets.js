@@ -14,7 +14,7 @@ import toast from "react-hot-toast";
 import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor, ExternalLink,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
@@ -1184,6 +1184,21 @@ export default function OrdersTickets() {
                   )}
                 </div>
               )},
+              // Reciprocal of SalesTickets.js's own "Order Ticket" column
+              // (2026-08-27) — links back to the Sales ticket this packing
+              // board entry was created from, resolved server-side via a
+              // batched order_id join in get_board_state() (no N+1 query).
+              { id: "sales_ticket", header: "Sales Ticket", cell: ({ row: { original: e } }) =>
+                e.ticket_id ? (
+                  <button
+                    onClick={ev => { ev.stopPropagation(); navigate("/tickets/sales", { state: { openTicketId: e.ticket_id } }); }}
+                    className="inline-flex items-center gap-1 text-xs font-mono text-bassani-600 hover:text-bassani-800 hover:underline"
+                  >
+                    TKT-{e.ticket_id.slice(-8).toUpperCase()}
+                    <ExternalLink size={10} />
+                  </button>
+                ) : <span className="text-xs text-gray-300">—</span>
+              },
               { id: "age", header: "Age", cell: ({ row: { original: e } }) =>
                 e.age_tier ? <AgeTierBadge tier={e.age_tier} /> : <span className="text-xs text-gray-300">—</span>
               },

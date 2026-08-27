@@ -123,7 +123,35 @@ async def get_board_state(warehouse_id: Optional[int] = None) -> list:
         .sort("queued_at", 1)
         .to_list(length=100)
     )
-    return [_with_age(e) for e in entries]
+    entries = [_with_age(e) for e in entries]
+
+    # Batch-resolve each entry's linked Sales ticket (2026-08-27, for
+    # OrdersTickets.js's list "Sales Ticket" column) — same order_id join
+    # every other cross-pipeline lookup in this file already uses (e.g.
+    # _sync_sales_ticket, _create_final_invoice's deposit-exclusion lookup),
+    # one batched query for the whole page rather than N+1 per entry.
+    # packing_board.order_id is stored as a string, tickets.order_id as an
+    # int — same mismatch every other join in this codebase already handles.
+    order_ids: set = set()
+    for e in entries:
+        try:
+            order_ids.add(int(e["order_id"]))
+        except (KeyError, ValueError, TypeError):
+            pass
+    ticket_map: dict = {}
+    if order_ids:
+        async for t in col("tickets").find(
+            {"type": "sales", "order_id": {"$in": list(order_ids)}, "exit_status": None},
+            {"order_id": 1},
+        ):
+            ticket_map[t["order_id"]] = str(t["_id"])
+    for e in entries:
+        try:
+            e["ticket_id"] = ticket_map.get(int(e["order_id"]))
+        except (ValueError, TypeError):
+            e["ticket_id"] = None
+
+    return entries
 
 
 async def push_update(entry: dict):
