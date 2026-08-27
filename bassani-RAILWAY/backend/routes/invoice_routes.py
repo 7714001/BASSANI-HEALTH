@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 import io
 
@@ -10,6 +10,7 @@ from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
 from ownership import is_partner_owned_by
+from services.email_service import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -607,11 +608,17 @@ async def reset_invoice_to_draft(
 @router.post("/{invoice_id}/send")
 async def send_invoice_standalone(
     invoice_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.finance_confirm")),
 ):
-    """Send an invoice via Odoo mail template. Works without a linked Sales Ticket."""
+    """Send an invoice via the portal's own email system (2026-08-27 — was
+    Odoo's mail.template mechanism), same reasoning as
+    send_deposit_due_proforma. Works without a linked Sales Ticket."""
     odoo = get_odoo_client()
-    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id"])
+    records = odoo.read(
+        "account.move", [invoice_id],
+        fields=["name", "state", "partner_id", "amount_total", "invoice_origin"],
+    )
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found")
     inv = records[0]
@@ -619,20 +626,27 @@ async def send_invoice_standalone(
         raise HTTPException(status_code=400, detail="Only posted invoices can be sent")
 
     try:
-        templates = odoo.search_read(
-            "mail.template",
-            [("model", "=", "account.move"), ("name", "ilike", "invoice")],
-            fields=["id", "name"],
-            limit=5,
+        partner = inv.get("partner_id")
+        customer_email = None
+        if partner:
+            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+            customer_email = p_rows[0].get("email") if p_rows else None
+        if not customer_email:
+            raise HTTPException(status_code=400, detail="Customer has no email on file")
+        pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
+        background_tasks.add_task(
+            send_invoice_email,
+            customer_email=customer_email,
+            customer_name=partner[1] if partner else "",
+            order_ref=inv.get("invoice_origin") or inv["name"],
+            invoice_ref=inv["name"],
+            amount_total=float(inv.get("amount_total", 0) or 0),
+            pdf_bytes=bytes(pdf_bytes),
         )
-        if not templates:
-            raise HTTPException(status_code=502, detail="Invoice email template not found in Odoo")
-        template_id = templates[0]["id"]
-        odoo.execute("mail.template", "send_mail", [template_id, invoice_id], {"force_send": True})
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo send failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not send invoice: {e}")
 
     await audit_log("invoice.sent", "invoice", invoice_id,
                     entity_label=inv["name"], user=current_user)

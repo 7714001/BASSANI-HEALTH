@@ -25,7 +25,7 @@ from auth import require_admin, get_current_user, get_user_by_username, require_
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
-from odoo_client import get_odoo_client, odoo as odoo_call
+from odoo_client import get_odoo_client, fetch_report_pdf
 from routes.settings_routes import get_email_routing
 from routes.monitor_routes import broadcast_monitor_refresh
 from services.email_service import (
@@ -38,6 +38,7 @@ from services.email_service import (
     send_backorder_stock_ready,
     send_qa_approval_needed,
     send_rp_approval_needed,
+    send_invoice_email,
 )
 from services.notification_service import notify_ticket_handoff
 from services.age_tier import board_entry_age_fields
@@ -812,7 +813,7 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
     return {"success": True, "pickings": validated, "error": None, "backorder_picking_id": backorder_picking_id, "backorder_picking_name": backorder_picking_name}
 
 
-async def _create_final_invoice(entry: dict, now: datetime) -> dict:
+async def _create_final_invoice(entry: dict, now: datetime, background_tasks: BackgroundTasks) -> dict:
     """Create + post the final delivery invoice for an order in Odoo (after
     QA + RP sign-off) and stamp its id back onto the linked Sales ticket.
     Extracted from complete_entry (2026-08-27) so the same logic can be
@@ -948,32 +949,39 @@ async def _create_final_invoice(entry: dict, now: datetime) -> dict:
                         odoo.execute("account.move", "action_post", [invoice_id])
 
         if invoice_id:
-            # Auto-send the final invoice to the customer via Odoo's own mail
-            # system (same mechanism as ticket_routes.py's manual "Send Invoice"
-            # action) — non-fatal, mirrors send_deposit_due_proforma's degrade-to-warning
-            # pattern so a missing/misconfigured Odoo mail template never blocks completion.
-            # Runs whether this invoice was newly created above or an
-            # existing not-yet-linked one was just found and reused.
+            # Auto-send the final invoice to the customer via the portal's own
+            # email system (2026-08-27) — replaces the previous Odoo
+            # mail.template send (same change applied to ticket_routes.py's
+            # manual "Send Invoice" action and invoice_routes.py's standalone
+            # one) so this email carries the portal's own branding and follows
+            # the Email Standards, matching send_deposit_due_proforma. Non-
+            # fatal — degrades to a warning, same as before. Runs whether this
+            # invoice was newly created above or an existing not-yet-linked
+            # one was just found and reused.
             try:
-                _templates = odoo.search_read(
-                    "mail.template",
-                    [("model", "=", "account.move")],
-                    fields=["id", "name"],
-                    limit=10,
-                )
-                _inv_template = next(
-                    (t for t in _templates if "invoice" in t["name"].lower()),
-                    _templates[0] if _templates else None,
-                )
-                if _inv_template:
-                    odoo_call(
-                        "mail.template", "send_mail",
-                        [_inv_template["id"], invoice_id],
-                        {"force_send": True},
+                _inv_rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id", "amount_total"])
+                _inv = _inv_rows[0] if _inv_rows else {}
+                _inv_partner = _inv.get("partner_id")
+                _customer_email = None
+                if _inv_partner:
+                    _p_rows = odoo.read("res.partner", [_inv_partner[0]], fields=["email"])
+                    _customer_email = _p_rows[0].get("email") if _p_rows else None
+                if not _customer_email:
+                    invoice_warning = "Invoice created but the customer has no email on file — invoice was not sent"
+                else:
+                    _order_rows = odoo.read("sale.order", [sale_order_id], fields=["name"])
+                    _order_ref = _order_rows[0]["name"] if _order_rows else str(sale_order_id)
+                    _pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
+                    background_tasks.add_task(
+                        send_invoice_email,
+                        customer_email=_customer_email,
+                        customer_name=_inv_partner[1] if _inv_partner else "",
+                        order_ref=_order_ref,
+                        invoice_ref=_inv.get("name") or invoice_name or f"#{invoice_id}",
+                        amount_total=float(_inv.get("amount_total", 0) or 0),
+                        pdf_bytes=bytes(_pdf_bytes),
                     )
                     invoice_sent = True
-                else:
-                    invoice_warning = "Invoice created but no invoice email template found in Odoo — configure one under Email > Templates"
             except Exception as e:
                 invoice_warning = f"Invoice created but the email may not have been sent: {e}"
     except Exception as e:
@@ -1127,7 +1135,7 @@ async def complete_entry(
     # ── Create and post Odoo invoice for delivered qty ────────────────────────
     # Invoice is raised here (after QA + RP sign-off) for all orders including
     # samples. Sample invoices total R0.00 and Odoo marks them paid immediately.
-    _inv_result = await _create_final_invoice(entry, now)
+    _inv_result = await _create_final_invoice(entry, now, background_tasks)
     invoice_id      = _inv_result["invoice_id"]
     invoice_name    = _inv_result["invoice_name"]
     invoice_warning = _inv_result["invoice_warning"]
@@ -1282,6 +1290,7 @@ async def complete_entry(
 @router.put("/retry-invoice-creation")
 async def retry_invoice_creation(
     body: OrderIdBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_any_permission("tickets.orders", "tickets.finance_confirm")),
 ):
     """Recovery action (2026-08-27) for an order that reached packing status
@@ -1309,7 +1318,7 @@ async def retry_invoice_creation(
         )
 
     now = datetime.now(timezone.utc)
-    result = await _create_final_invoice(entry, now)
+    result = await _create_final_invoice(entry, now, background_tasks)
     invoice_id = result["invoice_id"]
 
     update_set: dict = {}

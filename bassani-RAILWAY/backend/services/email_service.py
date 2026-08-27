@@ -344,6 +344,79 @@ def send_deposit_due_proforma(
     )
 
 
+def send_quote_email(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    amount_total: float,
+    pdf_bytes: bytes,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent when a quote is sent (or resent) to the customer — replaces the
+    previous Odoo mail.template send (2026-08-27) so this email carries the
+    portal's own branding and follows the Email Standards, same reasoning as
+    send_deposit_due_proforma. Attaches Odoo's own rendered Quotation PDF
+    (sale.report_saleorder), fetched live the same way the proforma is."""
+    if not customer_email:
+        return
+    body = (
+        _h1("Your quote is ready")
+        + _p(f"Hi {customer_name},")
+        + _p("Please find your quote attached. Let us know if you'd like to go ahead, "
+             "or if anything needs adjusting.")
+        + _info_box([
+            ("Quote reference", f"<strong>{order_ref}</strong>"),
+            ("Quote total", f"R{amount_total:,.2f}"),
+        ])
+    )
+    _send(
+        customer_email, f"Your Quote: {order_ref}",
+        _wrap(body), attachments=[{
+            "filename": f"{order_ref} Quote.pdf",
+            "content": list(pdf_bytes),
+        }],
+        cc=cc or None,
+    )
+
+
+def send_invoice_email(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    invoice_ref: str,
+    amount_total: float,
+    pdf_bytes: bytes,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent when the final delivery invoice is created and posted (after
+    QA + RP sign-off, or a deliberate manual/resend send) — replaces the
+    previous Odoo mail.template send (2026-08-27), same reasoning as
+    send_quote_email above. Attaches Odoo's own rendered Invoice PDF
+    (account.report_invoice_with_payments)."""
+    if not customer_email:
+        return
+    body = (
+        _h1("Your invoice is ready")
+        + _p(f"Hi {customer_name},")
+        + _p("Please find your invoice attached for the order below.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Invoice number", f"<strong>{invoice_ref}</strong>"),
+            ("Invoice total", f"R{amount_total:,.2f}"),
+        ])
+        + _divider()
+        + _p("If you have any questions about this invoice, please get in touch.", muted=True)
+    )
+    _send(
+        customer_email, f"Invoice {invoice_ref}: {order_ref}",
+        _wrap(body), attachments=[{
+            "filename": f"{invoice_ref} Invoice.pdf",
+            "content": list(pdf_bytes),
+        }],
+        cc=cc or None,
+    )
+
+
 # Ticket emails
 
 _STAGE_LABELS = {

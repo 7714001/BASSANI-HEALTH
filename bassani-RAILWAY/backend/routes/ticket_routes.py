@@ -26,12 +26,15 @@ from auth import (
 )
 from routes.monitor_routes import broadcast_monitor_refresh
 from routes.order_routes import _queue_packing_board
-from odoo_client import get_odoo_client, odoo as odoo_call
+from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from warehouse_context import company_context
 from database import col
 from middleware.audit import audit_log
 from services.notification_service import notify_ticket_assigned
-from services.email_service import send_ticket_assigned, send_pop_uploaded_notification
+from services.email_service import (
+    send_ticket_assigned, send_pop_uploaded_notification,
+    send_quote_email, send_invoice_email,
+)
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
@@ -1009,6 +1012,7 @@ async def confirm_payment(
 async def create_order_from_ticket(
     ticket_id: str,
     body: TicketOrderCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(_require_ticket_driver),
 ):
     """
@@ -1134,7 +1138,7 @@ async def create_order_from_ticket(
     send_warning = None
     try:
         ticket_after = await col("tickets").find_one({"_id": oid})
-        send_result = await _send_quote_impl(ticket_id, oid, ticket_after, current_user)
+        send_result = await _send_quote_impl(ticket_id, oid, ticket_after, current_user, background_tasks)
         quote_sent = bool(send_result.get("email_sent"))
         send_warning = send_result.get("warning")
     except HTTPException as e:
@@ -1396,7 +1400,7 @@ async def update_order_from_ticket(
     return {"success": True, "odoo_order_id": order_id}
 
 
-async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict) -> dict:
+async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict, background_tasks: BackgroundTasks) -> dict:
     """Core of the quote-send flow — extracted 2026-08-26 so
     create_order_from_ticket can automatically send the quote the moment
     it's built, rather than leaving it to a separate manual "Send Quote"
@@ -1405,19 +1409,19 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
     Order, not Send Quote). Shared with the standalone POST
     /{ticket_id}/send-quote endpoint below, which callers still use for a
     deliberate resend after editing an already-sent quote — one
-    implementation either way, so an Odoo mail-template change never has
-    to be made twice. Caller is responsible for the ticket-lookup/exit-
-    status/reseller-ownership checks; this assumes `ticket` already
-    reflects order_id being set (create_order_from_ticket re-reads its own
-    just-updated ticket doc before calling this, rather than reusing its
-    pre-creation in-memory copy)."""
+    implementation either way, so a change here never has to be made twice.
+    Caller is responsible for the ticket-lookup/exit-status/reseller-
+    ownership checks; this assumes `ticket` already reflects order_id being
+    set (create_order_from_ticket re-reads its own just-updated ticket doc
+    before calling this, rather than reusing its pre-creation in-memory
+    copy)."""
     if not ticket.get("order_id"):
         raise HTTPException(status_code=400, detail="No linked order — build a quote first")
 
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
     try:
-        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "partner_id"])
+        rows = odoo.read("sale.order", [order_id], fields=["state", "name", "partner_id", "amount_total"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not rows:
@@ -1429,27 +1433,36 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
             detail=f"Order {order['name']} is already confirmed — cannot resend a confirmed order as a quote",
         )
 
-    # Attempt to send via Odoo's built-in sale quotation email template.
-    # If the template is missing or Odoo's mail server isn't configured we still
-    # mark the state as 'sent' and warn — better than a hard failure that blocks
-    # the rep from progressing the ticket.
+    # Send via the portal's own email system (2026-08-27) — replaces the
+    # previous Odoo mail.template send so this email carries the portal's
+    # own branding and follows the Email Standards, same reasoning as
+    # send_deposit_due_proforma. If the customer has no email on file, or
+    # the PDF fetch fails, we still mark the state as 'sent' and warn —
+    # better than a hard failure that blocks the rep from progressing the
+    # ticket.
     email_sent = False
     warning = None
     try:
-        templates = odoo.search_read(
-            "mail.template",
-            domain=[["model", "=", "sale.order"], ["name", "ilike", "quotation"]],
-            fields=["id", "name"],
-            limit=5,
-        )
-        if templates:
-            template_id = templates[0]["id"]
-            odoo_call("mail.template", "send_mail", [template_id, order_id], {"force_send": True})
-            email_sent = True
+        partner = order.get("partner_id")
+        customer_email = None
+        if partner:
+            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+            customer_email = p_rows[0].get("email") if p_rows else None
+        if not customer_email:
+            warning = "Customer has no email on file — order marked sent but no email was delivered"
         else:
-            warning = "Quotation email template not found in Odoo — order marked sent but no email was delivered"
+            pdf_bytes = fetch_report_pdf("sale.report_saleorder", [order_id])
+            background_tasks.add_task(
+                send_quote_email,
+                customer_email=customer_email,
+                customer_name=partner[1] if partner else ticket.get("customer_name", ""),
+                order_ref=order["name"],
+                amount_total=float(order.get("amount_total", 0) or 0),
+                pdf_bytes=bytes(pdf_bytes),
+            )
+            email_sent = True
     except Exception as e:
-        warning = f"Odoo mail send failed ({e}) — order marked sent but email may not have been delivered"
+        warning = f"Could not send quote email ({e}) — order marked sent but email may not have been delivered"
 
     # Mark the Odoo order as 'sent' regardless of email outcome
     try:
@@ -1489,13 +1502,15 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
 @router.post("/{ticket_id}/send-quote")
 async def send_quote(
     ticket_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(_require_ticket_driver),
 ):
-    """Email the PDF quotation to the customer via Odoo's built-in quotation
-    template. Marks the Odoo order as 'sent' and stamps quote_sent_at on the
-    ticket. Idempotent — safe to call again after edits (resend); this is
-    the deliberate-resend path, since create_order_from_ticket already sends
-    the quote automatically the moment it's built."""
+    """Email the PDF quotation to the customer via the portal's own email
+    system (2026-08-27 — was Odoo's built-in quotation template). Marks the
+    Odoo order as 'sent' and stamps quote_sent_at on the ticket. Idempotent —
+    safe to call again after edits (resend); this is the deliberate-resend
+    path, since create_order_from_ticket already sends the quote
+    automatically the moment it's built."""
     try:
         oid = ObjectId(ticket_id)
     except Exception:
@@ -1510,7 +1525,7 @@ async def send_quote(
         await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
-    return await _send_quote_impl(ticket_id, oid, ticket, current_user)
+    return await _send_quote_impl(ticket_id, oid, ticket, current_user, background_tasks)
 
 
 @router.get("/{ticket_id}/existing-invoices")
@@ -2681,11 +2696,15 @@ async def reassign_ticket(
 @router.post("/{ticket_id}/send-invoice")
 async def send_invoice(
     ticket_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
 ):
     """
-    Send (or resend) the Odoo invoice PDF to the customer via Odoo's mail system.
-    Stamps invoice_sent_at on the ticket. Gracefully degrades if Odoo mail isn't configured.
+    Send (or resend) the invoice PDF to the customer via the portal's own
+    email system (2026-08-27 — was Odoo's mail.template mechanism), same
+    reasoning as send_deposit_due_proforma. Stamps invoice_sent_at on the
+    ticket. Gracefully degrades if the customer has no email on file or the
+    PDF fetch fails.
     """
     try:
         oid = ObjectId(ticket_id)
@@ -2701,7 +2720,7 @@ async def send_invoice(
     odoo = get_odoo_client()
 
     # Verify invoice exists and is posted
-    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id"])
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id", "amount_total"])
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found in Odoo")
     inv = records[0]
@@ -2710,25 +2729,31 @@ async def send_invoice(
 
     warning = None
     try:
-        # Find Odoo's invoice mail template
-        templates = odoo.search_read(
-            "mail.template",
-            [("model", "=", "account.move")],
-            fields=["id", "name"],
-            limit=10,
-        )
-        invoice_template = next(
-            (t for t in templates if "invoice" in t["name"].lower()),
-            templates[0] if templates else None,
-        )
-        if invoice_template:
-            odoo_call(
-                "mail.template", "send_mail",
-                [invoice_template["id"], invoice_id],
-                {"force_send": True},
-            )
+        partner = inv.get("partner_id")
+        customer_email = None
+        if partner:
+            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+            customer_email = p_rows[0].get("email") if p_rows else None
+        if not customer_email:
+            warning = "Customer has no email on file — invoice was not sent"
         else:
-            warning = "No invoice email template found in Odoo — configure one under Email > Templates"
+            order_ref = None
+            if ticket.get("order_id"):
+                try:
+                    _o_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["name"])
+                    order_ref = _o_rows[0]["name"] if _o_rows else None
+                except Exception:
+                    pass
+            pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
+            background_tasks.add_task(
+                send_invoice_email,
+                customer_email=customer_email,
+                customer_name=partner[1] if partner else ticket.get("customer_name", ""),
+                order_ref=order_ref or inv["name"],
+                invoice_ref=inv["name"],
+                amount_total=float(inv.get("amount_total", 0) or 0),
+                pdf_bytes=bytes(pdf_bytes),
+            )
     except Exception as e:
         warning = f"Email may not have been sent: {e}"
 
