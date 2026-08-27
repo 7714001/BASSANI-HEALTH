@@ -14,7 +14,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
   Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle, Building2, Factory,
-  Eye, EyeOff,
+  Eye, EyeOff, ReceiptText,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -302,13 +302,33 @@ function NavGroup({ group, pathname, navigate }) {
 }
 
 // ── Global barcode / reference search bar ─────────────────────────────────────
-// Press "/" from anywhere (when not in another input) to focus. Enter dispatches.
+// Press "/" from anywhere (when not in another input) to focus.
+//
+// Two distinct interactions share this one input (2026-08-27 predictive
+// upgrade, matching the enterprise pattern Odoo's own top search and
+// similar ERP search bars use): scanning a full barcode/SO/invoice number
+// and hitting Enter still resolves and navigates immediately via
+// global_search's exact-match dispatch (unchanged from before) — a scanner
+// fires the keystrokes plus Enter far too fast for a debounced dropdown to
+// matter, and there's nothing to "pick" from a single scanned code anyway.
+// Typing a partial reference now also opens a predictive dropdown (from the
+// new /api/search/suggest endpoint) so a partially-remembered SO number
+// turns into a pick list instead of a guess-the-full-number-or-fail flow.
+// Arrow keys move through the dropdown; Enter with a suggestion highlighted
+// picks it; Enter with nothing highlighted falls through to the exact-match
+// dispatch exactly as before, so the scan flow can never be broken by this.
 function GlobalSearch() {
-  const inputRef  = useRef(null);
-  const navigate  = useNavigate();
+  const inputRef   = useRef(null);
+  const wrapRef    = useRef(null);
+  const debounceRef = useRef(null);
+  const navigate   = useNavigate();
   const { isAdmin } = useAuth();
-  const [query,   setQuery  ] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [query,       setQuery      ] = useState("");
+  const [loading,     setLoading    ] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [open,        setOpen       ] = useState(false);
+  const [highlight,   setHighlight  ] = useState(-1);
 
   const focus = useCallback((e) => {
     if (e.key !== "/") return;
@@ -323,8 +343,58 @@ function GlobalSearch() {
     return () => window.removeEventListener("keydown", focus);
   }, [focus]);
 
+  // Close the dropdown on an outside click — the standard pattern this
+  // codebase already uses elsewhere (e.g. ProductPickerDrawer.js's
+  // SearchableSelect), not a novel one.
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  // Debounced predictive fetch (250ms) — fires on every keystroke past 2
+  // characters, so this must stay cheap and must not fire on every single
+  // keystroke immediately or it'd hammer the endpoint while typing fast.
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      setSuggestLoading(false);
+      return;
+    }
+    setSuggestLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get("/api/search/suggest", { params: { q } });
+        setSuggestions(data.results || []);
+        setOpen(true);
+        setHighlight(-1);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setSuggestLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(debounceRef.current);
+  }, [query]);
+
   if (!isAdmin) return null;
 
+  const goTo = (item) => {
+    setQuery("");
+    setSuggestions([]);
+    setOpen(false);
+    inputRef.current?.blur();
+    navigate(item.navigate_to, { state: item.state || {} });
+  };
+
+  // Exact-match dispatch — unchanged from before the predictive upgrade.
+  // Still the only path a scanned barcode ever takes (nothing to predict
+  // from a single complete scanned code), and the fallback for Enter when
+  // no suggestion is highlighted.
   const dispatch = async () => {
     const q = query.trim();
     if (!q) return;
@@ -332,6 +402,8 @@ function GlobalSearch() {
     try {
       const { data } = await api.get("/api/search/global", { params: { q } });
       setQuery("");
+      setSuggestions([]);
+      setOpen(false);
       inputRef.current?.blur();
       navigate(data.navigate_to, { state: data.state || {} });
     } catch (err) {
@@ -341,21 +413,74 @@ function GlobalSearch() {
     }
   };
 
+  const TYPE_ICON  = { order: FileText, invoice: ReceiptText, product: Package };
+  const TYPE_LABEL = { order: "Order", invoice: "Invoice", product: "Product" };
+
   return (
-    <div className="hidden sm:flex items-center relative">
+    <div ref={wrapRef} className="hidden sm:flex items-center relative">
       <Search size={13} className="absolute left-2.5 text-gray-400 pointer-events-none z-10" />
-      {loading && <Loader2 size={13} className="absolute right-2.5 text-gray-400 animate-spin z-10" />}
+      {(loading || suggestLoading) && <Loader2 size={13} className="absolute right-2.5 text-gray-400 animate-spin z-10" />}
       <input
         ref={inputRef}
         value={query}
         onChange={e => setQuery(e.target.value)}
+        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
         onKeyDown={e => {
-          if (e.key === "Enter") dispatch();
-          if (e.key === "Escape") { setQuery(""); e.target.blur(); }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (suggestions.length > 0) { setOpen(true); setHighlight(h => (h + 1) % suggestions.length); }
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (suggestions.length > 0) { setOpen(true); setHighlight(h => (h <= 0 ? suggestions.length - 1 : h - 1)); }
+          } else if (e.key === "Enter") {
+            if (open && highlight >= 0 && suggestions[highlight]) goTo(suggestions[highlight]);
+            else dispatch();
+          } else if (e.key === "Escape") {
+            if (open) { setOpen(false); setHighlight(-1); }
+            else { setQuery(""); e.target.blur(); }
+          }
         }}
         placeholder="/ Scan or search…"
-        className="pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-44 focus:w-56 transition-all duration-150"
+        className="pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-44 focus:w-72 transition-all duration-150"
       />
+      {open && suggestions.length > 0 && (
+        <div
+          onMouseDown={e => e.preventDefault()}
+          className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1"
+        >
+          {suggestions.map((item, i) => {
+            const Icon = TYPE_ICON[item.type] || FileText;
+            return (
+              <button
+                key={`${item.type}-${item.id}`}
+                onClick={() => goTo(item)}
+                onMouseEnter={() => setHighlight(i)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${i === highlight ? "bg-bassani-50" : "hover:bg-gray-50"}`}
+              >
+                <span className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${i === highlight ? "bg-bassani-100 text-bassani-700" : "bg-gray-100 text-gray-400"}`}>
+                  <Icon size={13} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-mono text-xs font-semibold text-gray-800 truncate">{item.ref}</span>
+                    <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide shrink-0">{TYPE_LABEL[item.type]}</span>
+                  </span>
+                  <span className="block text-[11px] text-gray-500 truncate">{item.name}</span>
+                  {item.sub && <span className="block text-[10px] text-gray-400 truncate">{item.sub}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {open && !suggestLoading && suggestions.length === 0 && query.trim().length >= 2 && (
+        <div
+          onMouseDown={e => e.preventDefault()}
+          className="absolute top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-3 px-3"
+        >
+          <p className="text-xs text-gray-400">No matches — press Enter to search anyway.</p>
+        </div>
+      )}
     </div>
   );
 }
