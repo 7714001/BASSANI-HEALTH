@@ -1784,6 +1784,7 @@ async def upload_proof_of_payment(
         background_tasks.add_task(
             send_pop_uploaded_notification,
             notify, ticket_ref, ticket.get("customer_name", ""), file.filename,
+            ticket_id=str(oid),
         )
 
     return {"success": True, "upload": {k: v for k, v in upload_doc.items() if k != "r2_key"}}

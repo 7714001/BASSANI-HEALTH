@@ -50,6 +50,7 @@ TEST_EMAIL_SENDERS: dict = {
     ),
     "pop_uploaded_to": lambda to: send_pop_uploaded_notification(
         [to], ticket_ref="TICKET-TEST01", customer_name="Test Pharmacy (Pty) Ltd", filename="proof_of_payment.pdf",
+        ticket_id="000000000000000000000000",
     ),
     "qa_approval_to": lambda to: send_qa_approval_needed(
         [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",

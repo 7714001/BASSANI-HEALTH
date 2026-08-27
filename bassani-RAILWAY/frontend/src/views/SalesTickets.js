@@ -153,6 +153,20 @@ export default function SalesTickets() {
     if (match) openDetail(match);
   }, [loading]); // eslint-disable-line
 
+  // Auto-open via a real URL query param (2026-08-27) — distinct from the
+  // location.state effect above, which only ever works for in-app
+  // navigation (navigate(..., {state})); state doesn't exist on a fresh
+  // page load, so it can't be used by an external link like the one in
+  // send_pop_uploaded_notification's "Open ticket" email button. Calls
+  // openDetail directly with just {id}, the only field it actually reads
+  // before fetching — no need to wait for the list to load or find a
+  // match in it first, same pattern OrdersTickets.js's own deep-link
+  // support already uses.
+  useEffect(() => {
+    const targetId = new URLSearchParams(location.search).get("ticket");
+    if (targetId) openDetail({ id: targetId });
+  }, []); // eslint-disable-line
+
   // ── Create modal ──────────────────────────────────────────────────────────
   const [createModal, setCreateModal]       = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
