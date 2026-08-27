@@ -1114,7 +1114,7 @@ export default function OrderPassport() {
                   detail behind them. */}
               {!isReseller && !isCustomer && (
               <SideCard
-                icon={Package} title="Packing"
+                icon={Package} title="Packing Ticket"
                 action={packing && (
                   <button
                     onClick={() => navigate("/tickets/orders")}

@@ -19,6 +19,35 @@ def last_day_of_month(year: int, month: int) -> datetime:
         return datetime(year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=1)
     return datetime(year, month + 1, 1, tzinfo=timezone.utc) - timedelta(seconds=1)
 
+async def _attach_pipeline_status(orders: list) -> list:
+    """Attach linked_ticket/packing_status to each order (2026-08-27), same
+    batched-lookup shape order_routes.py::list_orders already uses for the
+    admin/reseller/customer Orders list — the dashboard's "Recent orders"
+    widget was showing Odoo's own raw 4-state badge (Quotation/Confirmed/
+    Done/Cancelled) instead, which reads identically for the entire multi-
+    week deposit -> packing -> QA/RP -> collection pipeline. Mutates and
+    returns the same list; a no-op (returns immediately) for an empty list."""
+    if not orders:
+        return orders
+    order_ids = [o["id"] for o in orders]
+    ticket_map: dict = {}
+    async for t in col("tickets").find(
+        {"order_id": {"$in": order_ids}, "type": "sales"},
+        {"order_id": 1, "status": 1, "exit_status": 1},
+    ):
+        ticket_map[t["order_id"]] = {"status": t.get("status"), "exit_status": t.get("exit_status")}
+    packing_map: dict = {}
+    async for pb in col("packing_board").find(
+        {"order_id": {"$in": [str(oid) for oid in order_ids]}},
+        {"order_id": 1, "status": 1},
+    ):
+        packing_map[pb["order_id"]] = pb.get("status")
+    for order in orders:
+        order["linked_ticket"] = ticket_map.get(order["id"])
+        order["packing_status"] = packing_map.get(str(order["id"]))
+    return orders
+
+
 def financial_year_bounds(today: date) -> tuple:
     """
     SA financial year: 1 March → last day of February the following year.
@@ -143,6 +172,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 limit=5,
                 order="date_order desc",
             )
+            await _attach_pipeline_status(recent_orders)
 
             pipeline = [
                 {"$match": {
@@ -228,6 +258,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
                 fields=["id", "name", "partner_id", "amount_total", "state", "date_order"],
                 limit=5, order="date_order desc",
             )
+            await _attach_pipeline_status(recent_orders)
 
             return {
                 "products": {"total": total_products, "low_stock": low_stock},

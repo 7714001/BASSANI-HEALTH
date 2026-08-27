@@ -4,6 +4,31 @@ import api from "../api";
 import { useAuth } from "../AuthContext";
 import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from "../components/UI";
 
+// ── Pipeline status for the reseller/customer "Recent orders" widget
+// (2026-08-27, found live) — was showing Odoo's own raw 4-state badge
+// (Quotation/Confirmed/Done/Cancelled), which reads identically for the
+// entire multi-week deposit -> packing -> QA/RP -> collection pipeline.
+// Same packing-status-wins, else-ticket-status, else-raw-order-state
+// precedence and wording Views.js::Orders()'s own role-aware Status column
+// already uses correctly, backed by the same order.linked_ticket/
+// order.packing_status fields (report_routes.py::_attach_pipeline_status).
+const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
+const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
+const TICKET_EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
+const TICKET_EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
+const TICKET_STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
+const TICKET_STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
+function orderPipelineBadge(o) {
+  if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
+  const t = o.linked_ticket;
+  if (t) {
+    return t.exit_status
+      ? <Badge color={TICKET_EXIT_COLOR[t.exit_status]}>{TICKET_EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
+      : <Badge color={TICKET_STATUS_COLOR[t.status]}>{TICKET_STATUS_LABEL[t.status] || t.status}</Badge>;
+  }
+  return <Badge status={o.state} />;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   // Reseller and customer (Phase 25) share the same simplified, self-scoped
@@ -204,10 +229,17 @@ export default function Dashboard() {
                     )}
                     {data.recent_orders.map(o => (
                       <tr key={o.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 font-mono text-xs text-bassani-700">{o.name}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => navigate(`/orders/${o.id}/passport`)}
+                            className="font-mono text-xs text-bassani-700 hover:text-bassani-900 hover:underline"
+                          >
+                            {o.name}
+                          </button>
+                        </td>
                         <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(o.date_order)}</td>
                         <td className="px-4 py-3 font-semibold">{fmtR(o.amount_total)}</td>
-                        <td className="px-4 py-3"><Badge status={o.state} /></td>
+                        <td className="px-4 py-3">{orderPipelineBadge(o)}</td>
                       </tr>
                     ))}
                   </tbody>
