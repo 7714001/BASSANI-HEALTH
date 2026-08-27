@@ -848,7 +848,18 @@ async def complete_entry(
             "sale.advance.payment.inv",
             {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
         )
-        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id], {"active_ids": [sale_order_id]})
+        # Found live 2026-08-27: OdooClient.execute()'s (*args) -> single
+        # flat args list has no way to send real XML-RPC kwargs/context, so
+        # the {"active_ids": [...]} dict here was landing as a second
+        # POSITIONAL argument to create_invoices() rather than context. On
+        # Odoo 19 that method's signature is bare create_invoices(self) — it
+        # derives everything from the wizard's own already-set
+        # sale_order_ids field — so the extra arg raised "takes 1 positional
+        # argument but 2 were given". No context is actually needed here (the
+        # working register_deposit flow in ticket_routes.py passes company
+        # context via odoo_call's real kwargs param, not this helper, for
+        # the same wizard method) — just drop the stray argument.
+        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
         inv_rows = odoo.search_read(
             "account.move",
             [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
