@@ -709,6 +709,92 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
     return {"success": True, "pickings": validated, "error": None, "backorder_picking_id": backorder_picking_id, "backorder_picking_name": backorder_picking_name}
 
 
+async def _create_final_invoice(entry: dict, now: datetime) -> dict:
+    """Create + post the final delivery invoice for an order in Odoo (after
+    QA + RP sign-off) and stamp its id back onto the linked Sales ticket.
+    Extracted from complete_entry (2026-08-27) so the same logic can be
+    re-run standalone by the retry-invoice-creation endpoint below, for an
+    order that reached "complete" with no invoice created — e.g. the
+    create_invoices() TypeError incident (see this file's own history) left
+    orders stuck at "complete" with no invoice and no way to register the
+    balance payment. Never raises — returns invoice_warning on any failure,
+    same as complete_entry's own original inline try/except did."""
+    invoice_id: Optional[int] = None
+    invoice_name: Optional[str] = None
+    invoice_warning: Optional[str] = None
+    invoice_sent = False
+    try:
+        odoo = get_odoo_client()
+        sale_order_id = int(entry["order_id"])
+        wiz_id = odoo.create(
+            "sale.advance.payment.inv",
+            {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+        )
+        # OdooClient.execute()'s (*args) -> single flat args list has no way
+        # to send real XML-RPC kwargs/context — create_invoices() on Odoo 19
+        # takes no extra arguments at all, deriving everything from the
+        # wizard's own already-set sale_order_ids field (2026-08-27 fix).
+        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
+        inv_rows = odoo.search_read(
+            "account.move",
+            [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
+            ["id", "name"],
+            order="id desc",
+            limit=1,
+        )
+        if inv_rows:
+            invoice_id = inv_rows[0]["id"]
+            invoice_name = inv_rows[0]["name"]
+            odoo.execute("account.move", "action_post", [invoice_id])
+            # Auto-send the final invoice to the customer via Odoo's own mail
+            # system (same mechanism as ticket_routes.py's manual "Send Invoice"
+            # action) — non-fatal, mirrors send_deposit_due_proforma's degrade-to-warning
+            # pattern so a missing/misconfigured Odoo mail template never blocks completion.
+            try:
+                _templates = odoo.search_read(
+                    "mail.template",
+                    [("model", "=", "account.move")],
+                    fields=["id", "name"],
+                    limit=10,
+                )
+                _inv_template = next(
+                    (t for t in _templates if "invoice" in t["name"].lower()),
+                    _templates[0] if _templates else None,
+                )
+                if _inv_template:
+                    odoo_call(
+                        "mail.template", "send_mail",
+                        [_inv_template["id"], invoice_id],
+                        {"force_send": True},
+                    )
+                    invoice_sent = True
+                else:
+                    invoice_warning = "Invoice created but no invoice email template found in Odoo — configure one under Email > Templates"
+            except Exception as e:
+                invoice_warning = f"Invoice created but the email may not have been sent: {e}"
+    except Exception as e:
+        invoice_warning = f"Invoice creation failed: {e}"
+
+    # Stamp invoice_id on the linked sales ticket so Finance can register payment
+    if invoice_id:
+        try:
+            _st = await col("tickets").find_one(
+                {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None}
+            )
+            if _st:
+                _ticket_set: dict = {"invoice_id": invoice_id}
+                if invoice_sent:
+                    _ticket_set["invoice_sent_at"] = now
+                await col("tickets").update_one({"_id": _st["_id"]}, {"$set": _ticket_set})
+        except Exception:
+            pass
+
+    return {
+        "invoice_id": invoice_id, "invoice_name": invoice_name,
+        "invoice_warning": invoice_warning, "invoice_sent": invoice_sent,
+    }
+
+
 @router.put("/complete")
 async def complete_entry(
     body: OrderIdBody,
@@ -837,82 +923,10 @@ async def complete_entry(
     # ── Create and post Odoo invoice for delivered qty ────────────────────────
     # Invoice is raised here (after QA + RP sign-off) for all orders including
     # samples. Sample invoices total R0.00 and Odoo marks them paid immediately.
-    invoice_id: Optional[int] = None
-    invoice_name: Optional[str] = None
-    invoice_warning: Optional[str] = None
-    invoice_sent = False
-    try:
-        odoo = get_odoo_client()
-        sale_order_id = int(entry["order_id"])
-        wiz_id = odoo.create(
-            "sale.advance.payment.inv",
-            {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
-        )
-        # Found live 2026-08-27: OdooClient.execute()'s (*args) -> single
-        # flat args list has no way to send real XML-RPC kwargs/context, so
-        # the {"active_ids": [...]} dict here was landing as a second
-        # POSITIONAL argument to create_invoices() rather than context. On
-        # Odoo 19 that method's signature is bare create_invoices(self) — it
-        # derives everything from the wizard's own already-set
-        # sale_order_ids field — so the extra arg raised "takes 1 positional
-        # argument but 2 were given". No context is actually needed here (the
-        # working register_deposit flow in ticket_routes.py passes company
-        # context via odoo_call's real kwargs param, not this helper, for
-        # the same wizard method) — just drop the stray argument.
-        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
-        inv_rows = odoo.search_read(
-            "account.move",
-            [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
-            ["id", "name"],
-            order="id desc",
-            limit=1,
-        )
-        if inv_rows:
-            invoice_id = inv_rows[0]["id"]
-            invoice_name = inv_rows[0]["name"]
-            odoo.execute("account.move", "action_post", [invoice_id])
-            # Auto-send the final invoice to the customer via Odoo's own mail
-            # system (same mechanism as ticket_routes.py's manual "Send Invoice"
-            # action) — non-fatal, mirrors send_deposit_due_proforma's degrade-to-warning
-            # pattern so a missing/misconfigured Odoo mail template never blocks completion.
-            try:
-                _templates = odoo.search_read(
-                    "mail.template",
-                    [("model", "=", "account.move")],
-                    fields=["id", "name"],
-                    limit=10,
-                )
-                _inv_template = next(
-                    (t for t in _templates if "invoice" in t["name"].lower()),
-                    _templates[0] if _templates else None,
-                )
-                if _inv_template:
-                    odoo_call(
-                        "mail.template", "send_mail",
-                        [_inv_template["id"], invoice_id],
-                        {"force_send": True},
-                    )
-                    invoice_sent = True
-                else:
-                    invoice_warning = "Invoice created but no invoice email template found in Odoo — configure one under Email > Templates"
-            except Exception as e:
-                invoice_warning = f"Invoice created but the email may not have been sent: {e}"
-    except Exception as e:
-        invoice_warning = f"Invoice creation failed: {e}"
-
-    # Stamp invoice_id on the linked sales ticket so Finance can register payment
-    if invoice_id:
-        try:
-            _st = await col("tickets").find_one(
-                {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None}
-            )
-            if _st:
-                _ticket_set: dict = {"invoice_id": invoice_id}
-                if invoice_sent:
-                    _ticket_set["invoice_sent_at"] = now
-                await col("tickets").update_one({"_id": _st["_id"]}, {"$set": _ticket_set})
-        except Exception:
-            pass
+    _inv_result = await _create_final_invoice(entry, now)
+    invoice_id      = _inv_result["invoice_id"]
+    invoice_name    = _inv_result["invoice_name"]
+    invoice_warning = _inv_result["invoice_warning"]
 
     _complete_set: dict = {
         "status": "complete",
@@ -922,6 +936,20 @@ async def complete_entry(
     if invoice_id:
         _complete_set["inv_num"] = invoice_name or ""
         _complete_set["invoice_id"] = invoice_id
+        # Clear any stale error from a previous failed attempt (e.g. this
+        # order already went through the retry-invoice-creation endpoint).
+        _complete_set["invoice_creation_error"] = None
+        _complete_set["invoice_creation_failed_at"] = None
+    else:
+        # Persisted (2026-08-27), not just returned as a one-off response
+        # warning — the create_invoices() TypeError incident showed a
+        # transient toast was the only trace of this failure, leaving an
+        # order stuck at "complete" with no invoice and no visible reason
+        # why. Surfaced on the ticket detail page with a Retry Invoice
+        # Creation action, same non-blocking-failure convention as
+        # packing_board_queue_error elsewhere in this codebase.
+        _complete_set["invoice_creation_error"] = invoice_warning
+        _complete_set["invoice_creation_failed_at"] = now
 
     # Targets the exact same document resolved at the top of this function via
     # entry["_id"] — previously hardcoded to {"order_id": ..., "is_backorder":
@@ -1045,6 +1073,62 @@ async def complete_entry(
     if warnings:
         response["warning"] = " | ".join(warnings)
     return response
+
+
+@router.put("/retry-invoice-creation")
+async def retry_invoice_creation(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Recovery action (2026-08-27) for an order that reached packing status
+    "complete" (or later) with no final invoice ever created — most
+    commonly a transient Odoo-side failure at Mark Complete time (see
+    _create_final_invoice's own history for the create_invoices() TypeError
+    incident that prompted this). Re-runs the exact same invoice-creation
+    logic complete_entry itself uses. Refuses to run at all once an invoice
+    already exists on this entry, so this can never create a duplicate —
+    unlike complete_entry, a failure here IS the whole point of the call,
+    so it raises rather than degrading to a response `warning`."""
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    if entry.get("status") not in ("complete", "collected"):
+        raise HTTPException(status_code=400, detail="Order must be complete before an invoice can be created")
+    if entry.get("invoice_id"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"An invoice already exists for this order ({entry.get('inv_num') or entry['invoice_id']}) — nothing to retry",
+        )
+
+    now = datetime.now(timezone.utc)
+    result = await _create_final_invoice(entry, now)
+    invoice_id = result["invoice_id"]
+
+    update_set: dict = {}
+    if invoice_id:
+        update_set["inv_num"] = result["invoice_name"] or ""
+        update_set["invoice_id"] = invoice_id
+        update_set["invoice_creation_error"] = None
+        update_set["invoice_creation_failed_at"] = None
+    else:
+        update_set["invoice_creation_error"] = result["invoice_warning"]
+        update_set["invoice_creation_failed_at"] = now
+
+    updated = await col("packing_board").find_one_and_update(
+        {"_id": entry["_id"]}, {"$set": update_set}, return_document=True,
+    )
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
+    await audit_log(
+        "packing.retry_invoice_creation", "packing_board", body.order_id,
+        entity_label=body.order_id, user=current_user,
+        detail={"success": bool(invoice_id), "invoice_id": invoice_id},
+    )
+
+    if not invoice_id:
+        raise HTTPException(status_code=502, detail=result["invoice_warning"] or "Invoice creation failed")
+    return {"success": True, "invoice_id": invoice_id, "invoice_name": result["invoice_name"], "warning": result["invoice_warning"]}
 
 
 @router.put("/mark-collected")

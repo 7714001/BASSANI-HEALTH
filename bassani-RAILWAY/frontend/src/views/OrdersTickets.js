@@ -259,6 +259,21 @@ export default function OrdersTickets() {
     finally { setBusyId(null); }
   };
 
+  // Recovery action (2026-08-27) for an order that reached "complete" with
+  // no final invoice ever created — most commonly the create_invoices()
+  // TypeError incident. Backend refuses to run once an invoice already
+  // exists, so this can never create a duplicate.
+  const retryInvoiceCreation = async () => {
+    setBusyId("retry-invoice");
+    try {
+      const r = await api.put("/api/packing/retry-invoice-creation", { order_id: detail.order_id, picking_id: detail.odoo_picking_id });
+      toast.success(`Invoice ${r.data.invoice_name} created`);
+      if (r.data.warning) toast.error(r.data.warning, { duration: 8000 });
+      await refreshDetail(detail.order_id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Invoice creation failed"); }
+    finally { setBusyId(null); }
+  };
+
   const submitIncomplete = async () => {
     if (!incompleteReason.trim()) return toast.error("A reason is required");
     setBusyId(detail.order_id);
@@ -482,6 +497,34 @@ export default function OrdersTickets() {
         ) : (
           <main className="flex-1 overflow-y-auto p-6">
             <div className="max-w-7xl mx-auto">
+
+              {/* Invoice creation failure banner (2026-08-27) — persistent,
+                  not just a one-off toast, so an order stuck at "complete"
+                  with no invoice (e.g. the create_invoices() TypeError
+                  incident) stays visibly flagged until retried. Deliberately
+                  outside the (!isTerminal || complete) gate the rest of the
+                  action area sits inside, since this can matter even once
+                  the order has moved on to "collected". */}
+              {detail.invoice_creation_error && !detail.invoice_id && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start justify-between gap-4 flex-wrap">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-700">No invoice was created for this order</p>
+                      <p className="text-xs text-red-600 mt-0.5">{detail.invoice_creation_error}</p>
+                    </div>
+                  </div>
+                  {canOrders && (
+                    <BtnSecondary
+                      onClick={retryInvoiceCreation}
+                      loading={busyId === "retry-invoice"}
+                      className="text-red-700 border-red-200 hover:bg-red-100 shrink-0"
+                    >
+                      <RefreshCw size={13} />Retry Invoice Creation
+                    </BtnSecondary>
+                  )}
+                </div>
+              )}
 
               {/* Order Timeline (2026-08-26) — full width, same placement
                   OrderPassport.js and SalesTickets.js already use for this
