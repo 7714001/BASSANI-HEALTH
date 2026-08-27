@@ -345,7 +345,7 @@ export default function OrdersTickets() {
     if (!packerInput.trim() || !detail) return;
     setSavingPacker(true);
     try {
-      await api.put("/api/packing/assign-packer", { order_id: detail.order_id, packer_name: packerInput.trim(), picking_id: detail.odoo_picking_id });
+      await api.put("/api/packing/assign", { order_id: detail.order_id, packer_name: packerInput.trim(), picking_id: detail.odoo_picking_id });
       toast.success("Packer assigned");
       await refreshDetail(detail.order_id);
       setPackerInput("");
@@ -411,7 +411,7 @@ export default function OrdersTickets() {
           nextAction = {
             label: "Mark as Packing", icon: Package,
             onClick: () => act("mark-packing", detail.order_id),
-            desc: "Assign a packer above, then move to active packing. The floor board will update.",
+            desc: "Optionally assign a packer below, then move to active packing. The floor board will update.",
           };
         } else {
           waitingText = "Queued for packing.";
@@ -858,6 +858,27 @@ export default function OrdersTickets() {
                       {nextAction ? (
                         <>
                           <p className="text-xs text-gray-500">{nextAction.desc}</p>
+                          {/* Packer field surfaced here too (2026-08-27) — same
+                              packerInput/savePacker state as the Delivery Notes
+                              card's own field below, so the two can never drift
+                              apart. Purely a quick-action convenience: assigning
+                              a packer stays optional, Mark as Packing works with
+                              or without one. */}
+                          {detail.status === "queued" && (
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <span className="text-[11px] text-gray-400 uppercase font-semibold tracking-wide shrink-0">Packer</span>
+                              <input
+                                value={packerInput || detail.packer_name || ""}
+                                onChange={e => setPackerInput(e.target.value)}
+                                onBlur={savePacker}
+                                onKeyDown={e => e.key === "Enter" && savePacker()}
+                                placeholder="Assign packer (optional)…"
+                                className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                                disabled={savingPacker}
+                              />
+                              {savingPacker && <span className="text-[10px] text-gray-400">…</span>}
+                            </div>
+                          )}
                           <BtnPrimary
                             onClick={nextAction.onClick}
                             loading={busyId === detail.order_id || busyId === "check-stock"}
