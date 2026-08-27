@@ -2429,8 +2429,13 @@ export function Orders() {
               // to ticket status, then the raw order state for a still-
               // unconfirmed draft.
               const t = o.linked_ticket;
-              const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Collection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
-              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"green", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
+              // "ready" on the packing board means ready for QA/RP inspection,
+              // not ready for collection — only "complete" means that (same
+              // mix-up already fixed in OrderTimeline.js/OrderPassport.js,
+              // 2026-08-27). Was telling a customer/reseller their order was
+              // ready to collect before QA/RP had even signed off.
+              const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
+              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
               if (t) {
                 const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
@@ -2457,7 +2462,7 @@ export function Orders() {
             }}]:[]),
             ...(!isReseller && !isCustomer?[{ id:"packing", header:"Packing", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
               const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
-              const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready", complete:"Complete", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
+              const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
               if (o.state === "sale") return <span className="text-[10px] text-gray-400 italic">Not queued</span>;
               return <span className="text-xs text-gray-200">—</span>;

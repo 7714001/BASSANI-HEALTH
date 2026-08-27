@@ -70,9 +70,17 @@ const PACK_COLOUR = {
   cleared:   "bg-gray-100 text-gray-500",
   waiting_stock: "bg-orange-50 text-orange-700",
 };
+// Wording matches OrdersTickets.js's own STATUS_LABEL exactly (2026-08-27
+// fix, found live) — "ready" on the packing board means ready for QA/RP
+// inspection, not ready for the customer to collect; only "complete" means
+// that. This card had the two swapped, so a card sitting at "ready" (before
+// any QA/RP sign-off) showed "Ready for Collection" — the same "ready" vs
+// "complete" mix-up already fixed in OrderTimeline.js, just a second,
+// independent copy of the mistake in a plain label map rather than the
+// timeline's own state logic.
 const PACK_LABEL = {
-  queued: "Queued", packing: "Packing", ready: "Ready for Collection",
-  complete: "Complete", incomplete: "Incomplete", cancelled: "Cancelled",
+  queued: "Queued", packing: "Packing In Progress", ready: "Ready for Inspection",
+  complete: "Ready for Collection", incomplete: "Incomplete", cancelled: "Cancelled",
   collected: "Collected", cleared: "Cleared", waiting_stock: "Awaiting Stock",
 };
 
