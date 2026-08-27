@@ -250,11 +250,14 @@ export default function OrdersTickets() {
     setBusyId("check-stock");
     try {
       const r = await api.get("/api/packing/backorders/check-stock");
-      if (r.data.ready > 0) {
-        toast.success(`${r.data.ready} backorder${r.data.ready !== 1 ? "s" : ""} now have stock — notifications sent`);
+      const parts = [];
+      if (r.data.ready > 0) parts.push(`${r.data.ready} backorder${r.data.ready !== 1 ? "s" : ""} now have stock — notifications sent`);
+      if (r.data.items_updated > 0) parts.push(`${r.data.items_updated} order${r.data.items_updated !== 1 ? "s" : ""} had stale "Backorder" labels corrected`);
+      if (parts.length > 0) {
+        toast.success(parts.join(". "));
         load();
       } else {
-        toast("No backorders have stock available yet", { icon: "ℹ️" });
+        toast("No changes — stock availability hasn't changed", { icon: "ℹ️" });
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Stock check failed"); }
     finally { setBusyId(null); }
@@ -1095,6 +1098,15 @@ export default function OrdersTickets() {
   const filteredEntries = statusFilter.size === 0 ? entries
     : entries.filter(e => statusFilter.has(e.status));
   const hasWaitingStock = entries.some(e => e.status === "waiting_stock");
+  // Also surface the button when an active (queued/packing) entry still
+  // carries a stale per-line "Backorder" flag (2026-08-27) — a snapshot
+  // taken once at deposit-registration time that can go stale once Odoo's
+  // own reservation catches up. Previously the button only ever showed for
+  // waiting_stock entries, so there was no way to trigger a recheck for
+  // this different (but related) stale-flag case at all.
+  const hasStaleItemFlags = entries.some(e =>
+    ["queued", "packing"].includes(e.status) && e.items?.some(i => i.is_backordered)
+  );
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -1107,7 +1119,7 @@ export default function OrdersTickets() {
             <BtnSecondary onClick={() => openMonitorDisplay("/api/monitor/token", "/monitor", navigate)}>
               <Monitor size={14} />Order Monitor
             </BtnSecondary>
-            {hasWaitingStock && canOrders && (
+            {(hasWaitingStock || hasStaleItemFlags) && canOrders && (
               <BtnSecondary
                 onClick={handleCheckStock}
                 loading={busyId === "check-stock"}

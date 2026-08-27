@@ -518,8 +518,12 @@ async def _recheck_backorder_stock(background_tasks: BackgroundTasks, actor: Opt
     resulting packing-board re-queue attributes the person who advanced the
     MO, not an anonymous system action."""
     try:
-        from routes.packing_board_routes import _check_and_notify_backorder_stock
+        from routes.packing_board_routes import _check_and_notify_backorder_stock, _refresh_active_item_backorder_flags
         await _check_and_notify_backorder_stock(background_tasks, actor=actor)
+        # Also refreshes the per-line is_backordered snapshot on regular
+        # active entries, not just whole backorder-child entries — see that
+        # function's own docstring (2026-08-27).
+        await _refresh_active_item_backorder_flags()
     except Exception as e:
         logger.warning("mo_backorder_recheck_failed", extra={"error": str(e)})
 

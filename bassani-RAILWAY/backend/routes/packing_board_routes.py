@@ -1325,6 +1325,88 @@ async def mark_collected(
     }
 
 
+async def _refresh_entry_item_backorder_flags(odoo, entry: dict) -> Optional[list]:
+    """Re-read live stock.move reservation for one packing_board entry's
+    delivery and recompute each item's is_backordered/qty_reserved from
+    scratch (2026-08-27). The flag _queue_packing_board originally computes
+    is a one-time snapshot taken at deposit-registration time — if Odoo
+    hadn't finished reserving stock against the delivery at that exact
+    moment, every line gets flagged, and nothing ever re-checks it
+    afterward even once reservation catches up. Found live: every item on
+    an order showed the yellow "Backorder" label while the Backorders page
+    (which only tracks genuine Odoo-created backorder pickings, a
+    completely different signal) correctly showed none.
+
+    Never raises — returns the corrected items list only when something
+    actually changed, or None on any failure/no-op, so callers can treat
+    this as pure best-effort and skip the write entirely when there's
+    nothing to do."""
+    picking_id = entry.get("odoo_picking_id")
+    if not picking_id:
+        return None
+    try:
+        pick_rows = odoo.read("stock.picking", [picking_id], fields=["move_ids"])
+        if not pick_rows or not pick_rows[0].get("move_ids"):
+            return None
+        # 'quantity' not 'reserved_availability' — see the field-drift note
+        # on this exact read elsewhere in this file (_validate_odoo_delivery)
+        # and in order_routes.py's _queue_packing_board, which this mirrors.
+        moves = odoo.read(
+            "stock.move", pick_rows[0]["move_ids"],
+            fields=["product_id", "product_uom_qty", "quantity"],
+        )
+    except Exception:
+        return None
+
+    by_product = {m["product_id"][0]: m for m in moves if m.get("product_id")}
+    items = entry.get("items", [])
+    changed = False
+    for item in items:
+        move = by_product.get(item.get("product_id"))
+        if not move:
+            continue
+        qty_ordered  = float(move.get("product_uom_qty", 0))
+        qty_reserved = float(move.get("quantity", 0))
+        new_flag = qty_reserved < qty_ordered
+        if item.get("qty_reserved") != qty_reserved or item.get("is_backordered") != new_flag:
+            item["qty_reserved"] = qty_reserved
+            item["is_backordered"] = new_flag
+            changed = True
+    return items if changed else None
+
+
+async def _refresh_active_item_backorder_flags() -> dict:
+    """Bulk companion to _check_and_notify_backorder_stock below (2026-08-27)
+    — that function re-checks whole BACKORDER CHILD entries (is_backorder
+    True, waiting_stock True); this one re-checks the per-line
+    is_backordered flags on regular, still-active entries (queued/packing)
+    that were snapshotted stale at deposit-registration time. Deliberately
+    reuses the exact same event-driven trigger points (the manual "Check
+    backorder stock" button, and Manufacturing Order record-production/
+    complete) rather than adding a new poll or a live check on every page
+    read — production/stock events advancing is exactly when a recheck is
+    worth paying for; a live check on every Order Ticket view would not be,
+    at real production volume."""
+    entries = await col("packing_board").find(
+        {"status": {"$in": ["queued", "packing"]}, "items.is_backordered": True}
+    ).to_list(200)
+    if not entries:
+        return {"checked": 0, "updated": 0}
+
+    odoo = get_odoo_client()
+    updated = 0
+    for entry in entries:
+        new_items = await _refresh_entry_item_backorder_flags(odoo, entry)
+        if new_items is None:
+            continue
+        await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": {"items": new_items}})
+        updated += 1
+        entry["items"] = new_items
+        entry.pop("_id", None)
+        await push_update(entry)
+    return {"checked": len(entries), "updated": updated}
+
+
 async def _check_and_notify_backorder_stock(background_tasks: BackgroundTasks, actor: Optional[dict] = None) -> dict:
     """Check all waiting_stock backorder entries against Odoo. When a backorder picking
     has moved to 'assigned' (stock reserved), clears the waiting flag, moves the
@@ -1444,7 +1526,10 @@ async def check_backorder_stock(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
-    return await _check_and_notify_backorder_stock(background_tasks, actor=current_user)
+    result = await _check_and_notify_backorder_stock(background_tasks, actor=current_user)
+    item_result = await _refresh_active_item_backorder_flags()
+    result["items_updated"] = item_result["updated"]
+    return result
 
 
 @router.put("/incomplete")
@@ -1653,6 +1738,18 @@ async def mark_packing(
         raise HTTPException(status_code=404, detail="Order not on board")
     if entry["status"] != "queued":
         raise HTTPException(status_code=400, detail="Order must be queued before marking as packing")
+
+    # Refresh stale is_backordered flags right as packing starts (2026-08-27)
+    # — the single highest-value moment to correct them, since the packer is
+    # about to act on this data. See _refresh_entry_item_backorder_flags's
+    # own docstring for why this snapshot can go stale in the first place.
+    try:
+        new_items = await _refresh_entry_item_backorder_flags(get_odoo_client(), entry)
+        if new_items is not None:
+            await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": {"items": new_items}})
+    except Exception as e:
+        logger.warning("mark_packing_item_backorder_refresh_failed", extra={"order_id": body.order_id, "error": str(e)})
+
     updated = await _do_update_status(body.order_id, "packing", current_user, body.picking_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
