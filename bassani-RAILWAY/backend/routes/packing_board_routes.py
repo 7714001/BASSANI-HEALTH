@@ -113,6 +113,30 @@ def _with_age(entry: dict) -> dict:
     return entry
 
 
+async def _with_ticket_summary(entry: dict) -> dict:
+    """Attach a small set of linked-Sales-ticket fields for the Orders Ticket
+    detail page's own "Sales Ticket" reference card (2026-08-27) — a plain
+    single lookup, not get_board_state()'s batched join, since this only
+    ever backs the single-entry GET /entry/{order_id} the detail page calls.
+    An order ticket can never exist without a linked Sales ticket (the 8.47
+    deposit gate only ever creates a packing_board entry from one already at
+    awaiting_deposit), so `ticket` is expected to always resolve — the
+    fallback is defensive, not a real empty-state this page needs to design
+    for."""
+    ticket = None
+    try:
+        ticket = await col("tickets").find_one(
+            {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None},
+            {"source": 1, "assigned_to_name": 1},
+        )
+    except (ValueError, TypeError):
+        pass
+    entry["ticket_id"] = str(ticket["_id"]) if ticket else None
+    entry["ticket_source"] = ticket.get("source") if ticket else None
+    entry["ticket_assigned_to_name"] = ticket.get("assigned_to_name") if ticket else None
+    return entry
+
+
 async def get_board_state(warehouse_id: Optional[int] = None) -> list:
     query: dict = {"status": {"$ne": "cleared"}}
     if warehouse_id is not None:
@@ -1621,7 +1645,7 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
         entry = await col("packing_board").find_one({**_entry_query(order_id, picking_id), "reseller_id": rid}, NO_ID)
         if not entry:
             raise HTTPException(status_code=403, detail="Access denied")
-        return _with_age(entry)
+        return await _with_ticket_summary(_with_age(entry))
     # Staff: enforce board access
     if not (
         current_user.get("is_super_admin")
@@ -1632,7 +1656,7 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
     entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-    return _with_age(entry)
+    return await _with_ticket_summary(_with_age(entry))
 
 
 @router.post("/adopt")

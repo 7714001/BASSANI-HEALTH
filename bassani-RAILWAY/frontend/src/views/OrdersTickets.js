@@ -14,7 +14,7 @@ import toast from "react-hot-toast";
 import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor, ExternalLink,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor, ExternalLink, FileText,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
@@ -913,6 +913,60 @@ export default function OrdersTickets() {
                       </div>
                     )}
                   </div>
+
+                  {/* Sales Ticket reference (2026-08-27) — a compact reciprocal
+                      of SalesTickets.js's own "Packing Detail" card, not a
+                      full duplicate of Order Passport's Sales Ticket card:
+                      customer/reseller and stage are already visible in this
+                      page's own header, so only the genuinely new fields
+                      (ref, order type, assignee) are shown here. An order
+                      ticket can never exist without a linked Sales ticket
+                      (the 8.47 deposit gate guarantees it), so this card has
+                      no "no ticket" empty state to design for — the
+                      `detail.ticket_id` guard is defensive only. */}
+                  {detail.ticket_id && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                          <FileText size={12} />Sales Ticket
+                        </p>
+                        <button
+                          onClick={() => navigate("/tickets/sales", { state: { openTicketId: detail.ticket_id } })}
+                          className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium"
+                        >
+                          Open <ExternalLink size={11} />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500">Ref</span>
+                        <span className="text-xs font-mono font-medium text-gray-700">
+                          TKT-{detail.ticket_id.slice(-8).toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500">Type</span>
+                        {(() => {
+                          const TYPE_STYLE = {
+                            reseller: ["Reseller Order", "text-purple-700 bg-purple-50 border-purple-100"],
+                            portal:   ["Portal Order",    "text-blue-700 bg-blue-50 border-blue-100"],
+                            email:    ["Email Inquiry",   "text-gray-700 bg-gray-50 border-gray-200"],
+                          };
+                          const [label, style] = TYPE_STYLE[detail.ticket_source] || ["Direct Inquiry", "text-gray-700 bg-gray-50 border-gray-200"];
+                          return (
+                            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${style}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                      {detail.ticket_assigned_to_name && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">Assigned to</span>
+                          <span className="text-xs text-gray-700">{detail.ticket_assigned_to_name}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Secondary / less-frequent actions */}
                   {(!isTerminal || detail.status === "complete") && (
