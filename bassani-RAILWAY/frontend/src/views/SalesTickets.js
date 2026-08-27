@@ -27,6 +27,7 @@ import {
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
+import SendRecipientsModal from "../components/SendRecipientsModal";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import OrderView from "./OrderView";
@@ -655,10 +656,16 @@ export default function SalesTickets() {
     }
   };
 
-  const sendQuote = async () => {
+  // Send Quote recipient picker (2026-08-27) — the button now opens a
+  // modal to choose which contact(s) on the company receive the email,
+  // instead of silently sending to whichever single email auto-resolves.
+  const [sendQuoteModal, setSendQuoteModal] = useState(false);
+  const sendQuote = () => setSendQuoteModal(true);
+
+  const doSendQuote = async (recipients) => {
     setSending(true);
     try {
-      const r = await api.post(`/api/tickets/${detail.id}/send-quote`);
+      const r = await api.post(`/api/tickets/${detail.id}/send-quote`, { recipients });
       if (r.data.warning) {
         toast(`Quote marked sent — ${r.data.warning}`, { icon: "⚠️", duration: 8000 });
       } else {
@@ -667,6 +674,7 @@ export default function SalesTickets() {
       refreshDetail(detail.id);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send quote");
+      throw e;
     } finally {
       setSending(false);
     }
@@ -967,14 +975,18 @@ export default function SalesTickets() {
   const [creditNoteForm, setCreditNoteForm] = useState({ reason: "", date: "", journal_id: "" });
   const [creditNoteSaving, setCreditNoteSaving] = useState(false);
 
-  const sendInvoice = async () => {
+  // Send Invoice recipient picker (2026-08-27) — same pattern as sendQuote above.
+  const [sendInvoiceModal, setSendInvoiceModal] = useState(false);
+  const sendInvoice = () => setSendInvoiceModal(true);
+
+  const doSendInvoice = async (recipients) => {
     setSendingInvoice(true);
     try {
-      const r = await api.post(`/api/tickets/${detail.id}/send-invoice`);
+      const r = await api.post(`/api/tickets/${detail.id}/send-invoice`, { recipients });
       if (r.data.warning) toast.error(r.data.warning, { duration: 6000 });
       else toast.success("Invoice sent to customer");
       refreshDetail(detail.id);
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed to send invoice"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to send invoice"); throw e; }
     finally { setSendingInvoice(false); }
   };
 
@@ -2669,6 +2681,24 @@ export default function SalesTickets() {
             ticketId={detail.id}
             onClose={() => setRecurringModalOpen(false)}
             onCreated={() => refreshDetail(detail.id)}
+          />
+        )}
+
+        {/* Send Quote / Send Invoice recipient pickers (2026-08-27) */}
+        {sendQuoteModal && (
+          <SendRecipientsModal
+            partnerId={Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : detail.customer_id}
+            title="Send Quote"
+            onClose={() => setSendQuoteModal(false)}
+            onSend={doSendQuote}
+          />
+        )}
+        {sendInvoiceModal && (
+          <SendRecipientsModal
+            partnerId={Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : detail.customer_id}
+            title="Send Invoice"
+            onClose={() => setSendInvoiceModal(false)}
+            onSend={doSendInvoice}
           />
         )}
 

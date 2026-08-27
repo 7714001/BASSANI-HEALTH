@@ -605,15 +605,27 @@ async def reset_invoice_to_draft(
 
 # ── 8.29 — Standalone invoice send (no ticket required) ──────────────────────
 
+class SendInvoiceRecipientsBody(BaseModel):
+    """Recipient picker (2026-08-27) — see ticket_routes.py's
+    SendRecipientsBody for the same shape/reasoning; kept as its own local
+    model rather than a cross-file import, matching this codebase's
+    parallel-files precedent for near-identical small models."""
+    recipients: Optional[List[str]] = None
+
+
 @router.post("/{invoice_id}/send")
 async def send_invoice_standalone(
     invoice_id: int,
     background_tasks: BackgroundTasks,
+    body: SendInvoiceRecipientsBody = SendInvoiceRecipientsBody(),
     current_user: dict = Depends(require_permission("tickets.finance_confirm")),
 ):
     """Send an invoice via the portal's own email system (2026-08-27 — was
     Odoo's mail.template mechanism), same reasoning as
-    send_deposit_due_proforma. Works without a linked Sales Ticket."""
+    send_deposit_due_proforma. Works without a linked Sales Ticket.
+    `body.recipients`, when provided (the Send Invoice recipient-picker
+    modal), overrides the default single auto-resolved recipient — first
+    entry is To, the rest CC."""
     odoo = get_odoo_client()
     records = odoo.read(
         "account.move", [invoice_id],
@@ -627,10 +639,14 @@ async def send_invoice_standalone(
 
     try:
         partner = inv.get("partner_id")
-        customer_email = None
-        if partner:
-            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
-            customer_email = p_rows[0].get("email") if p_rows else None
+        if body.recipients:
+            customer_email, cc_emails = body.recipients[0], (body.recipients[1:] or None)
+        else:
+            customer_email = None
+            if partner:
+                p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+                customer_email = p_rows[0].get("email") if p_rows else None
+            cc_emails = None
         if not customer_email:
             raise HTTPException(status_code=400, detail="Customer has no email on file")
         pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
@@ -640,6 +656,7 @@ async def send_invoice_standalone(
             customer_name=partner[1] if partner else "",
             order_ref=inv.get("invoice_origin") or inv["name"],
             invoice_ref=inv["name"],
+            cc=cc_emails,
             amount_total=float(inv.get("amount_total", 0) or 0),
             pdf_bytes=bytes(pdf_bytes),
         )

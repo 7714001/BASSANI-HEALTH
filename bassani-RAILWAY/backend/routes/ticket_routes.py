@@ -249,6 +249,15 @@ class ReassignBody(BaseModel):
     assigned_to: str  # portal user ID
 
 
+class SendRecipientsBody(BaseModel):
+    """Recipient picker (2026-08-27) — Send Quote/Send Invoice. recipients[0]
+    is used as the primary To address, any further entries as CC. Optional
+    on both endpoints so an older client (or a future automated caller) that
+    omits it still gets the pre-existing single-auto-resolved-recipient
+    behavior."""
+    recipients: Optional[List[str]] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _serialize(t: dict) -> dict:
@@ -1400,7 +1409,7 @@ async def update_order_from_ticket(
     return {"success": True, "odoo_order_id": order_id}
 
 
-async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict, background_tasks: BackgroundTasks) -> dict:
+async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict, background_tasks: BackgroundTasks, recipients: Optional[List[str]] = None) -> dict:
     """Core of the quote-send flow — extracted 2026-08-26 so
     create_order_from_ticket can automatically send the quote the moment
     it's built, rather than leaving it to a separate manual "Send Quote"
@@ -1439,15 +1448,24 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
     # send_deposit_due_proforma. If the customer has no email on file, or
     # the PDF fetch fails, we still mark the state as 'sent' and warn —
     # better than a hard failure that blocks the rep from progressing the
-    # ticket.
+    # ticket. `recipients` (2026-08-27, recipient picker): when a staff
+    # member deliberately chose recipients via the Send Quote modal, that
+    # ordered list is used as-is (first = To, rest = CC) instead of the
+    # single auto-resolved customer email — omitted entirely by
+    # create_order_from_ticket's automatic send, which keeps the original
+    # single-recipient behavior since there's no user present to choose.
     email_sent = False
     warning = None
     try:
         partner = order.get("partner_id")
-        customer_email = None
-        if partner:
-            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
-            customer_email = p_rows[0].get("email") if p_rows else None
+        if recipients:
+            customer_email, cc_emails = recipients[0], (recipients[1:] or None)
+        else:
+            customer_email = None
+            if partner:
+                p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+                customer_email = p_rows[0].get("email") if p_rows else None
+            cc_emails = None
         if not customer_email:
             warning = "Customer has no email on file — order marked sent but no email was delivered"
         else:
@@ -1459,6 +1477,7 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
                 order_ref=order["name"],
                 amount_total=float(order.get("amount_total", 0) or 0),
                 pdf_bytes=bytes(pdf_bytes),
+                cc=cc_emails,
             )
             email_sent = True
     except Exception as e:
@@ -1503,6 +1522,7 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
 async def send_quote(
     ticket_id: str,
     background_tasks: BackgroundTasks,
+    body: SendRecipientsBody = SendRecipientsBody(),
     current_user: dict = Depends(_require_ticket_driver),
 ):
     """Email the PDF quotation to the customer via the portal's own email
@@ -1510,7 +1530,9 @@ async def send_quote(
     Odoo order as 'sent' and stamps quote_sent_at on the ticket. Idempotent —
     safe to call again after edits (resend); this is the deliberate-resend
     path, since create_order_from_ticket already sends the quote
-    automatically the moment it's built."""
+    automatically the moment it's built. `body.recipients`, when provided
+    (the Send Quote recipient-picker modal), overrides the default single
+    auto-resolved recipient."""
     try:
         oid = ObjectId(ticket_id)
     except Exception:
@@ -1525,7 +1547,7 @@ async def send_quote(
         await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
-    return await _send_quote_impl(ticket_id, oid, ticket, current_user, background_tasks)
+    return await _send_quote_impl(ticket_id, oid, ticket, current_user, background_tasks, recipients=body.recipients)
 
 
 @router.get("/{ticket_id}/existing-invoices")
@@ -2697,6 +2719,7 @@ async def reassign_ticket(
 async def send_invoice(
     ticket_id: str,
     background_tasks: BackgroundTasks,
+    body: SendRecipientsBody = SendRecipientsBody(),
     current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
 ):
     """
@@ -2704,7 +2727,9 @@ async def send_invoice(
     email system (2026-08-27 — was Odoo's mail.template mechanism), same
     reasoning as send_deposit_due_proforma. Stamps invoice_sent_at on the
     ticket. Gracefully degrades if the customer has no email on file or the
-    PDF fetch fails.
+    PDF fetch fails. `body.recipients`, when provided (the Send Invoice
+    recipient-picker modal), overrides the default single auto-resolved
+    recipient — first entry is To, the rest CC.
     """
     try:
         oid = ObjectId(ticket_id)
@@ -2730,10 +2755,14 @@ async def send_invoice(
     warning = None
     try:
         partner = inv.get("partner_id")
-        customer_email = None
-        if partner:
-            p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
-            customer_email = p_rows[0].get("email") if p_rows else None
+        if body.recipients:
+            customer_email, cc_emails = body.recipients[0], (body.recipients[1:] or None)
+        else:
+            customer_email = None
+            if partner:
+                p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
+                customer_email = p_rows[0].get("email") if p_rows else None
+            cc_emails = None
         if not customer_email:
             warning = "Customer has no email on file — invoice was not sent"
         else:
@@ -2751,6 +2780,7 @@ async def send_invoice(
                 customer_name=partner[1] if partner else ticket.get("customer_name", ""),
                 order_ref=order_ref or inv["name"],
                 invoice_ref=inv["name"],
+                cc=cc_emails,
                 amount_total=float(inv.get("amount_total", 0) or 0),
                 pdf_bytes=bytes(pdf_bytes),
             )

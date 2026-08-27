@@ -12,6 +12,7 @@ import {
   OdooPdfViewerModal,
   fmtR, fmtDate,
 } from "../components/UI";
+import SendRecipientsModal from "../components/SendRecipientsModal";
 
 // ── Static Bassani details ─────────────────────────────────────────────────────
 const BASSANI = {
@@ -458,13 +459,21 @@ export default function Invoices() {
   const openTicket = (ticketId) =>
     navigate("/tickets/sales", { state: { openTicketId: ticketId } });
 
-  const sendInvoice = async (inv) => {
+  // Send recipient picker (2026-08-27) — opens a modal to choose which
+  // contact(s) on the company receive the email, instead of it silently
+  // going to whichever single email auto-resolves.
+  const [sendModalInvoice, setSendModalInvoice] = useState(null);
+  const sendInvoice = (inv) => setSendModalInvoice(inv);
+
+  const doSendInvoice = async (recipients) => {
+    const inv = sendModalInvoice;
     setSendingId(inv.id);
     try {
-      await api.post(`/api/invoices/${inv.id}/send`);
+      await api.post(`/api/invoices/${inv.id}/send`, { recipients });
       toast.success(`Invoice ${inv.name} sent to customer`);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to send invoice");
+      throw e;
     } finally {
       setSendingId(null);
     }
@@ -844,6 +853,16 @@ export default function Invoices() {
 
       {/* Full-screen invoice viewer */}
       {viewInvoice && <InvoiceView invoice={viewInvoice} onClose={() => setViewInvoice(null)} />}
+
+      {/* Send Invoice recipient picker (2026-08-27) */}
+      {sendModalInvoice && (
+        <SendRecipientsModal
+          partnerId={Array.isArray(sendModalInvoice.partner_id) ? sendModalInvoice.partner_id[0] : null}
+          title={`Send Invoice — ${sendModalInvoice.name}`}
+          onClose={() => setSendModalInvoice(null)}
+          onSend={doSendInvoice}
+        />
+      )}
 
       {/* Register payment modal */}
       {payModal && (

@@ -10,6 +10,7 @@ from auth import get_current_user, require_admin, require_permission, hash_passw
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
+from contacts import resolve_company_contacts
 from services.r2_client import r2_put, r2_delete, r2_presign
 from middleware.audit import audit_log
 from routes.ticket_routes import ticket_manager
@@ -1034,6 +1035,27 @@ def create_customer_contact(
         return {"success": True, "contact_id": contact_id}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+@router.get("/{customer_id}/send-recipients")
+async def get_send_recipients(
+    customer_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Contact list for the Send Quote / Send Invoice recipient picker
+    (2026-08-27) — the company's own record plus every active child contact
+    that has an email on file, via the shared contacts.resolve_company_contacts()
+    helper (also usable against a contact person's own id, not just the
+    company's, since it resolves to the commercial partner first). Loosely
+    gated (require_admin, any staff role) since this only exposes name/email
+    of contacts already on file — the same data a staff member already sees
+    on the customer's own profile page."""
+    odoo = get_odoo_client()
+    try:
+        contacts = resolve_company_contacts(odoo, customer_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    return {"contacts": contacts}
 
 
 @router.get("/{customer_id}/portal-access")
