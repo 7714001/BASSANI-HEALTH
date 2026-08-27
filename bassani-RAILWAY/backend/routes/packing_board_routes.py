@@ -769,11 +769,52 @@ async def _create_final_invoice(entry: dict, now: datetime) -> dict:
             "sale.advance.payment.inv",
             {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
         )
-        # OdooClient.execute()'s (*args) -> single flat args list has no way
-        # to send real XML-RPC kwargs/context — create_invoices() on Odoo 19
-        # takes no extra arguments at all, deriving everything from the
-        # wizard's own already-set sale_order_ids field (2026-08-27 fix).
-        odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
+
+        # Capture invoice_ids before the call so a genuine failure can be
+        # told apart from create_invoices' known XML-RPC response-
+        # serialization quirk (found and fixed once already in
+        # ticket_routes.py::register_deposit for the deposit invoice, hit
+        # again here for the final invoice, 2026-08-27) — the action dict
+        # Odoo returns can contain None values the marshaller rejects even
+        # though the invoice really was created. Assuming every exception
+        # from create_invoices IS that harmless quirk is itself the mistake
+        # register_deposit's own fix corrected — a genuine failure (nothing
+        # to invoice, a validation error) raises the exact same way and
+        # looks identical from here without this check.
+        try:
+            _before_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
+            _invoice_ids_before = set(_before_rows[0].get("invoice_ids", [])) if _before_rows else set()
+        except Exception:
+            _invoice_ids_before = set()
+
+        try:
+            # OdooClient.execute()'s (*args) -> single flat args list has no
+            # way to send real XML-RPC kwargs/context — create_invoices() on
+            # Odoo 19 takes no extra arguments at all, deriving everything
+            # from the wizard's own already-set sale_order_ids field
+            # (2026-08-27 fix).
+            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
+        except Exception as e:
+            logger.warning(
+                "final_invoice_create_invoices_response_error",
+                extra={"wiz_id": wiz_id, "order_id": sale_order_id, "error": str(e)},
+            )
+            try:
+                _after_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
+                _new_ids = (set(_after_rows[0].get("invoice_ids", [])) - _invoice_ids_before) if _after_rows else set()
+            except Exception:
+                _new_ids = set()
+            if not _new_ids:
+                # No new invoice actually appeared — a real failure, not the
+                # serialization quirk. invoice_id is still None here, so the
+                # ticket-stamping block below is already correctly a no-op.
+                return {
+                    "invoice_id": None, "invoice_name": None,
+                    "invoice_warning": f"Invoice creation failed: {e}", "invoice_sent": False,
+                }
+            # Else: a new invoice really was created despite the fault —
+            # fall through to resolve and post it normally.
+
         inv_rows = odoo.search_read(
             "account.move",
             [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
