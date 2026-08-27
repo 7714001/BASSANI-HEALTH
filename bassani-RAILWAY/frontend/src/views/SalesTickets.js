@@ -124,7 +124,8 @@ export default function SalesTickets() {
   const [loading, setLoading] = useState(true);
   const [listSearch,   setListSearch  ] = useState("");
   const [statusFilter, setStatusFilter] = useState(new Set());
-  const [sourceFilter, setSourceFilter] = useState("all"); // "all" | "internal" | "external"
+  const [sourceFilter, setSourceFilter] = useState("all"); // "all" | "internal" | "reseller" | "customer"
+  const [ageFilter, setAgeFilter] = useState(null); // null | "overdue" | "urgent" — from the priority chips
 
   const toggleStatus = (key) =>
     setStatusFilter(prev => {
@@ -1303,8 +1304,18 @@ export default function SalesTickets() {
 
   // Must be declared before any early returns to satisfy Rules of Hooks.
   const filteredTickets = useMemo(() => tickets.filter(t => {
-    if (sourceFilter === "internal" &&  t.reseller_id) return false;
-    if (sourceFilter === "external" && !t.reseller_id) return false;
+    // Source filter (2026-08-27) — keyed on t.source, the same vocabulary
+    // already driving the Type badge in the Customer column below, rather
+    // than the old reseller_id-truthy heuristic (which conflated "placed by
+    // a reseller" with "linked to an owning reseller for commission"). This
+    // is also what makes a first-class "Customers" bucket possible — a
+    // customer's own self-service order shares source "portal" with a
+    // staff-placed-on-customer's-behalf order, which is the correct
+    // grouping (both belong to a customer account), not a reseller's.
+    if (sourceFilter === "internal" && !["direct", "email"].includes(t.source)) return false;
+    if (sourceFilter === "reseller" && t.source !== "reseller") return false;
+    if (sourceFilter === "customer" && t.source !== "portal") return false;
+    if (ageFilter && t.age_tier !== ageFilter) return false;
     if (statusFilter.size > 0) {
       const key = t.exit_status ? `exit:${t.exit_status}` : t.status;
       if (!statusFilter.has(key)) return false;
@@ -1318,7 +1329,7 @@ export default function SalesTickets() {
       ) return false;
     }
     return true;
-  }), [tickets, sourceFilter, statusFilter, listSearch]);
+  }), [tickets, sourceFilter, ageFilter, statusFilter, listSearch]);
 
   const doPurgeTicket = async () => {
     setPurgeConfirm(false);
@@ -3340,14 +3351,14 @@ export default function SalesTickets() {
             />
             {!isReseller && (
               <div className="flex items-center gap-1">
-                {[["all", "All"], ["internal", "Internal"], ["external", "Resellers"]].map(([val, label]) => (
+                {[["all", "All"], ["internal", "Internal"], ["reseller", "Resellers"], ["customer", "Customers"]].map(([val, label]) => (
                   <FilterPill key={val} label={label} active={sourceFilter === val} onClick={() => setSourceFilter(val)} />
                 ))}
               </div>
             )}
-            {(listSearch || statusFilter.size > 0 || (!isReseller && sourceFilter !== "all")) && (
+            {(listSearch || statusFilter.size > 0 || ageFilter || (!isReseller && sourceFilter !== "all")) && (
               <button
-                onClick={() => { setListSearch(""); setStatusFilter(new Set()); setSourceFilter("all"); }}
+                onClick={() => { setListSearch(""); setStatusFilter(new Set()); setSourceFilter("all"); setAgeFilter(null); }}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors shrink-0"
               >
                 Clear filters
@@ -3359,13 +3370,18 @@ export default function SalesTickets() {
               </span>
             )}
           </div>
-          {/* Priority strip (2026-08-26) — the same overdue/at-risk counts a
-              viewer would see rolled up on the Operations Monitor for these
-              same tickets, so priority is visible on the list itself rather
-              than only on the TV board. */}
-          {!loading && <AgePriorityStrip items={tickets} />}
+          {/* Priority + status chips, one unified filter bar (2026-08-27) —
+              the priority counts (2026-08-26) used to sit on their own plain-
+              text line above the status chips; now they're the same clickable
+              chip language as everything else, leading the row and set off
+              by the same "|" divider already used between forward/exit
+              statuses, rather than a second visual system for filtering. */}
           {!loading && tickets.length > 0 && (
             <ChipRow>
+              <AgePriorityStrip items={tickets} activeTier={ageFilter} onSelect={setAgeFilter} />
+              {(tickets.some(t => t.age_tier === "overdue" || t.age_tier === "urgent")) && (
+                <span className="self-center text-gray-200 px-1 shrink-0 select-none">|</span>
+              )}
               {FORWARD_STATUSES.map(s => (
                 <FilterPill
                   key={s}

@@ -1224,22 +1224,42 @@ export function AgeTierBadge({ tier, className = "" }) {
 // need attention right now. Same counts a viewer would see rolled up on the
 // Operations Monitor for these same records. Renders nothing once both
 // counts are zero, rather than an empty "0 Overdue" strip every day.
-export function AgePriorityStrip({ items, className = "" }) {
+//
+// Optionally interactive (2026-08-27): pass `activeTier` ("overdue"/"urgent"/
+// null) + `onSelect(tier)` to turn the two counts into filter chips a caller
+// can wire into its own list filtering — clicking the active one again is
+// expected to call onSelect(null) to clear it. Omitting both props keeps the
+// original plain, non-clickable rendering (OrdersTickets.js's usage today).
+export function AgePriorityStrip({ items, className = "", activeTier = null, onSelect = null }) {
   const overdue = items.filter(i => i.age_tier === "overdue").length;
   const atRisk  = items.filter(i => i.age_tier === "urgent").length;
   if (overdue === 0 && atRisk === 0) return null;
+  const interactive = typeof onSelect === "function";
+  const pill = (tier, count, label, colorClasses, activeClasses) => {
+    const isActive = activeTier === tier;
+    if (!interactive) {
+      return (
+        <span key={tier} className={`flex items-center gap-1.5 font-semibold ${colorClasses.text}`}>
+          <span className={`w-2 h-2 rounded-full ${colorClasses.dot}`} />{count} {label}
+        </span>
+      );
+    }
+    return (
+      <button
+        key={tier}
+        onClick={() => onSelect(isActive ? null : tier)}
+        className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+          isActive ? activeClasses : `bg-white border-gray-200 ${colorClasses.text} hover:border-current`
+        }`}
+      >
+        <span className={`w-2 h-2 rounded-full ${isActive ? "bg-white" : colorClasses.dot}`} />{count} {label}
+      </button>
+    );
+  };
   return (
-    <div className={`flex items-center gap-3 text-xs ${className}`}>
-      {overdue > 0 && (
-        <span className="flex items-center gap-1.5 font-semibold text-red-600">
-          <span className="w-2 h-2 rounded-full bg-red-500" />{overdue} Overdue
-        </span>
-      )}
-      {atRisk > 0 && (
-        <span className="flex items-center gap-1.5 font-semibold text-orange-600">
-          <span className="w-2 h-2 rounded-full bg-orange-500" />{atRisk} At Risk
-        </span>
-      )}
+    <div className={`flex items-center gap-2 text-xs ${interactive ? "" : "gap-3"} ${className}`}>
+      {overdue > 0 && pill("overdue", overdue, "Overdue", { text: "text-red-600", dot: "bg-red-500" }, "bg-red-600 text-white border-red-600")}
+      {atRisk  > 0 && pill("urgent",  atRisk,  "At Risk", { text: "text-orange-600", dot: "bg-orange-500" }, "bg-orange-500 text-white border-orange-500")}
     </div>
   );
 }
