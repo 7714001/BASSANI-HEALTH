@@ -133,12 +133,22 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
   });
 
   // The real "final" delivery invoice is only ever created in Odoo at
-  // mark_complete, after QA+RP sign off (packing.status becomes "complete"
-  // at that point, not merely "ready") — gate on readyForCollection, not
-  // packingWorkDone, so these three steps can never go "done" on the
-  // strength of the deposit invoice alone while still sitting at "ready"
-  // (i.e. only just reached QA/RP inspection).
-  const finalInv = readyForCollection ? invoices?.[invoices.length - 1] : null;
+  // mark_complete, after QA+RP sign-off — its Odoo id is stamped onto
+  // packing.invoice_id at that exact point (_create_final_invoice /
+  // complete_entry in packing_board_routes.py), and ONLY then. Matching on
+  // that id specifically, rather than assuming "the last invoice in the
+  // array is the final one," is required, not just tidier: found live
+  // 2026-08-27 — an order that reached "complete" but whose invoice
+  // creation FAILED (see that file's own create_invoices() TypeError
+  // incident) still has readyForCollection=true with only the already-paid
+  // deposit invoice in `invoices`. "Last item in the array" picked that
+  // deposit invoice, mistook it for the final one, and showed Balance
+  // Payment Received as done before any balance had actually been
+  // invoiced, let alone paid. No packing.invoice_id means no final invoice
+  // exists yet, full stop — never fall back to guessing from the array.
+  const finalInv = (readyForCollection && packing?.invoice_id)
+    ? invoices?.find(i => i.invoice_id === packing.invoice_id)
+    : null;
 
   if (finalInv) {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name });

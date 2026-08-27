@@ -1312,7 +1312,8 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "rp_approved_by": 1, "rp_approved_at": 1,
          "collected_by": 1, "collected_at": 1,
          "completed_at": 1, "incomplete_reason": 1, "updated_at": 1,
-         "queued_at": 1},
+         "queued_at": 1, "invoice_id": 1,
+         "invoice_creation_error": 1, "invoice_creation_failed_at": 1},
     )
     packing_out = None
     if packing_entry:
@@ -1332,6 +1333,14 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "completed_at":   _dt(packing_entry.get("completed_at")),
             "incomplete_reason": packing_entry.get("incomplete_reason"),
             "updated_at":     _dt(packing_entry.get("updated_at")),
+            # Retry Invoice Creation banner (2026-08-27) — same fields
+            # packing_board_routes.py's own detail fetch already exposes,
+            # so Order Passport can surface (and Finance can act on) the
+            # identical create_invoices() failure state without a detour
+            # through the Orders Ticket page.
+            "invoice_id":       packing_entry.get("invoice_id"),
+            "invoice_creation_error": packing_entry.get("invoice_creation_error"),
+            "invoice_creation_failed_at": _dt(packing_entry.get("invoice_creation_failed_at")),
             **board_entry_age_fields(packing_entry),
         }
 

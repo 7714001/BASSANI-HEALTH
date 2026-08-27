@@ -65,10 +65,11 @@ export default function OrdersTickets() {
   const navigate = useNavigate();
   const location = useLocation();
   const { can, user } = useAuth();
-  const canOrders = can("tickets.orders");
-  const canQa     = can("tickets.qa_approve");
-  const canRp     = can("tickets.rp_approve");
-  const canManage = can("tickets.manage");
+  const canOrders  = can("tickets.orders");
+  const canQa      = can("tickets.qa_approve");
+  const canRp      = can("tickets.rp_approve");
+  const canManage  = can("tickets.manage");
+  const canFinance = can("tickets.finance_confirm");
 
   // ── List state ──────────────────────────────────────────────────────────────
   const [view, setView]       = useState("list");
@@ -501,20 +502,30 @@ export default function OrdersTickets() {
               {/* Invoice creation failure banner (2026-08-27) — persistent,
                   not just a one-off toast, so an order stuck at "complete"
                   with no invoice (e.g. the create_invoices() TypeError
-                  incident) stays visibly flagged until retried. Deliberately
-                  outside the (!isTerminal || complete) gate the rest of the
-                  action area sits inside, since this can matter even once
-                  the order has moved on to "collected". */}
-              {detail.invoice_creation_error && !detail.invoice_id && (
+                  incident) stays visibly flagged until retried. Gated on
+                  status + missing invoice_id, NOT on invoice_creation_error
+                  being set (fixed same day, found live) — an order that
+                  completed before this error-persistence code even existed
+                  has no invoice_creation_error stored at all, only a
+                  now-long-gone one-off toast, so gating on that field alone
+                  left genuinely broken older orders with no banner and no
+                  way to retry. invoice_creation_error is shown when present,
+                  but its absence is never treated as "nothing's wrong."
+                  Deliberately outside the (!isTerminal || complete) gate the
+                  rest of the action area sits inside, since this can matter
+                  even once the order has moved on to "collected". */}
+              {["complete", "collected"].includes(detail.status) && !detail.invoice_id && (
                 <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start justify-between gap-4 flex-wrap">
                   <div className="flex items-start gap-2">
                     <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
                     <div>
                       <p className="text-sm font-semibold text-red-700">No invoice was created for this order</p>
-                      <p className="text-xs text-red-600 mt-0.5">{detail.invoice_creation_error}</p>
+                      <p className="text-xs text-red-600 mt-0.5">
+                        {detail.invoice_creation_error || "No error was recorded (this order likely completed before failure tracking was added) — click Retry to create it now."}
+                      </p>
                     </div>
                   </div>
-                  {canOrders && (
+                  {(canOrders || canFinance) && (
                     <BtnSecondary
                       onClick={retryInvoiceCreation}
                       loading={busyId === "retry-invoice"}

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from auth import require_admin, get_current_user, get_user_by_username, require_permission, require_super_admin, ADMIN_ROLES
+from auth import require_admin, get_current_user, get_user_by_username, require_permission, require_any_permission, require_super_admin, ADMIN_ROLES
 from config import get_settings
 from database import col, NO_ID
 from middleware.audit import audit_log
@@ -637,7 +637,46 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
         return {"success": False, "pickings": [], "error": f"Could not fetch delivery orders from Odoo: {e}", **_no_backorder}
 
     if not pickings:
-        return {"success": False, "pickings": [], "error": "No delivery orders in Ready state found for this order", **_no_backorder}
+        # Nothing left in Odoo's "assigned" (Ready) state — this used to be
+        # treated as a flat failure regardless of why, which conflated two
+        # very different situations: a delivery that was already validated
+        # (state "done") outside this button — most commonly staff doing
+        # the picking directly in Odoo instead of through the portal — is
+        # functionally the same outcome this function itself would have
+        # produced, just not via this call; a delivery that's genuinely not
+        # ready (no stock reserved yet, or no delivery generated at all) is
+        # a real problem. Reconciling against Odoo's actual state here
+        # (2026-08-27, found live) rather than assuming the portal is the
+        # only possible actor matches this app's own architecture principle
+        # that staff shouldn't need Odoo at all for routine work — but that
+        # only holds if the portal also correctly recognizes when someone
+        # legitimately did act there directly.
+        try:
+            all_pickings = _odoo.search_read(
+                "stock.picking",
+                [("sale_id", "=", odoo_order_id)],
+                ["id", "name", "state"],
+            )
+        except Exception as e:
+            return {"success": False, "pickings": [], "error": f"Could not fetch delivery orders from Odoo: {e}", **_no_backorder}
+
+        if not all_pickings:
+            return {
+                "success": False, "pickings": [],
+                "error": "No delivery orders found for this order in Odoo — check that the sale order has generated a delivery",
+                **_no_backorder,
+            }
+        done_pickings = [p for p in all_pickings if p["state"] == "done"]
+        if len(done_pickings) == len(all_pickings):
+            # Every delivery on this order was already validated — nothing
+            # left for this call to do, and that's a success, not an error.
+            return {"success": True, "pickings": [p["name"] for p in done_pickings], "error": None, **_no_backorder}
+        states = ", ".join(sorted({p["state"] for p in all_pickings}))
+        return {
+            "success": False, "pickings": [],
+            "error": f"Delivery not yet ready to validate in Odoo (current state: {states}) — check stock reservation",
+            **_no_backorder,
+        }
 
     validated: list = []
     errors: list = []
@@ -1078,7 +1117,7 @@ async def complete_entry(
 @router.put("/retry-invoice-creation")
 async def retry_invoice_creation(
     body: OrderIdBody,
-    current_user: dict = Depends(require_permission("tickets.orders")),
+    current_user: dict = Depends(require_any_permission("tickets.orders", "tickets.finance_confirm")),
 ):
     """Recovery action (2026-08-27) for an order that reached packing status
     "complete" (or later) with no final invoice ever created — most
@@ -1088,7 +1127,11 @@ async def retry_invoice_creation(
     logic complete_entry itself uses. Refuses to run at all once an invoice
     already exists on this entry, so this can never create a duplicate —
     unlike complete_entry, a failure here IS the whole point of the call,
-    so it raises rather than degrading to a response `warning`."""
+    so it raises rather than degrading to a response `warning`. Gated to
+    `tickets.orders` OR `tickets.finance_confirm` (2026-08-27, widened from
+    `tickets.orders` alone once this action was also surfaced on Order
+    Passport) — Finance is the role most likely to actually discover this
+    failure, via a blank Register Balance Payment amount."""
     entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")

@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import bwipjs from "bwip-js";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch } from "lucide-react";
+import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight } from "lucide-react";
 import {
-  TopBar, DataTable, SearchBar, FilterPill, ChipRow,
+  TopBar, DataTable, SearchBar, FilterPill, ChipRow, Pager,
   Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger,
   OdooPdfViewerModal,
@@ -244,6 +244,86 @@ function InvoiceView({ invoice, onClose }) {
   );
 }
 
+// ── By-Order view (2026-08-27) — grouped/expandable rows for the reseller/
+// customer role, mirroring ManufacturingOrders.js's OrderGroupRow pattern
+// exactly (chevron-expand, order ref links to Order Passport, first group
+// defaultExpanded). A customer's invoices naturally come in small clusters
+// per order (a deposit invoice + a final invoice), so seeing them grouped
+// answers "what's the full picture for this order" at a glance instead of
+// scanning a flat list to spot which two rows belong together.
+function InvoiceOrderGroupRow({ group, defaultExpanded, navigate, onView }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  return (
+    <>
+      <tr
+        className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <td className="p-3 w-8">
+          <button onClick={e => { e.stopPropagation(); setExpanded(v => !v); }} className="text-gray-400 hover:text-gray-600">
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+        </td>
+        <td className="p-3 font-mono text-sm whitespace-nowrap">
+          {group.sale_order_id ? (
+            <button
+              onClick={e => { e.stopPropagation(); navigate(`/orders/${group.sale_order_id}/passport`); }}
+              className="text-bassani-700 hover:text-bassani-900 hover:underline font-medium flex items-center gap-1"
+            >
+              {group.order_ref}
+              <ExternalLink size={11} className="text-bassani-400" />
+            </button>
+          ) : (
+            <span className="text-gray-900">{group.order_ref || "No Order"}</span>
+          )}
+        </td>
+        <td className="p-3 text-xs text-gray-400 whitespace-nowrap">
+          {group.invoices.length} invoice{group.invoices.length !== 1 ? "s" : ""}
+        </td>
+        <td className="p-3 font-semibold whitespace-nowrap">{fmtR(group.total)}</td>
+        <td className="p-3 whitespace-nowrap">
+          <span className={`font-semibold ${group.outstanding > 0 ? "text-red-600" : "text-green-700"}`}>
+            {group.outstanding > 0 ? fmtR(group.outstanding) : "Paid in full"}
+          </span>
+        </td>
+      </tr>
+      {expanded && group.invoices.map(inv => (
+        <tr key={inv.id} className="bg-gray-50 border-b border-gray-100">
+          <td className="p-3" />
+          <td className="p-3 pl-8" colSpan={2}>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-xs text-bassani-700 font-semibold">{inv.name || "Draft"}</span>
+              {inv.move_type === "out_refund" && (
+                <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">CN</span>
+              )}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-0.5">{fmtDate(inv.invoice_date)}</p>
+          </td>
+          <td className="p-3">
+            <span className="font-semibold text-sm">{fmtR(inv.amount_total)}</span>
+          </td>
+          <td className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <PaymentBadge state={inv.payment_state} />
+                {inv.amount_residual > 0 && (
+                  <span className="text-[10px] text-red-600 font-medium whitespace-nowrap">{fmtR(inv.amount_residual)} due</span>
+                )}
+              </div>
+              <button
+                onClick={() => onView(inv)}
+                className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline shrink-0"
+              >
+                View
+              </button>
+            </div>
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 // ── Main Invoices view ─────────────────────────────────────────────────────────
 
 export default function Invoices() {
@@ -268,6 +348,15 @@ export default function Invoices() {
   const [filter,     setFilter    ] = useState(initialFilter);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [sorting,    setSorting   ] = useState([{ id: "invoice_date", desc: true }]);
+
+  // By Order view (2026-08-27) — reseller/customer only, defaults on. "All
+  // Invoices" keeps the existing flat, server-paginated table exactly as
+  // before (also the only mode staff ever see — grouping by SO doesn't
+  // serve a searchable business-wide list the way it does a customer's own
+  // small, order-clustered invoice history).
+  const [viewMode,       setViewMode      ] = useState(isExternalRole ? "grouped" : "flat");
+  const [groupPageIndex, setGroupPageIndex] = useState(0);
+  const [groupPageSize,  setGroupPageSize ] = useState(25);
 
   const [viewInvoice,  setViewInvoice ] = useState(null);
   const [viewLoading,  setViewLoading ] = useState(false);
@@ -296,9 +385,21 @@ export default function Invoices() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const sort = sorting[0];
-      const params = { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
-      if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
+      const grouped = isExternalRole && viewMode === "grouped";
+      // Grouped view paginates SO groups client-side (Pager below), same
+      // shape ManufacturingOrders.js's own By Order view already uses, so
+      // a group never gets split across two server pages — fetches the
+      // largest batch the backend allows (200, its own hard cap) instead
+      // of the normal page-at-a-time params. A customer/reseller's own
+      // invoice history realistically never exceeds that; flagged, not
+      // solved, if it ever does — "All Invoices" + search still works past it.
+      const params = grouped
+        ? { limit: 200, offset: 0 }
+        : { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
+      if (!grouped) {
+        const sort = sorting[0];
+        if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
+      }
       if (search) params.search = search;
       if (filter === "credit_notes") {
         params.move_type = "out_refund";
@@ -310,7 +411,7 @@ export default function Invoices() {
       setTotal(r.data.total);
     } catch { toast.error("Failed to load invoices"); }
     finally { setLoading(false); }
-  }, [search, filter, pagination, sorting]);
+  }, [search, filter, pagination, sorting, viewMode, isExternalRole]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -489,6 +590,42 @@ export default function Invoices() {
 
   const outstandingTotal = invoices.reduce((s, i) => s + (i.amount_residual || 0), 0);
 
+  // Groups the currently-loaded invoices by their linked sale order — one
+  // group per SO (a deposit + a final invoice on the same order land
+  // together), sorted newest-first by each group's most recent invoice
+  // date (matches this app's default newest-first admin-list convention,
+  // unlike ManufacturingOrders.js's own oldest-first triage ordering,
+  // which doesn't apply to a customer looking at their own history).
+  // Falls back to invoice_origin (the human-readable SO name) when
+  // sale_order_id is missing, then a single "No Order" bucket.
+  const invoiceGroups = useMemo(() => {
+    const map = new Map();
+    invoices.forEach(inv => {
+      const key = inv.sale_order_id ? `so-${inv.sale_order_id}` : (inv.invoice_origin || "no-order");
+      if (!map.has(key)) {
+        map.set(key, { key, sale_order_id: inv.sale_order_id || null, order_ref: inv.invoice_origin || null, invoices: [] });
+      }
+      map.get(key).invoices.push(inv);
+    });
+    const groups = Array.from(map.values()).map(g => ({
+      ...g,
+      total:       g.invoices.reduce((s, i) => s + (i.amount_total || 0), 0),
+      outstanding: g.invoices.reduce((s, i) => s + (i.amount_residual || 0), 0),
+      latestDate:  g.invoices.reduce((max, i) => (i.invoice_date && i.invoice_date > max ? i.invoice_date : max), ""),
+    }));
+    return groups.sort((a, b) => (b.latestDate || "").localeCompare(a.latestDate || ""));
+  }, [invoices]);
+
+  // Reset to page 1 whenever the underlying group list changes shape,
+  // otherwise a filter/search that shrinks the result set can strand the
+  // view on a now-empty page (same guard ManufacturingOrders.js uses).
+  useEffect(() => { setGroupPageIndex(0); }, [invoiceGroups.length, groupPageSize]);
+
+  const pagedGroups = useMemo(() => {
+    const start = groupPageIndex * groupPageSize;
+    return invoiceGroups.slice(start, start + groupPageSize);
+  }, [invoiceGroups, groupPageIndex, groupPageSize]);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <TopBar
@@ -500,7 +637,29 @@ export default function Invoices() {
       />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 space-y-2">
-          <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }} placeholder="Search invoice #, customer, sale order…" />
+          <div className="flex items-center gap-3 flex-wrap">
+            <SearchBar value={search} onChange={v => { setSearch(v); setPagination(p => ({ ...p, pageIndex: 0 })); }} placeholder="Search invoice #, customer, sale order…" />
+            {/* By Order / All Invoices toggle (2026-08-27) — reseller/
+                customer only; staff always see the flat, searchable list
+                unchanged. Mirrors ManufacturingOrders.js's By Order / By
+                Product toggle. */}
+            {isExternalRole && (
+              <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 gap-1">
+                <button
+                  onClick={() => setViewMode("grouped")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === "grouped" ? "bg-bassani-600 text-white" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  By Order
+                </button>
+                <button
+                  onClick={() => setViewMode("flat")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === "flat" ? "bg-bassani-600 text-white" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  All Invoices
+                </button>
+              </div>
+            )}
+          </div>
           <ChipRow>
             {FILTERS.map(f => (
               <FilterPill key={f.key} label={f.label} active={filter === f.key}
@@ -509,6 +668,48 @@ export default function Invoices() {
           </ChipRow>
         </div>
 
+        {isExternalRole && viewMode === "grouped" ? (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            {loading ? (
+              <div className="py-16 text-center text-sm text-gray-400">Loading…</div>
+            ) : invoiceGroups.length === 0 ? (
+              <div className="py-16 text-center">
+                <p className="text-sm font-medium text-gray-500">No invoices</p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="p-3 w-8" />
+                        <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Order</th>
+                        <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Invoices</th>
+                        <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Total</th>
+                        <th className="p-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Outstanding</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedGroups.map((group, i) => (
+                        <InvoiceOrderGroupRow
+                          key={group.key}
+                          group={group}
+                          defaultExpanded={i === 0}
+                          navigate={navigate}
+                          onView={openViewInvoice}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager
+                  pageIndex={groupPageIndex} pageSize={groupPageSize} total={invoiceGroups.length}
+                  onPageChange={setGroupPageIndex} onPageSizeChange={setGroupPageSize}
+                />
+              </>
+            )}
+          </div>
+        ) : (
         <DataTable
           columns={[
             { accessorKey: "name", header: "Invoice #",
@@ -640,6 +841,7 @@ export default function Invoices() {
           manualPagination manualSorting
           onRowClick={inv => openViewInvoice(inv)}
         />
+        )}
       </main>
 
       {/* Full-screen invoice viewer */}

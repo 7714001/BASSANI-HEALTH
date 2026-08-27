@@ -450,6 +450,14 @@ export default function OrderPassport() {
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling,    setCancelling   ] = useState(false);
 
+  // Retry Invoice Creation (2026-08-27) — staff-only recovery action for an
+  // order that reached "complete" with no final invoice ever created (e.g.
+  // the create_invoices() TypeError incident). Surfaced here too, not just
+  // OrdersTickets.js, since Finance is the role most likely to actually
+  // discover this (via a blank Register Balance Payment amount) and didn't
+  // otherwise have a natural path to fix it themselves.
+  const [retryingInvoice, setRetryingInvoice] = useState(false);
+
   const doCancelOrder = async () => {
     if (!data?.order?.id) return;
     setCancelling(true);
@@ -485,6 +493,21 @@ export default function OrderPassport() {
   };
 
   useEffect(() => { load(); }, [orderId]); // eslint-disable-line
+
+  const retryInvoiceCreation = async () => {
+    if (!data?.order?.id) return;
+    setRetryingInvoice(true);
+    try {
+      const r = await api.put("/api/packing/retry-invoice-creation", { order_id: String(data.order.id) });
+      toast.success(`Invoice ${r.data.invoice_name} created`);
+      if (r.data.warning) toast.error(r.data.warning, { duration: 8000 });
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Invoice creation failed");
+    } finally {
+      setRetryingInvoice(false);
+    }
+  };
 
   const goBack = () => {
     if (location.key !== "default") navigate(-1);
@@ -770,6 +793,40 @@ export default function OrderPassport() {
               />
             </div>
           </div>
+
+          {/* Invoice creation failure banner (2026-08-27) — same persistent
+              signal OrdersTickets.js shows, surfaced here too so Finance
+              (who most naturally discovers this via a blank Register
+              Balance Payment amount) can act on it directly rather than
+              needing an Orders Clerk to find and click it elsewhere. Gated
+              on status + missing invoice_id, NOT on invoice_creation_error
+              being set (fixed same day, found live) — an order completed
+              before this error-persistence code existed has no
+              invoice_creation_error stored at all, only a long-gone one-off
+              toast, so gating on that field alone hid the banner entirely
+              for genuinely broken older orders. */}
+          {!isReseller && !isCustomer && packing && ["complete", "collected"].includes(packing.status) && !packing.invoice_id && (
+            <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-red-700">No invoice was created for this order</p>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    {packing.invoice_creation_error || "No error was recorded (this order likely completed before failure tracking was added) — click Retry to create it now."}
+                  </p>
+                </div>
+              </div>
+              {(can("tickets.orders") || can("tickets.finance_confirm")) && (
+                <BtnSecondary
+                  onClick={retryInvoiceCreation}
+                  loading={retryingInvoice}
+                  className="text-red-700 border-red-200 hover:bg-red-100 shrink-0"
+                >
+                  <RefreshCw size={13} />Retry Invoice Creation
+                </BtnSecondary>
+              )}
+            </div>
+          )}
 
           {/* ── Order Timeline — full width (2026-08-25) ─────────────────────
               Previously lived inside the two-column grid's main column,
