@@ -80,10 +80,23 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
       : "done",
   });
 
-  const packingDone = !!packing && ["ready", "complete", "collected"].includes(packing.status);
+  // packingWorkDone = the physical pack itself is finished (status has
+  // reached "ready", i.e. ready for QA/RP inspection, or later) — this is
+  // NOT the same thing as the order being ready for the customer to collect.
+  // "ready" on the packing board means "Ready for Inspection" (see
+  // OrdersTickets.js's own STATUS_LABEL); only "complete" means "Ready for
+  // Collection." Conflating the two here was a real bug (found live
+  // 2026-08-27): the moment packing reached "ready" — before QA/RP had
+  // signed off and before Mark Complete had ever run — the "Ready for
+  // Collection" step, the final invoice read, and "Balance Payment
+  // Received" all lit up as done, off the strength of the 50% deposit
+  // invoice (the only invoice that exists at that point, and one Odoo marks
+  // paid immediately on registration) being mistaken for the final one.
+  const packingWorkDone = !!packing && ["ready", "complete", "collected"].includes(packing.status);
+  const readyForCollection = !!packing && ["complete", "collected"].includes(packing.status);
   const packingStep = {
     key: "packing", label: "Packing", icon: Package,
-    state: !packing ? "pending" : packingDone ? "done" : (packing.status === "packing" ? "current" : "pending"),
+    state: !packing ? "pending" : packingWorkDone ? "done" : (packing.status === "packing" ? "current" : "pending"),
     by: packing?.packer_name,
   };
   if (packing?.status === "waiting_stock") {
@@ -105,7 +118,7 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
 
   steps.push({
     key: "qa", label: "QA Approved", icon: ClipboardCheck,
-    state: packing?.qa_approved_at ? "done" : (packingDone || packing?.status === "packing" ? "current" : "pending"),
+    state: packing?.qa_approved_at ? "done" : (packingWorkDone || packing?.status === "packing" ? "current" : "pending"),
     at: packing?.qa_approved_at, by: packing?.qa_approved_by,
   });
   steps.push({
@@ -115,16 +128,17 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
   });
   steps.push({
     key: "ready", label: "Ready for Collection", icon: Truck,
-    state: packingDone ? "done" : "pending",
+    state: readyForCollection ? "done" : "pending",
     at: packing?.completed_at,
   });
 
   // The real "final" delivery invoice is only ever created in Odoo at
-  // mark_complete, after QA+RP sign off. Before that, `invoices` only ever
-  // contains the down-payment deposit invoice, created AND paid immediately
-  // the moment a deposit is registered — gate on packingDone so these three
-  // steps can never go "done" on the strength of the deposit invoice alone.
-  const finalInv = packingDone ? invoices?.[invoices.length - 1] : null;
+  // mark_complete, after QA+RP sign off (packing.status becomes "complete"
+  // at that point, not merely "ready") — gate on readyForCollection, not
+  // packingWorkDone, so these three steps can never go "done" on the
+  // strength of the deposit invoice alone while still sitting at "ready"
+  // (i.e. only just reached QA/RP inspection).
+  const finalInv = readyForCollection ? invoices?.[invoices.length - 1] : null;
 
   if (finalInv) {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name });
@@ -139,7 +153,7 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
 
   steps.push({
     key: "collected", label: "Collected", icon: CheckCircle2,
-    state: packing?.collected_at ? "done" : (finalInv?.payment_state === "paid" || packing?.status === "ready" ? "current" : "pending"),
+    state: packing?.collected_at ? "done" : (finalInv?.payment_state === "paid" || packing?.status === "complete" ? "current" : "pending"),
     at: packing?.collected_at, by: packing?.collected_by,
   });
 
