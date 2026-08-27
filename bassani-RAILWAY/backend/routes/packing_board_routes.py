@@ -765,71 +765,120 @@ async def _create_final_invoice(entry: dict, now: datetime) -> dict:
     try:
         odoo = get_odoo_client()
         sale_order_id = int(entry["order_id"])
-        wiz_id = odoo.create(
-            "sale.advance.payment.inv",
-            {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+
+        # Check for a usable final invoice already sitting in Odoo before
+        # creating a new one (2026-08-27, found live retrying this exact
+        # endpoint) — the create_invoices() XML-RPC marshalling quirk below
+        # can leave a real draft invoice created server-side even when the
+        # call raises and the overall attempt gets reported as a failure;
+        # a second create_invoices() call against the same order can then
+        # behave unpredictably rather than cleanly erroring, since Odoo may
+        # see nothing further to invoice. Reusing an already-existing,
+        # not-yet-linked invoice instead of blindly creating another is the
+        # same "check before creating" principle ticket_routes.py's
+        # existing-invoices/use-existing-invoice flow already established
+        # for the deposit invoice — never a parallel-ledger risk (Architecture
+        # Principle #1), just avoiding a genuine duplicate-invoice risk.
+        # Excludes the deposit invoice, identified via the ticket's own
+        # invoice_id field, which only ever points at the deposit until a
+        # final invoice successfully completes and overwrites it below.
+        _ticket_doc = await col("tickets").find_one(
+            {"type": "sales", "order_id": sale_order_id, "exit_status": None},
+            {"invoice_id": 1},
         )
-
-        # Capture invoice_ids before the call so a genuine failure can be
-        # told apart from create_invoices' known XML-RPC response-
-        # serialization quirk (found and fixed once already in
-        # ticket_routes.py::register_deposit for the deposit invoice, hit
-        # again here for the final invoice, 2026-08-27) — the action dict
-        # Odoo returns can contain None values the marshaller rejects even
-        # though the invoice really was created. Assuming every exception
-        # from create_invoices IS that harmless quirk is itself the mistake
-        # register_deposit's own fix corrected — a genuine failure (nothing
-        # to invoice, a validation error) raises the exact same way and
-        # looks identical from here without this check.
+        _deposit_invoice_id = _ticket_doc.get("invoice_id") if _ticket_doc else None
+        _existing_domain = [
+            ["invoice_origin", "like", str(sale_order_id)],
+            ["move_type", "=", "out_invoice"],
+            ["state", "!=", "cancel"],
+        ]
+        if _deposit_invoice_id:
+            _existing_domain.append(["id", "!=", _deposit_invoice_id])
         try:
-            _before_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
-            _invoice_ids_before = set(_before_rows[0].get("invoice_ids", [])) if _before_rows else set()
-        except Exception:
-            _invoice_ids_before = set()
-
-        try:
-            # OdooClient.execute()'s (*args) -> single flat args list has no
-            # way to send real XML-RPC kwargs/context — create_invoices() on
-            # Odoo 19 takes no extra arguments at all, deriving everything
-            # from the wizard's own already-set sale_order_ids field
-            # (2026-08-27 fix).
-            odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
-        except Exception as e:
-            logger.warning(
-                "final_invoice_create_invoices_response_error",
-                extra={"wiz_id": wiz_id, "order_id": sale_order_id, "error": str(e)},
+            _existing = odoo.search_read(
+                "account.move", _existing_domain, ["id", "name", "state"],
+                order="id desc", limit=1,
             )
-            try:
-                _after_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
-                _new_ids = (set(_after_rows[0].get("invoice_ids", [])) - _invoice_ids_before) if _after_rows else set()
-            except Exception:
-                _new_ids = set()
-            if not _new_ids:
-                # No new invoice actually appeared — a real failure, not the
-                # serialization quirk. invoice_id is still None here, so the
-                # ticket-stamping block below is already correctly a no-op.
-                return {
-                    "invoice_id": None, "invoice_name": None,
-                    "invoice_warning": f"Invoice creation failed: {e}", "invoice_sent": False,
-                }
-            # Else: a new invoice really was created despite the fault —
-            # fall through to resolve and post it normally.
+        except Exception:
+            _existing = []
 
-        inv_rows = odoo.search_read(
-            "account.move",
-            [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
-            ["id", "name"],
-            order="id desc",
-            limit=1,
-        )
-        if inv_rows:
-            invoice_id = inv_rows[0]["id"]
-            invoice_name = inv_rows[0]["name"]
-            odoo.execute("account.move", "action_post", [invoice_id])
+        if _existing:
+            invoice_id = _existing[0]["id"]
+            invoice_name = _existing[0]["name"]
+            if _existing[0]["state"] == "draft":
+                odoo.execute("account.move", "action_post", [invoice_id])
+        else:
+            wiz_id = odoo.create(
+                "sale.advance.payment.inv",
+                {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
+            )
+
+            # Capture invoice_ids before the call so a genuine failure can be
+            # told apart from create_invoices' known XML-RPC response-
+            # serialization quirk (found and fixed once already in
+            # ticket_routes.py::register_deposit for the deposit invoice, hit
+            # again here for the final invoice) — the action dict Odoo
+            # returns can contain None values the marshaller rejects even
+            # though the invoice really was created. Assuming every
+            # exception from create_invoices IS that harmless quirk is
+            # itself the mistake register_deposit's own fix corrected — a
+            # genuine failure (nothing to invoice, a validation error)
+            # raises the exact same way and looks identical from here
+            # without this check.
+            try:
+                _before_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
+                _invoice_ids_before = set(_before_rows[0].get("invoice_ids", [])) if _before_rows else set()
+            except Exception:
+                _invoice_ids_before = set()
+
+            try:
+                # OdooClient.execute()'s (*args) -> single flat args list has
+                # no way to send real XML-RPC kwargs/context —
+                # create_invoices() on Odoo 19 takes no extra arguments at
+                # all, deriving everything from the wizard's own already-set
+                # sale_order_ids field (2026-08-27 fix).
+                odoo.execute("sale.advance.payment.inv", "create_invoices", [wiz_id])
+            except Exception as e:
+                logger.warning(
+                    "final_invoice_create_invoices_response_error",
+                    extra={"wiz_id": wiz_id, "order_id": sale_order_id, "error": str(e)},
+                )
+                try:
+                    _after_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
+                    _new_ids = (set(_after_rows[0].get("invoice_ids", [])) - _invoice_ids_before) if _after_rows else set()
+                except Exception:
+                    _new_ids = set()
+                if not _new_ids:
+                    # No new invoice actually appeared — a real failure, not
+                    # the serialization quirk. invoice_id is still None
+                    # here, so the ticket-stamping block below is already
+                    # correctly a no-op.
+                    return {
+                        "invoice_id": None, "invoice_name": None,
+                        "invoice_warning": f"Invoice creation failed: {e}", "invoice_sent": False,
+                    }
+                # Else: a new invoice really was created despite the fault —
+                # fall through to resolve and post it normally.
+
+            inv_rows = odoo.search_read(
+                "account.move",
+                [["invoice_origin", "like", str(sale_order_id)], ["move_type", "=", "out_invoice"], ["state", "=", "draft"]],
+                ["id", "name"],
+                order="id desc",
+                limit=1,
+            )
+            if inv_rows:
+                invoice_id = inv_rows[0]["id"]
+                invoice_name = inv_rows[0]["name"]
+                odoo.execute("account.move", "action_post", [invoice_id])
+
+        if invoice_id:
             # Auto-send the final invoice to the customer via Odoo's own mail
             # system (same mechanism as ticket_routes.py's manual "Send Invoice"
             # action) — non-fatal, mirrors send_deposit_due_proforma's degrade-to-warning
             # pattern so a missing/misconfigured Odoo mail template never blocks completion.
+            # Runs whether this invoice was newly created above or an
+            # existing not-yet-linked one was just found and reused.
             try:
                 _templates = odoo.search_read(
                     "mail.template",
