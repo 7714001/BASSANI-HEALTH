@@ -19,7 +19,7 @@ the product owner).
 import logging
 from datetime import datetime, date, timedelta, timezone
 from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from typing import Optional
 from pydantic import BaseModel
 from bson import ObjectId
@@ -34,7 +34,12 @@ from routes.ticket_routes import (
     _require_ticket_driver, _reseller_id_for_user, _assert_reseller_owns_ticket, _actor,
     _ticket_customer_partner_id,
 )
-from services.email_service import send_recurring_order_upcoming
+from services.email_service import (
+    send_recurring_order_upcoming,
+    send_recurring_order_accepted_internal,
+    send_recurring_order_needs_confirm_internal,
+    send_recurring_order_declined_internal,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -308,6 +313,237 @@ async def cancel_recurring_order(
     current_user: dict = Depends(require_permission("orders.recurring_manage")),
 ):
     return await _set_schedule_status(schedule_id, ("active", "paused"), "cancelled", current_user)
+
+
+@router.post("/{schedule_id}/run-now")
+async def run_now_recurring_order(
+    schedule_id: str,
+    current_user: dict = Depends(require_permission("orders.recurring_manage")),
+):
+    """Manually fire this schedule's next occurrence immediately, bypassing
+    generate_recurring_notices()'s 2-days-out window check. Not a dry run —
+    reuses _generate_one_occurrence() exactly as the daily job does, so it
+    creates a real draft sale.order in Odoo, advances next_run_date /
+    occurrences_generated (and flips the schedule to completed if this was
+    its last occurrence) exactly as the automatic path would, and emails the
+    real customer on file a real review/accept link. Two uses: testing the
+    generate -> review -> accept/decline chain without waiting for the real
+    date to line up, and catching up a schedule if the daily job was ever
+    missed (same class of incident as the Sales mailbox Graph subscription
+    lapse, see CLAUDE.md's inbox_service.py entry)."""
+    doc = await col("recurring_orders").find_one({"id": schedule_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if doc["status"] != "active":
+        raise HTTPException(status_code=400, detail="Schedule must be active to run now")
+
+    odoo = get_odoo_client()
+    try:
+        await _generate_one_occurrence(odoo, doc)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to generate occurrence: {str(e)}")
+
+    await audit_log(
+        "recurring_order.run_now", "recurring_order", schedule_id,
+        entity_label=doc.get("customer_name", ""), user=current_user,
+        detail={"triggered_manually": True},
+    )
+    return {"success": True}
+
+
+# ── Occurrence accept/decline core — shared by the public token endpoint ─────
+# (public_routes.py's /api/public/recurring/{token}, no login) and the
+# authenticated in-portal endpoints below. One implementation either way, so
+# the two entry points can never drift on what "accept"/"decline" actually do.
+
+def occurrence_already_actioned(ticket: dict) -> bool:
+    """True once anything has happened to this recurring-generated ticket that
+    should invalidate further accept/decline attempts on it — checked by both
+    entry points so they can never disagree about what counts as "already
+    handled." status != "quote" covers the case a customer confirmed/edited
+    the draft order via the ordinary Order Passport buttons before ever using
+    either accept/decline path (found live 2026-08-27 — that path used to
+    leave the public token silently exploitable afterward)."""
+    return bool(
+        ticket.get("exit_status") or ticket.get("customer_accepted_at")
+        or ticket.get("customer_declined_at") or ticket.get("status") != "quote"
+    )
+
+
+async def _accept_occurrence_core(ticket: dict, actor: dict, background_tasks: BackgroundTasks) -> dict:
+    """Confirms a recurring occurrence's draft order (_confirm_order_core) and
+    stamps the ticket as accepted. `actor` is a real current_user for the
+    in-portal path (so _confirm_order_core's own reseller/customer ownership
+    check applies for free, and stage_history correctly attributes the actual
+    person) or the synthetic system actor for the public token path (which
+    has no logged-in user at all — ownership was already guaranteed at
+    schedule setup time). Returns needs_manual_confirm: true, not an error, on
+    a credit-limit block — the caller decides how to surface that."""
+    from routes.order_routes import _confirm_order_core
+
+    now = datetime.now(timezone.utc)
+    order_ref = f"#{ticket['order_id']}"
+    routing = await get_email_routing()
+    try:
+        await _confirm_order_core(ticket["order_id"], actor, background_tasks)
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {
+                "$set": {"customer_accepted_at": now, "updated_at": now},
+                "$push": {"stage_history": {
+                    "status": ticket["status"], "exit_status": None,
+                    "actor_id": actor.get("id"), "actor_name": actor.get("name") or "system",
+                    "at": now, "note": "Customer accepted — order auto-confirmed",
+                }},
+            },
+        )
+        if routing.get("recurring_order_accepted_to"):
+            send_recurring_order_accepted_internal(
+                routing["recurring_order_accepted_to"],
+                customer_name=ticket.get("customer_name", ""), order_ref=order_ref,
+            )
+        return {"success": True}
+    except HTTPException as e:
+        # Credit-limit block (402) — can't be silently overridden here, so
+        # leave the order confirmed-but-flagged for a staff member to review
+        # and confirm manually with an explicit override.
+        if e.status_code != 402:
+            raise
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {
+                "$set": {
+                    "customer_accepted_at": now, "needs_manual_confirm": True,
+                    "manual_confirm_reason": e.detail, "updated_at": now,
+                },
+                "$push": {"stage_history": {
+                    "status": ticket["status"], "exit_status": None,
+                    "actor_id": actor.get("id"), "actor_name": actor.get("name") or "system",
+                    "at": now, "note": f"Customer accepted, but auto-confirm was blocked: {e.detail}",
+                }},
+            },
+        )
+        if routing.get("recurring_order_needs_confirm_to"):
+            send_recurring_order_needs_confirm_internal(
+                routing["recurring_order_needs_confirm_to"],
+                customer_name=ticket.get("customer_name", ""), order_ref=order_ref, reason=e.detail,
+            )
+        return {"success": True, "needs_manual_confirm": True, "reason": e.detail}
+
+
+async def _decline_occurrence_core(ticket: dict) -> dict:
+    """Cancels the draft order in Odoo and closes the ticket. Unlike the
+    original implementation, a failed Odoo cancel is never swallowed — the
+    ticket is only ever marked declined once Odoo actually agrees (found live
+    2026-08-27: a blind cancel-and-mark-declined-regardless meant a portal
+    ticket could show "declined" while an already-confirmed order kept
+    progressing in Odoo, since occurrence_already_actioned() now blocks this
+    from being reached for that specific case anyway — this stays as defense
+    in depth for any other genuine Odoo refusal)."""
+    now = datetime.now(timezone.utc)
+    odoo = get_odoo_client()
+    if ticket.get("order_id"):
+        try:
+            odoo.execute("sale.order", "action_cancel", [ticket["order_id"]])
+        except Exception as e:
+            logger.warning("recurring_decline_cancel_failed",
+                            extra={"ticket_id": str(ticket["_id"]), "order_id": ticket["order_id"], "error": str(e)})
+            raise HTTPException(status_code=502, detail="Could not cancel this order. Please contact us directly.")
+
+    await col("tickets").update_one(
+        {"_id": ticket["_id"]},
+        {
+            "$set": {"customer_declined_at": now, "exit_status": "not_interested", "updated_at": now},
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": "not_interested",
+                "actor_id": None, "actor_name": "system",
+                "at": now, "note": "Customer declined the recurring order",
+            }},
+        },
+    )
+    routing = await get_email_routing()
+    if routing.get("recurring_order_declined_to"):
+        send_recurring_order_declined_internal(
+            routing["recurring_order_declined_to"],
+            customer_name=ticket.get("customer_name", ""), order_ref=f"#{ticket['order_id']}",
+        )
+    return {"success": True}
+
+
+# ── Customer self-service review — in-portal alternative to the emailed
+# token link (2026-08-27). Customer role only, for now — the recurring
+# notice email itself only ever goes to the end customer on the order
+# (sched["customer_email"], resolved from ticket.customer_id, never the
+# reseller), so a reseller has no equivalent notification to act on here yet.
+
+async def _require_recurring_review_access(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "customer":
+        raise HTTPException(status_code=403, detail="Access denied")
+    return current_user
+
+
+async def _get_own_pending_occurrence(ticket_id: str, current_user: dict) -> dict:
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket or ticket.get("type") != "sales" or ticket.get("source") != "recurring":
+        raise HTTPException(status_code=404, detail="Occurrence not found")
+    if _ticket_customer_partner_id(ticket) != current_user.get("customer_company_partner_id"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if occurrence_already_actioned(ticket):
+        raise HTTPException(status_code=400, detail="This order has already been actioned")
+    return ticket
+
+
+@router.get("/mine/pending")
+async def list_my_pending_occurrences(
+    current_user: dict = Depends(_require_recurring_review_access),
+):
+    """Every recurring-generated occurrence still awaiting this customer's
+    decision — powers the Dashboard banner and the Order Passport review
+    card. Recurring-generated tickets never carry customer_company_id (only
+    customer_id, set directly from the schedule at generation time), so a
+    plain equality is the correct match here — same value
+    _ticket_customer_partner_id() would resolve to for this ticket shape."""
+    partner_id = current_user.get("customer_company_partner_id")
+    rows = await col("tickets").find({
+        "type": "sales", "source": "recurring", "status": "quote",
+        "customer_id": partner_id,
+        "exit_status": None, "customer_accepted_at": None, "customer_declined_at": None,
+    }).sort("scheduled_for", 1).to_list(length=None)
+    out = []
+    for t in rows:
+        for k in ("scheduled_for", "created_at", "updated_at", "accept_token_expires_at"):
+            if t.get(k):
+                t[k] = t[k].isoformat()
+        out.append({
+            "ticket_id": str(t["_id"]),
+            "order_id": t.get("order_id"),
+            "customer_name": t.get("customer_name"),
+            "scheduled_for": t.get("scheduled_for"),
+        })
+    return {"occurrences": out, "total": len(out)}
+
+
+@router.post("/mine/{ticket_id}/accept")
+async def accept_my_occurrence(
+    ticket_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(_require_recurring_review_access),
+):
+    ticket = await _get_own_pending_occurrence(ticket_id, current_user)
+    return await _accept_occurrence_core(ticket, current_user, background_tasks)
+
+
+@router.post("/mine/{ticket_id}/decline")
+async def decline_my_occurrence(
+    ticket_id: str,
+    current_user: dict = Depends(_require_recurring_review_access),
+):
+    ticket = await _get_own_pending_occurrence(ticket_id, current_user)
+    return await _decline_occurrence_core(ticket)
 
 
 # ── Generation jobs — called from services/scheduler.py ──────────────────────

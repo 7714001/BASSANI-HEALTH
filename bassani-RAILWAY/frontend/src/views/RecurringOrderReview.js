@@ -32,7 +32,7 @@ export default function RecurringOrderReview() {
       await api.post(`/api/public/recurring/${token}/accept`);
       setOutcome("accepted");
     } catch (e) {
-      setError(e.response?.data?.detail || "Something went wrong. Please try again or contact Bassani Health.");
+      setError(e.response?.data?.detail || "Something went wrong. Please try again or contact us.");
     } finally {
       setSubmitting(false);
     }
@@ -44,7 +44,7 @@ export default function RecurringOrderReview() {
       await api.post(`/api/public/recurring/${token}/decline`);
       setOutcome("declined");
     } catch (e) {
-      setError(e.response?.data?.detail || "Something went wrong. Please try again or contact Bassani Health.");
+      setError(e.response?.data?.detail || "Something went wrong. Please try again or contact us.");
     } finally {
       setSubmitting(false);
     }
@@ -71,7 +71,7 @@ export default function RecurringOrderReview() {
           <h2 className="text-lg font-bold text-gray-900 mb-2">Link unavailable</h2>
           <p className="text-sm text-gray-500">{error}</p>
           <p className="text-xs text-gray-400 mt-4">
-            If you believe this is an error, please contact Bassani Health directly.
+            If you believe this is an error, please contact us directly.
           </p>
         </div>
       </div>
@@ -87,7 +87,7 @@ export default function RecurringOrderReview() {
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Order confirmed</h2>
           <p className="text-sm text-gray-500">
-            Thank you. Your order has been confirmed. Bassani Health will be in touch shortly with
+            Thank you. Your order has been confirmed. We'll be in touch shortly with
             payment details for the deposit due before it moves into fulfilment.
           </p>
         </div>

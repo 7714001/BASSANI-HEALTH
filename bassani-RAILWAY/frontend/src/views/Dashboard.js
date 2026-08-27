@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { Repeat } from "lucide-react";
 import api from "../api";
 import { useAuth } from "../AuthContext";
-import { TopBar, StatCard, LoadingState, ErrorState, Badge, fmtR, fmtDate } from "../components/UI";
+import { TopBar, StatCard, LoadingState, ErrorState, Badge, BtnPrimary, fmtR, fmtDate } from "../components/UI";
 
 // ── Pipeline status for the reseller/customer "Recent orders" widget
 // (2026-08-27, found live) — was showing Odoo's own raw 4-state badge
@@ -35,22 +36,33 @@ export default function Dashboard() {
   // dashboard view — the backend's /api/reports/dashboard has a matching
   // branch for each so neither ever sees business-wide admin KPIs.
   const isExternal = user?.role === "reseller" || user?.role === "customer";
+  const isCustomer = user?.role === "customer";
   const navigate = useNavigate();
   const [data,   setData  ] = useState(null);
   const [loading,setLoading] = useState(true);
   const [error,  setError ] = useState(null);
   const [target, setTarget] = useState(null);
+  // Pending recurring occurrences (2026-08-27) — customer-only banner
+  // pointing at the in-portal review flow on Order Passport (see that
+  // file's isPendingRecurringReview), so a customer with a login doesn't
+  // have to rely on the emailed token link to notice a regular order is
+  // waiting on them. Non-fatal if this call fails — it's a convenience
+  // banner, not core dashboard data.
+  const [pendingRecurring, setPendingRecurring] = useState([]);
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const [dashRes, targetRes] = await Promise.allSettled([
+      const calls = [
         api.get("/api/reports/dashboard"),
         api.get("/api/targets/current"),
-      ]);
+      ];
+      if (isCustomer) calls.push(api.get("/api/recurring-orders/mine/pending"));
+      const [dashRes, targetRes, pendingRes] = await Promise.allSettled(calls);
       if (dashRes.status === "fulfilled") setData(dashRes.value.data);
       else setError(dashRes.reason?.response?.data?.detail || "Failed to load dashboard");
       if (targetRes.status === "fulfilled") setTarget(targetRes.value.data);
+      if (isCustomer && pendingRes?.status === "fulfilled") setPendingRecurring(pendingRes.value.data.occurrences || []);
     } finally { setLoading(false); }
   };
 
@@ -64,6 +76,47 @@ export default function Dashboard() {
         {error   && <ErrorState message={error} onRetry={load} />}
         {data    && (
           <div className="space-y-5">
+
+            {/* Pending recurring orders (2026-08-27) — customer-only. Links
+                through to Order Passport rather than offering Accept/Decline
+                inline here, so there's exactly one place the actual review
+                logic lives (isPendingRecurringReview on OrderPassport.js). */}
+            {isCustomer && pendingRecurring.length > 0 && (
+              <div className="bg-bassani-50 border-2 border-bassani-200 rounded-xl px-5 py-4 flex items-start gap-3 flex-wrap">
+                <div className="w-9 h-9 rounded-xl bg-white border border-bassani-200 flex items-center justify-center shrink-0">
+                  <Repeat size={16} className="text-bassani-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-gray-900">
+                    {pendingRecurring.length === 1
+                      ? "You have a regular order awaiting your review"
+                      : `You have ${pendingRecurring.length} regular orders awaiting your review`}
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {pendingRecurring.length === 1
+                      ? `Scheduled for ${fmtDate(pendingRecurring[0].scheduled_for)}. Review it before it's automatically skipped.`
+                      : "Review each one before it's automatically skipped."}
+                  </p>
+                </div>
+                {pendingRecurring.length === 1 ? (
+                  <BtnPrimary onClick={() => navigate(`/orders/${pendingRecurring[0].order_id}/passport`)}>
+                    Review Order
+                  </BtnPrimary>
+                ) : (
+                  <div className="flex flex-col gap-1.5 w-full sm:w-auto">
+                    {pendingRecurring.map(o => (
+                      <button
+                        key={o.ticket_id}
+                        onClick={() => navigate(`/orders/${o.order_id}/passport`)}
+                        className="text-left text-xs font-medium text-bassani-700 hover:text-bassani-900 hover:underline"
+                      >
+                        Order #{o.order_id} · {fmtDate(o.scheduled_for)} →
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Reseller KPI row — admins skip this and go straight to Channel Performance */}
             {isExternal && (

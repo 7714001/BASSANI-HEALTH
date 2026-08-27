@@ -473,6 +473,54 @@ export default function OrderPassport() {
     }
   };
 
+  // Recurring order review, in-portal (2026-08-27) — a customer previously
+  // had no way to accept/decline a recurring occurrence except the emailed
+  // token link, even with a portal login. Same accept/decline logic the
+  // public page uses (recurring_order_routes.py's _accept_occurrence_core/
+  // _decline_occurrence_core, shared with public_routes.py's token
+  // endpoints), just authenticated and keyed by ticket_id instead of a
+  // token. Customer role only for now — the recurring notice email itself
+  // only ever goes to the end customer, never a reseller, so there's no
+  // reseller-facing occurrence to review yet.
+  const [recurAccepting, setRecurAccepting] = useState(false);
+  const [recurDeclining, setRecurDeclining] = useState(false);
+  const [recurDeclineConfirm, setRecurDeclineConfirm] = useState(false);
+
+  const doAcceptRecurring = async () => {
+    const ticketId = data?.ticket?.ticket_id;
+    if (!ticketId) return;
+    setRecurAccepting(true);
+    try {
+      const { data: res } = await api.post(`/api/recurring-orders/mine/${ticketId}/accept`);
+      if (res.needs_manual_confirm) {
+        toast("Thanks! Your order needs a quick check from our team before it's confirmed. We'll be in touch shortly.", { icon: "ℹ️", duration: 8000 });
+      } else {
+        toast.success("Order confirmed. You'll receive an email shortly with your 50% deposit invoice.");
+      }
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to accept order");
+    } finally {
+      setRecurAccepting(false);
+    }
+  };
+
+  const doDeclineRecurring = async () => {
+    const ticketId = data?.ticket?.ticket_id;
+    if (!ticketId) return;
+    setRecurDeclining(true);
+    try {
+      await api.post(`/api/recurring-orders/mine/${ticketId}/decline`);
+      toast.success("Order declined. Your regular schedule will continue as normal.");
+      setRecurDeclineConfirm(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to decline order");
+    } finally {
+      setRecurDeclining(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -528,6 +576,14 @@ export default function OrderPassport() {
   if (!data) return null;
 
   const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status, support_email, age_tier } = data;
+  // Recurring order review (2026-08-27) — true while this order is a
+  // recurring-generated occurrence still awaiting the customer's decision.
+  // Mirrors occurrence_already_actioned()'s conditions on the backend, minus
+  // the expiry check (this page requires a login, unlike the emailed token,
+  // so there's no separate link-expiry concept here).
+  const isPendingRecurringReview =
+    isCustomer && ticket?.source === "recurring" && ticket?.status === "quote"
+    && !ticket?.exit_status && !ticket?.customer_accepted_at && !ticket?.customer_declined_at;
   const partner            = order.partner_detail || {};
   const hasPartialDelivery = deliveries.some(d => d.state === "done");
   const outstandingLines   = (order.lines || []).filter(
@@ -650,16 +706,23 @@ export default function OrderPassport() {
               only existed inside the OrderView.js modal the order list no
               longer opens for this role. Stays in the toolbar (not the new
               Actions card below) since it's urgent/primary for a draft order,
-              not a routine management action like Reorder/Make Recurring. */}
-          {(isReseller || isCustomer) && order.state === "draft" && (
+              not a routine management action like Reorder/Make Recurring.
+              Hidden while isPendingRecurringReview (2026-08-27) — a
+              recurring occurrence uses the dedicated Accept/Decline card
+              below instead, which also stamps customer_accepted_at and
+              notifies staff; the generic Confirm here would silently skip
+              both. */}
+          {(isReseller || isCustomer) && order.state === "draft" && !isPendingRecurringReview && (
             <BtnPrimary onClick={() => doConfirmOrder(false)} loading={confirming}>
               <CheckCircle2 size={13} />Confirm Order
             </BtnPrimary>
           )}
           {/* Self-cancel (2026-08-25) — draft only, matches the Confirm
               Order gate exactly; a confirmed order still goes through
-              Bassani (contact via the Need Help card below). */}
-          {(isReseller || isCustomer) && order.state === "draft" && (
+              Bassani (contact via the Need Help card below). Hidden while
+              isPendingRecurringReview, same reasoning as Confirm Order above
+              — use Decline instead. */}
+          {(isReseller || isCustomer) && order.state === "draft" && !isPendingRecurringReview && (
             <BtnDanger onClick={() => setCancelConfirm(true)}>
               <X size={13} />Cancel Order
             </BtnDanger>
@@ -793,6 +856,41 @@ export default function OrderPassport() {
               />
             </div>
           </div>
+
+          {/* ── Recurring order review (2026-08-27) ──────────────────────────
+              In-portal alternative to the emailed token link at
+              /recurring/:token — a customer with a login previously had no
+              way to accept/decline except that email, even though this
+              order already sits right here on their own Order Passport.
+              Full-width and placed directly under the hero, ahead of
+              everything else, since deciding is the one thing that actually
+              needs this customer's attention on this page right now. */}
+          {isPendingRecurringReview && (
+            <div className="mb-4 bg-bassani-50 border-2 border-bassani-200 rounded-2xl p-5">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-white border border-bassani-200 flex items-center justify-center shrink-0">
+                  <Repeat size={16} className="text-bassani-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-gray-900">This is your regular recurring order</h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {ticket.scheduled_for ? `Prepared for ${fmtDate(ticket.scheduled_for)}. ` : ""}
+                    Please review the order above and let us know if you'd like it to go ahead.
+                    If you don't respond in time, this occurrence will simply be skipped and your
+                    regular schedule will continue as normal.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <BtnPrimary onClick={doAcceptRecurring} loading={recurAccepting}>
+                      <CheckCircle2 size={13} />Accept this order
+                    </BtnPrimary>
+                    <BtnSecondary onClick={() => setRecurDeclineConfirm(true)} disabled={recurAccepting}>
+                      <XCircle size={13} />Decline this order
+                    </BtnSecondary>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Invoice creation failure banner (2026-08-27) — same persistent
               signal OrdersTickets.js shows, surfaced here too so Finance
@@ -1628,6 +1726,18 @@ export default function OrderPassport() {
           <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setCancelConfirm(false)}>Keep Order</BtnSecondary>
             <BtnDanger onClick={doCancelOrder} loading={cancelling}>Cancel Order</BtnDanger>
+          </div>
+        </Modal>
+      )}
+      {recurDeclineConfirm && (
+        <Modal title="Decline This Order" onClose={() => setRecurDeclineConfirm(false)}>
+          <p className="text-sm text-gray-600 mb-4">
+            Decline order <strong>{order.name}</strong>? This occurrence will not go ahead.
+            Your regular ordering schedule will continue as normal from the next date.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnSecondary onClick={() => setRecurDeclineConfirm(false)} disabled={recurDeclining}>Never mind</BtnSecondary>
+            <BtnDanger onClick={doDeclineRecurring} loading={recurDeclining}>Decline Order</BtnDanger>
           </div>
         </Modal>
       )}

@@ -2,7 +2,7 @@
 // schedules: pause/resume/cancel, and a per-schedule occurrence history.
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw, Pause, Play, Ban, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import { RefreshCw, Pause, Play, Ban, Zap, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
 import {
@@ -35,6 +35,11 @@ function ScheduleRow({ sched, onAction, expanded, onToggle, occurrences, loading
         <td className="p-3 text-sm text-gray-600 text-center">{sched.occurrences_generated || 0}</td>
         <td className="p-3"><Badge color={STATUS_COLOR[sched.status] || "gray"}>{STATUS_LABEL[sched.status] || sched.status}</Badge></td>
         <td className="p-3 text-right whitespace-nowrap">
+          {sched.status === "active" && (
+            <button onClick={() => onAction("run-now", sched)} className="text-bassani-600 hover:text-bassani-800 p-1.5 rounded-lg hover:bg-bassani-50" title="Run Now">
+              <Zap size={14} />
+            </button>
+          )}
           {sched.status === "active" && (
             <button onClick={() => onAction("pause", sched)} className="text-amber-600 hover:text-amber-800 p-1.5 rounded-lg hover:bg-amber-50" title="Pause">
               <Pause size={14} />
@@ -120,20 +125,22 @@ export default function RecurringOrders() {
 
   useEffect(() => { load(); }, [load]);
 
+  const fetchOccurrences = async (id) => {
+    setLoadingOccurrences(true);
+    try {
+      const r = await api.get(`/api/recurring-orders/${id}`);
+      setOccurrenceCache(c => ({ ...c, [id]: r.data.occurrences || [] }));
+    } catch {
+      toast.error("Failed to load occurrence history");
+    } finally {
+      setLoadingOccurrences(false);
+    }
+  };
+
   const toggleExpand = async (id) => {
     if (expandedId === id) { setExpandedId(null); return; }
     setExpandedId(id);
-    if (!occurrenceCache[id]) {
-      setLoadingOccurrences(true);
-      try {
-        const r = await api.get(`/api/recurring-orders/${id}`);
-        setOccurrenceCache(c => ({ ...c, [id]: r.data.occurrences || [] }));
-      } catch {
-        toast.error("Failed to load occurrence history");
-      } finally {
-        setLoadingOccurrences(false);
-      }
-    }
+    if (!occurrenceCache[id]) await fetchOccurrences(id);
   };
 
   const runAction = async () => {
@@ -143,9 +150,15 @@ export default function RecurringOrders() {
     try {
       await api.post(`/api/recurring-orders/${sched.id}/${type}`);
       toast.success(
-        type === "pause" ? "Schedule paused" : type === "resume" ? "Schedule resumed" : "Schedule cancelled"
+        type === "run-now" ? "Occurrence generated — customer notified"
+        : type === "pause" ? "Schedule paused"
+        : type === "resume" ? "Schedule resumed" : "Schedule cancelled"
       );
       setActionModal(null);
+      // Re-fetch this schedule's occurrence history if it's the one currently
+      // expanded, so a freshly-generated occurrence from Run Now shows up
+      // immediately rather than waiting behind the stale cache.
+      if (type === "run-now" && expandedId === sched.id) await fetchOccurrences(sched.id);
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Action failed");
@@ -230,6 +243,7 @@ export default function RecurringOrders() {
           title={
             actionModal.type === "pause" ? "Pause Schedule"
             : actionModal.type === "resume" ? "Resume Schedule"
+            : actionModal.type === "run-now" ? "Run Occurrence Now"
             : "Cancel Schedule"
           }
           onClose={() => setActionModal(null)}
@@ -237,6 +251,7 @@ export default function RecurringOrders() {
           <p className="text-sm text-gray-600 mb-4">
             {actionModal.type === "pause" && `Pause the recurring schedule for ${actionModal.sched.customer_name}? No further occurrences will be generated until it's resumed.`}
             {actionModal.type === "resume" && `Resume the recurring schedule for ${actionModal.sched.customer_name}? It will continue generating occurrences from its next scheduled date.`}
+            {actionModal.type === "run-now" && `Generate the next occurrence for ${actionModal.sched.customer_name} right now, instead of waiting for the scheduled date? This is not a preview — it creates a real draft order in Odoo and emails ${actionModal.sched.customer_email || "the customer on file"} a real review link, exactly as the daily job would. The schedule's next run date will advance as normal.`}
             {actionModal.type === "cancel" && `Cancel the recurring schedule for ${actionModal.sched.customer_name}? This cannot be undone — a new schedule would need to be set up from scratch.`}
           </p>
           <div className="flex justify-end gap-2">
@@ -245,7 +260,7 @@ export default function RecurringOrders() {
               <BtnDanger onClick={runAction} loading={acting}>Cancel Schedule</BtnDanger>
             ) : (
               <BtnPrimary onClick={runAction} loading={acting}>
-                {actionModal.type === "pause" ? "Pause" : "Resume"}
+                {actionModal.type === "pause" ? "Pause" : actionModal.type === "run-now" ? "Generate Now" : "Resume"}
               </BtnPrimary>
             )}
           </div>

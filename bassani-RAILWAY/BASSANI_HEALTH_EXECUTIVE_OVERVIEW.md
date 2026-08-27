@@ -304,7 +304,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Customer onboarding — 5-step application, document collection, admin review | Live |
 | Customer document upload request — admin sends a secure, time-limited upload link to an existing customer; status tracked on profile | Live |
 | Sales ticket pipeline — inquiry → quote → confirm → 50% deposit registered → packing → QA/RP → invoice → collect. The deposit is a mandatory step for every order, with an automatic pro-forma invoice emailed to the customer the moment their order is confirmed. | Live |
-| Recurring orders — a ticket can be set to repeat weekly, every two weeks, or monthly; the customer is emailed directly to confirm or decline each occurrence 2 days ahead, with no portal login required; a missed response simply skips that occurrence and the schedule continues | Live |
+| Recurring orders — a ticket can be set to repeat weekly, every two weeks, or monthly; the customer is emailed directly to confirm or decline each occurrence 2 days ahead, with no portal login required, and a customer with their own portal login can review and decide from inside the portal instead (Dashboard banner + a card on the order itself); a missed response simply skips that occurrence and the schedule continues | Live |
 | Email inbox integration — sales@ and orders@ mailboxes connected to the portal; documents saveable directly to onboarding applications from inbox | Live |
 | Packing board — real-time warehouse floor with QA/RP approval | Live |
 | Finance — invoice management, payment confirmation, credit limit enforcement | Live |

@@ -1258,7 +1258,8 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
          "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1,
-         "stage_history": 1},
+         "stage_history": 1, "scheduled_for": 1, "customer_accepted_at": 1,
+         "customer_declined_at": 1, "needs_manual_confirm": 1, "manual_confirm_reason": 1},
     )
     ticket_out = None
     if ticket:
@@ -1310,6 +1311,16 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             ],
             "pop_awaiting_review": bool(ticket.get("pop_awaiting_review")),
             "stage_history": ticket.get("stage_history") or [],
+            # Recurring occurrence review (2026-08-27) — lets OrderPassport.js
+            # show a dedicated Accept/Decline card in place of the generic
+            # Confirm/Cancel buttons when this order is a still-pending
+            # recurring occurrence (source == "recurring", none of these set
+            # yet). See recurring_order_routes.py's occurrence_already_actioned().
+            "scheduled_for": ticket.get("scheduled_for"),
+            "customer_accepted_at": ticket.get("customer_accepted_at"),
+            "customer_declined_at": ticket.get("customer_declined_at"),
+            "needs_manual_confirm": bool(ticket.get("needs_manual_confirm")),
+            "manual_confirm_reason": ticket.get("manual_confirm_reason"),
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────
@@ -2092,6 +2103,13 @@ async def _confirm_order_core(
                 {"_id": _sales_ticket["_id"]},
                 {
                     "$set": {"status": "awaiting_deposit", "updated_at": _now_c},
+                    # Clears a stale recurring-order "needs manual confirm" flag
+                    # (public_routes.py's accept endpoint) the moment this ticket
+                    # actually reaches awaiting_deposit by any path — otherwise a
+                    # credit-block flag set once, then resolved by a normal manual
+                    # confirm, stayed true forever and RecurringOrders.js kept
+                    # showing "Needs manual confirm" on an already-confirmed order.
+                    "$unset": {"needs_manual_confirm": "", "manual_confirm_reason": ""},
                     "$push": {"stage_history": {
                         "status": "awaiting_deposit", "exit_status": None,
                         # Found live 2026-08-27: this always wrote "system"
