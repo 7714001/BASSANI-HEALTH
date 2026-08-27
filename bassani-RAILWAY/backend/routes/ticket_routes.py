@@ -254,6 +254,15 @@ def _serialize(t: dict) -> dict:
     # uses for the Operations Monitor's Quotes/Deposit columns, so this
     # ticket's badge can never disagree with its own card on that board.
     t.update(ticket_age_fields(t))
+    # Self-heal (2026-08-27): create_ticket used to fall back to the raw
+    # assigned_to ObjectId string as assigned_to_name on a failed/missing
+    # user lookup (fixed at the source above) — a ticket written before that
+    # fix still has the ID permanently stored as its "name". Rather than a
+    # one-off data migration, null it out on read so it displays the normal
+    # "Unassigned" state instead of a raw ID, same self-heal-on-read
+    # convention already used for historical audit rows (middleware/audit.py).
+    if t.get("assigned_to_name") and t["assigned_to_name"] == t.get("assigned_to"):
+        t["assigned_to_name"] = None
     return t
 
 
@@ -428,7 +437,12 @@ async def create_ticket(
             _au = await col("users").find_one({"_id": ObjectId(body.assigned_to)}, {"name": 1, "username": 1, "role": 1})
         except Exception:
             _au = None
-        _assignee_name = (_au.get("name") or _au.get("username")) if _au else body.assigned_to
+        # Found live 2026-08-27: on a failed/missing lookup this fell back to
+        # the raw Mongo ObjectId string, which the frontend then displayed
+        # verbatim as the "Assigned to" name instead of a person's name.
+        # None matches update_ticket_stage's own already-correct fallback
+        # for the identical lookup a few lines below in this file.
+        _assignee_name = (_au.get("name") or _au.get("username")) if _au else None
         _assignee_role = _au.get("role", "") if _au else ""
     doc = {
         "type": "sales",

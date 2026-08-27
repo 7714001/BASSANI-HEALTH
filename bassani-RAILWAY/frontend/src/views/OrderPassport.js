@@ -660,12 +660,9 @@ export default function OrderPassport() {
               (2026-08-25) — that's where this role actually looks for order
               billing documents, consolidated with the real invoice list
               rather than split between the toolbar and a sidebar card.
-              Staff keep the toolbar button, unchanged. */}
-          {!isReseller && !isCustomer && (
-            <BtnSecondary onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}>
-              <FileSearch size={13} /><span className="hidden sm:inline">View Quote (Odoo)</span>
-            </BtnSecondary>
-          )}
+              Staff's own "View Quote (Odoo)" moved out of the toolbar too
+              (2026-08-27, product owner: too easy to miss up here) — now
+              lives as a top-right action on the Order Lines card itself. */}
           <BtnSecondary onClick={load}>
             <RefreshCw size={13} /><span className="hidden sm:inline">Refresh</span>
           </BtnSecondary>
@@ -807,9 +804,21 @@ export default function OrderPassport() {
               {/* ── Order lines ──────────────────────────────────────────────── */}
               {order.lines?.length > 0 && (
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                    <ClipboardCheck size={12} />Order Lines
-                  </p>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                      <ClipboardCheck size={12} />Order Lines
+                    </p>
+                    {/* Staff-only "View Quote (Odoo)" (2026-08-27, moved out
+                        of the toolbar — too easy to miss up there). */}
+                    {!isReseller && !isCustomer && (
+                      <button
+                        onClick={() => setPdfView({ url: `/api/orders/${orderId}/quote-pdf`, title: `${order.name} — Quotation` })}
+                        className="flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 font-medium shrink-0"
+                      >
+                        <FileSearch size={11} />View Quote (Odoo)
+                      </button>
+                    )}
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
@@ -1168,7 +1177,8 @@ export default function OrderPassport() {
                   every order document lives in one place instead of split
                   across the app bar and two different card states. Staff
                   keep the original Invoice(s)/Invoice card unchanged below,
-                  reached via the toolbar's own "View Quote (Odoo)" button
+                  reached via the "View Quote (Odoo)" action on the Order
+                  Lines card (2026-08-27, moved out of the toolbar itself)
                   for the quotation instead. */}
               {(isReseller || isCustomer) ? (
                 <SideCard
