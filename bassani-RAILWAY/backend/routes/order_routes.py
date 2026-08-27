@@ -934,7 +934,13 @@ async def get_order_quote_pdf(order_id: str, current_user: dict = Depends(get_cu
         pdf_bytes = fetch_report_pdf("sale.report_saleorder", [resolved_id])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch quote PDF from Odoo: {str(e)}")
-    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    # Odoo returns False (a bool), not None/"", for an unset Char field —
+    # defensive fallback matching the fix for the identical crash on a
+    # still-draft invoice's name in invoice_routes.py::get_invoice_pdf
+    # (2026-08-27). Lower risk here in practice (sale.order/stock.picking
+    # names are assigned at creation, not deferred like an invoice's
+    # sequence number), but the same guard costs nothing.
+    filename = f"{(rows[0].get('name') or 'document').replace('/', '-')}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -976,7 +982,9 @@ async def get_order_proforma_pdf(order_id: str, current_user: dict = Depends(get
         pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [resolved_id])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch pro-forma invoice from Odoo: {str(e)}")
-    filename = f"{rows[0]['name'].replace('/', '-')}-proforma.pdf"
+    # Same defensive fallback as the other PDF filename builders in this
+    # file (2026-08-27) — Odoo returns False, not None/"", for an unset name.
+    filename = f"{(rows[0].get('name') or 'document').replace('/', '-')}-proforma.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -1007,7 +1015,13 @@ async def get_delivery_pdf(order_id: str, picking_id: int, current_user: dict = 
         pdf_bytes = fetch_report_pdf("stock.report_deliveryslip", [picking_id])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch delivery slip PDF from Odoo: {str(e)}")
-    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    # Odoo returns False (a bool), not None/"", for an unset Char field —
+    # defensive fallback matching the fix for the identical crash on a
+    # still-draft invoice's name in invoice_routes.py::get_invoice_pdf
+    # (2026-08-27). Lower risk here in practice (sale.order/stock.picking
+    # names are assigned at creation, not deferred like an invoice's
+    # sequence number), but the same guard costs nothing.
+    filename = f"{(rows[0].get('name') or 'document').replace('/', '-')}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

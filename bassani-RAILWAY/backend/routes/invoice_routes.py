@@ -367,7 +367,13 @@ async def get_invoice_pdf(invoice_id: int, current_user: dict = Depends(get_curr
         pdf_bytes = fetch_report_pdf("account.report_invoice_with_payments", [invoice_id])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch invoice PDF from Odoo: {str(e)}")
-    filename = f"{rows[0]['name'].replace('/', '-')}.pdf"
+    # Odoo returns False (not None/""), a bool, for an unset Char field over
+    # XML-RPC — a still-draft invoice has no sequence number assigned yet
+    # (only happens at posting), so .replace() on it raised AttributeError:
+    # 'bool' object has no attribute 'replace' (found live 2026-08-27,
+    # viewing a draft invoice's PDF before it had been posted).
+    invoice_name = rows[0].get("name") or f"invoice-{invoice_id}"
+    filename = f"{invoice_name.replace('/', '-')}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

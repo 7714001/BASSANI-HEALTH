@@ -4,7 +4,7 @@ import bwipjs from "bwip-js";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight } from "lucide-react";
+import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight, Eye, CreditCard } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow, Pager,
   Modal, FormGroup, Input, Select, Textarea,
@@ -58,6 +58,34 @@ function PaymentBadge({ state }) {
 function fmt(n) {
   if (n == null) return "—";
   return new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+// ── Row action chip (2026-08-27) — replaces the plain text/underline links
+// the row actions used to be with an actual compact button (background +
+// border), so a row with several conditional actions (View/Send/Pay/Draft/
+// CN/Ticket) reads as a cluster of distinct buttons rather than a run of
+// inline text. Deliberately small (px-2 py-1, text-[11px]) rather than the
+// standard BtnSecondary size — a data table row with up to 6 possible
+// actions needs to stay compact, not full-size buttons stacked in one cell.
+const ACTION_CHIP_COLOR = {
+  bassani: "bg-bassani-50 text-bassani-700 border-bassani-100 hover:bg-bassani-100",
+  blue:    "bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100",
+  green:   "bg-green-50 text-green-700 border-green-100 hover:bg-green-100",
+  amber:   "bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-100",
+  purple:  "bg-purple-50 text-purple-700 border-purple-100 hover:bg-purple-100",
+};
+function ActionChip({ onClick, disabled, loading, icon: Icon, color = "bassani", title, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      title={title}
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${ACTION_CHIP_COLOR[color] || ACTION_CHIP_COLOR.bassani}`}
+    >
+      {loading ? <Loader2 size={11} className="animate-spin" /> : Icon && <Icon size={11} />}
+      {children}
+    </button>
+  );
 }
 
 // canvas → PNG data URL so the barcode survives the innerHTML → new window print copy
@@ -310,12 +338,9 @@ function InvoiceOrderGroupRow({ group, defaultExpanded, navigate, onView }) {
                   <span className="text-[10px] text-red-600 font-medium whitespace-nowrap">{fmtR(inv.amount_residual)} due</span>
                 )}
               </div>
-              <button
-                onClick={() => onView(inv)}
-                className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline shrink-0"
-              >
+              <ActionChip onClick={() => onView(inv)} icon={Eye} color="bassani">
                 View
-              </button>
+              </ActionChip>
             </div>
           </td>
         </tr>
@@ -768,67 +793,40 @@ export default function Invoices() {
                 const isSending  = sendingId === inv.id;
                 const isCreating = creatingTicketId === inv.id;
                 return (
-                  <div className="flex items-center gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
-                    {/* View portal invoice */}
-                    <button
-                      onClick={() => openViewInvoice(inv)}
-                      disabled={viewLoading}
-                      className="text-xs text-bassani-600 hover:text-bassani-700 font-medium hover:underline disabled:opacity-40">
+                  <div className="flex items-center gap-1.5 flex-wrap" onClick={e => e.stopPropagation()}>
+                    <ActionChip onClick={() => openViewInvoice(inv)} disabled={viewLoading} icon={Eye} color="bassani">
                       View
-                    </button>
+                    </ActionChip>
 
-                    {/* Send invoice */}
                     {isPosted && isOutInv && canFinance && (
-                      <button
-                        onClick={() => sendInvoice(inv)}
-                        disabled={isSending}
-                        className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-bassani-600 font-medium transition-colors disabled:opacity-40"
-                        title="Send invoice email to customer">
-                        {isSending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                      <ActionChip onClick={() => sendInvoice(inv)} loading={isSending} icon={Send} color="blue" title="Send invoice email to customer">
                         Send
-                      </button>
+                      </ActionChip>
                     )}
 
-                    {/* Register payment */}
                     {isPosted && inv.payment_state !== "paid" && isOutInv && canRecordPayment && (
-                      <button
-                        onClick={() => openPayModal(inv)}
-                        className="flex items-center gap-0.5 text-xs text-green-700 hover:text-green-800 font-medium transition-colors"
-                        title="Register a payment against this invoice">
+                      <ActionChip onClick={() => openPayModal(inv)} icon={CreditCard} color="green" title="Register a payment against this invoice">
                         Pay
-                      </button>
+                      </ActionChip>
                     )}
 
-                    {/* Reset to draft */}
                     {isPosted && isUnpaid && isOutInv && canFinance && isAdmin && (
-                      <button
-                        onClick={() => setResetConfirm(inv)}
-                        className="flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors"
-                        title="Reset to draft">
-                        <RotateCcw size={11} />Draft
-                      </button>
+                      <ActionChip onClick={() => setResetConfirm(inv)} icon={RotateCcw} color="amber" title="Reset to draft">
+                        Draft
+                      </ActionChip>
                     )}
 
-                    {/* Credit note */}
                     {isPosted && isOutInv && canFinance && (
-                      <button
-                        onClick={() => openCreditNote(inv)}
-                        className="flex items-center gap-0.5 text-xs text-purple-600 hover:text-purple-700 font-medium transition-colors"
-                        title="Raise credit note">
-                        <FileX size={11} />CN
-                      </button>
+                      <ActionChip onClick={() => openCreditNote(inv)} icon={FileX} color="purple" title="Raise credit note">
+                        CN
+                      </ActionChip>
                     )}
 
                     {/* Create Sales Ticket — only when linked order exists and no ticket yet */}
                     {inv.sale_order_id && !inv.linked_ticket_id && isAdmin && (
-                      <button
-                        onClick={() => createTicket(inv)}
-                        disabled={isCreating}
-                        className="flex items-center gap-0.5 text-xs text-green-600 hover:text-green-700 font-medium transition-colors disabled:opacity-40"
-                        title="Create a Sales Ticket for the linked order">
-                        {isCreating ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                      <ActionChip onClick={() => createTicket(inv)} loading={isCreating} icon={Plus} color="green" title="Create a Sales Ticket for the linked order">
                         Ticket
-                      </button>
+                      </ActionChip>
                     )}
                   </div>
                 );
