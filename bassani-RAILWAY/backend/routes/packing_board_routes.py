@@ -127,13 +127,14 @@ async def _with_ticket_summary(entry: dict) -> dict:
     try:
         ticket = await col("tickets").find_one(
             {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None},
-            {"source": 1, "assigned_to_name": 1},
+            {"source": 1, "assigned_to_name": 1, "stage_history": 1},
         )
     except (ValueError, TypeError):
         pass
     entry["ticket_id"] = str(ticket["_id"]) if ticket else None
     entry["ticket_source"] = ticket.get("source") if ticket else None
     entry["ticket_assigned_to_name"] = ticket.get("assigned_to_name") if ticket else None
+    entry["ticket_stage_history"] = (ticket.get("stage_history") or []) if ticket else []
     return entry
 
 
@@ -231,6 +232,7 @@ async def _sync_sales_ticket(
     outcome: str,
     reason: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    actor: Optional[dict] = None,
 ):
     """
     Phase 8.4 — write an Orders outcome (complete/incomplete/cancelled) back
@@ -242,6 +244,14 @@ async def _sync_sales_ticket(
     background_tasks is optional and only used for the ready_for_collection
     customer-notification email below — callers that don't need it (or that
     never reach that outcome) can omit it.
+
+    actor (2026-08-27 fix) — every one of this function's five call sites
+    already had a real current_user in scope, but the stage_history entry
+    pushed below always hardcoded "system" regardless, throwing away who
+    actually clicked Mark Complete / Report Packing Issue / Cancel / Admin
+    Override. Optional (not every caller has one — none currently omit it,
+    but this stays a real gate rather than a silent assumption) so a missing
+    actor still degrades to "system" rather than crashing.
     """
     try:
         ticket = await col("tickets").find_one(
@@ -265,7 +275,9 @@ async def _sync_sales_ticket(
             {"$set": updates, "$push": {"stage_history": {
                 "status": updates.get("status", ticket["status"]),
                 "exit_status": updates.get("exit_status"),
-                "actor_id": None, "actor_name": "system", "at": now,
+                "actor_id": (actor or {}).get("id"),
+                "actor_name": (actor or {}).get("name") or (actor or {}).get("username") or "system",
+                "at": now,
                 "note": f"Orders ticket reached '{outcome}'" + (f": {reason}" if reason else ""),
             }}},
         )
@@ -1167,7 +1179,7 @@ async def complete_entry(
     )
     await _sync_sales_ticket(
         body.order_id, "partially_fulfilled" if is_partial else "ready_for_collection",
-        background_tasks=background_tasks,
+        background_tasks=background_tasks, actor=current_user,
     )
 
     _routing = await get_email_routing()
@@ -1367,7 +1379,7 @@ async def mark_collected(
     relevant = [e for e in all_entries if not e.get("waiting_stock")]
     all_collected = bool(relevant) and all(e.get("collected_at") is not None for e in relevant)
     if all_collected:
-        await _sync_sales_ticket(body.order_id, "complete")
+        await _sync_sales_ticket(body.order_id, "complete", actor=current_user)
 
     await broadcast_monitor_refresh()
     return {
@@ -1607,7 +1619,7 @@ async def mark_incomplete(
     await push_update(updated)
     await audit_log("packing.incomplete", "packing_board", body.order_id, entity_label=body.order_id,
                     user=current_user, detail={"reason": body.reason})
-    await _sync_sales_ticket(body.order_id, "incomplete", body.reason)
+    await _sync_sales_ticket(body.order_id, "incomplete", body.reason, actor=current_user)
     return {"success": True}
 
 
@@ -1633,7 +1645,7 @@ async def cancel_entry(
     await push_update(updated)
     await audit_log("packing.cancelled", "packing_board", body.order_id, entity_label=body.order_id,
                     user=current_user, detail={"reason": body.reason})
-    await _sync_sales_ticket(body.order_id, "cancelled", body.reason)
+    await _sync_sales_ticket(body.order_id, "cancelled", body.reason, actor=current_user)
     return {"success": True}
 
 
@@ -1883,7 +1895,7 @@ async def override_status(
         "collected":  "complete",
     }.get(body.status)
     if _ticket_outcome:
-        await _sync_sales_ticket(body.order_id, _ticket_outcome, background_tasks=background_tasks)
+        await _sync_sales_ticket(body.order_id, _ticket_outcome, background_tasks=background_tasks, actor=current_user)
 
     return {"success": True}
 

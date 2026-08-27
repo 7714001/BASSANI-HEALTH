@@ -1257,7 +1257,8 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
         {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1, "assigned_to_name": 1,
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
-         "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1},
+         "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1,
+         "stage_history": 1},
     )
     ticket_out = None
     if ticket:
@@ -1308,6 +1309,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
                 for u in (ticket.get("pop_uploads") or [])
             ],
             "pop_awaiting_review": bool(ticket.get("pop_awaiting_review")),
+            "stage_history": ticket.get("stage_history") or [],
         }
 
     # ── Packing board entry ───────────────────────────────────────────────────
@@ -2092,7 +2094,13 @@ async def _confirm_order_core(
                     "$set": {"status": "awaiting_deposit", "updated_at": _now_c},
                     "$push": {"stage_history": {
                         "status": "awaiting_deposit", "exit_status": None,
-                        "actor_id": None, "actor_name": "system",
+                        # Found live 2026-08-27: this always wrote "system"
+                        # regardless of who actually confirmed the order —
+                        # current_user has been a real parameter of this
+                        # function the whole time (used a few lines up for
+                        # the ownership check), just never read here.
+                        "actor_id": current_user.get("id"),
+                        "actor_name": current_user.get("name") or current_user.get("username") or "system",
                         "at": _now_c, "note": "Order confirmed — awaiting 50% deposit",
                     }},
                 },

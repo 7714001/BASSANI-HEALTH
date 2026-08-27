@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import {
-  FileText, CheckCircle2, X, Package, ClipboardCheck, Truck, Check, Clock,
+  FileText, CheckCircle2, X, Package, ClipboardCheck, Truck, Check, Clock, History,
 } from "lucide-react";
 import { fmtDate } from "./UI";
 
@@ -259,6 +259,14 @@ export function HorizontalTimelineCard({ order, ticket, packing, invoices, manuf
                   )
                 )}
                 {s.at && <p className="text-[10px] text-gray-400 mt-0.5">{fmtDate(s.at)}</p>}
+                {/* Actor caption (2026-08-27) — already computed by
+                    buildTimelineSteps() for Packing/QA/RP/Collected (packer
+                    name, qa/rp approver, who marked collected) but never
+                    rendered until now. Only shown once the step has actually
+                    started (not "pending"), same gate as the date above. */}
+                {s.by && s.state !== "pending" && (
+                  <p className="text-[10px] text-gray-400 truncate max-w-[84px]" title={s.by}>by {s.by}</p>
+                )}
               </div>
               {!isLast && (
                 <div className={`h-0.5 flex-1 min-w-[20px] mt-4 ${connectorDone ? "bg-bassani-600" : "bg-gray-200"}`} />
@@ -266,6 +274,54 @@ export function HorizontalTimelineCard({ order, ticket, packing, invoices, manuf
             </Fragment>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Activity Log — "who did what, when" (2026-08-27) ────────────────────────
+// Extracted from SalesTickets.js's own inline "Timeline" card, which read a
+// ticket's stage_history array directly — every ticket-level status push
+// already carries a real actor_name (ticket create, confirm, deposit/balance
+// payment registration, admin overrides, exit statuses), so this needed no
+// new backend field, only fixing two write sites that had been hardcoding
+// "system" regardless of who actually acted (_confirm_order_core,
+// packing_board_routes.py's _sync_sales_ticket). A separate card from the
+// HorizontalTimelineCard above on purpose: that one is a compact, sleek
+// lifecycle-stage stepper (only 4 of its ~9 nodes carry a free actor caption
+// via `by`); this one is the genuinely complete, chronological "who did
+// what" record, scrollable rather than cramped into a stepper node.
+//
+// `labelFor` defaults to ticketStageLabel (this file's own status
+// vocabulary) but SalesTickets.js passes its own richer STATUS_LABEL/
+// EXIT_LABEL maps (e.g. "In Fulfilment" vs this file's "In Progress") so
+// wording already established as this app's ticket-status copy on that page
+// doesn't silently change just because the card was shared.
+export function ActivityLogCard({ history = [], title = "Activity Log", labelFor = ticketStageLabel }) {
+  const entries = (history || []).slice().reverse();
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+        <History size={12} />{title}
+      </p>
+      <div className="space-y-2.5 max-h-80 overflow-y-auto">
+        {entries.length === 0 ? (
+          <p className="text-xs text-gray-300">No activity yet.</p>
+        ) : (
+          entries.map((h, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs">
+              <Clock size={12} className="text-gray-300 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-gray-700">
+                  <span className="font-medium">{h.actor_name}</span>
+                  {" "}→ {labelFor({ status: h.status, exit_status: h.exit_status })}
+                </p>
+                {h.note && <p className="text-gray-400 mt-0.5">{h.note}</p>}
+                <p className="text-gray-300 mt-0.5">{fmtDate(h.at)}</p>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

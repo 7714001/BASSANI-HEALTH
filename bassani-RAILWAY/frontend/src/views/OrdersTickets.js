@@ -22,7 +22,7 @@ import {
   OdooPdfViewerModal, openMonitorDisplay,
   AgeTierBadge, AgePriorityStrip,
 } from "../components/UI";
-import { HorizontalTimelineCard } from "../components/OrderTimeline";
+import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 
 // canvas → PNG data URL so the barcode survives innerHTML → new window print copy
 function BarcodeImg({ text, style }) {
@@ -988,6 +988,13 @@ export default function OrdersTickets() {
                       )}
                     </div>
                   )}
+
+                  {/* Activity Log (2026-08-27) — the linked ticket's full
+                      stage_history (who confirmed, who registered the
+                      deposit, admin overrides, etc.), same shared component
+                      SalesTickets.js uses, sourced via _with_ticket_summary()
+                      alongside the Sales Ticket card above. */}
+                  {detail.ticket_id && <ActivityLogCard history={detail.ticket_stage_history} />}
 
                   {/* Secondary / less-frequent actions */}
                   {(!isTerminal || detail.status === "complete") && (

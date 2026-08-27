@@ -27,7 +27,7 @@ import {
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
-import { HorizontalTimelineCard } from "../components/OrderTimeline";
+import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import OrderView from "./OrderView";
 
@@ -2385,29 +2385,18 @@ export default function SalesTickets() {
                     </div>
                   )}
 
-                  {/* Timeline */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Timeline</p>
-                    <div className="space-y-2.5 max-h-80 overflow-y-auto">
-                      {(detail.stage_history || []).length === 0 ? (
-                        <p className="text-xs text-gray-300">No history yet.</p>
-                      ) : (
-                        (detail.stage_history || []).slice().reverse().map((h, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs">
-                            <Clock size={12} className="text-gray-300 mt-0.5 shrink-0" />
-                            <div>
-                              <p className="text-gray-700">
-                                <span className="font-medium">{h.actor_name}</span>
-                                {" "}→ {h.exit_status ? EXIT_LABEL[h.exit_status] : (STATUS_LABEL[h.status] || h.status)}
-                              </p>
-                              {h.note && <p className="text-gray-400 mt-0.5">{h.note}</p>}
-                              <p className="text-gray-300 mt-0.5">{fmtDate(h.at)}</p>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  {/* Activity Log (2026-08-27) — extracted into a shared
+                      component (components/OrderTimeline.js) so Orders
+                      Ticket and Order Passport can show the identical "who
+                      did what, when" record from the same ticket
+                      stage_history. Keeps this page's own established
+                      status-label vocabulary (STATUS_LABEL/EXIT_LABEL, e.g.
+                      "In Fulfilment") via labelFor, rather than the shared
+                      component's own default wording. */}
+                  <ActivityLogCard
+                    history={detail.stage_history}
+                    labelFor={h => (h.exit_status ? EXIT_LABEL[h.exit_status] : (STATUS_LABEL[h.status] || h.status))}
+                  />
 
                   {/* Source email (Phase 11 — only shown when ticket was created from inbox) */}
                   {inboxItem && (

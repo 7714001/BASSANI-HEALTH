@@ -14,7 +14,7 @@ import {
   ageTierTextClass, AgeTierBadge,
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
-import { HorizontalTimelineCard, ticketStageLabel } from "../components/OrderTimeline";
+import { HorizontalTimelineCard, ticketStageLabel, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 
 const fmtR = (n) =>
@@ -1160,6 +1160,16 @@ export default function OrderPassport() {
                     </div>
                   )}
                 </SideCard>
+              )}
+
+              {/* Activity Log (2026-08-27, staff only) — the linked ticket's
+                  full stage_history (who confirmed, who registered the
+                  deposit, admin overrides, etc.), same shared component
+                  SalesTickets.js and OrdersTickets.js use. Same staff-only
+                  gate as the Sales Ticket card above it — internal actor
+                  detail, not something reseller/customer needs. */}
+              {!isReseller && !isCustomer && ticket && (
+                <ActivityLogCard history={ticket.stage_history} />
               )}
 
               {/* Packing card (2026-08-25: staff only) — packer name, packing
