@@ -1960,6 +1960,18 @@ export default function SalesTickets() {
                     // independent of detail.invoice_id) could show a real
                     // deduction with no invoice visible anywhere to explain it.
                     const hasInvoiceSection = !isReseller && (!!detail.invoice_id || detailInvoices.length > 0);
+                    // Any real Odoo invoice besides the one this ticket
+                    // currently tracks (2026-08-27 fix, found live) — a
+                    // ticket tracks exactly one invoice_id at a time (the
+                    // deposit, until a final invoice successfully links and
+                    // overwrites it), but the order can genuinely carry a
+                    // second real invoice in Odoo the whole time (deposit +
+                    // final, both existing simultaneously). The section
+                    // below used to be an either/or on detail.invoice_id,
+                    // so once a deposit was tracked, any other real invoice
+                    // — like a final invoice awaiting confirmation — never
+                    // showed anywhere on this page at all.
+                    const otherInvoices = detailInvoices.filter(inv => inv.invoice_id !== detail.invoice_id);
                     return (
                       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -1991,7 +2003,7 @@ export default function SalesTickets() {
                         {hasInvoiceSection && (
                           <div className={`space-y-1 ${hasQuoteSection ? "pt-2 border-t border-gray-50" : ""}`}>
                             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Invoice</p>
-                            {detail.invoice_id ? (
+                            {detail.invoice_id && (
                               <>
                                 <div className="flex items-center justify-between gap-2">
                                   <span className="text-xs text-gray-600">Invoice #{detail.invoice_id}</span>
@@ -2022,21 +2034,26 @@ export default function SalesTickets() {
                                   </p>
                                 )}
                               </>
-                            ) : (
-                              // Real invoice(s) exist in Odoo but this ticket
-                              // never registered one through the portal (order
-                              // confirmed/invoiced directly in Odoo) — list
-                              // them directly from detailInvoices so the
-                              // Payments Received figure below is never
-                              // unexplained. Register Deposit's own
-                              // "existing invoices" check will offer to link
-                              // one of these instead of creating a duplicate.
-                              <div className="space-y-1.5">
+                            )}
+                            {otherInvoices.length > 0 && (
+                              // Any real Odoo invoice this ticket doesn't
+                              // currently track — either the only invoice
+                              // section (no detail.invoice_id at all, order
+                              // confirmed/invoiced directly in Odoo) or a
+                              // second one alongside the tracked block above
+                              // (most commonly: deposit tracked, final
+                              // invoice not yet linked/confirmed). Listed
+                              // directly from detailInvoices so the Payments
+                              // Received figure below is never unexplained.
+                              // Register Deposit's own "existing invoices"
+                              // check will offer to link one of these
+                              // instead of creating a duplicate.
+                              <div className={`space-y-1.5 ${detail.invoice_id ? "pt-1.5 border-t border-gray-50" : ""}`}>
                                 <p className="text-[11px] text-amber-600 flex items-center gap-1.5">
                                   <AlertTriangle size={10} className="shrink-0" />
-                                  Found in Odoo, not yet linked to this ticket
+                                  {detail.invoice_id ? "Also found in Odoo, not yet linked" : "Found in Odoo, not yet linked to this ticket"}
                                 </p>
-                                {detailInvoices.map(inv => {
+                                {otherInvoices.map(inv => {
                                   // Only offer the one-click Link action on an
                                   // invoice that could actually succeed —
                                   // matches use_existing_invoice's own
