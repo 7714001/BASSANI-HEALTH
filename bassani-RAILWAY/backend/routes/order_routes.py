@@ -1236,7 +1236,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     # ── Sales ticket ──────────────────────────────────────────────────────────
     ticket = await col("tickets").find_one(
         {"type": "sales", "order_id": {"$in": [resolved_id, order_id]}},
-        {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1,
+        {"_id": 1, "status": 1, "exit_status": 1, "assigned_to": 1, "assigned_to_name": 1,
          "incomplete_reason": 1, "created_at": 1, "updated_at": 1, "source": 1,
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
          "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1},
@@ -1258,6 +1258,16 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "status":       ticket.get("status"),
             "exit_status":  ticket.get("exit_status"),
             "assigned_to":  ticket.get("assigned_to"),
+            # Found live 2026-08-27 — this dict never carried the resolved
+            # name at all, only the raw user id, so the passport's Sales
+            # Ticket card had no choice but to render the id itself. Same
+            # self-heal as ticket_routes.py::_serialize() for a historical
+            # ticket where assigned_to_name was itself once written as the
+            # raw id (a since-fixed bug in create_ticket).
+            "assigned_to_name": (
+                None if ticket.get("assigned_to_name") == ticket.get("assigned_to")
+                else ticket.get("assigned_to_name")
+            ),
             "incomplete_reason": ticket.get("incomplete_reason"),
             "created_at":   ticket.get("created_at"),
             "updated_at":   ticket.get("updated_at"),

@@ -1036,18 +1036,28 @@ export default function OrderPassport() {
                         <span className="text-gray-500">Stage</span>
                         <StagePill color={ticketStageColor(ticket)}>{ticketStageLabel(ticket)}</StagePill>
                       </div>
-                      {/* Order type — reseller vs internal */}
+                      {/* Order type (2026-08-27 fix, found live) — was a bare
+                          reseller-vs-"Internal Order" binary check, so a
+                          customer's own self-service portal order (source:
+                          "portal") got mislabelled the same as a staff-
+                          created direct inquiry. Matches the same source
+                          vocabulary/colors SalesTickets.js's list already
+                          uses correctly (reseller/portal/email/direct). */}
                       <div className="flex items-center justify-between">
                         <span className="text-gray-500">Type</span>
-                        {ticket.source === "reseller" ? (
-                          <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
-                            Reseller Order
-                          </span>
-                        ) : (
-                          <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
-                            Internal Order
-                          </span>
-                        )}
+                        {(() => {
+                          const TYPE_STYLE = {
+                            reseller: ["Reseller Order", "text-purple-700 bg-purple-50 border-purple-100"],
+                            portal:   ["Portal Order",    "text-blue-700 bg-blue-50 border-blue-100"],
+                            email:    ["Email Inquiry",   "text-gray-700 bg-gray-50 border-gray-200"],
+                          };
+                          const [label, style] = TYPE_STYLE[ticket.source] || ["Direct Inquiry", "text-gray-700 bg-gray-50 border-gray-200"];
+                          return (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${style}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       {ticket.reseller_name && (
                         <div className="flex items-center justify-between">
@@ -1064,7 +1074,7 @@ export default function OrderPassport() {
                       {ticket.assigned_to && (
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500">Assigned to</span>
-                          <span className="text-gray-700">{ticket.assigned_to}</span>
+                          <span className="text-gray-700">{ticket.assigned_to_name || "Unassigned"}</span>
                         </div>
                       )}
                       {ticket.notes && (
