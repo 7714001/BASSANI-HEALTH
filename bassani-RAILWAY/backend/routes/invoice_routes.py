@@ -652,7 +652,7 @@ async def send_invoice_standalone(
     odoo = get_odoo_client()
     records = odoo.read(
         "account.move", [invoice_id],
-        fields=["name", "state", "partner_id", "amount_total", "invoice_origin"],
+        fields=["name", "state", "partner_id", "amount_total", "invoice_origin", "payment_state", "payment_reference"],
     )
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -682,11 +682,27 @@ async def send_invoice_standalone(
             cc=cc_emails,
             amount_total=float(inv.get("amount_total", 0) or 0),
             pdf_bytes=bytes(pdf_bytes),
+            payment_state=inv.get("payment_state"),
+            payment_reference=inv.get("payment_reference"),
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not send invoice: {e}")
+
+    # Chatter note (2026-08-28) — see the matching note on ticket_routes.py's
+    # send_invoice/_send_quote_impl for why this is needed now that the send
+    # doesn't go through Odoo's own mail.template. Best-effort; the send
+    # itself already succeeded (or raised) above, so this only runs on a
+    # genuine send.
+    try:
+        _cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
+        odoo.message_post(
+            "account.move", invoice_id,
+            f"Invoice sent to {customer_email}{_cc_note} via the Bassani Health Portal.",
+        )
+    except Exception:
+        pass
 
     await audit_log("invoice.sent", "invoice", invoice_id,
                     entity_label=inv["name"], user=current_user)

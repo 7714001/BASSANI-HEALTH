@@ -182,6 +182,20 @@ class OdooClient:
     def execute(self, model, method, *args):
         return odoo(model, method, list(args))
 
+    def message_post(self, model, res_id, body, internal_only=True):
+        """Log a chatter entry on a record. `execute()` above can't do this —
+        its (*args)-only signature has no way to send the kwargs mail.thread's
+        message_post() requires (body is keyword-only on this Odoo version).
+        internal_only posts as a plain log note (subtype_xmlid='mail.mt_note'),
+        the same as clicking "Log note" in Odoo's UI — it will not re-notify
+        the record's followers by email, only the quote/invoice send itself
+        does that. Best-effort by design; callers should never let a failure
+        here affect the actual send."""
+        kwargs = {"body": body}
+        if internal_only:
+            kwargs["subtype_xmlid"] = "mail.mt_note"
+        return odoo(model, "message_post", [res_id], kwargs)
+
 _client = OdooClient()
 
 def get_odoo_client() -> OdooClient:

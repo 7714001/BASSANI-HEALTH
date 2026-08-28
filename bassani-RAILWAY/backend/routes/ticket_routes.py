@@ -1535,6 +1535,22 @@ async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error marking order sent: {str(e)}")
 
+    # Log a chatter note on the order so anyone opening it directly in Odoo
+    # can see the send actually happened (2026-08-28) — state alone doesn't
+    # say who it went to or when, and since the send no longer goes through
+    # Odoo's own mail.template, nothing else writes this. Best-effort, and
+    # only logged when an email genuinely went out (not the no-email-on-file
+    # case) so the chatter stays an honest record.
+    if email_sent:
+        try:
+            _cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
+            odoo.message_post(
+                "sale.order", order_id,
+                f"Quote sent to {customer_email}{_cc_note} via the Bassani Health Portal.",
+            )
+        except Exception:
+            pass
+
     now = datetime.now(timezone.utc)
     actor = _actor(current_user)
     note = f"Quote {'sent' if email_sent else 'marked sent (email not delivered)'} to customer (Odoo {order['name']})"
@@ -2791,7 +2807,7 @@ async def send_invoice(
     odoo = get_odoo_client()
 
     # Verify invoice exists and is posted
-    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id", "amount_total"])
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id", "amount_total", "payment_state", "payment_reference"])
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found in Odoo")
     inv = records[0]
@@ -2799,6 +2815,7 @@ async def send_invoice(
         raise HTTPException(status_code=400, detail="Invoice must be posted before sending")
 
     warning = None
+    invoice_email_sent = False
     try:
         partner = inv.get("partner_id")
         if body.recipients:
@@ -2829,9 +2846,25 @@ async def send_invoice(
                 cc=cc_emails,
                 amount_total=float(inv.get("amount_total", 0) or 0),
                 pdf_bytes=bytes(pdf_bytes),
+                payment_state=inv.get("payment_state"),
+                payment_reference=inv.get("payment_reference"),
             )
+            invoice_email_sent = True
     except Exception as e:
         warning = f"Email may not have been sent: {e}"
+
+    # Chatter note (2026-08-28) — see the matching note in _send_quote_impl
+    # above for why this is needed now that the send doesn't go through
+    # Odoo's own mail.template. Best-effort, only logged on a genuine send.
+    if invoice_email_sent:
+        try:
+            _cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
+            odoo.message_post(
+                "account.move", invoice_id,
+                f"Invoice sent to {customer_email}{_cc_note} via the Bassani Health Portal.",
+            )
+        except Exception:
+            pass
 
     now = datetime.now(timezone.utc)
     await col("tickets").update_one(

@@ -387,14 +387,35 @@ def send_invoice_email(
     amount_total: float,
     pdf_bytes: bytes,
     cc: "list[str] | None" = None,
+    payment_state: str = None,
+    payment_reference: str = None,
 ) -> None:
     """Sent when the final delivery invoice is created and posted (after
     QA + RP sign-off, or a deliberate manual/resend send) — replaces the
     previous Odoo mail.template send (2026-08-27), same reasoning as
     send_quote_email above. Attaches Odoo's own rendered Invoice PDF
-    (account.report_invoice_with_payments)."""
+    (account.report_invoice_with_payments). payment_state/payment_reference
+    (account.move's own fields, passed by the caller) restore the one thing
+    the old Odoo template said that this one originally didn't: whether the
+    invoice is already settled, and if not, how to pay it — found missing
+    2026-08-28 comparing this against Odoo's native 'Invoice: Sending'
+    template wording. Both optional so a caller that hasn't fetched them
+    still gets the unpaid/pay-by-EFT wording, matching the common case."""
     if not customer_email:
         return
+    if payment_state in ("paid", "in_payment"):
+        payment_line = _p(
+            "This invoice has been paid in full. No further action is needed.",
+            muted=True,
+        )
+    else:
+        ref = payment_reference or invoice_ref
+        payment_line = _p(
+            f"Please make payment to {settings.bank_name}, account number "
+            f"{settings.bank_account}, branch code {settings.bank_branch}, using "
+            f"{ref} as your payment reference. Banking details are also included "
+            "on the attached invoice."
+        )
     body = (
         _h1("Your invoice is ready")
         + _p(f"Hi {customer_name},")
@@ -404,6 +425,7 @@ def send_invoice_email(
             ("Invoice number", f"<strong>{invoice_ref}</strong>"),
             ("Invoice total", f"R{amount_total:,.2f}"),
         ])
+        + payment_line
         + _divider()
         + _p("If you have any questions about this invoice, please get in touch.", muted=True)
     )

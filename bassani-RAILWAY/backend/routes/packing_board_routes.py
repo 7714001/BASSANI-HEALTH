@@ -975,7 +975,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
             # invoice was newly created above or an existing not-yet-linked
             # one was just found and reused.
             try:
-                _inv_rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id", "amount_total"])
+                _inv_rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id", "amount_total", "payment_state", "payment_reference"])
                 _inv = _inv_rows[0] if _inv_rows else {}
                 _inv_partner = _inv.get("partner_id")
                 _customer_email = None
@@ -996,8 +996,23 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                         invoice_ref=_inv.get("name") or invoice_name or f"#{invoice_id}",
                         amount_total=float(_inv.get("amount_total", 0) or 0),
                         pdf_bytes=bytes(_pdf_bytes),
+                        payment_state=_inv.get("payment_state"),
+                        payment_reference=_inv.get("payment_reference"),
                     )
                     invoice_sent = True
+                    # Chatter note (2026-08-28) — see the matching note in
+                    # ticket_routes.py's send_invoice/_send_quote_impl for why
+                    # this is needed now that the send doesn't go through
+                    # Odoo's own mail.template. Best-effort, isolated in its
+                    # own try so a chatter-write failure can never turn a
+                    # genuinely successful invoice send into a warning.
+                    try:
+                        odoo.message_post(
+                            "account.move", invoice_id,
+                            f"Invoice sent to {_customer_email} via the Bassani Health Portal.",
+                        )
+                    except Exception:
+                        pass
             except Exception as e:
                 invoice_warning = f"Invoice created but the email may not have been sent: {e}"
     except Exception as e:
