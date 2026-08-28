@@ -6,7 +6,7 @@
 // responsible_pharmacist: RP Approve (when ready)
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -1187,7 +1187,17 @@ export default function OrdersTickets() {
   // Same shape as SalesTickets.js's filteredTickets — source keyed on
   // e.ticket_source (t.source), age on e.age_tier, search on customer_name/
   // ps_num (this page's equivalent of customer_name/order_id).
-  const filteredEntries = useMemo(() => entries.filter(e => {
+  //
+  // Plain derived const, NOT useMemo (found live 2026-08-28 — a real
+  // production crash): this component's "detail" view returns early at
+  // `if (view === "detail") { ... return (...) }` well above this point in
+  // the function body, so a hook placed here is only ever called on some
+  // renders (list) and not others (detail) — an invalid, order-dependent
+  // hook call that crashes React outright the moment the view actually
+  // switches (React error #300-class: hook count mismatch between renders).
+  // A plain const has no such constraint and is cheap enough to recompute
+  // every render regardless.
+  const filteredEntries = entries.filter(e => {
     if (sourceFilter === "internal" && !["direct", "email"].includes(e.ticket_source)) return false;
     if (sourceFilter === "reseller" && e.ticket_source !== "reseller") return false;
     if (sourceFilter === "customer" && e.ticket_source !== "portal") return false;
@@ -1201,7 +1211,7 @@ export default function OrdersTickets() {
       ) return false;
     }
     return true;
-  }), [entries, sourceFilter, ageFilter, statusFilter, listSearch]);
+  });
   const hasWaitingStock = entries.some(e => e.status === "waiting_stock");
   // Also surface the button when an active (queued/packing) entry still
   // carries a stale per-line "Backorder" flag (2026-08-27) — a snapshot
