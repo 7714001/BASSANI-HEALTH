@@ -35,12 +35,19 @@ INVOICE_FIELDS = [
     "id", "name", "partner_id", "invoice_date", "invoice_date_due",
     "amount_total", "amount_tax", "amount_residual",
     "state", "move_type", "payment_state", "invoice_origin",
-    # Internal-only (portal_sales_agent.py) — who at Bassani, or which
-    # reseller, is responsible for this account. Stripped for reseller/
-    # customer in both list_invoices and get_invoice below — never sent
-    # to an external role, same as every other internal-only field.
-    "x_studio_bassani_portal_sales_agent",
 ]
+# x_studio_bassani_portal_sales_agent (portal_sales_agent.py) — who at
+# Bassani, or which reseller, is responsible for this account — is NOT in
+# INVOICE_FIELDS above. Found live 2026-08-28 (production 502 on the
+# Invoices page): requesting it directly on account.move raises
+# "Invalid field 'x_studio_bassani_portal_sales_agent' on 'account.move'" —
+# a live fields_get() check confirmed the field only exists, stored, on
+# res.partner; the related field this codebase's own notes claimed also
+# existed on account.move does not (Odoo Studio drift since that was last
+# verified, or it was never actually checked on this model specifically).
+# Both list_invoices and get_invoice below resolve it from res.partner via
+# each invoice's partner_id instead, same as every other partner-scoped
+# lookup in this file — never request it directly on account.move again.
 
 INVOICE_DOMAIN = [("move_type", "in", ["out_invoice", "in_invoice", "out_refund", "in_refund"])]
 
@@ -156,6 +163,22 @@ async def list_invoices(
         for inv in invoices:
             inv["sale_order_id"]  = None
             inv["linked_ticket_id"] = None
+
+    # Resolve x_studio_bassani_portal_sales_agent from res.partner (see
+    # INVOICE_FIELDS' comment above for why it can't be requested directly
+    # on account.move) — batched the same way sale_order_id/linked_ticket_id
+    # are resolved above, not one read per invoice.
+    partner_ids = list({inv["partner_id"][0] for inv in invoices if inv.get("partner_id")})
+    partner_agent = {}
+    if partner_ids:
+        try:
+            partner_rows = odoo.read("res.partner", partner_ids, fields=["x_studio_bassani_portal_sales_agent"])
+            partner_agent = {p["id"]: p.get("x_studio_bassani_portal_sales_agent") for p in partner_rows}
+        except Exception:
+            partner_agent = {}
+    for inv in invoices:
+        pid = inv["partner_id"][0] if inv.get("partner_id") else None
+        inv["x_studio_bassani_portal_sales_agent"] = partner_agent.get(pid) if pid else None
 
     # Internal-only field (portal_sales_agent.py) — never sent to reseller/
     # customer, same treatment as get_invoice below. Odoo returns False (a
@@ -283,6 +306,24 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
             raise HTTPException(status_code=404, detail="Invoice not found")
         invoice = records[0]
         await _assert_invoice_owned_by_external_role(odoo, current_user, invoice.get("partner_id"))
+
+        # Fetch partner address + VAT for invoice header. Also resolves
+        # x_studio_bassani_portal_sales_agent from res.partner here (see
+        # INVOICE_FIELDS' comment above — it can't be requested directly on
+        # account.move) rather than a second read.
+        if invoice.get("partner_id"):
+            partner_id = invoice["partner_id"][0]
+            partners = odoo.read(
+                "res.partner", [partner_id],
+                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat",
+                        "x_studio_bassani_portal_sales_agent"],
+            )
+            if partners:
+                invoice["partner_detail"] = partners[0]
+                invoice["x_studio_bassani_portal_sales_agent"] = partners[0].pop("x_studio_bassani_portal_sales_agent", None)
+        else:
+            invoice["x_studio_bassani_portal_sales_agent"] = None
+
         # Internal-only field (portal_sales_agent.py) — who at Bassani/which
         # reseller is responsible for this account, for Bassani's own
         # accounting/reporting. Never expose it to reseller/customer, same
@@ -291,16 +332,6 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
             invoice.pop("x_studio_bassani_portal_sales_agent", None)
         elif invoice.get("x_studio_bassani_portal_sales_agent") is False:
             invoice["x_studio_bassani_portal_sales_agent"] = None
-
-        # Fetch partner address + VAT for invoice header
-        if invoice.get("partner_id"):
-            partner_id = invoice["partner_id"][0]
-            partners = odoo.read(
-                "res.partner", [partner_id],
-                fields=["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat"],
-            )
-            if partners:
-                invoice["partner_detail"] = partners[0]
 
         # Fetch lines with tax IDs
         if invoice.get("invoice_line_ids"):
