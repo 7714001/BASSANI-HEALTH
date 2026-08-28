@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
-  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
+  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate, fmtDateTime,
   SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal, openMonitorDisplay,
   AgeTierBadge, AgePriorityStrip,
 } from "../components/UI";
@@ -1408,6 +1408,14 @@ export default function SalesTickets() {
   if (view === "detail") {
     const orderStateLabel = ORDER_STATE_LABEL[detailOrder?.state] || "—";
     const orderStateColor = ORDER_STATE_COLOR[detailOrder?.state] || "gray";
+    // Admin Override audit line (2026-08-28) — who set the ticket's current
+    // (unbacked) status and when, read straight from stage_history rather
+    // than a new backend field: the most recent entry whose own status
+    // matches detail.status IS the override event, since nothing else
+    // touches status after it until reconciliation resolves the gap.
+    const overrideEvent = detail?.override_gaps?.length > 0
+      ? [...(detail.stage_history || [])].reverse().find(h => h.status === detail.status)
+      : null;
 
     return (
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
@@ -1460,27 +1468,35 @@ export default function SalesTickets() {
               {/* Admin Override reconciliation (2026-08-28) — persistent,
                   can't be dismissed, stays until every gap is actually
                   closed. detail.override_gaps comes from get_ticket
-                  (ticket_routes.py::_compute_override_gaps). */}
+                  (ticket_routes.py::_compute_override_gaps). Amber, single
+                  border, one compact line plus a muted audit caption —
+                  deliberately calmer than a hard-failure banner: this is a
+                  to-do, not something broken. */}
               {detail.override_gaps?.length > 0 && (
-                <div className="mb-5 bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex items-start gap-2.5">
-                    <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-red-700">
-                        This ticket's status was manually overridden — {detail.override_gaps.length} step{detail.override_gaps.length !== 1 ? "s" : ""} unverified
+                <div className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <AlertTriangle size={15} className="text-amber-500 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-amber-800">
+                        <span className="font-semibold">Status set by Admin Override</span>
+                        <span className="text-amber-600">
+                          {" "}— {detail.override_gaps.map(g => RECONCILE_GAP_LABEL[g] || g).join(", ")} not yet confirmed
+                        </span>
                       </p>
-                      <p className="text-xs text-red-600 mt-0.5">
-                        Status shows {STATUS_LABEL[detail.status] || detail.status}, but{" "}
-                        {detail.override_gaps.map(g => RECONCILE_GAP_LABEL[g] || g).join(", ")}{" "}
-                        {detail.override_gaps.length === 1 ? "hasn't" : "haven't"} been confirmed in the portal.
-                      </p>
+                      {overrideEvent && (
+                        <p className="text-xs text-amber-600/80 mt-0.5">
+                          Set to {STATUS_LABEL[detail.status] || detail.status} by {overrideEvent.actor_name || "unknown"} on {fmtDateTime(overrideEvent.at)}
+                          {overrideEvent.note && ` — "${overrideEvent.note}"`}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <BtnSecondary
                     onClick={() => setReconcileModal(true)}
-                    className="text-red-700 border-red-200 hover:bg-red-100 shrink-0"
+                    size="sm"
+                    className="text-amber-700 border-amber-200 hover:bg-amber-100 shrink-0"
                   >
-                    <RefreshCw size={13} />Reconcile Now
+                    <RefreshCw size={12} />Reconcile Now
                   </BtnSecondary>
                 </div>
               )}
