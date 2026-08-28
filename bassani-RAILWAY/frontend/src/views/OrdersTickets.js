@@ -6,7 +6,7 @@
 // responsible_pharmacist: RP Approve (when ready)
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -20,7 +20,7 @@ import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
   OdooPdfViewerModal, openMonitorDisplay,
-  AgeTierBadge, AgePriorityStrip,
+  AgeTierBadge, AgePriorityStrip, SearchBar, FilterPill, ChipRow,
 } from "../components/UI";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 
@@ -112,6 +112,13 @@ export default function OrdersTickets() {
   const [itemLots,     setItemLots    ] = useState({});   // { product_id: [{ id, name, expiry }] }
   const [lotSaving,    setLotSaving   ] = useState(null); // product_id being saved
   const [statusFilter, setStatusFilter] = useState(new Set());
+  // Search/filter bar (2026-08-28) — matches SalesTickets.js's list view
+  // look and feel: SearchBar + FilterPill/ChipRow instead of plain buttons,
+  // an interactive AgePriorityStrip, and a Source bucket driven by the same
+  // ticket.source vocabulary (Internal/Resellers/Customers).
+  const [listSearch,   setListSearch  ] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [ageFilter,    setAgeFilter   ] = useState(null);
   const [mos,        setMos       ] = useState([]);
   const [mosLoading, setMosLoading] = useState(false);
   const [orderLotMap, setOrderLotMap] = useState({});
@@ -1177,8 +1184,24 @@ export default function OrdersTickets() {
   const toggleStatus = (s) => setStatusFilter(prev => {
     const next = new Set(prev); next.has(s) ? next.delete(s) : next.add(s); return next;
   });
-  const filteredEntries = statusFilter.size === 0 ? entries
-    : entries.filter(e => statusFilter.has(e.status));
+  // Same shape as SalesTickets.js's filteredTickets — source keyed on
+  // e.ticket_source (t.source), age on e.age_tier, search on customer_name/
+  // ps_num (this page's equivalent of customer_name/order_id).
+  const filteredEntries = useMemo(() => entries.filter(e => {
+    if (sourceFilter === "internal" && !["direct", "email"].includes(e.ticket_source)) return false;
+    if (sourceFilter === "reseller" && e.ticket_source !== "reseller") return false;
+    if (sourceFilter === "customer" && e.ticket_source !== "portal") return false;
+    if (ageFilter && e.age_tier !== ageFilter) return false;
+    if (statusFilter.size > 0 && !statusFilter.has(e.status)) return false;
+    if (listSearch.trim()) {
+      const q = listSearch.trim().toLowerCase();
+      if (
+        !(e.customer_name || "").toLowerCase().includes(q) &&
+        !(e.ps_num         || "").toLowerCase().includes(q)
+      ) return false;
+    }
+    return true;
+  }), [entries, sourceFilter, ageFilter, statusFilter, listSearch]);
   const hasWaitingStock = entries.some(e => e.status === "waiting_stock");
   // Also surface the button when an active (queued/packing) entry still
   // carries a stale per-line "Backorder" flag (2026-08-27) — a snapshot
@@ -1214,37 +1237,63 @@ export default function OrdersTickets() {
         }
       />
       <main className="flex-1 overflow-y-auto p-6">
-        {/* Priority strip (2026-08-26) — same overdue/at-risk counts a
-            viewer would see rolled up on the Operations Monitor for these
-            same orders. */}
-        {!loading && <AgePriorityStrip items={entries} className="mb-3" />}
-        {!loading && entries.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-1.5">
-            {["queued", "packing", "ready", "complete", "incomplete", "waiting_stock"].map(s => (
+        {/* Filter bar (2026-08-28) — matches SalesTickets.js's list view:
+            SearchBar + Source FilterPill row + Clear filters + result count,
+            then a unified ChipRow with the (now-interactive) AgePriorityStrip
+            leading the status pills. */}
+        <div className="mb-4 flex flex-col gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <SearchBar
+              value={listSearch}
+              onChange={setListSearch}
+              placeholder="Search customer or SO number…"
+            />
+            <div className="flex items-center gap-1">
+              {[["all", "All"], ["internal", "Internal"], ["reseller", "Resellers"], ["customer", "Customers"]].map(([val, label]) => (
+                <FilterPill key={val} label={label} active={sourceFilter === val} onClick={() => setSourceFilter(val)} />
+              ))}
+            </div>
+            {(listSearch || statusFilter.size > 0 || ageFilter || sourceFilter !== "all") && (
               <button
-                key={s}
-                onClick={() => toggleStatus(s)}
-                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                  statusFilter.has(s)
-                    ? "bg-bassani-600 text-white border-bassani-600"
-                    : "bg-white text-gray-500 border-gray-200 hover:border-bassani-300"
-                }`}
+                onClick={() => { setListSearch(""); setStatusFilter(new Set()); setSourceFilter("all"); setAgeFilter(null); }}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors shrink-0"
               >
-                {STATUS_LABEL[s] || s}
-                {s === "waiting_stock" && entries.filter(e => e.status === s).length > 0 && (
-                  <span className="ml-1.5 bg-amber-500 text-white rounded-full px-1.5 text-[10px]">
-                    {entries.filter(e => e.status === s).length}
-                  </span>
-                )}
-              </button>
-            ))}
-            {statusFilter.size > 0 && (
-              <button onClick={() => setStatusFilter(new Set())} className="text-xs text-gray-400 hover:text-gray-600 ml-1 transition-colors">
-                Clear
+                Clear filters
               </button>
             )}
+            {!loading && (
+              <span className="text-xs text-gray-400 ml-auto shrink-0">
+                {filteredEntries.length} of {entries.length} order{entries.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
-        )}
+          {!loading && entries.length > 0 && (
+            <ChipRow>
+              <AgePriorityStrip items={entries} activeTier={ageFilter} onSelect={setAgeFilter} />
+              {(entries.some(e => e.age_tier === "overdue" || e.age_tier === "urgent")) && (
+                <span className="self-center text-gray-200 px-1 shrink-0 select-none">|</span>
+              )}
+              {["queued", "packing", "ready", "complete", "incomplete", "waiting_stock"].map(s => {
+                const count = entries.filter(e => e.status === s).length;
+                return (
+                  <FilterPill
+                    key={s}
+                    active={statusFilter.has(s)}
+                    onClick={() => toggleStatus(s)}
+                    label={
+                      <>
+                        {STATUS_LABEL[s] || s}
+                        {s === "waiting_stock" && count > 0 && (
+                          <span className="ml-1.5 bg-amber-500 text-white rounded-full px-1.5 text-[10px]">{count}</span>
+                        )}
+                      </>
+                    }
+                  />
+                );
+              })}
+            </ChipRow>
+          )}
+        </div>
         {loading ? <LoadingState /> : filteredEntries.length === 0 ? (
           <EmptyState message={entries.length === 0 ? "No active orders on the board." : "No orders match the selected filter."} />
         ) : (

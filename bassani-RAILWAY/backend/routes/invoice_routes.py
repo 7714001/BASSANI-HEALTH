@@ -35,6 +35,11 @@ INVOICE_FIELDS = [
     "id", "name", "partner_id", "invoice_date", "invoice_date_due",
     "amount_total", "amount_tax", "amount_residual",
     "state", "move_type", "payment_state", "invoice_origin",
+    # Internal-only (portal_sales_agent.py) — who at Bassani, or which
+    # reseller, is responsible for this account. Stripped for reseller/
+    # customer in both list_invoices and get_invoice below — never sent
+    # to an external role, same as every other internal-only field.
+    "x_studio_bassani_portal_sales_agent",
 ]
 
 INVOICE_DOMAIN = [("move_type", "in", ["out_invoice", "in_invoice", "out_refund", "in_refund"])]
@@ -152,6 +157,16 @@ async def list_invoices(
             inv["sale_order_id"]  = None
             inv["linked_ticket_id"] = None
 
+    # Internal-only field (portal_sales_agent.py) — never sent to reseller/
+    # customer, same treatment as get_invoice below. Odoo returns False (a
+    # bool), not None/"", for an unset Char field — normalized here too.
+    is_external = current_user.get("role") in ("reseller", "customer")
+    for inv in invoices:
+        if is_external:
+            inv.pop("x_studio_bassani_portal_sales_agent", None)
+        elif inv.get("x_studio_bassani_portal_sales_agent") is False:
+            inv["x_studio_bassani_portal_sales_agent"] = None
+
     return {"invoices": invoices, "total": total}
 
 
@@ -268,6 +283,14 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
             raise HTTPException(status_code=404, detail="Invoice not found")
         invoice = records[0]
         await _assert_invoice_owned_by_external_role(odoo, current_user, invoice.get("partner_id"))
+        # Internal-only field (portal_sales_agent.py) — who at Bassani/which
+        # reseller is responsible for this account, for Bassani's own
+        # accounting/reporting. Never expose it to reseller/customer, same
+        # as every other internal-only field in this app.
+        if current_user.get("role") in ("reseller", "customer"):
+            invoice.pop("x_studio_bassani_portal_sales_agent", None)
+        elif invoice.get("x_studio_bassani_portal_sales_agent") is False:
+            invoice["x_studio_bassani_portal_sales_agent"] = None
 
         # Fetch partner address + VAT for invoice header
         if invoice.get("partner_id"):

@@ -151,6 +151,18 @@ function InvoiceView({ invoice, onClose }) {
         <div>
           <p className="text-sm font-semibold text-gray-800">{invoice.name || "Invoice"}</p>
           <p className="text-xs text-gray-400">{invoice.partner_id?.[1]}</p>
+          {/* Bassani Sales Agent (2026-08-28) — internal-only (portal_sales_agent.py:
+              who at Bassani, or which reseller, is responsible for this account, for
+              Bassani's own accounting/reporting). Backend only ever sends this field
+              to staff (never reseller/customer), so its presence alone is a safe gate
+              — no separate role check needed here. Kept outside the printRef'd
+              invoice body below so it can never appear on the customer-facing
+              printed/emailed PDF. */}
+          {invoice.x_studio_bassani_portal_sales_agent && (
+            <p className="text-xs text-bassani-700 font-medium mt-0.5">
+              Sales Agent: {invoice.x_studio_bassani_portal_sales_agent}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setOdooPdfOpen(true)}
@@ -764,6 +776,14 @@ export default function Invoices() {
             { id: "customer", header: "Customer", enableSorting: false,
               cell: ({ row: { original: inv } }) =>
                 <span className="font-medium text-gray-900">{inv.partner_id?.[1] || "—"}</span> },
+            // Sales Agent (2026-08-28) — x_studio_bassani_portal_sales_agent
+            // (portal_sales_agent.py), internal-only. Staff always see the
+            // flat DataTable (this column), never the grouped view below,
+            // which is reseller/customer-only and never receives this field
+            // from the backend anyway — no extra role check needed here.
+            { id: "sales_agent", header: "Sales Agent", enableSorting: false, meta: { className: "hidden lg:table-cell" },
+              cell: ({ row: { original: inv } }) =>
+                <span className="text-xs text-gray-500">{inv.x_studio_bassani_portal_sales_agent || "—"}</span> },
             { accessorKey: "invoice_date", header: "Date", meta: { className: "hidden sm:table-cell" },
               cell: ({ row: { original: inv } }) =>
                 <span className="text-xs text-gray-500">{fmtDate(inv.invoice_date)}</span> },

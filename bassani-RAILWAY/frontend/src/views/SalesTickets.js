@@ -16,7 +16,7 @@ import {
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
   Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
-  ClipboardCheck,
+  ClipboardCheck, RefreshCw,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -72,6 +72,15 @@ const STATUS_COLOR = {
 const EXIT_LABEL  = { not_interested: "Not Interested", cancelled: "Cancelled", complete: "Complete" };
 const EXIT_COLOR  = { not_interested: "gray", cancelled: "red", complete: "green" };
 const FORWARD_STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "ready_for_collection", "partially_fulfilled", "incomplete"];
+
+// Admin Override reconciliation (2026-08-28) — matches
+// ticket_routes.py::_compute_override_gaps' gap keys exactly.
+const RECONCILE_GAP_LABEL = {
+  packing_entry: "packing",
+  qa_approval:   "QA sign-off",
+  rp_approval:   "RP sign-off",
+  final_invoice: "the final invoice",
+};
 const PRE_CONFIRM = new Set(["open", "quote", "sale_order"]);
 
 const ORDER_STATE_LABEL = {
@@ -112,6 +121,13 @@ export default function SalesTickets() {
   const canFinance      = can("tickets.finance_confirm");
   const canManage       = can("tickets.manage");
   const canConfirmOrder = can("orders.confirm") || isReseller;
+  // Reconciliation wizard (2026-08-28) — each retroactive step requires its
+  // own real permission, deliberately separate from canManage (Admin
+  // Override) so overriding a ticket never doubles as authority to also
+  // rubber-stamp QA/RP sign-off.
+  const canOrdersWork = can("tickets.orders");
+  const canQaApprove  = can("tickets.qa_approve");
+  const canRpApprove  = can("tickets.rp_approve");
 
   // Odoo-native PDF viewer — one shared modal for whichever document (the
   // real Odoo SO/quote, the real Odoo invoice) was last requested. Staff
@@ -990,6 +1006,36 @@ export default function SalesTickets() {
     finally { setSendingInvoice(false); }
   };
 
+  // Admin Override reconciliation wizard (2026-08-28) — see CLAUDE.md's
+  // packing_board_routes.py entry for the full mechanics. detail.override_gaps
+  // (from get_ticket) lists which real pipeline steps the ticket's claimed
+  // status isn't actually backed by yet, in order: packing_entry ->
+  // qa_approval -> rp_approval -> final_invoice. Each retroactive/* call
+  // requires the real permission for that step, not tickets.manage (Admin
+  // Override) — an admin can flag the gap, but only QA/RP/Orders/Finance can
+  // actually close it, same as the live pipeline.
+  const [reconcileModal,      setReconcileModal]      = useState(false);
+  const [reconcilePackerName, setReconcilePackerName] = useState("");
+  const [reconcileBusy,       setReconcileBusy]       = useState(null); // gap key in flight
+
+  const doReconcileStep = async (gapKey, endpoint, extra = {}) => {
+    if (!detail?.order_id) return;
+    setReconcileBusy(gapKey);
+    try {
+      await api.post(`/api/packing/retroactive/${endpoint}`, { order_id: String(detail.order_id), ...extra });
+      toast.success("Confirmed");
+      await refreshDetail(detail.id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to confirm this step");
+    } finally {
+      setReconcileBusy(null);
+    }
+  };
+  const doReconcilePacking = () => doReconcileStep("packing_entry", "confirm-packing", { packer_name: reconcilePackerName || null });
+  const doReconcileQa      = () => doReconcileStep("qa_approval", "confirm-qa");
+  const doReconcileRp      = () => doReconcileStep("rp_approval", "confirm-rp");
+  const doReconcileInvoice = () => doReconcileStep("final_invoice", "confirm-invoice");
+
   const resetToDraft = async () => {
     setResetDraftConfirm(false);
     try {
@@ -1408,6 +1454,34 @@ export default function SalesTickets() {
                   <p className="text-xs text-amber-700">
                     This ticket was automatically closed because the linked order was cancelled in the ERP.
                   </p>
+                </div>
+              )}
+
+              {/* Admin Override reconciliation (2026-08-28) — persistent,
+                  can't be dismissed, stays until every gap is actually
+                  closed. detail.override_gaps comes from get_ticket
+                  (ticket_routes.py::_compute_override_gaps). */}
+              {detail.override_gaps?.length > 0 && (
+                <div className="mb-5 bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start justify-between gap-4 flex-wrap">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-700">
+                        This ticket's status was manually overridden — {detail.override_gaps.length} step{detail.override_gaps.length !== 1 ? "s" : ""} unverified
+                      </p>
+                      <p className="text-xs text-red-600 mt-0.5">
+                        Status shows {STATUS_LABEL[detail.status] || detail.status}, but{" "}
+                        {detail.override_gaps.map(g => RECONCILE_GAP_LABEL[g] || g).join(", ")}{" "}
+                        {detail.override_gaps.length === 1 ? "hasn't" : "haven't"} been confirmed in the portal.
+                      </p>
+                    </div>
+                  </div>
+                  <BtnSecondary
+                    onClick={() => setReconcileModal(true)}
+                    className="text-red-700 border-red-200 hover:bg-red-100 shrink-0"
+                  >
+                    <RefreshCw size={13} />Reconcile Now
+                  </BtnSecondary>
                 </div>
               )}
 
@@ -2700,6 +2774,69 @@ export default function SalesTickets() {
             onClose={() => setSendInvoiceModal(false)}
             onSend={doSendInvoice}
           />
+        )}
+
+        {/* Admin Override reconciliation wizard (2026-08-28) — one row per
+            gap, in the fixed order override_gaps is always returned in
+            (packing -> QA -> RP -> invoice), so only the first unresolved
+            gap is ever actionable; later ones show as waiting on it.
+            Each action button is gated by the REAL permission for that
+            step, never tickets.manage — see the state/handlers' own
+            comment above for why. */}
+        {reconcileModal && detail && (
+          <Modal title="Reconcile Overridden Ticket" onClose={() => setReconcileModal(false)}>
+            <p className="text-xs text-gray-500 mb-4">
+              This ticket's status was set directly via Admin Override, skipping the
+              normal pipeline. Confirm each step below with the real person responsible
+              for it — this records a genuine retrospective attestation, not a backdated
+              fake history.
+            </p>
+            <div className="space-y-2">
+              {(() => { const nextGapKey = detail.override_gaps?.[0]; return [
+                { key: "packing_entry", label: "Packing", can: canOrdersWork, permLabel: "Orders Clerk", action: doReconcilePacking },
+                { key: "qa_approval",   label: "QA Sign-Off", can: canQaApprove, permLabel: "QA Manager", action: doReconcileQa },
+                { key: "rp_approval",   label: "RP Sign-Off", can: canRpApprove, permLabel: "Responsible Pharmacist", action: doReconcileRp },
+                { key: "final_invoice", label: "Final Invoice", can: canFinance, permLabel: "Finance", action: doReconcileInvoice },
+              ].map((step) => {
+                const isGap = (detail.override_gaps || []).includes(step.key);
+                const isNext = step.key === nextGapKey; // override_gaps is always the remaining contiguous tail
+                const busy = reconcileBusy === step.key;
+                return (
+                  <div key={step.key} className={`border rounded-lg p-3 ${isGap ? (isNext ? "border-amber-200 bg-amber-50" : "border-gray-100 bg-gray-50") : "border-green-100 bg-green-50"}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        {isGap
+                          ? <AlertTriangle size={14} className={isNext ? "text-amber-500" : "text-gray-300"} />
+                          : <CheckCircle2 size={14} className="text-green-600" />}
+                        <span className="text-sm font-medium text-gray-800">{step.label}</span>
+                      </div>
+                      {!isGap ? (
+                        <span className="text-xs text-green-700 font-medium">Confirmed</span>
+                      ) : !isNext ? (
+                        <span className="text-xs text-gray-400">Waiting on {RECONCILE_GAP_LABEL[nextGapKey] || "the step above"}</span>
+                      ) : !step.can ? (
+                        <span className="text-xs text-red-500 font-medium">Requires {step.permLabel}</span>
+                      ) : (
+                        <BtnSecondary onClick={step.action} loading={busy} size="sm">Confirm</BtnSecondary>
+                      )}
+                    </div>
+                    {isNext && step.key === "packing_entry" && step.can && (
+                      <div className="mt-2">
+                        <Input
+                          value={reconcilePackerName}
+                          onChange={e => setReconcilePackerName(e.target.value)}
+                          placeholder="Packer name (optional)"
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              }); })()}
+            </div>
+            <div className="flex justify-end mt-4">
+              <BtnSecondary onClick={() => setReconcileModal(false)}>Close</BtnSecondary>
+            </div>
+          </Modal>
         )}
 
         {/* Link existing order modal */}

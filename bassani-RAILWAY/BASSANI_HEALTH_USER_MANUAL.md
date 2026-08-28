@@ -602,10 +602,11 @@ The quote is now a draft sale order in Odoo. The ticket advances to `Quote` stag
 Once a quote is built:
 
 1. Click **Send Quote** in the right sidebar
-2. The PDF quotation is emailed to the customer from `sales@bassanihealth.com` (using Odoo's mail system)
-3. The button label changes to **Resend Quote** once sent
+2. A popup shows every contact the portal has on file for that company (email address shown under each name), with the main company contact pre-ticked — tick any others who should also receive it, or type in an extra email address if the right person isn't listed yet
+3. Click **Send** in the popup — the PDF quotation goes out with the portal's own branding
+4. The button label changes to **Resend Quote** once sent
 
-If you edit the quote after sending it, the button changes to **Send Updated Quote** with an amber warning — this reminds you that the customer's copy is out of date.
+If you edit the quote after sending it, the button changes to **Send Updated Quote** with an amber warning — this reminds you that the customer's copy is out of date. Resending opens the same recipient popup again.
 
 ### Editing a Quote
 
@@ -1671,7 +1672,7 @@ Each invoice row shows the relevant actions for its state:
 
 - **View** — opens the portal print view; use Print / Save PDF to generate a PDF for the customer.
 - **PDF** — downloads the Odoo-generated invoice PDF directly.
-- **Send** — sends the invoice email to the customer via Odoo's mail template. Only available for posted invoices.
+- **Send** — opens a popup to choose which contact(s) at the company should receive it (the main company contact is pre-ticked; tick others or type in an extra email address as needed), then sends the invoice with the portal's own branding. Only available for posted invoices.
 - **Draft** *(admin only)* — resets a posted, unpaid invoice to draft for editing. A confirmation modal is shown. Not available if any payment has been registered.
 - **CN** — raises a credit note against the invoice. Enter a reason (required), date, and journal, then confirm. The credit note is created in Odoo immediately and appears in the Credit Notes filter.
 - **Ticket** — creates a Sales Ticket from the linked Odoo sale order. Only shown for invoices that have a linked sale order but no portal ticket yet — useful for invoices created directly in Odoo before the portal existed.

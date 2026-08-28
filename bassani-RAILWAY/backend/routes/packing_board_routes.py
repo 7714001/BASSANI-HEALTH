@@ -164,18 +164,26 @@ async def get_board_state(warehouse_id: Optional[int] = None) -> list:
             order_ids.add(int(e["order_id"]))
         except (KeyError, ValueError, TypeError):
             pass
+    # ticket_source (2026-08-28) added to this same batched join for
+    # OrdersTickets.js's Source filter (Internal/Resellers/Customers) — the
+    # same t.source vocabulary SalesTickets.js's own Source filter already
+    # uses, so the two pages' Source buckets can never disagree about what
+    # counts as "internal"/"reseller"/"customer" for the same underlying
+    # ticket.
     ticket_map: dict = {}
     if order_ids:
         async for t in col("tickets").find(
             {"type": "sales", "order_id": {"$in": list(order_ids)}, "exit_status": None},
-            {"order_id": 1},
+            {"order_id": 1, "source": 1},
         ):
-            ticket_map[t["order_id"]] = str(t["_id"])
+            ticket_map[t["order_id"]] = {"ticket_id": str(t["_id"]), "source": t.get("source")}
     for e in entries:
         try:
-            e["ticket_id"] = ticket_map.get(int(e["order_id"]))
+            t = ticket_map.get(int(e["order_id"]))
         except (ValueError, TypeError):
-            e["ticket_id"] = None
+            t = None
+        e["ticket_id"] = t["ticket_id"] if t else None
+        e["ticket_source"] = t["source"] if t else None
 
     return entries
 
@@ -482,6 +490,14 @@ class UpdateStatus(BaseModel):
 class OrderIdBody(BaseModel):
     order_id:   str
     picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
+
+
+class RetroactivePackingBody(BaseModel):
+    """Reconciliation wizard, step 1 (2026-08-28) — see the endpoint's own
+    docstring below."""
+    order_id:    str
+    picking_id:  Optional[int] = None
+    packer_name: Optional[str] = None
 
 
 class IncompleteBody(BaseModel):
@@ -1346,6 +1362,214 @@ async def retry_invoice_creation(
     if not invoice_id:
         raise HTTPException(status_code=502, detail=result["invoice_warning"] or "Invoice creation failed")
     return {"success": True, "invoice_id": invoice_id, "invoice_name": result["invoice_name"], "warning": result["invoice_warning"]}
+
+
+# ── Admin Override reconciliation wizard (2026-08-28) ─────────────────────────
+# Found live: update_ticket_stage (ticket_routes.py's Admin Override "Stage"
+# action) special-cases only a move to confirmed_wip (retry-queue an existing
+# packing board failure) — every other target status, including
+# ready_for_collection, is a blind `ticket.status = body.status` write with
+# no packing_board entry, no QA/RP sign-off, and no final invoice ever
+# created. A ticket overridden straight to ready_for_collection can end up
+# claiming a pipeline it never actually ran through in the portal, even when
+# (as confirmed with the product owner, 2026-08-28) the real physical work —
+# packing, QA/RP inspection, sometimes collection — genuinely happened, just
+# outside the portal's own buttons.
+#
+# The fix is NOT to silently backfill fake history — that would corrupt an
+# Annex-11-relevant audit trail (QA/RP sign-off is a real compliance record,
+# not just a UI checkbox; see CLAUDE.md's Phase 13 compliance notes). Instead
+# this is a genuine retrospective attestation: each step below can only be
+# confirmed by someone holding that step's REAL permission (an admin who
+# overrode the ticket cannot also rubber-stamp "QA approved" — only
+# tickets.qa_approve can), each write is clearly marked retrospective, and
+# the real actor/timestamp of the *attestation* (not a guessed original time)
+# is recorded. get_ticket's `override_gaps` field (ticket_routes.py) drives
+# which of these four steps SalesTickets.js's reconciliation modal shows —
+# always a contiguous sequence (packing -> QA -> RP -> invoice), so a step
+# can never be attempted before the one before it is genuinely resolved.
+
+async def _retroactive_gate(order_id: str) -> dict:
+    """Shared 404 for every step below — every retroactive action operates on
+    an already-existing packing_board entry except confirm-packing itself."""
+    entry = await col("packing_board").find_one({"order_id": order_id})
+    if not entry:
+        raise HTTPException(status_code=400, detail="No packing entry exists yet for this order — confirm packing first")
+    return entry
+
+
+@router.post("/retroactive/confirm-packing")
+async def retroactive_confirm_packing(
+    body: RetroactivePackingBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """Reconciliation step 1 — backfills a real packing_board entry for an
+    order whose Sales ticket claims further progress than any entry exists
+    to back. Reuses order_routes.py's _queue_packing_board() for correctness
+    (real line items/warehouse/picking data read fresh from Odoo, identical
+    to the normal creation path) rather than hand-rolling a second doc-
+    builder — but that function unconditionally regresses the linked
+    ticket's status to "confirmed_wip" for its own normal callers, which is
+    exactly wrong here: the ticket is deliberately already further along
+    and preserving that claim (now that it's about to be genuinely backed)
+    is the whole point, not undoing it. The ticket's real status is restored
+    immediately after. The fresh entry is then advanced from "queued" to
+    "ready" (packing already physically happened, per this attestation) with
+    a `retrospective: True` marker — it can never silently read as having
+    gone through a real live queued->packing->ready run."""
+    try:
+        order_id_int = int(body.order_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid order ID")
+    ticket = await col("tickets").find_one({"type": "sales", "order_id": order_id_int, "exit_status": None})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="No Sales ticket found for this order")
+    if await col("packing_board").find_one({"order_id": body.order_id}):
+        raise HTTPException(status_code=400, detail="A packing entry already exists for this order")
+
+    from routes.order_routes import _queue_packing_board  # deferred import, same defensive pattern order_routes.py itself already uses for packing_board_routes.manager
+    _orig_status = ticket["status"]
+    try:
+        await _queue_packing_board(order_id_int, background_tasks)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not create the packing entry: {str(e)}")
+
+    now = datetime.now(timezone.utc)
+    await col("packing_board").update_one(
+        {"order_id": body.order_id},
+        {"$set": {
+            "status": "ready", "packer_name": body.packer_name or None,
+            "packed_at": now, "ready_at": now, "retrospective": True,
+        }},
+    )
+    # Restore the ticket's real status — see the function docstring above for why.
+    await col("tickets").update_one(
+        {"_id": ticket["_id"]},
+        {
+            "$set": {"status": _orig_status, "updated_at": now},
+            "$push": {"stage_history": {
+                "status": _orig_status, "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": current_user.get("name") or current_user.get("username", ""),
+                "at": now, "note": "Reconciliation: packing entry backfilled retrospectively (confirmed already packed)",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.retroactive_confirm_packing", "ticket", str(ticket["_id"]),
+        entity_label=ticket.get("customer_name", ""), user=current_user,
+    )
+    updated = await col("packing_board").find_one({"order_id": body.order_id})
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
+    return {"success": True}
+
+
+@router.post("/retroactive/confirm-qa")
+async def retroactive_confirm_qa(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.qa_approve")),
+):
+    """Reconciliation step 2 — gated by the REAL QA permission, not the
+    admin who overrode the ticket, so this can never become a second way
+    for one person to skip a compliance sign-off. Same idea as the normal
+    QA approve action, just marked retrospective and reachable without the
+    entry having gone through a live packing run first."""
+    entry = await _retroactive_gate(body.order_id)
+    if entry.get("qa_approved_at"):
+        raise HTTPException(status_code=400, detail="QA has already signed off on this order")
+    now = datetime.now(timezone.utc)
+    await col("packing_board").update_one(
+        {"_id": entry["_id"]},
+        {"$set": {"qa_approved_by": current_user.get("name") or current_user.get("username", ""), "qa_approved_at": now, "qa_retrospective": True}},
+    )
+    await audit_log(
+        "packing.retroactive_confirm_qa", "packing_board", body.order_id,
+        entity_label=entry.get("customer_name", ""), user=current_user,
+    )
+    updated = await col("packing_board").find_one({"_id": entry["_id"]})
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
+    return {"success": True}
+
+
+@router.post("/retroactive/confirm-rp")
+async def retroactive_confirm_rp(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.rp_approve")),
+):
+    """Reconciliation step 3 — mirrors retroactive_confirm_qa exactly, gated
+    on the real RP permission."""
+    entry = await _retroactive_gate(body.order_id)
+    if entry.get("rp_approved_at"):
+        raise HTTPException(status_code=400, detail="RP has already signed off on this order")
+    now = datetime.now(timezone.utc)
+    await col("packing_board").update_one(
+        {"_id": entry["_id"]},
+        {"$set": {"rp_approved_by": current_user.get("name") or current_user.get("username", ""), "rp_approved_at": now, "rp_retrospective": True}},
+    )
+    await audit_log(
+        "packing.retroactive_confirm_rp", "packing_board", body.order_id,
+        entity_label=entry.get("customer_name", ""), user=current_user,
+    )
+    updated = await col("packing_board").find_one({"_id": entry["_id"]})
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
+    return {"success": True}
+
+
+@router.post("/retroactive/confirm-invoice")
+async def retroactive_confirm_invoice(
+    body: OrderIdBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
+):
+    """Reconciliation step 4 — the direct fix for the original complaint
+    (a real, already-existing Odoo invoice for this order that the ticket
+    had no way to link, since the existing "Link" button on an untracked
+    invoice is deliberately restricted to already-paid invoices — correct
+    for its own deposit-linking use case, wrong here). Reuses
+    _create_final_invoice() exactly as complete_entry/retry_invoice_creation
+    do — it already checks for a real, existing, not-yet-linked invoice on
+    the order before creating a new one, so this both fixes the linking gap
+    and never risks a duplicate invoice. Requires QA and RP already
+    confirmed — the same sequencing complete_entry itself enforces (an
+    Orders Clerk cannot Mark Complete before both have signed off), applied
+    here too rather than let this step be reachable out of order."""
+    entry = await _retroactive_gate(body.order_id)
+    if not entry.get("qa_approved_at") or not entry.get("rp_approved_at"):
+        raise HTTPException(status_code=400, detail="QA and RP sign-off must both be confirmed before the final invoice")
+    if entry.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="An invoice is already linked to this order")
+
+    now = datetime.now(timezone.utc)
+    result = await _create_final_invoice(entry, now, background_tasks)
+    if not result.get("invoice_id"):
+        raise HTTPException(status_code=502, detail=result.get("invoice_warning") or "Could not create or link the final invoice")
+
+    await col("packing_board").update_one(
+        {"_id": entry["_id"]},
+        {"$set": {
+            "inv_num": result.get("invoice_name") or "",
+            "invoice_id": result["invoice_id"],
+            "status": "complete", "completed_at": now,
+            "invoice_creation_error": None, "invoice_creation_failed_at": None,
+            "invoice_retrospective": True,
+        }},
+    )
+    await audit_log(
+        "packing.retroactive_confirm_invoice", "packing_board", body.order_id,
+        entity_label=entry.get("customer_name", ""), user=current_user,
+        detail={"invoice_id": result["invoice_id"]},
+    )
+    updated = await col("packing_board").find_one({"_id": entry["_id"]})
+    if updated:
+        updated.pop("_id", None)
+        await push_update(updated)
+    return {"success": True, "invoice_id": result["invoice_id"], "invoice_name": result.get("invoice_name")}
 
 
 @router.put("/mark-collected")

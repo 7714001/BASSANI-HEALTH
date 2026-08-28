@@ -282,6 +282,47 @@ def _actor(current_user: dict) -> str:
     return current_user.get("name") or current_user.get("username") or "unknown"
 
 
+async def _compute_override_gaps(ticket: dict) -> list:
+    """Detects a real gap between what ticket.status/exit_status claims and
+    what packing_board actually backs it with (2026-08-28) — independent of
+    HOW the gap was created (Admin Override — update_ticket_stage's blind
+    status write below — is the only currently-possible cause, but this
+    stays mechanism-agnostic so it also catches any future desync source).
+    Returns an ordered, always-contiguous list of gap keys the
+    reconciliation wizard (packing_board_routes.py's retroactive/* endpoints)
+    steps through: packing_entry -> qa_approval -> rp_approval ->
+    final_invoice. Empty means the ticket's claimed status is honestly
+    backed by real data. Balance-payment status is deliberately left to the
+    frontend, which already has live invoice/payment data
+    (detailOutstanding) without a redundant Odoo read here."""
+    claims_wip = ticket.get("status") in ("confirmed_wip", "ready_for_collection") or ticket.get("exit_status") == "complete"
+    if not claims_wip:
+        return []
+    order_id = ticket.get("order_id")
+    if not order_id:
+        return []
+    try:
+        packing = await col("packing_board").find_one({"order_id": str(order_id)})
+    except Exception:
+        return []
+    claims_done = ticket.get("status") == "ready_for_collection" or ticket.get("exit_status") == "complete"
+    if not packing:
+        gaps = ["packing_entry"]
+        if claims_done:
+            gaps += ["qa_approval", "rp_approval", "final_invoice"]
+        return gaps
+    if not claims_done:
+        return []
+    gaps = []
+    if not packing.get("qa_approved_at"):
+        gaps.append("qa_approval")
+    if not packing.get("rp_approved_at"):
+        gaps.append("rp_approval")
+    if not packing.get("invoice_id"):
+        gaps.append("final_invoice")
+    return gaps
+
+
 # ── Reseller-aware auth helpers ───────────────────────────────────────────────
 # These replace individual require_permission() calls on endpoints that resellers
 # need to reach. Each helper replicates the super-admin bypass and role gate from
@@ -824,6 +865,11 @@ async def get_ticket(
             ticket["reseller_name"] = _res["name"]
     if ticket.get("reseller_id") and ticket.get("source") == "portal":
         ticket["source"] = "reseller"
+
+    # Admin Override reconciliation (2026-08-28) — see _compute_override_gaps'
+    # own docstring. Detail-view only, not list_tickets, to avoid an extra
+    # packing_board query per row on the list.
+    ticket["override_gaps"] = await _compute_override_gaps(ticket)
 
     return _serialize(ticket)
 
