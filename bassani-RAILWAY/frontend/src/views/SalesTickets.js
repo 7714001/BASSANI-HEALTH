@@ -896,6 +896,15 @@ export default function SalesTickets() {
     setQuoteNote("");
     setQuoteMode("edit");
     setView("quote-builder");
+    // The order's own warehouse (fixed — the UI shows "Locked to existing
+    // order" for this field in edit mode) was never propagated into
+    // quoteWarehouseId, which both ProductLineRow's inline search and the
+    // Browse Products drawer read for their warehouse_id param. Left at
+    // whatever a prior new-quote session set it to (or empty), it fell
+    // through to the staff member's own active warehouse — or, if that was
+    // also unset, to no warehouse/company scoping at all, showing products
+    // across every company. Set it explicitly from the order's real warehouse.
+    setQuoteWarehouseId(Array.isArray(detailOrder?.warehouse_id) ? String(detailOrder.warehouse_id[0]) : "");
     const customerId = currentCustomer.id;
     const preShippingId = Array.isArray(detailOrder?.partner_shipping_id) ? detailOrder.partner_shipping_id[0] : null;
     const preInvoiceId  = Array.isArray(detailOrder?.partner_invoice_id)  ? detailOrder.partner_invoice_id[0]  : null;

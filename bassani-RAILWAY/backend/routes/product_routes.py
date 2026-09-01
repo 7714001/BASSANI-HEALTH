@@ -287,7 +287,7 @@ async def list_products(
             for p in products:
                 p["list_price"] = p.pop("lst_price", 0)
             _attach_tax_rates(odoo, products, company_id)
-            total = odoo.count("product.product", domain)
+            total = odoo.count("product.product", domain, context=odoo_context(warehouse_id, company_id))
         await _apply_pending_gtin_fallback(products)
         return {
             "products": products, "total": total, "limit": limit, "offset": offset,
