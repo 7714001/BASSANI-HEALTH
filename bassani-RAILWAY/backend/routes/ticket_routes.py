@@ -26,6 +26,7 @@ from auth import (
 )
 from routes.monitor_routes import broadcast_monitor_refresh
 from routes.order_routes import _queue_packing_board
+from routes.packing_board_routes import push_update as _push_packing_board_update
 from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from warehouse_context import company_context
 from database import col
@@ -280,6 +281,50 @@ def _serialize(t: dict) -> dict:
 
 def _actor(current_user: dict) -> str:
     return current_user.get("name") or current_user.get("username") or "unknown"
+
+
+async def _cancel_linked_packing_board(order_id, reason: Optional[str] = None, actor: Optional[dict] = None) -> None:
+    """The missing reverse leg of packing_board_routes.py's _sync_sales_ticket
+    (2026-09-07). That function already pushes packing-board outcomes
+    (complete/incomplete/cancelled) back onto the linked Sales ticket, but
+    nothing ever went the other way: closing a Sales ticket as cancelled
+    (via the Odoo-order-cancelled auto-sync below, or an Admin Override
+    exit_status write) left any already-created packing_board ("Order
+    Ticket") entry sitting active — still shown on the Operations Monitor
+    and OrdersTickets.js, contradicting the ticket it exists to track.
+    Cancels every non-terminal packing_board entry for this order (there
+    can be more than one — a primary delivery plus a re-queued backorder
+    child share one order_id, 2026-08-23), mirroring cancel_entry's own
+    field shape exactly. Best-effort and silent on failure, same convention
+    as _sync_sales_ticket itself — a sync failure here must never block the
+    ticket-cancel action that triggered it."""
+    try:
+        now = datetime.now(timezone.utc)
+        cursor = col("packing_board").find({
+            "order_id": str(order_id),
+            "status": {"$nin": ["collected", "cleared", "cancelled", "complete", "incomplete"]},
+        })
+        entries = await cursor.to_list(length=50)
+        for entry in entries:
+            updated = await col("packing_board").find_one_and_update(
+                {"_id": entry["_id"]},
+                {"$set": {
+                    "status": "cancelled",
+                    "cancelled_at": now,
+                    "incomplete_reason": reason or "Linked Sales ticket was cancelled",
+                }},
+                return_document=True,
+            )
+            updated.pop("_id", None)
+            await _push_packing_board_update(updated)
+            await audit_log(
+                "packing.cancelled", "packing_board", str(order_id), entity_label=str(order_id),
+                user=actor, detail={"reason": reason or "Linked Sales ticket was cancelled", "source": "ticket_cancel_sync"},
+            )
+        if entries:
+            await broadcast_monitor_refresh()
+    except Exception as e:
+        logger.warning("packing_board_cancel_sync_failed order_id=%s error=%s", order_id, e)
 
 
 async def _compute_override_gaps(ticket: dict) -> list:
@@ -775,6 +820,7 @@ async def get_ticket(
                     ticket["odoo_order_state"] = live_state
                     ticket["exit_status"]      = "cancelled"
                     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+                    await _cancel_linked_packing_board(order_id, "Odoo order was cancelled")
 
                 else:
                     set_fields: dict = {"updated_at": now}
@@ -989,6 +1035,13 @@ async def update_ticket_stage(
     )
     await broadcast_monitor_refresh()
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    # Closing a ticket out (cancelled/not_interested) must also cancel any
+    # packing_board entry already created for it (2026-09-07) — see
+    # _cancel_linked_packing_board's own docstring for why this direction was
+    # missing. A ticket can only reach confirmed_wip/a packing_board entry
+    # via the deposit gate, so order_id is always the right key here.
+    if body.exit_status in ("cancelled", "not_interested") and ticket.get("order_id"):
+        await _cancel_linked_packing_board(ticket["order_id"], body.note, current_user)
     # 2026-08-26 — this endpoint also handles "Assign to me" (body.assigned_to
     # only, no status change) — another trigger point for portal_sales_agent.py.
     # Only fires when an assignee was actually set (body.assigned_to truthy),
