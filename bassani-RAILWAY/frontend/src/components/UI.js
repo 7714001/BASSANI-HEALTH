@@ -302,7 +302,10 @@ function NavGroup({ group, pathname, navigate }) {
 }
 
 // ── Global barcode / reference search bar ─────────────────────────────────────
-// Press "/" from anywhere (when not in another input) to focus.
+// Press "/" or Cmd/Ctrl+K from anywhere to focus (Cmd/Ctrl+K works even from
+// inside another input — the modern command-palette convention, GitHub/
+// Linear/Notion/Vercel; "/" deliberately doesn't, so typing "/" in a text
+// field is never hijacked).
 //
 // Two distinct interactions share this one input (2026-08-27 predictive
 // upgrade, matching the enterprise pattern Odoo's own top search and
@@ -317,23 +320,84 @@ function NavGroup({ group, pathname, navigate }) {
 // Arrow keys move through the dropdown; Enter with a suggestion highlighted
 // picks it; Enter with nothing highlighted falls through to the exact-match
 // dispatch exactly as before, so the scan flow can never be broken by this.
+//
+// 2026-09-07 — opened up to every internal role (was admin-only); each
+// entity type is independently permission-gated server-side
+// (search_routes.py's _has_perm/_can_search_tickets), so this component
+// doesn't need its own duplicate permission logic — it just needs to know
+// who reaches the app shell at all. warehouse_supervisor/packer are excluded
+// here for the same reason they're excluded server-side: they never render
+// this shell (App.js routes them to a separate packing-floor screen).
+const INTERNAL_SEARCH_ROLES = new Set([
+  "super_admin", "admin", "sales", "orders_clerk", "finance",
+  "qa_manager", "responsible_pharmacist", "vault_custodian",
+]);
+
+const SEARCH_TYPE_ICON  = { order: FileText, invoice: ReceiptText, product: Package, ticket: Ticket };
+const SEARCH_TYPE_LABEL = { order: "Order", invoice: "Invoice", product: "Product", ticket: "Sales Ticket" };
+const RECENT_SEARCH_LIMIT = 6;
+
+function recentSearchKey(userId) { return `bassani_recent_search_${userId}`; }
+
+function loadRecentSearches(userId) {
+  try {
+    const raw = localStorage.getItem(recentSearchKey(userId));
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function pushRecentSearch(userId, item) {
+  try {
+    const { type, id, ref, name, sub, navigate_to, state } = item;
+    const rest = loadRecentSearches(userId).filter(r => r.navigate_to !== navigate_to);
+    const next = [{ type, id, ref, name, sub, navigate_to, state }, ...rest].slice(0, RECENT_SEARCH_LIMIT);
+    localStorage.setItem(recentSearchKey(userId), JSON.stringify(next));
+    return next;
+  } catch { return loadRecentSearches(userId); }
+}
+
+// Wraps the substring of `text` matching `q` in <mark> — pure display
+// polish, case-insensitive, first-match-only (good enough for a short
+// ref/name in a dropdown row, not a general highlighter).
+function highlightMatch(text, q) {
+  if (!q || !text) return text;
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-bassani-100 text-bassani-800 rounded-sm px-0.5">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
+
 function GlobalSearch() {
-  const inputRef   = useRef(null);
-  const wrapRef    = useRef(null);
+  const inputRef    = useRef(null);
+  const wrapRef     = useRef(null);
   const debounceRef = useRef(null);
-  const navigate   = useNavigate();
-  const { isAdmin } = useAuth();
+  const reqIdRef    = useRef(0);
+  const navigate    = useNavigate();
+  const { user }    = useAuth();
   const [query,       setQuery      ] = useState("");
   const [loading,     setLoading    ] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [open,        setOpen       ] = useState(false);
   const [highlight,   setHighlight  ] = useState(-1);
+  const [recent,      setRecent     ] = useState([]);
+
+  useEffect(() => {
+    if (user?.id) setRecent(loadRecentSearches(user.id));
+  }, [user?.id]);
 
   const focus = useCallback((e) => {
-    if (e.key !== "/") return;
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+    if (e.key !== "/" && !isCmdK) return;
+    if (!isCmdK) {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    }
     e.preventDefault();
     inputRef.current?.focus();
   }, []);
@@ -357,6 +421,11 @@ function GlobalSearch() {
   // Debounced predictive fetch (250ms) — fires on every keystroke past 2
   // characters, so this must stay cheap and must not fire on every single
   // keystroke immediately or it'd hammer the endpoint while typing fast.
+  // reqIdRef + AbortController together guard against a real race: if a
+  // slower response for an earlier, shorter query resolves AFTER a faster
+  // response for a later, more specific one, it must never overwrite the
+  // newer results with stale ones (a genuine risk with typeahead over a
+  // real network, not a hypothetical one).
   useEffect(() => {
     clearTimeout(debounceRef.current);
     const q = query.trim();
@@ -366,28 +435,40 @@ function GlobalSearch() {
       return;
     }
     setSuggestLoading(true);
+    const controller = new AbortController();
     debounceRef.current = setTimeout(async () => {
+      const myReqId = ++reqIdRef.current;
       try {
-        const { data } = await api.get("/api/search/suggest", { params: { q } });
+        const { data } = await api.get("/api/search/suggest", { params: { q }, signal: controller.signal });
+        if (myReqId !== reqIdRef.current) return; // superseded by a later keystroke
         setSuggestions(data.results || []);
         setOpen(true);
         setHighlight(-1);
       } catch {
+        if (myReqId !== reqIdRef.current) return;
         setSuggestions([]);
       } finally {
-        setSuggestLoading(false);
+        if (myReqId === reqIdRef.current) setSuggestLoading(false);
       }
     }, 250);
-    return () => clearTimeout(debounceRef.current);
+    return () => { clearTimeout(debounceRef.current); controller.abort(); };
   }, [query]);
 
-  if (!isAdmin) return null;
+  if (!INTERNAL_SEARCH_ROLES.has(user?.role)) return null;
+
+  // What's actually rendered: the fetched suggestions once 2+ chars are
+  // typed, or recently-visited items when the box is empty — so focusing an
+  // empty search bar is never a dead end (Linear/Notion/GitHub's own "/"
+  // search all do this).
+  const showingRecent = query.trim().length < 2;
+  const activeList = showingRecent ? recent : suggestions;
 
   const goTo = (item) => {
     setQuery("");
     setSuggestions([]);
     setOpen(false);
     inputRef.current?.blur();
+    if (user?.id) setRecent(pushRecentSearch(user.id, item));
     navigate(item.navigate_to, { state: item.state || {} });
   };
 
@@ -405,6 +486,7 @@ function GlobalSearch() {
       setSuggestions([]);
       setOpen(false);
       inputRef.current?.blur();
+      if (user?.id) setRecent(pushRecentSearch(user.id, data));
       navigate(data.navigate_to, { state: data.state || {} });
     } catch (err) {
       toast.error(err.response?.data?.detail || "No match found");
@@ -413,8 +495,7 @@ function GlobalSearch() {
     }
   };
 
-  const TYPE_ICON  = { order: FileText, invoice: ReceiptText, product: Package };
-  const TYPE_LABEL = { order: "Order", invoice: "Invoice", product: "Product" };
+  const listboxId = "global-search-listbox";
 
   return (
     <div ref={wrapRef} className="hidden sm:flex items-center relative">
@@ -424,56 +505,85 @@ function GlobalSearch() {
         ref={inputRef}
         value={query}
         onChange={e => setQuery(e.target.value)}
-        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
+        onFocus={() => { if (activeList.length > 0) setOpen(true); }}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-autocomplete="list"
+        aria-controls={listboxId}
+        aria-activedescendant={highlight >= 0 ? `${listboxId}-option-${highlight}` : undefined}
         onKeyDown={e => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
-            if (suggestions.length > 0) { setOpen(true); setHighlight(h => (h + 1) % suggestions.length); }
+            if (activeList.length > 0) { setOpen(true); setHighlight(h => (h + 1) % activeList.length); }
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
-            if (suggestions.length > 0) { setOpen(true); setHighlight(h => (h <= 0 ? suggestions.length - 1 : h - 1)); }
+            if (activeList.length > 0) { setOpen(true); setHighlight(h => (h <= 0 ? activeList.length - 1 : h - 1)); }
           } else if (e.key === "Enter") {
-            if (open && highlight >= 0 && suggestions[highlight]) goTo(suggestions[highlight]);
-            else dispatch();
+            if (open && highlight >= 0 && activeList[highlight]) goTo(activeList[highlight]);
+            else if (!showingRecent) dispatch();
           } else if (e.key === "Escape") {
             if (open) { setOpen(false); setHighlight(-1); }
             else { setQuery(""); e.target.blur(); }
           }
         }}
-        placeholder="/ Scan or search…"
+        placeholder="/ or ⌘K — scan or search…"
         className="pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-44 focus:w-72 transition-all duration-150"
       />
-      {open && suggestions.length > 0 && (
+      {open && activeList.length > 0 && (
         <div
+          role="listbox"
+          id={listboxId}
           onMouseDown={e => e.preventDefault()}
           className="absolute top-full left-0 mt-1 w-80 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1"
         >
-          {suggestions.map((item, i) => {
-            const Icon = TYPE_ICON[item.type] || FileText;
+          {showingRecent && (
+            <p className="px-3 pt-1 pb-1.5 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">Recent</p>
+          )}
+          {activeList.map((item, i) => {
+            const Icon = SEARCH_TYPE_ICON[item.type] || FileText;
+            // Section header whenever the type changes from the previous row
+            // — results already arrive grouped by type from the backend
+            // (orders, then invoices, then tickets), so this is a plain
+            // linear scan, not a re-sort.
+            const showHeader = !showingRecent && (i === 0 || activeList[i - 1].type !== item.type);
             return (
-              <button
-                key={`${item.type}-${item.id}`}
-                onClick={() => goTo(item)}
-                onMouseEnter={() => setHighlight(i)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${i === highlight ? "bg-bassani-50" : "hover:bg-gray-50"}`}
-              >
-                <span className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${i === highlight ? "bg-bassani-100 text-bassani-700" : "bg-gray-100 text-gray-400"}`}>
-                  <Icon size={13} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-xs font-semibold text-gray-800 truncate">{item.ref}</span>
-                    <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide shrink-0">{TYPE_LABEL[item.type]}</span>
+              <div key={`${item.type}-${item.id}`}>
+                {showHeader && (
+                  <p className={`px-3 pb-1 text-[9px] font-semibold text-gray-400 uppercase tracking-wide ${i === 0 ? "pt-1" : "pt-2"}`}>
+                    {SEARCH_TYPE_LABEL[item.type]}s
+                  </p>
+                )}
+                <button
+                  id={`${listboxId}-option-${i}`}
+                  role="option"
+                  aria-selected={i === highlight}
+                  onClick={() => goTo(item)}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${i === highlight ? "bg-bassani-50" : "hover:bg-gray-50"}`}
+                >
+                  <span className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${i === highlight ? "bg-bassani-100 text-bassani-700" : "bg-gray-100 text-gray-400"}`}>
+                    {showingRecent ? <Clock size={13} /> : <Icon size={13} />}
                   </span>
-                  <span className="block text-[11px] text-gray-500 truncate">{item.name}</span>
-                  {item.sub && <span className="block text-[10px] text-gray-400 truncate">{item.sub}</span>}
-                </span>
-              </button>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono text-xs font-semibold text-gray-800 truncate">
+                        {showingRecent ? item.ref : highlightMatch(item.ref, query.trim())}
+                      </span>
+                      {showingRecent && <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide shrink-0">{SEARCH_TYPE_LABEL[item.type]}</span>}
+                    </span>
+                    <span className="block text-[11px] text-gray-500 truncate">
+                      {showingRecent ? item.name : highlightMatch(item.name, query.trim())}
+                    </span>
+                    {item.sub && <span className="block text-[10px] text-gray-400 truncate">{item.sub}</span>}
+                  </span>
+                </button>
+              </div>
             );
           })}
         </div>
       )}
-      {open && !suggestLoading && suggestions.length === 0 && query.trim().length >= 2 && (
+      {open && !suggestLoading && !showingRecent && suggestions.length === 0 && query.trim().length >= 2 && (
         <div
           onMouseDown={e => e.preventDefault()}
           className="absolute top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-3 px-3"

@@ -1442,13 +1442,19 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 Assigning a GTIN from the picker writes the barcode field directly to Odoo and marks the code as assigned in the pool. The Products table barcode cell updates immediately. To manage the full GTIN pool (upload codes, view the registry, remove unused codes), go to **Settings → GTIN Pool**.
 
-**Global barcode search:** Every admin role sees a search bar in the top-right of the portal header on every page. Press `/` on your keyboard from anywhere to focus it (as long as you are not already typing in another field). Then scan any barcode or type a reference:
+**Global search:** Every internal staff role (not just admins — this was opened up to Sales, Orders, Finance, QA, RP, and the vault custodian in 2026-09-07) sees a search bar in the top-right of the portal header on every page. Press `/` or **Ctrl+K** (**Cmd+K** on Mac) from anywhere to focus it — Ctrl/Cmd+K works even while you're already typing in another field, `/` doesn't (so typing a literal `/` somewhere else is never hijacked).
 
-- **Product GS1 barcode:** Scanning a product's GTIN (13 or 14 digits) takes you straight to the Products page filtered to that item's SKU. Use this when you have a physical product and want to check its stock, price, or lot details without browsing.
-- **Sale order reference:** Typing or scanning the Odoo order number (e.g. `S00142`) opens the sales ticket for that order if one exists — including its current status, invoice, and all actions. For orders that have not yet been pulled into the portal pipeline, the Orders list opens pre-filtered to that order reference so you can create a ticket from there.
-- **Invoice number:** Typing the invoice reference (e.g. `INV/2026/00043`) navigates to the Invoices page.
+As you type 2 or more characters, a dropdown appears with matching results grouped by type — Orders, Invoices, and Sales Tickets — with the matched text highlighted. Use the arrow keys and Enter to pick one, or click it. Focusing the search bar with nothing typed shows your recently visited results instead, so you never see an empty box.
 
-If no match is found, a red toast appears. Press Escape to clear the search bar at any time.
+What you can search for, and what you see, depends on your role — you'll only ever see the kinds of records you're already allowed to view elsewhere in the portal (e.g. Finance sees invoices, everyone with order access sees orders, the vault custodian sees neither, since their work has nothing to do with the commercial pipeline):
+
+- **Company or customer name** — shows every matching order/invoice, including ones placed against a specific contact person at that company, not just the company's own record.
+- **Sale order reference** (e.g. `S00142`) — jumps straight to that order's Order Passport, its unified tracking page.
+- **Invoice number** (e.g. `INV/2026/00043`) — jumps to that invoice.
+- **Sales Ticket reference** (e.g. `TKT-A1B2C3D4`, the same reference shown on the Sales Tickets and Orders Tickets lists) or a customer name — opens that ticket directly, including ones that don't have an order yet (a still-open inquiry).
+- **Product GS1 barcode** (13 or 14 digit scan) — takes you straight to the Products page filtered to that item's SKU. Available to every role that reaches this search bar, including the vault custodian.
+
+If you type a full reference and hit Enter with nothing highlighted in the dropdown (the normal outcome of a barcode scanner firing Enter automatically), it resolves and navigates the same way. If no match is found, a red toast appears. Press Escape to clear the search bar at any time.
 
 **Order barcodes on tickets:** Every sales ticket detail page shows a compact Code 128 barcode of the sale order reference in the top-right of the order document header. Warehouse staff can scan this from a tablet screen or a printed packing slip to pull up the order instantly via the global search bar.
 
