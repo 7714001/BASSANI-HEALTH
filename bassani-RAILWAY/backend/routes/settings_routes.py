@@ -175,6 +175,7 @@ async def get_email_routing() -> dict:
         "recurring_order_needs_confirm_to": doc.get("recurring_order_needs_confirm_to", []),
         "recurring_order_declined_to": doc.get("recurring_order_declined_to", []),
         "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
+        "pop_uploaded_to":          doc.get("pop_uploaded_to", []),
     }
 
 
