@@ -80,9 +80,33 @@ async def list_invoices(
         else:
             domain.append(("payment_state", "=", payment_state))
     if search:
+        # Resolve to res.partner ids rather than adding a
+        # commercial_partner_id filter directly on account.move (2026-09-07)
+        # — that field/model combination has never been live-verified on
+        # this Odoo instance; see the customer-role branch a few lines below
+        # for the identical concern, already fixed the same way for exactly
+        # this model. Finds every partner whose own name matches (so a
+        # direct contact-name search still works exactly as before via
+        # partner_id.name), then also pulls in every child contact of a
+        # matching company — so searching a company name finds every
+        # invoice billed to any of its contacts, not only ones billed to the
+        # company record itself (an order/invoice's partner_id is often a
+        # specific child contact, e.g. "Stuart Oakes" under "Cannex").
+        try:
+            matched_ids = list(odoo.search("res.partner", [("name", "ilike", search)], limit=200))
+            if matched_ids:
+                matched_ids += list(odoo.search("res.partner", [("parent_id", "in", matched_ids)], limit=500))
+        except Exception:
+            matched_ids = []
+        # Also match invoice_origin (the originating sale.order reference,
+        # e.g. "S00764") — Invoices.js's own search placeholder already
+        # promises "Search invoice #, customer, sale order…", but this field
+        # was never actually included in the domain until now.
         domain.append("|")
         domain.append(("name", "ilike", search))
-        domain.append(("partner_id.name", "ilike", search))
+        domain.append("|")
+        domain.append(("invoice_origin", "ilike", search))
+        domain.append(("partner_id", "in", matched_ids))
 
     # Reseller: restrict to invoices where they are the customer in Odoo
     if current_user.get("role") == "reseller":

@@ -133,9 +133,19 @@ async def list_orders(
             pass
         domain.append(("commercial_partner_id", "=", partner_id))
     if search:
+        # Also match on commercial_partner_id.name (2026-09-07), not just
+        # partner_id.name — an order's direct partner_id is often a specific
+        # child contact (e.g. "Stuart Oakes" under "Cannex"), same case the
+        # exact-match partner_id filter above already resolves for. Without
+        # this, searching the company name only ever found orders placed
+        # directly against the company record itself, silently hiding every
+        # other order for that same company placed against one of its
+        # contacts — invisible unless you already knew the exact SO number.
         domain.append("|")
         domain.append(("name", "ilike", search))
+        domain.append("|")
         domain.append(("partner_id.name", "ilike", search))
+        domain.append(("commercial_partner_id.name", "ilike", search))
 
     try:
         orders = odoo.search_read(

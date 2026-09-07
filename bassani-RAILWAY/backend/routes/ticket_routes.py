@@ -2516,8 +2516,13 @@ async def create_ticket_from_order(
 ):
     """Onboard an existing Odoo order into the Sales Ticket pipeline.
     Draft/sent orders start at 'quote' stage. Confirmed orders (state=sale)
-    start at 'sale_order' stage — Finance still needs to confirm payment before
-    the order reaches the packing board."""
+    start at 'awaiting_deposit' — same target the Odoo-state auto-sync in
+    get_ticket already uses for a `sale`/`done` order (2026-09-07 fix; this
+    endpoint previously used the older pre-8.47 'sale_order' stage, which the
+    next auto-sync would silently advance past anyway, but creating it at the
+    wrong stage to begin with was never correct). The universal 50% deposit
+    gate still applies — Finance still needs to register it before the order
+    reaches the packing board."""
     odoo = get_odoo_client()
     try:
         orders = odoo.read(
@@ -2546,9 +2551,9 @@ async def create_ticket_from_order(
     customer_id = partner[0] if partner and partner is not False else None
     customer_name = partner[1] if partner and partner is not False else "Unknown"
 
-    # Confirmed orders enter at sale_order stage — quote stage is for drafts only
+    # Confirmed orders enter straight at awaiting_deposit — quote stage is for drafts only
     is_confirmed = order["state"] == "sale"
-    initial_status = "sale_order" if is_confirmed else "quote"
+    initial_status = "awaiting_deposit" if is_confirmed else "quote"
     note = (
         f"Ticket created from confirmed Odoo order {order['name']} — awaiting Finance payment confirmation"
         if is_confirmed
