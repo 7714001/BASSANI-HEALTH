@@ -18,6 +18,7 @@ import json
 import jwt
 import logging
 from datetime import datetime, timezone
+from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -1895,6 +1896,158 @@ async def cancel_entry(
                     user=current_user, detail={"reason": body.reason})
     await _sync_sales_ticket(body.order_id, "cancelled", body.reason, actor=current_user)
     return {"success": True}
+
+
+async def _find_orphaned_packing_boards(limit: int = 500) -> list:
+    """
+    The read-only half of the reconcile action (2026-09-07) — separated from
+    the write so the frontend can show a real preview before anyone commits,
+    matching this codebase's zero-window.confirm convention (every other
+    mutating admin action, e.g. Purge Test Data / Cancel Quote, lists exactly
+    what will change in a Modal before the user confirms; a bare "click and
+    it's done" button was a real gap here, flagged by the product owner).
+
+    Bounded scan (default 500) over every currently-active packing_board
+    entry. For each, checks whether ANY sales ticket exists for its order_id
+    (not just an open one) and returns the ones whose only matching ticket is
+    already exited (cancelled/not_interested/complete) — these are the
+    orphans _reconcile_cancelled_ticket_boards would cancel. Deliberately
+    excludes an entry with no ticket at all — a packing_board entry can
+    legitimately predate ticket-linking on old data, and that's a different,
+    pre-existing case this sweep has no business guessing about.
+
+    Returns one dict per orphan with enough context to review in a modal:
+    order_id, ps_num, customer_name, status, queued_at, ticket_exit_status.
+    """
+    active = await col("packing_board").find(
+        {"status": {"$nin": ["collected", "cleared", "cancelled", "complete", "incomplete"]}},
+        {"order_id": 1, "status": 1, "ps_num": 1, "customer_name": 1, "queued_at": 1, "is_backorder": 1},
+    ).to_list(length=limit)
+
+    order_ids: set = set()
+    for e in active:
+        try:
+            order_ids.add(int(e["order_id"]))
+        except (KeyError, ValueError, TypeError):
+            pass
+
+    ticket_exit_by_order: dict = {}
+    if order_ids:
+        async for t in col("tickets").find(
+            {"type": "sales", "order_id": {"$in": list(order_ids)}},
+            {"order_id": 1, "exit_status": 1},
+        ):
+            # If more than one ticket ever referenced the same order (shouldn't
+            # normally happen), an open one (exit_status None) always wins —
+            # never treat the entry as orphaned while any ticket still claims it.
+            existing = ticket_exit_by_order.get(t["order_id"], "__unset__")
+            if existing in ("__unset__",) or (existing and not t.get("exit_status")):
+                ticket_exit_by_order[t["order_id"]] = t.get("exit_status")
+
+    orphans: list = []
+    for e in active:
+        try:
+            oid_int = int(e["order_id"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        exit_status = ticket_exit_by_order.get(oid_int, "__unset__")
+        if exit_status in ("__unset__", None):
+            continue  # no ticket found, or its ticket is still open — not orphaned
+        orphans.append({
+            "packing_board_id": str(e["_id"]),
+            "order_id": oid_int,
+            "ps_num": e.get("ps_num"),
+            "customer_name": e.get("customer_name"),
+            "status": e.get("status"),
+            "is_backorder": bool(e.get("is_backorder")),
+            "queued_at": e.get("queued_at"),
+            "ticket_exit_status": exit_status,
+        })
+    return orphans
+
+
+async def _reconcile_cancelled_ticket_boards(limit: int = 500, actor: Optional[dict] = None) -> dict:
+    """
+    Data-fix sweep for the pre-2026-09-07 one-way sync gap (ticket cancelled
+    -> packing_board entry never followed) — see ticket_routes.py's
+    _cancel_linked_packing_board for the forward-fix this backfills.
+    That fix only prevents NEW occurrences: it lives inside the
+    ticket-cancellation code paths themselves, so a ticket that was already
+    cancelled before the fix shipped has no trigger left to re-run — its
+    stage_history entry already happened, and get_ticket's own auto-sync is
+    guarded by `not ticket.get("exit_status")`, so simply reopening an
+    already-closed ticket in the portal does nothing.
+
+    Cancels every orphan _find_orphaned_packing_boards() identifies, the same
+    way _cancel_linked_packing_board / cancel_entry do. Idempotent: an entry
+    this sweep just cancelled will never match the active-status query again,
+    so running it twice in a row (e.g. confirming the preview modal twice)
+    is a safe no-op the second time — the find_one_and_update's own status
+    filter re-checks this at write time too, not just at scan time, in case
+    an entry changed state in the gap between preview and confirm.
+    """
+    now = datetime.now(timezone.utc)
+    orphans = await _find_orphaned_packing_boards(limit=limit)
+
+    fixed: list = []
+    for o in orphans:
+        updated = await col("packing_board").find_one_and_update(
+            {"_id": ObjectId(o["packing_board_id"]), "status": {"$nin": ["collected", "cleared", "cancelled", "complete", "incomplete"]}},
+            {"$set": {
+                "status": "cancelled",
+                "cancelled_at": now,
+                "incomplete_reason": f"Linked Sales ticket was already '{o['ticket_exit_status']}' (reconciled)",
+            }},
+            return_document=True,
+        )
+        if not updated:
+            continue
+        updated.pop("_id", None)
+        await push_update(updated)
+        await audit_log(
+            "packing.cancelled", "packing_board", str(o["order_id"]), entity_label=str(o["order_id"]),
+            user=actor, detail={"reason": "reconcile_cancelled_ticket", "ticket_exit_status": o["ticket_exit_status"]},
+        )
+        fixed.append(o["order_id"])
+
+    if fixed:
+        await broadcast_monitor_refresh()
+    return {"scanned": len(orphans), "fixed_order_ids": fixed}
+
+
+@router.get("/reconcile-cancelled/preview")
+async def preview_reconcile_cancelled_packing_boards(
+    current_user: dict = Depends(require_permission("tickets.manage")),
+):
+    """
+    Read-only preview for the Reconcile Cancelled action — returns exactly
+    what POST /reconcile-cancelled would cancel, with no side effects, so the
+    frontend can show it in a confirm Modal before anyone commits (this
+    codebase's standard pattern for every other mutating admin action).
+    """
+    orphans = await _find_orphaned_packing_boards()
+    return {"orphans": orphans}
+
+
+@router.post("/reconcile-cancelled")
+async def reconcile_cancelled_packing_boards(
+    current_user: dict = Depends(require_permission("tickets.manage")),
+):
+    """
+    Admin data-fix action: cancels any packing_board entry still sitting
+    active whose linked Sales ticket already exited before the
+    ticket-cancel -> packing-board sync existed (2026-09-07). Safe to run
+    more than once — see _reconcile_cancelled_ticket_boards's own docstring.
+    The frontend always calls GET .../preview first and shows the exact list
+    in a confirm Modal — this endpoint itself performs no confirmation of its
+    own, so it must never be wired to a bare button click.
+    Exposed as a button rather than a one-off script so this stays a normal,
+    audited portal action (Architecture Principle #7) rather than requiring
+    direct database access, and so the same fix is available on demand if
+    this class of drift is ever discovered again.
+    """
+    result = await _reconcile_cancelled_ticket_boards(actor=current_user)
+    return {"success": True, **result}
 
 
 @router.get("/entry/{order_id}")

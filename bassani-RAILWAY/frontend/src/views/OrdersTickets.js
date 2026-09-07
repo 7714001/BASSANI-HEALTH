@@ -127,6 +127,9 @@ export default function OrdersTickets() {
   const [qtyPackedSaving, setQtyPackedSaving] = useState(new Set());
   const [purgeConfirm,    setPurgeConfirm   ] = useState(false);
   const [purging,         setPurging        ] = useState(false);
+  const [reconcilePreview,   setReconcilePreview  ] = useState(null);   // null | array of orphans
+  const [reconcileLoading,   setReconcileLoading  ] = useState(false);  // fetching the preview
+  const [reconcileConfirming,setReconcileConfirming] = useState(false); // committing the cancels
 
   // Fetch MOs whenever the entry has an order — previously gated on the
   // entry already being a waiting_stock backorder, which meant an MO that
@@ -268,6 +271,41 @@ export default function OrdersTickets() {
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Stock check failed"); }
     finally { setBusyId(null); }
+  };
+
+  // Data-fix action (2026-09-07) for the pre-fix one-way ticket-cancel ->
+  // packing-board sync gap (CLAUDE.md's Order pipeline business rules) — an
+  // entry whose Sales ticket was already cancelled/not_interested before
+  // that fix shipped has no trigger left to re-run on its own (reopening the
+  // ticket in the portal does nothing; get_ticket's auto-sync only runs for
+  // a ticket that's still open). Two-step, matching this codebase's
+  // zero-window.confirm convention: clicking the button only ever fetches a
+  // read-only preview of what WOULD be cancelled (GET .../preview, no side
+  // effects) and opens it in a Modal; the actual cancel only happens if the
+  // admin reviews the list and clicks Confirm inside that modal.
+  const openReconcilePreview = async () => {
+    setReconcileLoading(true);
+    try {
+      const r = await api.get("/api/packing/reconcile-cancelled/preview");
+      if ((r.data.orphans || []).length === 0) {
+        toast("Nothing to fix — every active order ticket has an open Sales ticket", { icon: "ℹ️" });
+      } else {
+        setReconcilePreview(r.data.orphans);
+      }
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not load reconcile preview"); }
+    finally { setReconcileLoading(false); }
+  };
+
+  const confirmReconcileCancelled = async () => {
+    setReconcileConfirming(true);
+    try {
+      const r = await api.post("/api/packing/reconcile-cancelled");
+      const n = r.data.fixed_order_ids?.length || 0;
+      toast.success(`${n} order ticket${n !== 1 ? "s" : ""} cancelled to match their already-closed Sales ticket`);
+      setReconcilePreview(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Reconcile failed"); }
+    finally { setReconcileConfirming(false); }
   };
 
   // Recovery action (2026-08-27) for an order that reached "complete" with
@@ -1172,6 +1210,38 @@ export default function OrdersTickets() {
             </div>
           </Modal>
         )}
+        {reconcilePreview && (
+          <Modal title="Reconcile Cancelled Tickets" onClose={() => setReconcilePreview(null)}>
+            <p className="text-sm text-gray-700 font-medium mb-2">
+              {reconcilePreview.length} order ticket{reconcilePreview.length !== 1 ? "s are" : " is"} still active on the board, but the Sales ticket behind {reconcilePreview.length !== 1 ? "them has" : "it has"} already closed. Confirming will cancel {reconcilePreview.length !== 1 ? "these entries" : "this entry"} so {reconcilePreview.length !== 1 ? "they stop" : "it stops"} showing on the Operations Monitor.
+            </p>
+            <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100 mb-3">
+              {reconcilePreview.map(o => (
+                <div key={o.packing_board_id} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-800 truncate">
+                      {o.ps_num || `Order ${o.order_id}`} {o.is_backorder && <span className="text-amber-600 text-xs font-normal">(backorder)</span>}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {o.customer_name || "Unknown customer"} · queued {fmtDate(o.queued_at)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <Badge color="gray">Board: {o.status}</Badge>{" "}
+                    <Badge color="red">Ticket: {o.ticket_exit_status}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-red-600 font-medium">This cannot be undone from the portal.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setReconcilePreview(null)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={confirmReconcileCancelled} loading={reconcileConfirming}>
+                Cancel {reconcilePreview.length} Entr{reconcilePreview.length !== 1 ? "ies" : "y"}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
         {pdfView && (
           <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
         )}
@@ -1241,6 +1311,15 @@ export default function OrdersTickets() {
                 className="text-amber-700 border-amber-200 hover:bg-amber-50"
               >
                 <RefreshCw size={13} />Check backorder stock
+              </BtnSecondary>
+            )}
+            {canManage && (
+              <BtnSecondary
+                onClick={openReconcilePreview}
+                loading={reconcileLoading}
+                title="Preview order tickets still active whose linked Sales ticket is already closed"
+              >
+                <RefreshCw size={13} />Reconcile Cancelled
               </BtnSecondary>
             )}
           </div>
