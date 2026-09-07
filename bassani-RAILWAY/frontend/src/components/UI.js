@@ -527,7 +527,7 @@ function GlobalSearch() {
             else { setQuery(""); e.target.blur(); }
           }
         }}
-        placeholder="/ or ⌘K — scan or search…"
+        placeholder="Scan or search…"
         className="pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-bassani-400 w-44 focus:w-72 transition-all duration-150"
       />
       {open && activeList.length > 0 && (
