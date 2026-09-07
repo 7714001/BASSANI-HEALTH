@@ -1120,7 +1120,6 @@ async def confirm_payment(
 async def create_order_from_ticket(
     ticket_id: str,
     body: TicketOrderCreate,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(_require_ticket_driver),
 ):
     """
@@ -1232,32 +1231,15 @@ async def create_order_from_ticket(
     )
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
 
-    # Auto-send the quote the moment it's built (2026-08-26) — product owner:
-    # staff shouldn't need a separate "Send Quote" click right after this one;
-    # by the time they're deciding what to do next, the quote should already
-    # be in the customer's inbox and the next real decision is Confirm Order.
-    # Re-reads the ticket doc rather than reusing the pre-creation `ticket`
-    # variable above, since _send_quote_impl requires order_id to already be
-    # set. Never fails or rolls back order creation on a send failure — same
-    # non-blocking-failure convention as _queue_packing_board's
-    # packing_board_queue_error and 8.55's welcome-pack-send-after-approval —
-    # the order was already committed in Odoo by the time this runs.
-    quote_sent = False
-    send_warning = None
-    try:
-        ticket_after = await col("tickets").find_one({"_id": oid})
-        send_result = await _send_quote_impl(ticket_id, oid, ticket_after, current_user, background_tasks)
-        quote_sent = bool(send_result.get("email_sent"))
-        send_warning = send_result.get("warning")
-    except HTTPException as e:
-        send_warning = e.detail if isinstance(e.detail, str) else "Failed to send the quote automatically"
-    except Exception as e:
-        send_warning = f"Failed to send the quote automatically: {e}"
-
-    result: dict = {"success": True, "odoo_order_id": odoo_order_id, "quote_sent": quote_sent}
-    if send_warning:
-        result["warning"] = send_warning
-    return result
+    # Deliberately does NOT send the quote automatically (reverted 2026-09-07
+    # — auto-send was added 2026-08-26, but for a direct-inquiry ticket the
+    # sales clerk routinely needs to come back and edit the draft quote
+    # before it's ready to go out; auto-sending the moment it's built meant
+    # the customer could already have a copy of a quote that hadn't been
+    # edited yet. Sending is now only ever triggered by an explicit click on
+    # Send Quote (POST /{id}/send-quote, _send_quote_impl), same as Edit
+    # Quote (update_order_from_ticket) has always worked.
+    return {"success": True, "odoo_order_id": odoo_order_id}
 
 
 @router.post("/{ticket_id}/cancel-order")
@@ -1510,19 +1492,19 @@ async def update_order_from_ticket(
 
 async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict, background_tasks: BackgroundTasks, recipients: Optional[List[str]] = None) -> dict:
     """Core of the quote-send flow — extracted 2026-08-26 so
-    create_order_from_ticket can automatically send the quote the moment
-    it's built, rather than leaving it to a separate manual "Send Quote"
-    click afterward (product owner: the quote should already be in the
-    customer's inbox by the time staff decide the next step is Confirm
-    Order, not Send Quote). Shared with the standalone POST
-    /{ticket_id}/send-quote endpoint below, which callers still use for a
-    deliberate resend after editing an already-sent quote — one
-    implementation either way, so a change here never has to be made twice.
+    create_order_from_ticket could automatically send the quote the moment
+    it was built. That auto-send was reverted 2026-09-07 (a direct-inquiry
+    sales clerk routinely needs to come back and edit the draft quote before
+    it's ready to go out, and auto-sending meant the customer could already
+    have an unedited copy) — this is now only ever reached via an explicit
+    click: the standalone POST /{ticket_id}/send-quote endpoint below (first
+    send or a deliberate resend after editing). Kept as its own function
+    regardless, since Send Quote itself has two entry points (the ticket
+    detail sidebar button and the recipient-picker resend) that must never
+    implement this twice.
     Caller is responsible for the ticket-lookup/exit-status/reseller-
     ownership checks; this assumes `ticket` already reflects order_id being
-    set (create_order_from_ticket re-reads its own just-updated ticket doc
-    before calling this, rather than reusing its pre-creation in-memory
-    copy)."""
+    set."""
     if not ticket.get("order_id"):
         raise HTTPException(status_code=400, detail="No linked order — build a quote first")
 
@@ -1643,11 +1625,12 @@ async def send_quote(
     """Email the PDF quotation to the customer via the portal's own email
     system (2026-08-27 — was Odoo's built-in quotation template). Marks the
     Odoo order as 'sent' and stamps quote_sent_at on the ticket. Idempotent —
-    safe to call again after edits (resend); this is the deliberate-resend
-    path, since create_order_from_ticket already sends the quote
-    automatically the moment it's built. `body.recipients`, when provided
-    (the Send Quote recipient-picker modal), overrides the default single
-    auto-resolved recipient."""
+    safe to call again after edits (resend); this is now the ONLY path that
+    sends a quote email at all — create_order_from_ticket used to auto-send
+    on build (2026-08-26), reverted 2026-09-07 so a sales clerk can edit a
+    direct-inquiry quote before the customer ever sees it. `body.recipients`,
+    when provided (the Send Quote recipient-picker modal), overrides the
+    default single auto-resolved recipient."""
     try:
         oid = ObjectId(ticket_id)
     except Exception:
