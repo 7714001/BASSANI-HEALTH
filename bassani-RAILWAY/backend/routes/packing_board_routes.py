@@ -698,10 +698,12 @@ async def rp_approve(
 def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = None) -> dict:
     """Validate all assigned stock.picking records linked to an Odoo sale order.
 
-    Normally sets qty_done = reserved quantity via action_set_quantities_to_reservation.
-    When qty_overrides is provided ({product_id: qty_packed}), writes those specific
-    qty_done values to the move lines directly — allowing a packer-reported shortfall
-    to produce a backorder automatically via Odoo's standard wizard.
+    Normally sets qty_done = reserved quantity by writing it directly onto each
+    move line (there is no working Odoo convenience method for this on this
+    Odoo 19 instance — see the 2026-09-08 note below). When qty_overrides is
+    provided ({product_id: qty_packed}), writes those specific qty_done values
+    to the move lines instead — allowing a packer-reported shortfall to
+    produce a backorder automatically via Odoo's standard wizard.
 
     Returns {"success": bool, "pickings": [name, ...], "error": str|None,
              "backorder_picking_id": int|None, "backorder_picking_name": str|None}.
@@ -768,22 +770,35 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
         pid = picking["id"]
         pname = picking["name"]
         try:
+            # 'quantity' not 'reserved_uom_qty' (2026-08-11, live-verified
+            # against production Odoo 19 — see order_routes.py's
+            # _queue_packing_board for the fuller field-drift writeup):
+            # 'reserved_uom_qty' does not exist on this instance's
+            # stock.move.line at all. 'quantity' holds the reserved-but-
+            # unpicked amount for that specific move line before completion,
+            # confirmed live across real assigned pickings.
+            #
+            # qty_done must be written directly to each move line rather than
+            # via Odoo's old "Set" convenience button — there is no
+            # 'action_set_quantities_to_reservation' method on this Odoo 19
+            # instance at all (2026-09-08, root cause of Sentry #143212165 /
+            # every order silently never reaching a validated delivery:
+            # confirmed live via a safe empty-id probe —
+            # AttributeError: "The method
+            # 'stock.picking.action_set_quantities_to_reservation' does not
+            # exist" — that convenience button was removed in this Odoo
+            # version). This used to only run in the qty_overrides branch;
+            # both branches now share the same direct-write mechanism so
+            # there is no code path left that depends on the missing method.
+            from collections import defaultdict as _dd
+            move_lines = _odoo.search_read(
+                "stock.move.line",
+                [("picking_id", "=", pid), ("state", "not in", ["done", "cancel"])],
+                ["id", "product_id", "quantity"],
+            )
             if qty_overrides:
                 # Apply per-product qty_done values; fill move lines in order,
                 # stopping when the packer-reported qty is reached.
-                # 'quantity' not 'reserved_uom_qty' (2026-08-11, live-verified
-                # against production Odoo 19 — see order_routes.py's
-                # _queue_packing_board for the fuller field-drift writeup):
-                # 'reserved_uom_qty' does not exist on this instance's
-                # stock.move.line at all. 'quantity' holds the reserved-but-
-                # unpicked amount for that specific move line before
-                # completion, confirmed live across real assigned pickings.
-                from collections import defaultdict as _dd
-                move_lines = _odoo.search_read(
-                    "stock.move.line",
-                    [("picking_id", "=", pid), ("state", "not in", ["done", "cancel"])],
-                    ["id", "product_id", "quantity"],
-                )
                 product_mls: dict = _dd(list)
                 for ml in move_lines:
                     pid_val = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
@@ -793,14 +808,13 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
                     remaining = float(override) if override is not None else None
                     for ml in mls:
                         reserved = float(ml.get("quantity", 0))
-                        if remaining is None:
-                            _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": reserved}])
-                        else:
-                            take = min(remaining, reserved)
-                            _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": take}])
+                        take = reserved if remaining is None else min(remaining, reserved)
+                        _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": take}])
+                        if remaining is not None:
                             remaining = max(0.0, remaining - take)
             else:
-                _odoo.execute("stock.picking", "action_set_quantities_to_reservation", [pid])
+                for ml in move_lines:
+                    _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": float(ml.get("quantity", 0))}])
             result = _odoo.execute("stock.picking", "button_validate", [pid])
             if isinstance(result, dict) and result.get("res_model") == "stock.backorder.confirmation":
                 # Partial reservation — ask Odoo to auto-create a backorder
