@@ -1167,10 +1167,25 @@ async def complete_entry(
     # ── Create and post Odoo invoice for delivered qty ────────────────────────
     # Invoice is raised here (after QA + RP sign-off) for all orders including
     # samples. Sample invoices total R0.00 and Odoo marks them paid immediately.
-    _inv_result = await _create_final_invoice(entry, now, background_tasks)
-    invoice_id      = _inv_result["invoice_id"]
-    invoice_name    = _inv_result["invoice_name"]
-    invoice_warning = _inv_result["invoice_warning"]
+    # Skipped entirely when delivery validation itself failed above (2026-09-08,
+    # found live via Sentry #143212165) — every Bassani product is
+    # invoice_policy=delivery, so Odoo will always refuse "no items available
+    # to invoice" until the delivery is genuinely validated (picking state
+    # "done"). Attempting create_invoices() anyway just spends an Odoo round
+    # trip to reproduce that confusing fault in place of the real, actionable
+    # reason — the delivery issue itself, which is what gets persisted instead.
+    if delivery_result["success"]:
+        _inv_result = await _create_final_invoice(entry, now, background_tasks)
+        invoice_id      = _inv_result["invoice_id"]
+        invoice_name    = _inv_result["invoice_name"]
+        invoice_warning = _inv_result["invoice_warning"]
+    else:
+        invoice_id = None
+        invoice_name = None
+        invoice_warning = (
+            "Delivery could not be validated in Odoo, so no invoice was created: "
+            f"{delivery_result.get('error') or 'unknown error'}"
+        )
 
     _complete_set: dict = {
         "status": "complete",
@@ -1308,11 +1323,14 @@ async def complete_entry(
         response["backorder_entry_id"] = backorder_entry_id
     warnings: list = []
     if not delivery_result["success"]:
+        # invoice_warning already restates this same delivery error (see
+        # above) when delivery validation is what blocked invoicing, so only
+        # one of the two is shown rather than the same root cause twice.
         warnings.append(
             delivery_result.get("error")
             or "Delivery could not be validated in Odoo. Stock levels may not reflect this completion."
         )
-    if invoice_warning:
+    elif invoice_warning:
         warnings.append(invoice_warning)
     if warnings:
         response["warning"] = " | ".join(warnings)
@@ -1350,10 +1368,60 @@ async def retry_invoice_creation(
         )
 
     now = datetime.now(timezone.utc)
+
+    # Re-validate the Odoo delivery first if it never actually succeeded
+    # (2026-09-08, found live via Sentry #143212165) — this endpoint used to
+    # go straight to invoice creation, which meant an order that reached
+    # "complete" with an unvalidated delivery (delivery_validated: False)
+    # reproduced the exact same "no items available to invoice" Odoo fault
+    # on every single retry, forever, since nothing had ever re-attempted the
+    # delivery itself. Confirmed with Tristan: the portal must validate
+    # deliveries automatically — there is no manual Odoo step in this
+    # pipeline, so "retry" has to mean retry the whole chain, not just the
+    # invoice half of it. Skipped once delivery_validated is already true —
+    # no reason to re-touch Odoo's stock moves for an already-done delivery.
+    if not entry.get("delivery_validated"):
+        _packing_items = entry.get("items", [])
+        _qty_overrides = {
+            i["product_id"]: float(i["qty_packed"])
+            for i in _packing_items
+            if i.get("product_id") and i.get("qty_packed") is not None
+        } or None
+        try:
+            _delivery_result = _validate_odoo_delivery(int(entry["order_id"]), _qty_overrides)
+        except (ValueError, TypeError) as e:
+            _delivery_result = {"success": False, "error": f"Invalid order ID: {e}"}
+        except Exception as e:
+            _delivery_result = {"success": False, "error": str(e)}
+
+        await audit_log(
+            "packing.retry_delivery_validation", "packing_board", body.order_id,
+            entity_label=body.order_id, user=current_user, detail=_delivery_result,
+        )
+
+        if not _delivery_result.get("success"):
+            _fail_set = {
+                "delivery_validated": False,
+                "invoice_creation_error": (
+                    "Delivery could not be validated in Odoo, so no invoice was created: "
+                    f"{_delivery_result.get('error') or 'unknown error'}"
+                ),
+                "invoice_creation_failed_at": now,
+            }
+            _updated = await col("packing_board").find_one_and_update(
+                {"_id": entry["_id"]}, {"$set": _fail_set}, return_document=True,
+            )
+            if _updated:
+                _updated.pop("_id", None)
+                await push_update(_updated)
+            raise HTTPException(status_code=502, detail=_fail_set["invoice_creation_error"])
+
+        entry["delivery_validated"] = True
+
     result = await _create_final_invoice(entry, now, background_tasks)
     invoice_id = result["invoice_id"]
 
-    update_set: dict = {}
+    update_set: dict = {"delivery_validated": True}
     if invoice_id:
         update_set["inv_num"] = result["invoice_name"] or ""
         update_set["invoice_id"] = invoice_id
