@@ -369,6 +369,87 @@ async def delete_parent_category(
     return {"success": True}
 
 
+@router.get("/odoo-export")
+async def export_odoo_category_mapping(
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """
+    Flattens the current Parent Category structure into one row per active
+    Odoo product, so Bassani can restructure their real Odoo product.category
+    tree to match what's already set up here. This never writes to Odoo — the
+    resulting sheet is meant to be fed directly into Odoo's own Products
+    list-view Import (match existing records on "Odoo Product ID", map "New
+    Category" onto the Product Category field); Odoo derives the category
+    path itself from parent_id nesting, same as this file already models.
+
+    "New Category" is the full path ("Parent > Sub", or just "Parent" for a
+    top-level-only match). "Matched Via" distinguishes a whole-category match
+    ("category" — every product currently in that Odoo category, safe to
+    bulk-apply) from a "handpick" (a product manually added to a parent
+    category IN ADDITION to whatever real Odoo category it already sits in —
+    since a product can only have one categ_id in Odoo, migrating this one
+    means a human decides its new category, not a mechanical rename) from
+    "unmapped" (not covered by any active parent category at all, so nothing
+    here needs to change for it).
+    """
+    odoo = get_odoo_client()
+    docs = await col("parent_categories").find({"active": True}).to_list(None)
+    docs_by_id = {str(d["_id"]): d for d in docs}
+
+    def leaf_path(doc: dict) -> str:
+        parent_id = doc.get("parent_id")
+        if parent_id and parent_id in docs_by_id:
+            return f"{docs_by_id[parent_id].get('name', '')} > {doc.get('name', '')}"
+        return doc.get("name", "")
+
+    # A category/product should only ever live in one doc via the Category
+    # Mapping tab's "move" semantics, but the underlying schema still allows
+    # many-to-many (the hand-pick flow) — first match wins, same defensive
+    # convention ParentCategories.js's own categoryToDocId map already uses.
+    category_to_doc, product_to_doc = {}, {}
+    for did, d in docs_by_id.items():
+        for cid in d.get("odoo_category_ids", []):
+            category_to_doc.setdefault(cid, did)
+        for pid in d.get("product_ids", []):
+            product_to_doc.setdefault(pid, did)
+
+    products = odoo.search_read(
+        "product.product",
+        domain=[("active", "=", True)],
+        fields=["id", "default_code", "name", "display_name", "categ_id"],
+        limit=20000,
+        order="name asc",
+    )
+
+    rows = []
+    for p in products:
+        categ = p.get("categ_id")
+        categ_id = categ[0] if categ else None
+
+        # Hand-pick wins when a product matches both ways — same precedence
+        # /preview already uses, since it's the more deliberate assignment.
+        if p["id"] in product_to_doc:
+            matched_via = "handpick"
+            new_category = leaf_path(docs_by_id[product_to_doc[p["id"]]])
+        elif categ_id is not None and categ_id in category_to_doc:
+            matched_via = "category"
+            new_category = leaf_path(docs_by_id[category_to_doc[categ_id]])
+        else:
+            matched_via = "unmapped"
+            new_category = ""
+
+        rows.append({
+            "odoo_product_id": p["id"],
+            "sku": p.get("default_code") or "",
+            "name": p.get("display_name") or p.get("name") or "",
+            "current_category": categ[1] if categ else "",
+            "new_category": new_category,
+            "matched_via": matched_via,
+        })
+
+    return {"rows": rows, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
 @router.put("/category-mapping/{odoo_category_id}")
 async def set_category_mapping(
     odoo_category_id: int,

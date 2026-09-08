@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Pencil, Info, Search, X, Loader2 } from "lucide-react";
+import { Plus, Pencil, Info, Search, X, Loader2, Download } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow, FilterPill, SearchBar,
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
@@ -303,6 +303,41 @@ export default function ParentCategories() {
 
   const mappedCount = mappingRows.filter(r => r.parentId).length;
 
+  // Flattens the current Parent Category structure into a working document
+  // for Bassani to restructure their real Odoo product.category tree — see
+  // parent_category_routes.py's odoo-export endpoint for the full mechanics.
+  // This never writes to Odoo; the sheet itself is what gets fed into Odoo's
+  // own Products list-view Import.
+  const [exportingOdoo, setExportingOdoo] = useState(false);
+  const MATCHED_VIA_LABEL = {
+    handpick: "Hand-picked (review manually)",
+    category: "Category rule",
+    unmapped: "Unmapped",
+  };
+  const exportForOdoo = async () => {
+    setExportingOdoo(true);
+    try {
+      const { data } = await api.get("/api/parent-categories/odoo-export");
+      const XLSX = await import("xlsx");
+      const sheet = data.rows.map(r => ({
+        "Odoo Product ID": r.odoo_product_id,
+        SKU: r.sku,
+        "Product Name": r.name,
+        "Current Odoo Category": r.current_category,
+        "New Category": r.new_category,
+        "Matched Via": MATCHED_VIA_LABEL[r.matched_via] || r.matched_via,
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), "Category Mapping");
+      XLSX.writeFile(wb, `Bassani Odoo Category Mapping ${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success("Export ready");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Export failed");
+    } finally {
+      setExportingOdoo(false);
+    }
+  };
+
   const assignMapping = async (odooCatId, targetId) => {
     setMappingSavingId(odooCatId);
     try {
@@ -324,9 +359,17 @@ export default function ParentCategories() {
         title="Parent Categories"
         subtitle={activeTab === "categories" ? "Portal-only grouping for reseller browsing" : `${mappedCount} of ${mappingRows.length} Odoo categories mapped`}
         onRefresh={load}
-        actions={activeTab === "categories" ? (
-          <BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>
-        ) : null}
+        actions={
+          <div className="flex items-center gap-2">
+            <BtnSecondary onClick={exportForOdoo} disabled={exportingOdoo}>
+              {exportingOdoo ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+              Export for Odoo
+            </BtnSecondary>
+            {activeTab === "categories" && (
+              <BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>
+            )}
+          </div>
+        }
       />
       <main className="flex-1 overflow-y-auto p-6">
         <ChipRow>
