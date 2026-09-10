@@ -1616,6 +1616,19 @@ async def _approve_application_impl(
 
     now_approved = datetime.now(timezone.utc)
 
+    # Always create this doc, even for a direct application with no reseller
+    # (app["reseller_id"] is None) — it's also the sole way get_customer_documents
+    # etc. resolve back to the source application's uploaded docs via onboarding_ref.
+    # A None/absent reseller_id here means exactly what it says: no owning reseller,
+    # NOT "linked to a reseller with an unknown name" — every consumer that checks
+    # "is this customer linked to a reseller" (reseller_routes.py's link/unlink,
+    # customer_routes.py's claim_customer, ownership.py, CustomerProfile.js's
+    # Account Manager badge) must test reseller_id truthiness, never just this
+    # doc's existence. Found live 2026-09-10: a direct-application customer had
+    # this exact ghost doc, which made CustomerProfile.js show a blank "Account
+    # Manager / Onboarded via reseller" badge and made link_customer_to_reseller/
+    # claim_customer both refuse to link the customer to a real reseller ("already
+    # linked to reseller ''") — fixed at every one of those call sites, not here.
     await col("customer_ownership").insert_one({
         "odoo_partner_id":     partner_id,
         "reseller_id":         app["reseller_id"],

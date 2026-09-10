@@ -795,22 +795,29 @@ async def claim_customer(
     if not records:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    # Check not already claimed by anyone
+    # Check not already claimed by anyone. An existing row with no reseller_id
+    # at all isn't a real claim — it's a customer_ownership row created purely
+    # to track a direct/self-service onboarding application's onboarding_ref
+    # (see onboarding_routes.py::_approve_application_impl), so it doesn't block.
     existing = await col("customer_ownership").find_one({"odoo_partner_id": customer_id})
-    if existing:
-        if existing.get("reseller_id") == (await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID) or {}).get("id"):
+    if existing and existing.get("reseller_id"):
+        if existing["reseller_id"] == (await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID) or {}).get("id"):
             return {"success": True, "message": "Already your customer"}
         raise HTTPException(status_code=409, detail=f"This customer is already linked to another reseller ({existing.get('reseller_name', 'unknown')})")
 
     reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-    await col("customer_ownership").insert_one({
+    ownership_vals = {
         "odoo_partner_id":     customer_id,
         "reseller_id":         reseller["id"]   if reseller else None,
         "reseller_name":       reseller["name"] if reseller else current_user.get("username", ""),
         "created_at":          datetime.now(timezone.utc),
         "created_by_username": current_user.get("username", ""),
         "claimed":             True,
-    })
+    }
+    if existing:
+        await col("customer_ownership").update_one({"_id": existing["_id"]}, {"$set": ownership_vals})
+    else:
+        await col("customer_ownership").insert_one(ownership_vals)
     if reseller:
         await ticket_manager.refresh_reseller(reseller["id"])
     return {"success": True, "customer_name": records[0]["name"]}

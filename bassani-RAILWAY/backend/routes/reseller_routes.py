@@ -509,22 +509,39 @@ async def link_customer_to_reseller(
         raise HTTPException(status_code=404, detail="Customer not found in Odoo")
 
     existing = await col("customer_ownership").find_one({"odoo_partner_id": body.odoo_partner_id})
-    if existing:
-        if existing.get("reseller_id") == reseller_id:
+    if existing and existing.get("reseller_id"):
+        if existing["reseller_id"] == reseller_id:
             raise HTTPException(status_code=409, detail="Customer is already linked to this reseller")
         raise HTTPException(
             status_code=409,
             detail=f"Customer is already linked to reseller '{existing.get('reseller_name', 'another reseller')}'"
         )
 
-    await col("customer_ownership").insert_one({
-        "odoo_partner_id":     body.odoo_partner_id,
-        "reseller_id":         reseller_id,
-        "reseller_name":       reseller["name"],
-        "created_at":          datetime.now(timezone.utc),
-        "created_by_username": current_user.get("username", ""),
-        "linked_by_admin":     True,
-    })
+    # `existing` here (if present) has no reseller_id at all — a customer_ownership
+    # row created purely to track a direct/self-service onboarding application's
+    # onboarding_ref (see onboarding_routes.py::_approve_application_impl), never
+    # a real reseller link. It doesn't block linking; update it in place so the
+    # onboarding_ref/document trail is preserved rather than lost.
+    if existing:
+        await col("customer_ownership").update_one(
+            {"_id": existing["_id"]},
+            {"$set": {
+                "reseller_id":         reseller_id,
+                "reseller_name":       reseller["name"],
+                "created_at":          datetime.now(timezone.utc),
+                "created_by_username": current_user.get("username", ""),
+                "linked_by_admin":     True,
+            }},
+        )
+    else:
+        await col("customer_ownership").insert_one({
+            "odoo_partner_id":     body.odoo_partner_id,
+            "reseller_id":         reseller_id,
+            "reseller_name":       reseller["name"],
+            "created_at":          datetime.now(timezone.utc),
+            "created_by_username": current_user.get("username", ""),
+            "linked_by_admin":     True,
+        })
     await audit_log(
         "reseller.customer_linked", "customer_ownership", reseller_id,
         entity_label=records[0]["name"], user=current_user,

@@ -1001,7 +1001,7 @@ export default function CustomerProfile() {
             {stats.credit_limit > 0 && (
               <KpiCard label="Credit Limit"    value={fmtR(stats.credit_limit)}       sub={creditPct != null ? `${creditPct}% used` : "No usage"} icon={CreditCard} accent="bg-violet-500" />
             )}
-            {ownership && (
+            {ownership?.reseller_id && (
               <KpiCard label="Account Manager" value={ownership.reseller_name}        sub="Onboarded via reseller"     icon={User}         accent="bg-purple-500" />
             )}
           </div>
