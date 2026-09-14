@@ -369,6 +369,37 @@ async def delete_parent_category(
     return {"success": True}
 
 
+@router.get("/category-product-counts")
+async def get_category_product_counts(
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """
+    Direct (non-recursive) product count per Odoo category, for the Category
+    Mapping tab — deliberately NOT the same number as product.category's own
+    product_count field, which rolls up children (e.g. a "Indoor" parent with
+    two children shows the children's combined total even if nothing is
+    directly assigned to "Indoor" itself). That recursive figure is right for
+    deciding whether a whole branch is worth showing at all (product_routes.py
+    already uses it that way); this one answers a different question the
+    mapping tab actually needs: does THIS EXACT category, mapped or not, have
+    products sitting in it right now. One bulk read + tally rather than 70+
+    per-category search_counts.
+    """
+    odoo = get_odoo_client()
+    products = odoo.search_read(
+        "product.product",
+        domain=[("active", "=", True)],
+        fields=["categ_id"],
+        limit=20000,
+    )
+    counts: dict = {}
+    for p in products:
+        categ = p.get("categ_id")
+        if categ:
+            counts[categ[0]] = counts.get(categ[0], 0) + 1
+    return {"counts": counts}
+
+
 @router.get("/odoo-export")
 async def export_odoo_category_mapping(
     current_user: dict = Depends(require_permission("products.manage")),

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Plus, Pencil, Info, Search, X, Loader2, Download } from "lucide-react";
+import { Plus, Pencil, Info, Search, X, Loader2, Download, AlertTriangle } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, ChipRow, FilterPill, SearchBar,
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
@@ -113,6 +113,13 @@ export default function ParentCategories() {
   const [odooCategoriesRaw, setOdooCategoriesRaw] = useState([]); // [{id, name, complete_name}]
   const [loading, setLoading]       = useState(true);
 
+  // ── Category Mapping tab: direct product count per Odoo category ─────────
+  // Lazy-loaded (only once the Mapping tab is actually opened) and cached
+  // until a manual refresh — see parent_category_routes.py's
+  // /category-product-counts entry for why this is a separate, non-recursive
+  // number from product.category's own product_count field.
+  const [categoryCounts, setCategoryCounts] = useState(null); // null = not yet loaded
+
   const odooCategoryOptions = odooCategoriesRaw.map(c => ({ value: c.id, label: c.complete_name || c.name }));
 
   const load = useCallback(async () => {
@@ -124,11 +131,38 @@ export default function ParentCategories() {
       ]);
       setCategories(pcR.data.categories || []);
       setOdooCategoriesRaw(catR.data.categories || []);
+      setCategoryCounts(null); // re-fetched by the effect below if the Mapping tab is active
     } catch { toast.error("Failed to load categories"); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (activeTab !== "mapping" || categoryCounts !== null) return;
+    api.get("/api/parent-categories/category-product-counts")
+      .then(r => setCategoryCounts(r.data.counts || {}))
+      .catch(() => toast.error("Failed to load product counts"));
+  }, [activeTab, categoryCounts]);
+
+  const [mappingSorting, setMappingSorting] = useState([]);
+
+  // Clicking a category's product count opens this — reuses the exact same
+  // GET /api/products/?category_id= the quote builder's picker drawer already
+  // uses, so the list can never disagree with the count shown next to it.
+  const [viewingCategory, setViewingCategory] = useState(null); // {id, name} | null
+  const [categoryProducts, setCategoryProducts] = useState({ loading: false, products: [], total: 0 });
+  const viewCategoryProducts = async (cat) => {
+    setViewingCategory(cat);
+    setCategoryProducts({ loading: true, products: [], total: 0 });
+    try {
+      const { data } = await api.get("/api/products/", { params: { category_id: cat.id, limit: 200 } });
+      setCategoryProducts({ loading: false, products: data.products || [], total: data.total || 0 });
+    } catch {
+      toast.error("Failed to load products for this category");
+      setCategoryProducts({ loading: false, products: [], total: 0 });
+    }
+  };
 
   // ── Modal state (shared for create + edit) ───────────────────────────────
   const [modal, setModal]     = useState(null); // null | "create" | "edit"
@@ -339,6 +373,9 @@ export default function ParentCategories() {
   });
 
   const mappedCount = mappingRows.filter(r => r.parentId).length;
+  const unmappedWithProductsCount = categoryCounts
+    ? mappingRows.filter(r => !r.parentId && (categoryCounts[r.cat.id] || 0) > 0).length
+    : null;
 
   // Flattens the current Parent Category structure into a working document
   // for Bassani to restructure their real Odoo product.category tree — see
@@ -481,6 +518,21 @@ export default function ParentCategories() {
               </p>
             </div>
 
+            {categoryCounts !== null && unmappedWithProductsCount > 0 && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
+                <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 flex-1">
+                  <strong>{unmappedWithProductsCount}</strong> Odoo categor{unmappedWithProductsCount !== 1 ? "ies" : "y"} still {unmappedWithProductsCount !== 1 ? "have" : "has"} products but {unmappedWithProductsCount !== 1 ? "aren't" : "isn't"} mapped to a Parent Category yet — those products won't be grouped for reseller browsing until mapped. A category showing <strong>0</strong> products is safe to leave unmapped.
+                </p>
+                <button
+                  onClick={() => { setUnmappedOnly(true); setMappingSorting([{ id: "product_count", desc: true }]); }}
+                  className="shrink-0 text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline"
+                >
+                  Show these
+                </button>
+              </div>
+            )}
+
             {topLevelDocs.length === 0 && !loading ? (
               <EmptyState
                 message="No Parent Categories exist yet. Create at least one (e.g. 'Flower') before mapping Odoo categories to it."
@@ -498,6 +550,8 @@ export default function ParentCategories() {
                 ) : (
                   <DataTable
                     data={filteredMappingRows}
+                    sorting={mappingSorting}
+                    onSortingChange={setMappingSorting}
                     columns={[
                       {
                         id: "category",
@@ -506,6 +560,27 @@ export default function ParentCategories() {
                         cell: ({ row: { original: r } }) => (
                           <span className="text-sm text-gray-900">{r.cat.complete_name || r.cat.name}</span>
                         ),
+                      },
+                      {
+                        id: "product_count",
+                        header: "Products",
+                        // -1 while still loading so it sorts to one end rather than
+                        // getting mixed in with real zero counts.
+                        accessorFn: r => categoryCounts ? (categoryCounts[r.cat.id] || 0) : -1,
+                        cell: ({ row: { original: r } }) => {
+                          if (categoryCounts === null) return <Loader2 size={12} className="animate-spin text-gray-300" />;
+                          const count = categoryCounts[r.cat.id] || 0;
+                          if (count === 0) return <span className="text-xs text-gray-300">0</span>;
+                          return (
+                            <button
+                              onClick={() => viewCategoryProducts({ id: r.cat.id, name: r.cat.complete_name || r.cat.name })}
+                              className="text-xs font-semibold text-bassani-600 hover:text-bassani-700 hover:underline"
+                              title="View the products directly in this category"
+                            >
+                              {count}
+                            </button>
+                          );
+                        },
                       },
                       {
                         id: "parent",
@@ -738,6 +813,46 @@ export default function ParentCategories() {
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setDeleteConfirm(null)}>Cancel</BtnSecondary>
             <BtnDanger onClick={doDelete} loading={deleting}>Delete</BtnDanger>
+          </div>
+        </Modal>
+      )}
+
+      {viewingCategory && (
+        <Modal title={`Products in "${viewingCategory.name}"`} onClose={() => setViewingCategory(null)} width="max-w-lg">
+          {categoryProducts.loading ? (
+            <div className="flex items-center gap-2 text-xs text-gray-400 py-6 justify-center">
+              <Loader2 size={14} className="animate-spin" /> Loading products…
+            </div>
+          ) : categoryProducts.products.length === 0 ? (
+            <p className="text-sm text-gray-400 py-6 text-center">No products are directly assigned to this category.</p>
+          ) : (
+            <>
+              <p className="text-xs text-gray-500 mb-2">
+                <strong>{categoryProducts.total}</strong> product{categoryProducts.total !== 1 ? "s" : ""} directly in this category
+                {categoryProducts.total > categoryProducts.products.length && <span className="text-gray-400"> (showing first {categoryProducts.products.length})</span>}.
+              </p>
+              <div className="border border-gray-100 rounded-lg max-h-96 overflow-y-auto">
+                {categoryProducts.products.map(p => {
+                  const { base, groups } = parseDisplayName(p.display_name || p.name || "");
+                  return (
+                    <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-50 last:border-0">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-gray-900 truncate">{base}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {groups.map((g, i) => (
+                            <span key={i} className="text-[9px] bg-gray-100 text-gray-500 rounded px-1 py-0.5">{g}</span>
+                          ))}
+                          <span className="font-mono text-[9px] text-gray-400">{p.default_code || "—"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          <div className="flex justify-end mt-4">
+            <BtnSecondary onClick={() => setViewingCategory(null)}>Close</BtnSecondary>
           </div>
         </Modal>
       )}
