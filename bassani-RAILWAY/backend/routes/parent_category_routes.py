@@ -391,10 +391,19 @@ async def export_odoo_category_mapping(
     means a human decides its new category, not a mechanical rename) from
     "unmapped" (not covered by any active parent category at all, so nothing
     here needs to change for it).
+
+    Also carries the product's current `reseller_visible`/`moq` state (from
+    the `reseller_catalog` doc) so the same sheet doubles as the source file
+    for the Reseller Catalog / MOQ bulk-import flow below — edit those two
+    columns and re-upload via POST /reseller-catalog-import/preview.
     """
     odoo = get_odoo_client()
     docs = await col("parent_categories").find({"active": True}).to_list(None)
     docs_by_id = {str(d["_id"]): d for d in docs}
+
+    catalog_doc = await col("reseller_catalog").find_one({"_id": "global"}) or {}
+    catalog_ids = set(catalog_doc.get("product_ids", []))
+    catalog_moq = {str(k): v for k, v in (catalog_doc.get("moq") or {}).items()}
 
     def leaf_path(doc: dict) -> str:
         parent_id = doc.get("parent_id")
@@ -445,9 +454,166 @@ async def export_odoo_category_mapping(
             "current_category": categ[1] if categ else "",
             "new_category": new_category,
             "matched_via": matched_via,
+            "reseller_visible": p["id"] in catalog_ids,
+            "moq": catalog_moq.get(str(p["id"]), 0),
         })
 
     return {"rows": rows, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+class ResellerCatalogImportRow(BaseModel):
+    odoo_product_id: int
+    reseller_visible: bool = False
+    moq: int = 0  # 0 = no minimum
+
+
+class ResellerCatalogImportBody(BaseModel):
+    rows: List[ResellerCatalogImportRow]
+
+
+async def _diff_reseller_catalog_import(odoo, rows: List[ResellerCatalogImportRow]) -> dict:
+    """Shared by preview and apply so the two can never disagree about what
+    "changed" means — apply re-derives this fresh from live state rather than
+    trusting whatever the preview step returned, in case anything changed in
+    between (same defensive pattern as packing_board_routes.py's Reconcile
+    Cancelled tool)."""
+    by_id: dict[int, ResellerCatalogImportRow] = {}
+    duplicate_ids: set[int] = set()
+    for r in rows:
+        if r.odoo_product_id in by_id:
+            duplicate_ids.add(r.odoo_product_id)
+        by_id[r.odoo_product_id] = r  # last occurrence wins
+
+    out_rows: list[dict] = []
+    not_found_ids: list[int] = []
+
+    if by_id:
+        ids = list(by_id.keys())
+        products = odoo.search_read(
+            "product.product",
+            domain=[("id", "in", ids)],
+            fields=["id", "default_code", "display_name"],
+            limit=len(ids),
+        )
+        product_map = {p["id"]: p for p in products}
+
+        catalog_doc = await col("reseller_catalog").find_one({"_id": "global"}) or {}
+        current_ids = set(catalog_doc.get("product_ids", []))
+        current_moq = {str(k): v for k, v in (catalog_doc.get("moq") or {}).items()}
+
+        for pid, r in by_id.items():
+            p = product_map.get(pid)
+            if not p:
+                not_found_ids.append(pid)
+                continue
+            current_visible = pid in current_ids
+            target_visible = r.reseller_visible
+            requested_moq = max(0, r.moq)
+            # A minimum order quantity is meaningless on a product that isn't
+            # in the reseller catalog at all — ignored rather than silently
+            # stored, so it can't resurface confusingly if the product is
+            # toggled back on later with no memory of why this number is here.
+            target_moq = requested_moq if target_visible else 0
+            cur_moq_val = current_moq.get(str(pid), 0)
+            out_rows.append({
+                "odoo_product_id": pid,
+                "sku": p.get("default_code") or "",
+                "name": p.get("display_name") or "",
+                "current_visible": current_visible,
+                "target_visible": target_visible,
+                "current_moq": cur_moq_val,
+                "target_moq": target_moq,
+                "visible_changed": current_visible != target_visible,
+                "moq_changed": cur_moq_val != target_moq,
+                "moq_ignored": requested_moq > 0 and not target_visible,
+            })
+
+    changed_rows = [r for r in out_rows if r["visible_changed"] or r["moq_changed"]]
+    summary = {
+        "total_rows": len(rows),
+        "matched": len(out_rows),
+        "not_found": len(not_found_ids),
+        "duplicates": len(duplicate_ids),
+        "will_add": sum(1 for r in out_rows if r["visible_changed"] and r["target_visible"]),
+        "will_remove": sum(1 for r in out_rows if r["visible_changed"] and not r["target_visible"]),
+        "moq_changes": sum(1 for r in out_rows if r["moq_changed"]),
+        "unchanged": sum(1 for r in out_rows if not r["visible_changed"] and not r["moq_changed"]),
+    }
+    return {
+        "rows": out_rows,
+        "changed_rows": changed_rows,
+        "summary": summary,
+        "not_found_ids": not_found_ids,
+        "duplicate_ids": sorted(duplicate_ids),
+    }
+
+
+@router.post("/reseller-catalog-import/preview")
+async def preview_reseller_catalog_import(
+    body: ResellerCatalogImportBody,
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """Read-only: resolves the uploaded sheet's rows (parsed client-side from
+    the "Reseller Catalog"/"MOQ" columns of the /odoo-export sheet, keyed on
+    Odoo Product ID) against live current state and returns the diff. Writes
+    nothing — see /reseller-catalog-import/apply for the actual commit."""
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="No rows to preview")
+    odoo = get_odoo_client()
+    return await _diff_reseller_catalog_import(odoo, body.rows)
+
+
+@router.post("/reseller-catalog-import/apply")
+async def apply_reseller_catalog_import(
+    body: ResellerCatalogImportBody,
+    current_user: dict = Depends(require_permission("products.manage")),
+):
+    """Applies only the rows that actually differ from live current state
+    (re-computed fresh here, not trusting the earlier preview call) — pass
+    only the rows the admin left checked in the preview to apply a subset."""
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="No rows to apply")
+    odoo = get_odoo_client()
+    diff = await _diff_reseller_catalog_import(odoo, body.rows)
+    changed = diff["changed_rows"]
+    if not changed:
+        return {"success": True, "applied": 0, "summary": diff["summary"]}
+
+    doc = await col("reseller_catalog").find_one({"_id": "global"}) or {}
+    product_ids = set(doc.get("product_ids", []))
+    moq = {str(k): v for k, v in (doc.get("moq") or {}).items()}
+
+    for r in changed:
+        pid = r["odoo_product_id"]
+        if r["target_visible"]:
+            product_ids.add(pid)
+        else:
+            product_ids.discard(pid)
+        if r["target_moq"] > 0:
+            moq[str(pid)] = r["target_moq"]
+        else:
+            moq.pop(str(pid), None)
+
+    await col("reseller_catalog").update_one(
+        {"_id": "global"},
+        {"$set": {"product_ids": sorted(product_ids), "moq": moq, "updated_by": current_user["username"]}},
+        upsert=True,
+    )
+    await audit_log(
+        action="reseller_catalog.bulk_import",
+        entity_type="reseller_catalog",
+        entity_id="global",
+        entity_label="Reseller Catalog Bulk Import",
+        user=current_user,
+        detail={
+            "applied": len(changed),
+            "will_add": diff["summary"]["will_add"],
+            "will_remove": diff["summary"]["will_remove"],
+            "moq_changes": diff["summary"]["moq_changes"],
+            "product_ids": [r["odoo_product_id"] for r in changed],
+        },
+    )
+    return {"success": True, "applied": len(changed), "summary": diff["summary"]}
 
 
 @router.put("/category-mapping/{odoo_category_id}")

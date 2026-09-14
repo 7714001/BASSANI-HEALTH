@@ -7,6 +7,7 @@ import {
   BtnPrimary, BtnSecondary, BtnDanger, LoadingState, EmptyState, Badge, parseDisplayName,
 } from "../components/UI";
 import { MultiSearchableSelect } from "../components/ProductPickerDrawer";
+import ResellerCatalogImportModal from "../components/ResellerCatalogImportModal";
 
 // Removable chip — same visual/interaction idiom as the active-filter chip in
 // ResellerCatalog.js / the reseller order cart, reused here for reviewing a
@@ -343,7 +344,10 @@ export default function ParentCategories() {
   // for Bassani to restructure their real Odoo product.category tree — see
   // parent_category_routes.py's odoo-export endpoint for the full mechanics.
   // This never writes to Odoo; the sheet itself is what gets fed into Odoo's
-  // own Products list-view Import.
+  // own Products list-view Import. Also carries the current Reseller Catalog
+  // / MOQ state per product (2026-09-14) — the same sheet doubles as the
+  // source file for ResellerCatalogImportModal's bulk-update flow below;
+  // edit those two columns and re-upload rather than exporting a second file.
   const [exportingOdoo, setExportingOdoo] = useState(false);
   const MATCHED_VIA_LABEL = {
     handpick: "Hand-picked (review manually)",
@@ -362,6 +366,8 @@ export default function ParentCategories() {
         "Current Odoo Category": r.current_category,
         "New Category": r.new_category,
         "Matched Via": MATCHED_VIA_LABEL[r.matched_via] || r.matched_via,
+        "Reseller Catalog": r.reseller_visible ? "Yes" : "No",
+        MOQ: r.moq > 0 ? r.moq : "",
       }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), "Category Mapping");
@@ -401,6 +407,7 @@ export default function ParentCategories() {
               {exportingOdoo ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
               Export for Odoo
             </BtnSecondary>
+            <ResellerCatalogImportModal />
             {activeTab === "categories" && (
               <BtnPrimary onClick={openCreate}><Plus size={14} />New Category</BtnPrimary>
             )}
