@@ -139,6 +139,29 @@ export default function ParentCategories() {
   const [deleting, setDeleting] = useState(false);
   const [preview, setPreview] = useState({ count: 0, truncated: false, products: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [catalogToggling, setCatalogToggling] = useState(new Set());
+
+  // Lets an admin flip a product's reseller-catalog visibility right from the
+  // preview list, instead of having to remember which ones were hidden and
+  // go find them again on the Products page. Same endpoint/permission
+  // (products.manage) as the toggle on that page — takes effect immediately,
+  // independent of whether the parent category form itself is saved.
+  const toggleProductCatalogVisibility = async (productId) => {
+    setCatalogToggling(prev => new Set(prev).add(productId));
+    try {
+      const { data } = await api.post(`/api/reseller-catalog/toggle/${productId}`);
+      const nowVisible = data.product_ids.includes(productId);
+      setPreview(prev => ({
+        ...prev,
+        products: prev.products.map(p => p.id === productId ? { ...p, catalog_visible: nowVisible } : p),
+      }));
+      toast.success(nowVisible ? "Added to reseller catalog" : "Removed from reseller catalog");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update reseller catalog");
+    } finally {
+      setCatalogToggling(prev => { const n = new Set(prev); n.delete(productId); return n; });
+    }
+  };
 
   // Live preview of what this parent category will actually contain — lets
   // the admin see the resolved product list (and whether each match is
@@ -169,6 +192,19 @@ export default function ParentCategories() {
   // offers a choice the server would reject.
   const topLevelOptions = categories.filter(c => !c.parent_id && c.id !== editing?.id);
   const hasChildren = editing ? categories.some(c => c.parent_id === editing.id) : false;
+
+  // Drives the modal title and Name placeholder so it's obvious, before you've
+  // typed anything, whether you're creating a new top-level category or a
+  // sub-category under an existing one — this was previously only revealed by
+  // a "Parent category (optional)" field further down the form.
+  const selectedParentName = form.parent_id
+    ? categories.find(c => c.id === form.parent_id)?.name
+    : null;
+  const modalTitle = modal === "create"
+    ? (selectedParentName ? `New Category — under "${selectedParentName}"` : "New Top-Level Category")
+    : (editing?.parent_id
+        ? `Edit "${editing.name}" — under "${categories.find(c => c.id === editing.parent_id)?.name || ""}"`
+        : `Edit "${editing?.name}"`);
 
   // A flat list with a "Parent" text column reads as unrelated rows that
   // happen to reference each other, not as a hierarchy — group each child
@@ -366,7 +402,7 @@ export default function ParentCategories() {
               Export for Odoo
             </BtnSecondary>
             {activeTab === "categories" && (
-              <BtnPrimary onClick={openCreate}><Plus size={14} />New Parent Category</BtnPrimary>
+              <BtnPrimary onClick={openCreate}><Plus size={14} />New Category</BtnPrimary>
             )}
           </div>
         }
@@ -441,7 +477,7 @@ export default function ParentCategories() {
             {topLevelDocs.length === 0 && !loading ? (
               <EmptyState
                 message="No Parent Categories exist yet. Create at least one (e.g. 'Flower') before mapping Odoo categories to it."
-                action={<BtnSecondary onClick={() => setActiveTab("categories")}>Create a Parent Category</BtnSecondary>}
+                action={<BtnSecondary onClick={() => setActiveTab("categories")}>Create a Category</BtnSecondary>}
               />
             ) : (
               <>
@@ -511,16 +547,41 @@ export default function ParentCategories() {
 
       {modal && (
         <Modal
-          title={modal === "create" ? "New Parent Category" : `Edit — ${editing?.name}`}
+          title={modalTitle}
           onClose={() => setModal(null)}
           width="max-w-xl"
         >
+          <FormGroup label="Where does this belong?">
+            {hasChildren ? (
+              <p className="text-xs text-gray-400 py-2">
+                This category already has sub-categories of its own, so it can't be nested under another one.
+              </p>
+            ) : (
+              <>
+                <Select
+                  value={form.parent_id}
+                  onChange={e => setForm({ ...form, parent_id: e.target.value })}
+                  autoFocus
+                >
+                  <option value="">Its own top-level category</option>
+                  {topLevelOptions.map(c => (
+                    <option key={c.id} value={c.id}>↳ A sub-category under "{c.name}"</option>
+                  ))}
+                </Select>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  {selectedParentName
+                    ? `Resellers will see this after they pick "${selectedParentName}" — e.g. "Deluxe" under "Flower".`
+                    : "This appears as its own category in the reseller catalog, the same level as \"Flower\". Don't see the top-level category you want to nest under? Create it first, then come back and add this one under it."}
+                </p>
+              </>
+            )}
+          </FormGroup>
           <FormGroup label="Name" required>
             <Input
               value={form.name}
               onChange={e => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. Flower, Specials"
-              autoFocus
+              placeholder={form.parent_id ? "e.g. Indoor, Exotic, Deluxe" : "e.g. Flower, Specials"}
+              autoFocus={hasChildren}
             />
           </FormGroup>
           <FormGroup label="Sort order">
@@ -529,30 +590,6 @@ export default function ParentCategories() {
               value={form.sort_order}
               onChange={e => setForm({ ...form, sort_order: e.target.value })}
             />
-          </FormGroup>
-          <FormGroup label="Parent category (optional)">
-            {hasChildren ? (
-              <p className="text-xs text-gray-400 py-2">
-                This category has sub-categories of its own, so it can't be nested under another one.
-              </p>
-            ) : (
-              <>
-                <Select
-                  value={form.parent_id}
-                  onChange={e => setForm({ ...form, parent_id: e.target.value })}
-                >
-                  <option value="">— None (top-level) —</option>
-                  {topLevelOptions.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </Select>
-                <p className="text-[11px] text-gray-400 mt-1.5">
-                  Leave as top-level for a category resellers see directly (e.g. "Flower"). Pick a parent
-                  to make this a sub-group under it (e.g. "Indoor" under "Flower") — create the top-level
-                  category first if it doesn't exist yet.
-                </p>
-              </>
-            )}
           </FormGroup>
           <FormGroup label="Odoo categories in this group">
             <MultiSearchableSelect
@@ -614,10 +651,12 @@ export default function ParentCategories() {
                 <p className="text-xs text-gray-600 mb-2">
                   <strong>{preview.count}</strong> product{preview.count !== 1 ? "s" : ""} will be grouped under this category
                   {preview.truncated && <span className="text-gray-400"> (showing first {preview.products.length})</span>}.
+                  {" "}Toggle a product below to add or remove it from the reseller catalog directly — it takes effect immediately.
                 </p>
                 <div className="border border-gray-100 rounded-lg max-h-56 overflow-y-auto">
                   {preview.products.map(p => {
                     const { base, groups } = parseDisplayName(p.name || "");
+                    const toggling = catalogToggling.has(p.id);
                     return (
                       <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-50 last:border-0">
                         <div className="min-w-0">
@@ -629,19 +668,27 @@ export default function ParentCategories() {
                             <span className="font-mono text-[9px] text-gray-400">{p.sku || "—"}</span>
                             {p.category && <span className="text-[9px] text-gray-400">{p.category}</span>}
                           </div>
+                          {!p.catalog_visible && p.source === "handpick" && (
+                            <p className="text-[9px] text-blue-600 mt-0.5">Will be added automatically when you save — or toggle it on now.</p>
+                          )}
                         </div>
-                        {p.catalog_visible ? (
-                          <span className="shrink-0 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700">Visible</span>
-                        ) : p.source === "handpick" ? (
-                          <span className="shrink-0 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">Will be added</span>
-                        ) : (
-                          <span
-                            className="shrink-0 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700"
-                            title="Not in the reseller catalog — toggle it on in Products for resellers to actually see it"
-                          >
-                            Hidden — not in catalog
+                        <div className="shrink-0 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <span className={`text-[9px] font-semibold ${p.catalog_visible ? "text-green-700" : "text-gray-400"}`}>
+                            {p.catalog_visible ? "Visible" : "Hidden"}
                           </span>
-                        )}
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={p.catalog_visible}
+                            disabled={toggling}
+                            onClick={() => toggleProductCatalogVisibility(p.id)}
+                            title={p.catalog_visible ? "Remove from reseller catalog" : "Add to reseller catalog"}
+                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-bassani-500 focus-visible:ring-offset-1 disabled:opacity-50 ${p.catalog_visible ? "bg-bassani-600" : "bg-gray-200"}`}
+                          >
+                            <span className={`pointer-events-none h-4 w-4 transform rounded-full bg-white shadow-sm transition duration-200 ease-in-out ${p.catalog_visible ? "translate-x-4" : "translate-x-0"}`} />
+                          </button>
+                          {toggling && <Loader2 size={11} className="animate-spin text-gray-400 shrink-0" />}
+                        </div>
                       </div>
                     );
                   })}
