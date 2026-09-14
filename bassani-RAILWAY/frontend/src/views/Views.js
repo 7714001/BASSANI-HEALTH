@@ -218,7 +218,7 @@ export function Products() {
       const params = { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize };
       if (sort) { params.sort_by = sort.id; params.sort_dir = sort.desc ? "desc" : "asc"; }
       if (search) params.search = search;
-      if (cat !== "all") params.category = cat;
+      if (cat !== "all") params.category_id = cat;
       if (stockFilter === "in_stock") params.in_stock_only = true;
       else if (stockFilter === "incoming") params.incoming_only = true;
       const r = await api.get("/api/products/", { params });
@@ -308,7 +308,7 @@ export function Products() {
       const XLSX = await import("xlsx");
       const params = {};
       if (search) params.search = search;
-      if (cat !== "all") params.category = cat;
+      if (cat !== "all") params.category_id = cat;
       if (stockFilter === "in_stock") params.in_stock_only = true;
       else if (stockFilter === "incoming") params.incoming_only = true;
       const { products: rows, warehouseName } = await fetchAllProducts(params);
@@ -376,16 +376,22 @@ export function Products() {
 
           {/* Category + variant filters — searchable dropdowns rather than a
               chip row, matching ResellerCatalog.js/the reseller order cart's
-              pattern. Same original Odoo category list as before (categories
-              state from /api/products/categories, filtered by name exactly
-              as this page already did) — only the widget changed. */}
+              pattern. Filters by exact categ_id (2026-09-14 fix) rather than
+              leaf name — Bassani's Odoo category restructure (grade-first
+              nesting, e.g. "Indoor / Flower", "Greenhouse / Pre Roll") means
+              several real categories now share the same leaf name ("Flower"
+              x5, "Pre Roll" x7), so a name-based filter silently merged
+              products from every grade sharing that leaf name into one list.
+              Options are limited to categories with at least one product
+              (product_count from /api/products/categories) to hide a couple
+              of empty leftover branches from the restructure. */}
           <div className="flex flex-wrap gap-3 items-end">
             <div>
               <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Category</label>
               <SearchableSelect
                 value={cat === "all" ? null : cat}
                 onChange={v => { setLoading(true); setProducts([]); setCat(v ?? "all"); setVariant("all"); setPagination(p => ({...p, pageIndex:0})); }}
-                options={categories.map(c => ({ value: c.name, label: c.name }))}
+                options={categories.filter(c => c.product_count > 0).map(c => ({ value: c.id, label: c.complete_name || c.name }))}
                 placeholder="All categories"
                 searchPlaceholder="Search categories…"
               />
@@ -555,7 +561,7 @@ export function Products() {
             <FormGroup label="Barcode"><Input value={form.barcode} onChange={e=>setForm({...form,barcode:e.target.value})} placeholder="e.g. 6009123456789" /></FormGroup>
             <FormGroup label="Category"><Select value={form.categ_id} onChange={e=>setForm({...form,categ_id:parseInt(e.target.value)||""})}>
               <option value="">— Select category —</option>
-              {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              {categories.map(c=><option key={c.id} value={c.id}>{c.complete_name || c.name}</option>)}
             </Select></FormGroup>
             <FormGroup label="Unit of Measure"><Select value={form.uom_id} onChange={e=>setForm({...form,uom_id:parseInt(e.target.value)||""})}>
               <option value="">— Select unit —</option>

@@ -330,9 +330,13 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
     return () => clearTimeout(debounceRef.current);
   }, [open, search, selectedCat, warehouseId]);
 
-  // Category options for the select
+  // Category options for the select. Label uses the full path
+  // (complete_name, e.g. "Indoor / Flower") rather than the bare leaf name —
+  // Bassani's grade-first Odoo restructure means several categories now
+  // share the same leaf name ("Flower" x5, "Pre Roll" x7), which without
+  // this would show indistinguishable duplicate entries (2026-09-14).
   const categoryOptions = useMemo(
-    () => categories.map(c => ({ value: c.id, label: c.name })),
+    () => categories.map(c => ({ value: c.id, label: c.complete_name || c.name })),
     [categories]
   );
 
@@ -372,7 +376,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
   if (!open) return null;
 
   const activeCatName = selectedCat
-    ? (categories.find(c => c.id === selectedCat)?.name ?? "")
+    ? (categories.find(c => c.id === selectedCat)?.complete_name ?? "")
     : "";
 
   return (

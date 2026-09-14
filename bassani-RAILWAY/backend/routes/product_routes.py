@@ -355,7 +355,7 @@ async def list_categories(
             categories = odoo.search_read(
                 "product.category",
                 domain=[("id", "in", cat_ids)],
-                fields=["id", "name", "complete_name", "parent_id"],
+                fields=["id", "name", "complete_name", "parent_id", "product_count"],
                 limit=500,
                 order="complete_name asc",
             )
@@ -364,7 +364,7 @@ async def list_categories(
         categories = odoo.search_read(
             "product.category",
             domain=[],
-            fields=["id", "name", "complete_name", "parent_id"],
+            fields=["id", "name", "complete_name", "parent_id", "product_count"],
             limit=500,
             order="complete_name asc",
         )
