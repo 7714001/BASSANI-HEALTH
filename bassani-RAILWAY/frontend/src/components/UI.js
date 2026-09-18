@@ -48,11 +48,17 @@ export async function openMonitorDisplay(tokenPath, publicPath, navigate) {
 }
 
 // Splits an Odoo display_name into base name + variant chips.
-// Odoo appends each attribute as a trailing "(Value)" group:
+// Odoo's name_get() adds two things on top of the plain product.product.name
+// once an internal reference (SKU) is set: a leading "[SKU] " prefix and a
+// trailing "(Value)" group per variant attribute — e.g.
+// "[IDFBCP100MYB] Black Cherry Punch Flower (IND) (1G)". The leading bracket
+// is Odoo's own convention, not portal-added, and is stripped here (2026-09-18)
+// since every caller already shows the SKU separately (p.default_code) —
+// leaving it in the name just duplicated it right there in the title.
 // "Product (Weight: 1g) (Pack: 2)" → { base: "Product", groups: ["Weight: 1g", "Pack: 2"] }
 export const parseDisplayName = (full = "") => {
   const groups = [];
-  let rest = full;
+  let rest = full.replace(/^\[[^\]]*\]\s*/, "");
   let m;
   while ((m = rest.match(/\s*\(([^)]+)\)$/))) {
     groups.unshift(m[1]);

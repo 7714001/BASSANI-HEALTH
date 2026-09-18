@@ -5665,4 +5665,124 @@ The API research behind this plan is from public Sage documentation and third-pa
 - `backend/warehouse_context.py` — the company-scoping convention `sage_company_map` mirrors
 - `backend/middleware/audit.py::audit_log()` — canonical audit writer for every push enqueue and pull-back write
 - `backend/auth.py` + `frontend/src/views/Users.js` — three-places permission model for the two new permission keys
+
+---
+
+## Phase 27 — Stock Take Module
+
+**Goal:** Let Bassani run a physical stock count against Odoo's recorded inventory, offline (Excel, no portal open during the actual count), with a dual-blind-count reconciliation methodology appropriate for a Schedule 6/GACP facility — confirming what's genuinely on the shelf, catching both counting errors and real inventory variance, and writing back a corrected, batch/lot-accurate quantity to Odoo only once a manager has reviewed and approved the result.
+**Estimate:** Not yet sized — planning only at this stage, no technical spike needed (no third-party API, entirely portal + existing Odoo write patterns)
+**Status:** 🔴 Not Started — planned and confirmed with the product owner 2026-09-14; not yet built
+**Completed:** —
+
+### Context
+
+Bassani's own spec named "Counter A / Counter B," with Counter A described as a blind count and Counter B as a "system count." Confirmed with the product owner this maps onto the stronger of two standard stock-take methodologies:
+
+- **Single blind count vs. system** — one person counts without seeing the expected quantity, the portal then compares their number to Odoo's book quantity. This is the default minimum practically every inventory system supports, but it can't distinguish a genuine variance (real stock loss/gain) from a simple counting mistake.
+- **True dual-blind count** — two independent people count the same stock, neither shown the system figure (or each other's number) while counting. This is the audit-grade standard used for regulated, high-value, or diversion-risk inventory (pharmaceuticals, controlled substances, cash) — Agreement between the two counters that still differs from the system is a confirmed real variance; disagreement between the two counters is a counting error, caught and resolved *before* it's ever compared to the system at all.
+
+**Confirmed 2026-09-14: this phase builds the true dual-blind version**, matching Bassani's existing Schedule 6/GACP compliance posture (RP sign-off, Annex 11 e-signature backlog, the whole batch traceability chain already built in Phase 13) — costs more counting labour than the single-count version, but is the defensible standard for this business, not an optional nice-to-have.
+
+**Confirmed 2026-09-14: count lines are per (product, batch/lot, location), not just per product.** Odoo's own `stock.quant` — the model this feature ultimately writes back to — is already keyed this way, and the rest of this codebase's compliance model (the GACP vault ledger, GS1 batch labels, the full cultivation→delivery traceability chain in `CLAUDE.md`'s Batch Traceability section) already tracks stock at lot level. A stock take that only counted "5 units of Product X" with no batch attribution would be a real step down from the rigor everything else in this system already has.
+
+**Why Excel, not the portal, during the actual count:** confirmed this is a genuine constraint, not a shortcut — counters are physically walking a warehouse/vault with no laptop or reliable connectivity, so the portal's job is to *generate* the count sheet, *receive* it back, and do everything else (delegation, reconciliation, approval, the Odoo write) inside the portal itself, matching Architecture Principle #2 (the portal is the main point of access) for every step except the physical counting itself.
+
+**Design precedent this phase reuses rather than reinvents:**
+- The preview → diff → confirm import shape just built for the Reseller Catalog / MOQ bulk import (`ResellerCatalogImportModal.js`, `parent_category_routes.py`'s `reseller-catalog-import` endpoints) — same three-step pattern: parse client-side, compute a diff read-only, apply only what's confirmed.
+- The one existing direct Odoo stock write in this codebase, `product_routes.py`'s manual `stock.quant.inventory_quantity` adjustment — the mechanism this phase's finalize step reuses, just batch/lot-scoped and reconciliation-gated rather than a single manual override.
+- `packing_board_routes.py`'s QA/RP approval pattern for the variance sign-off step (see 27.5) — a real quantity discrepancy in Schedule 6 stock is a compliance-relevant event, not a routine data edit.
+- `vault_odoo.py`'s staged-then-flushed write shape (`odoo_sync: staged|done|error`) for the final Odoo write, so a write failure is visibly flagged and retryable rather than silently lost, matching this codebase's established convention for every Odoo write that can't be synchronous.
+
+**Confirmed 2026-09-14: variance approval is its own standalone access right, not tied to a role.** `stock_take.approve` is a permission like any other in this codebase's model (`auth.py`'s `require_permission`) — granted to whichever users need it, independent of role, rather than hardcoded to `qa_manager`/`responsible_pharmacist`/`warehouse_supervisor` specifically. Any user holding it can approve any pending stock take's variances; no additional segregation-of-duties restriction (e.g. blocking the session's own creator from approving it) is being built — the permission gate is the only control. The approving user is captured the same way every other write in this system already is: `audit_log()` with `user=current_user`, giving a real actor/timestamp trail on the approval itself, not just on the resulting Odoo write.
+
+---
+
+### 27.0 — Architecture Summary (reference, not a build step)
+
+**New MongoDB collections** (portal-layer, per Architecture Principle #5 — final counts are the only thing that reaches Odoo):
+- `stock_takes` — one doc per session: `{_id, warehouse_id, location_id (optional stock.location scope), parent_category_id (optional scope narrowing), counter_a_user_id, counter_b_user_id, status, deadline, created_by, created_at, finalized_by, finalized_at}`. `status`: `draft` → `counting` → `reconciling` (both counts in) → `pending_approval` (variances exist) → `finalized` → optionally `cancelled`.
+- `stock_take_lines` — one doc per (product, batch/lot, location) line, not embedded in the session doc (thousands of lines for a full-warehouse count, and each line has its own lifecycle) — `{stock_take_id, product_id, lot_id, lot_name, location_id, system_qty (captured at export time, never shown to counters), counter_a_qty, counter_a_note, counter_b_qty, counter_b_note, match_status: pending|matched|variance|discrepancy_ab, resolution, resolved_qty, resolved_by}`.
+- `stock_take_additional_items` — separate collection for stock found that wasn't on either counter's sheet (see 27.6) — `{stock_take_id, reported_by_counter, raw_barcode_or_sku, raw_product_name, raw_batch_lot, quantity, raw_location, notes, resolved_product_id, resolved_lot_id, status: pending_review|resolved|rejected, reviewed_by, reviewed_at}`.
+
+**New backend module:** `backend/routes/stock_take_routes.py` (session CRUD, export, import/preview/apply, reconciliation read, approval, Odoo write-back) + a shared `backend/stock_take.py` for the reconciliation/diff logic, mirroring how `parent_categories.py`/`ownership.py` are kept out of route files to avoid route-importing-route cycles.
+
+**New permissions** (three-places rule — `auth.py`, `Users.js`'s `PERMISSION_GROUPS`/`DEFAULT_ADMIN_PERMS`/`ROLE_DEFAULT_PERMS`):
+- `stock_take.manage` — create/configure sessions, delegate Counter A/B, cancel a session.
+- `stock_take.count` — can be assigned as Counter A or Counter B (does **not** need portal access during the count itself — only to receive the exported file and later upload the completed one; likely granted to `warehouse_supervisor`/`packer` alongside admin roles).
+- `stock_take.approve` — reviews and finalizes variances, triggering the Odoo write. Kept as its own permission (not folded into `stock_take.manage`) specifically to support the segregation-of-duties question flagged above, if Bassani wants it enforced.
+
+**Export/import mechanics:** entirely client-side Excel (`xlsx`), matching every existing export/import in this codebase — the backend only ever deals in JSON. Two **separate files**, one per counter, generated from `stock_take_lines` — never a shared file, since sharing would let one counter see the other's blank sheet was itself another person's sheet and risk numbers being compared before both are independently submitted. Each row carries a hidden internal `line_id` (the Mongo `_id`) as the true match key on re-import, exactly like the Reseller Catalog import's Odoo Product ID — never matched by product name or row position, since a counter may reorder/filter/sort the sheet while working through it.
+
+---
+
+### 27.1 — Manager Setup: Session Creation & Counter Delegation
+
+- [ ] `POST /api/stock-takes` — pick warehouse, optional `stock.location` scope (a full-warehouse count or a targeted cycle count of one room/shelf/vault section), optional Parent Category scope (narrow to one product family), assign Counter A and Counter B (from users holding `stock_take.count`), optional deadline
+- [ ] On creation, snapshot `stock_take_lines` from Odoo's current `stock.quant` for the resolved scope — one line per (product, lot, location) with quantity on hand, capturing `system_qty` at this moment (never mutated afterward, even if Odoo's live figure moves during the count — the whole point is comparing counters against a fixed baseline)
+- [ ] `frontend/src/views/StockTake.js` (new nav item, `stock_take.manage`-gated for setup) — session list (status, scope, counters, age), create-session wizard
+- [ ] A session cannot move past `draft` until both Counter A and Counter B are assigned to different users (never the same person for both — defeats the entire point of a dual count)
+
+---
+
+### 27.2 — Export: Blind Count Sheets
+
+- [ ] `GET /api/stock-takes/{id}/export/{counter}` (`counter` = `a`|`b`) — generates that counter's `.xlsx`, **Count Sheet** tab: hidden `Line ID` column, Location, Product Name, SKU, Barcode, expected Batch/Lot (printed so the counter knows which physical carton to check — not the same as revealing the *quantity*), a blank **Counted Quantity** column, a blank **Note** column (e.g. "wrong lot in this bin," "damaged/quarantined stock visible"). No system quantity column anywhere on either counter's file.
+- [ ] Second tab, **Additional Items Found** — entirely blank, for anything physically found that isn't on the Count Sheet at all (see 27.6)
+- [ ] Session moves to `counting` once both files have been generated
+
+---
+
+### 27.3 — Import: Count Upload
+
+- [ ] `POST /api/stock-takes/{id}/import/{counter}/preview` — parses the uploaded workbook client-side (same tolerant header-matching approach as the Reseller Catalog import), matches rows on the hidden `Line ID`, returns a read-only summary: how many lines got a count, how many were left blank (not yet counted, allowed — a counter may need more than one sitting), any `Line ID`s that don't belong to this session
+- [ ] `POST /api/stock-takes/{id}/import/{counter}/apply` — writes `counter_a_qty`/`counter_b_qty` + notes onto the matching `stock_take_lines`. A counter can re-upload to correct their own submission until the *other* counter has also submitted (prevents a counter editing their number after seeing it's been compared) — once both are in, both are locked
+- [ ] Session moves to `reconciling` once both counters have submitted at least once
+
+---
+
+### 27.4 — Reconciliation Engine
+
+- [ ] For every line with both counts in: `counter_a_qty == counter_b_qty == system_qty` → `matched`, no action needed. `counter_a_qty == counter_b_qty != system_qty` → `variance`, a real confirmed discrepancy, goes to the approval queue. `counter_a_qty != counter_b_qty` → `discrepancy_ab`, a counting disagreement — never compared to the system at all yet, surfaced for a recount
+- [ ] `StockTakeReconciliation.js` view (or a tab on the session detail page) — three buckets (Matched / Variance / Needs Recount), counts and drill-in per line, batch/lot and location shown throughout
+- [ ] Recount path for `discrepancy_ab` lines: manager can request a targeted recount (regenerates a mini count sheet for just those lines, same blind export/import mechanics) or manually resolve with a note if a recount isn't practical
+- [ ] Session moves to `pending_approval` once every line is either `matched` or has a `variance`/manually-resolved value ready for review (no line left in `discrepancy_ab` unresolved)
+
+---
+
+### 27.5 — Variance Approval & Odoo Write-Back
+
+- [ ] `POST /api/stock-takes/{id}/approve` (`require_permission("stock_take.approve")`) — reviews the full variance list (product, lot, location, system vs. confirmed count, difference) before committing; grantable to any user regardless of role, per the confirmed 2026-09-14 decision above — no hardcoded role check
+- [ ] On approval, writes each `variance` line's confirmed quantity to Odoo via `stock.quant.inventory_quantity` (the same mechanism `product_routes.py`'s existing manual adjustment already uses), staged-then-flushed per line (`odoo_sync: staged|done|error`, mirroring `vault_odoo.py`) so a single failed write is visibly flagged and retryable rather than silently dropped or blocking the rest of the session
+- [ ] Every state transition, every import, and the final Odoo write are `audit_log()`'d with `user=current_user` (actor, timestamp, before/after), threaded with the stock take id — a completed stock take is itself a compliance record, not just a workflow. The approval action itself is audited the same way, not just its resulting Odoo write, so "who approved this variance" is always traceable independent of "who or what performed the Odoo write."
+- [ ] Session moves to `finalized`; a finalized session is read-only history from this point
+
+---
+
+### 27.6 — Additional Stock Item Report
+
+- [ ] Rows from either counter's "Additional Items Found" tab land in `stock_take_additional_items` on import, entirely separate from the main reconciliation — there's nothing to auto-compare them against, since by definition they weren't on the system-generated sheet
+- [ ] **Never auto-merged into stock.** Unexplained cannabis inventory appearing during a count is a compliance-relevant event (wrong location, an unlogged receipt, a genuine mislabel, or a real diversion-control concern), not simply "found free stock" — each entry needs a human to match it to a real product/lot (or confirm it can't be matched) before anything is decided
+- [ ] `POST /api/stock-takes/{id}/additional-items/{item_id}/resolve` — reviewer matches the raw text to a real `product_id`/`lot_id` (or rejects the entry, e.g. duplicate/data-entry error), with a mandatory note; resolved items are then it's own explicit follow-up decision (add to stock via a normal stock adjustment, investigate further, etc.) — deliberately **not** wired into the same one-click Odoo write 27.5 uses, since these were never expected/verified against anything
+- [ ] `StockTakeAdditionalItems.js` (or a tab on the session detail page) — pending/resolved/rejected queue, separate from the main variance list per the original ask
+
+---
+
+### 27.7 — Stock Take History & Reporting
+
+- [ ] Session list shows every past stock take (scope, date, counters, variance summary, total adjustment value) — a compliance/audit record, not just an operational tool
+- [ ] Export a completed session's full reconciliation (system vs. A vs. B vs. resolved, per line) as a record-keeping `.xlsx`, matching this codebase's existing export conventions
+- [ ] Dashboard/KPI tie-in (optional, lower priority): count of overdue/in-progress stock takes, similar to how other operational monitors already surface aging work
+
+---
+
+### Critical Files (for whoever picks this up)
+
+- `frontend/src/components/ResellerCatalogImportModal.js` + `backend/routes/parent_category_routes.py`'s `reseller-catalog-import` endpoints — the exact upload → client-parse → diff-preview → confirm-apply shape this phase's 27.3 reuses
+- `backend/routes/product_routes.py` — the existing manual `stock.quant.inventory_quantity` write this phase's 27.5 write-back is built on
+- `backend/services/vault_odoo.py` — staged/flushed Odoo-write shape (`odoo_sync: staged|done|error`) for 27.5's per-line write reliability
+- `backend/routes/packing_board_routes.py` — QA/RP approval pattern precedent for 27.5's sign-off step, once the approving role is decided
+- `backend/warehouse_context.py` — `get_company_id()`/`company_context()`, required for every `stock.quant` read/write this phase makes (Architecture Principle #6)
+- `backend/services/batch_id.py` / `CLAUDE.md`'s Batch Traceability section — the existing lot/batch model this phase's per-line granularity must stay consistent with
+- `backend/auth.py` + `frontend/src/views/Users.js` — three-places permission model for the three new permission keys
 - `frontend/src/views/BankReconciliation.js` — UI shape `SageSyncDashboard.js` is built on
