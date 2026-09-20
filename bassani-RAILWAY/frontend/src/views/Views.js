@@ -1088,14 +1088,57 @@ export function Orders() {
 
   useEffect(() => {
     if (!cartStorageKey || location.state?.editQuote || location.state?.reorderLines) return;
+    let saved;
     try {
-      const saved = JSON.parse(localStorage.getItem(cartStorageKey) || "null");
-      if (saved?.cart?.length > 0) {
+      saved = JSON.parse(localStorage.getItem(cartStorageKey) || "null");
+    } catch { return; } // corrupt/unavailable storage — ignore, just starts empty
+    if (!saved?.cart?.length) return;
+    (async () => {
+      // A saved cart can sit in localStorage for days — re-validate against
+      // current Odoo pricing/stock before restoring rather than trusting
+      // the cached figures, same "never trust a stale price" principle
+      // Reorder above already applies (found as a real gap 2026-09-20: the
+      // portal must always stay in sync with Odoo, and a restored cart with
+      // no re-check could silently submit a price that's no longer real).
+      try {
+        const ids = [...new Set(saved.cart.map(l => l.product_id))];
+        const { data } = await api.get("/api/products/", { params: { ids: ids.join(","), limit: Math.min(ids.length, 200) } });
+        const productMap = new Map((data.products || []).map(p => [p.id, p]));
+        let dropped = 0;
+        const refreshed = [];
+        saved.cart.forEach(l => {
+          const p = productMap.get(l.product_id);
+          if (!p) { dropped += 1; return; }
+          refreshed.push({
+            ...l,
+            price_unit: p.list_price,
+            name:       p.display_name || p.name,
+            _sku:       p.default_code || "",
+            _stock:     Math.max(0, p.virtual_available ?? 0),
+            _taxRate:   p.tax_rate ?? 0,
+            _image128:  p.image_128 || null,
+          });
+        });
+        if (refreshed.length === 0) {
+          localStorage.removeItem(cartStorageKey);
+          toast.error("Your saved cart's items are no longer available and could not be restored");
+          return;
+        }
+        setCart(refreshed);
+        if (saved.note) setCartNote(saved.note);
+        toast("Restored your saved cart", { icon: "🛒" });
+        if (dropped > 0) {
+          toast(`${dropped} item${dropped > 1 ? "s" : ""} from your saved cart ${dropped > 1 ? "are" : "is"} no longer available and ${dropped > 1 ? "were" : "was"} removed`, { icon: "⚠️" });
+        }
+      } catch {
+        // Live re-fetch failed (network blip) — restore the cached cart
+        // rather than losing it outright; it'll still go through the
+        // normal stock-check/confirm flow before anything is submitted.
         setCart(saved.cart);
         if (saved.note) setCartNote(saved.note);
         toast("Restored your saved cart", { icon: "🛒" });
       }
-    } catch { /* corrupt/unavailable storage — ignore, just starts empty */ }
+    })();
   }, []); // eslint-disable-line
 
   useEffect(() => {
