@@ -210,6 +210,35 @@ def send_welcome_email(username: str, name: str, email: str) -> None:
           _wrap(body))
 
 
+def send_reseller_portal_invite(email: str, name: str, invite_url: str) -> None:
+    """Sent when an admin creates a new Sales Agent account (2026-09-20) —
+    reseller creation moved onto the same invite pattern already used for
+    customer portal access (send_customer_portal_invite above), replacing
+    the old admin-types-a-password-directly flow send_welcome_email above
+    still exists for. Same single-use, 15-minute token link; no password is
+    ever known by the admin or emailed."""
+    if not email:
+        return
+    body = (
+        _h1("Your Sales Agent account is ready")
+        + _p(f"Hi {name},")
+        + _p(
+            "Your Sales Agent account on the Bassani Health portal has been created. "
+            "Once you set your password, you'll be able to sign in to place orders "
+            "and track your commission."
+        )
+        + _button("Set your password", invite_url)
+        + _divider()
+        + _p(
+            "This link expires in <strong>15 minutes</strong> and can only be used once. "
+            "If it has expired, use the \"Forgot password\" link on the sign-in page to "
+            "request a new one.",
+            muted=True,
+        )
+    )
+    _send(email, "Your Bassani Health portal account is ready", _wrap(body))
+
+
 # Order emails
 
 def send_order_placed(

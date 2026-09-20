@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, Search, Loader2, Building2, User, ChevronRight, ExternalLink } from "lucide-react";
+import { Link2, Search, Loader2, Building2, User, ChevronRight, ExternalLink, UserPlus } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -8,6 +8,7 @@ import {
   TopBar, SearchBar, DataTable, Badge, OnboardCustomerButton,
   Modal, FormGroup, Input, BtnPrimary, BtnSecondary,
 } from "../components/UI";
+import RegisterSalesAgentModal from "../components/RegisterSalesAgentModal";
 
 const FILTERS = [
   { key: "all",      label: "All Partners" },
@@ -20,6 +21,7 @@ export default function PartnerDirectory() {
   const navigate   = useNavigate();
   const { can }    = useAuth();
   const canManage  = can("customers.manage");
+  const canManageResellers = can("resellers.manage");
 
   const [filter,     setFilter    ] = useState("all");
   const [search,     setSearch    ] = useState("");
@@ -36,6 +38,9 @@ export default function PartnerDirectory() {
   const [companySearch,  setCompanySearch ] = useState(false);
   const [selected,       setSelected      ] = useState(null);
   const [submitting,     setSubmitting    ] = useState(false);
+
+  // ── Register as Sales Agent (2026-09-20) ────────────────────────────────────
+  const [registering, setRegistering] = useState(null); // partner row | null
 
   const loadCounts = useCallback(async () => {
     try {
@@ -148,6 +153,7 @@ export default function PartnerDirectory() {
         <div className="flex gap-1">
           {p.customer_rank > 0 && <Badge color="blue">Customer</Badge>}
           {p.supplier_rank > 0 && <Badge color="yellow">Supplier</Badge>}
+          {p.is_reseller && <Badge color="green">Sales Agent</Badge>}
         </div>
       ),
     },
@@ -179,6 +185,29 @@ export default function PartnerDirectory() {
             >
               <Link2 size={11} />Relink
             </button>
+          )}
+          {/* Register as Sales Agent (2026-09-20) — companies and unlinked
+              individuals (the Sole Proprietor case) only. A linked contact
+              (a specific person at a company) is deliberately not offered
+              this directly — same ambiguity the reseller wizard's own
+              resolve-to-parent logic exists to avoid; register the company
+              itself instead. */}
+          {!p.is_reseller && canManageResellers && (p.is_company || !p.parent_name) && (
+            p.email ? (
+              <button
+                onClick={e => { e.stopPropagation(); setRegistering(p); }}
+                className="text-xs text-bassani-600 hover:text-bassani-700 flex items-center gap-1 transition-colors font-medium"
+              >
+                <UserPlus size={11} />Register as Sales Agent
+              </button>
+            ) : (
+              <span
+                title="Add an email in Odoo first — needed to send the portal invite"
+                className="text-xs text-gray-300 flex items-center gap-1 cursor-not-allowed"
+              >
+                <UserPlus size={11} />Register as Sales Agent
+              </span>
+            )
           )}
           <ChevronRight size={14} className="text-gray-300" />
         </div>
@@ -306,6 +335,14 @@ export default function PartnerDirectory() {
             </BtnPrimary>
           </div>
         </Modal>
+      )}
+
+      {registering && (
+        <RegisterSalesAgentModal
+          partner={registering}
+          onClose={() => setRegistering(null)}
+          onCreated={() => { setRegistering(null); loadCounts(); load(); }}
+        />
       )}
     </div>
   );

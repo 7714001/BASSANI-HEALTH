@@ -2,12 +2,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
+import secrets
 import uuid
 from auth import get_current_user, require_admin, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from middleware.audit import audit_log
-from services.email_service import send_welcome_email
+from services.email_service import send_reseller_portal_invite
+from routes.auth_routes import create_password_reset_token
 from routes.ticket_routes import ticket_manager
 
 router = APIRouter(prefix="/api/resellers", tags=["resellers"])
@@ -21,14 +23,12 @@ class ResellerCreate(BaseModel):
     type: str = "Distributor"               # Distributor|Agent|Broker
     seller_code: str                         # e.g. JOE001 — unique lookup key
     contact_person: Optional[str] = ""
-    email: Optional[str] = ""
+    email: str                               # Required (2026-09-20) — the only way to deliver the portal invite
     phone: Optional[str] = ""
     address: Optional[str] = ""
     commission_eligible: bool = True         # False = internal staff agent; excluded from commission statements
     odoo_partner_id: Optional[int] = None   # Required only when commission_eligible; creates vendor bill on payout
     warehouse_id: Optional[int] = None      # Odoo stock.warehouse this agent's orders draw from
-    username: str                           # Login username for the portal
-    password: str                           # Hashed immediately — never stored plain
     entity_type: Optional[str] = ""         # Private Company (Pty) Ltd|Close Corporation (CC)|Sole Proprietor|Partnership|Other
     entity_type_other: Optional[str] = ""
     id_type: Optional[str] = "sa_id"        # sa_id|passport — Sole Proprietor agents only
@@ -136,9 +136,16 @@ async def create_reseller(
     """
     Create a reseller. Admin only.
     Validates the Odoo partner exists, then atomically creates:
-      1. A login account in the users collection
+      1. A login account in the users collection (invite-based — see below)
       2. The reseller record linked to both the user and the Odoo partner
     Rolls back the user account if the reseller insert fails.
+
+    2026-09-20: moved onto the same invite pattern customer portal access
+    already uses (customer_routes.py::grant_portal_access) rather than an
+    admin typing a password directly — the account's password is a random
+    value the admin never sees; the reseller sets their own via a single-use
+    reset-token link. email is required for exactly this reason: it's now
+    the only way to deliver access.
     """
     odoo = get_odoo_client()
 
@@ -160,29 +167,49 @@ async def create_reseller(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not verify Odoo partner: {str(e)}")
 
+    username = (reseller.email or "").lower().strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="An email is required to send the portal invite")
+
     # Uniqueness checks before any writes
     if await col("resellers").find_one({"seller_code": reseller.seller_code.upper()}):
         raise HTTPException(status_code=400, detail=f"Seller code '{reseller.seller_code}' already exists")
     if reseller.odoo_partner_id and await col("resellers").find_one({"odoo_partner_id": reseller.odoo_partner_id}):
         raise HTTPException(status_code=400, detail="This Odoo partner is already linked to a sales agent")
-    if await col("users").find_one({"username": reseller.username}):
-        raise HTTPException(status_code=400, detail=f"Username '{reseller.username}' is already taken")
+    if await col("users").find_one({"username": username}):
+        raise HTTPException(status_code=400, detail=f"Email '{username}' is already in use by another account")
     # Login lookup (auth.py::authenticate_user) falls back to matching by email
     # when the entered username contains "@" — a duplicate email makes that
     # lookup ambiguous, since find_one returns whichever account matches first
-    # rather than necessarily the one an admin just reset. Block it here.
-    if reseller.email:
-        _email_norm = reseller.email.lower().strip()
-        if await col("users").find_one({"email": _email_norm}):
-            raise HTTPException(status_code=400, detail=f"Email '{_email_norm}' is already in use by another account")
+    # rather than necessarily the one an admin just reset. Block it here too
+    # (username IS the email now, but the users collection is still queried
+    # both ways elsewhere, so keep both checks — harmless once collapsed).
+    if await col("users").find_one({"email": username}):
+        raise HTTPException(status_code=400, detail=f"Email '{username}' is already in use by another account")
+
+    # Non-blocking cross-role awareness (2026-09-20) — no existing check
+    # anywhere prevents/flags an Odoo partner being both a customer and a
+    # reseller; a partner CAN legitimately be both, so this only informs,
+    # never blocks, same shape as the existing credit_warning/stock_warning
+    # non-blocking warnings elsewhere in this codebase.
+    cross_role_warning = None
+    if reseller.odoo_partner_id:
+        existing_customer_login = await col("users").find_one(
+            {"role": "customer", "companies.odoo_partner_id": reseller.odoo_partner_id},
+            {"username": 1, "_id": 0},
+        )
+        if existing_customer_login:
+            cross_role_warning = f"This partner already has a customer portal login under {existing_customer_login['username']}."
 
     now = datetime.now(timezone.utc)
     reseller_id = f"reseller_{reseller.seller_code.lower()}"
 
-    # Step 1 — create login account
+    # Step 1 — create login account. Password is a random value the admin
+    # never sees — the reseller sets their own via the invite link below.
     user_doc = {
-        "username": reseller.username,
-        "password": hash_password(reseller.password),
+        "username": username,
+        "email": username,
+        "password": hash_password(secrets.token_urlsafe(32)),
         "role": "reseller",
         "name": reseller.name,
         "reseller_id": reseller_id,
@@ -191,11 +218,6 @@ async def create_reseller(
         "created_at": now,
         "must_change_password": True,
     }
-    if reseller.email:
-        # Normalized the same way create_user/update_user store it, and the
-        # same way authenticate_user's email-login fallback queries it — an
-        # un-normalized email here would never match that lookup at all.
-        user_doc["email"] = reseller.email.lower().strip()
     user_result = await col("users").insert_one(user_doc)
     user_id = str(user_result.inserted_id)
 
@@ -253,16 +275,18 @@ async def create_reseller(
             })
 
     await audit_log("reseller.create", "reseller", reseller_id, entity_label=reseller.name,
-                    user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": reseller.username},
+                    user=current_user, after={"seller_code": reseller.seller_code.upper(), "username": username},
                     reseller_id=reseller_id)
-    if reseller.email:
-        background_tasks.add_task(
-            send_welcome_email,
-            username=reseller.username,
-            name=reseller.name,
-            email=reseller.email,
-        )
-    return {"success": True, "reseller_id": reseller_id, "user_id": user_id}
+
+    from config import get_settings as _gs
+    token = await create_password_reset_token(username)
+    invite_url = f"{_gs().portal_url}/reset-password?token={token}"
+    background_tasks.add_task(send_reseller_portal_invite, username, reseller.name, invite_url)
+
+    response = {"success": True, "reseller_id": reseller_id, "user_id": user_id}
+    if cross_role_warning:
+        response["warning"] = cross_role_warning
+    return response
 
 
 @router.put("/{reseller_id}")

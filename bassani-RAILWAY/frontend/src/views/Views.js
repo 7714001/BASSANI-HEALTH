@@ -2590,7 +2590,7 @@ export function Orders() {
 export function Resellers() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", username:"", password:"", entity_type:"", entity_type_other:"", id_type:"sa_id", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
+  const BLANK_FORM = { name:"", type:"Distributor", seller_code:"", contact_person:"", email:"", phone:"", commission_eligible:true, odoo_partner_id:"", warehouse_id:"", entity_type:"", entity_type_other:"", id_type:"sa_id", id_number:"", company_reg_number:"", vat_registered:false, vat_number:"", bank_name:"", bank_account_holder:"", bank_account_number:"", bank_branch_code:"" };
 
   const [resellers,          setResellers         ] = useState([]);
   const [loading,            setLoading           ] = useState(true);
@@ -2756,8 +2756,7 @@ export function Resellers() {
 
   const save = async () => {
     if (!form.name || !form.seller_code) return toast.error("Name and seller code required");
-    if (!form.username || !form.password) return toast.error("Username and password are required");
-    if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
+    if (!form.email) return toast.error("Email is required to send the portal invite");
     if (isSoleProp) {
       const idNum = form.id_number.trim();
       const isPassport = form.id_type === "passport";
@@ -2772,8 +2771,9 @@ export function Resellers() {
       else delete payload.odoo_partner_id;
       if (payload.warehouse_id) payload.warehouse_id = parseInt(payload.warehouse_id);
       else delete payload.warehouse_id;
-      await api.post("/api/resellers/", payload);
-      toast.success("Sales agent created");
+      const r = await api.post("/api/resellers/", payload);
+      toast.success(`Sales agent created — invite sent to ${form.email}`);
+      if (r.data?.warning) toast(r.data.warning, { icon: "⚠️" });
       setModal(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
@@ -2806,7 +2806,7 @@ export function Resellers() {
 
           {/* Step indicator */}
           {(() => {
-            const STEPS = ["Odoo Partner", "Business", "Login", "Financials"];
+            const STEPS = ["Odoo Partner", "Business", "Financials"];
             return (
               <div className="flex items-center gap-0 mb-6">
                 {STEPS.map((label, i) => {
@@ -2970,7 +2970,7 @@ export function Resellers() {
                 )}
                 <FormGroup label="Seller Code" required><Input value={form.seller_code} onChange={e=>setForm({...form,seller_code:e.target.value.toUpperCase()})} placeholder="JOE001" /></FormGroup>
                 <FormGroup label="Contact Person"><Input value={form.contact_person} onChange={e=>setForm({...form,contact_person:e.target.value})} /></FormGroup>
-                <FormGroup label="Email"><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
+                <FormGroup label="Email" required><Input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></FormGroup>
                 <FormGroup label="Phone"><Input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></FormGroup>
                 <FormGroup label="Warehouse" className="sm:col-span-2">
                   <Select value={form.warehouse_id} onChange={e=>setForm({...form,warehouse_id:e.target.value})}>
@@ -2980,11 +2980,15 @@ export function Resellers() {
                   <p className="text-[11px] text-gray-400 mt-1">This agent's orders will draw stock from the selected warehouse.</p>
                 </FormGroup>
               </div>
+              <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                An invite to set a password will be sent to this email once the sales agent is created — no password is set here.
+              </p>
               <div className="flex justify-between">
                 <BtnSecondary onClick={()=>setRStep(1)}>← Back</BtnSecondary>
                 <BtnPrimary onClick={() => {
                   if (!form.name) return toast.error("Business name is required");
                   if (!form.seller_code) return toast.error("Seller code is required");
+                  if (!form.email) return toast.error("Email is required to send the portal invite");
                   if (form.entity_type === "Other" && !form.entity_type_other.trim()) return toast.error("Please specify the entity type");
                   setRStep(3);
                 }}>Next →</BtnPrimary>
@@ -2992,32 +2996,8 @@ export function Resellers() {
             </div>
           )}
 
-          {/* ── Step 3: Login Credentials ── */}
+          {/* ── Step 3: Financials ── */}
           {rStep === 3 && (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">Set the portal login credentials for this sales agent. They will be required to change their password on first login.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormGroup label="Username" required>
-                  <Input value={form.username} onChange={e=>setForm({...form,username:e.target.value.toLowerCase().replace(/\s/g,"")})} placeholder="e.g. joe.smith" autoFocus />
-                </FormGroup>
-                <FormGroup label="Password" required>
-                  <Input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min. 8 characters" />
-                </FormGroup>
-              </div>
-              <div className="flex justify-between">
-                <BtnSecondary onClick={()=>setRStep(2)}>← Back</BtnSecondary>
-                <BtnPrimary onClick={() => {
-                  if (!form.username) return toast.error("Username is required");
-                  if (!form.password) return toast.error("Password is required");
-                  if (form.password.length < 8) return toast.error("Password must be at least 8 characters");
-                  setRStep(4);
-                }}>Next →</BtnPrimary>
-              </div>
-            </div>
-          )}
-
-          {/* ── Step 4: Financials ── */}
-          {rStep === 4 && (
             <div className="space-y-4">
               <div>
                 <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Registration</p>
@@ -3063,7 +3043,7 @@ export function Resellers() {
                 </div>
               </div>
               <div className="flex justify-between">
-                <BtnSecondary onClick={()=>setRStep(3)} disabled={saving}>← Back</BtnSecondary>
+                <BtnSecondary onClick={()=>setRStep(2)} disabled={saving}>← Back</BtnSecondary>
                 <BtnPrimary onClick={save} loading={saving}>Create Sales Agent</BtnPrimary>
               </div>
             </div>

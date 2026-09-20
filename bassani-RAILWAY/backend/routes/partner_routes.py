@@ -6,6 +6,7 @@ orphaned contacts (individuals with no parent company link).
 from fastapi import APIRouter, Depends, Query, HTTPException
 from auth import require_admin, require_permission
 from odoo_client import get_odoo_client
+from database import col
 from middleware.audit import audit_log
 from pydantic import BaseModel
 
@@ -66,7 +67,7 @@ def partner_counts(current_user: dict = Depends(require_admin)):
 
 
 @router.get("/")
-def list_partners(
+async def list_partners(
     filter: str = Query("all", pattern="^(all|company|linked|unlinked)$"),
     search: str | None = Query(None),
     limit: int = Query(50, le=200),
@@ -81,9 +82,39 @@ def list_partners(
             limit=limit, offset=offset, order="name asc",
         )
         total = odoo.count("res.partner", domain)
-        return {"partners": [_fmt(p) for p in partners], "total": total}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    rows = [_fmt(p) for p in partners]
+
+    # "Already a Sales Agent" / "already a customer portal login" awareness
+    # (2026-09-20, for the Register-as-Sales-Agent button) — same batched
+    # $in-overlay pattern already used twice in customer_routes.py
+    # (customer_metadata overlay, users.companies.odoo_partner_id overlay).
+    ids = [r["id"] for r in rows]
+    if ids:
+        reseller_map = {}
+        async for rec in col("resellers").find(
+            {"odoo_partner_id": {"$in": ids}}, {"odoo_partner_id": 1, "seller_code": 1, "_id": 0}
+        ):
+            reseller_map[rec["odoo_partner_id"]] = rec
+
+        customer_login_map = {}
+        async for rec in col("users").find(
+            {"role": "customer", "companies.odoo_partner_id": {"$in": ids}},
+            {"companies.odoo_partner_id": 1, "_id": 0},
+        ):
+            for c in rec.get("companies", []):
+                if c.get("odoo_partner_id") in ids:
+                    customer_login_map[c["odoo_partner_id"]] = True
+
+        for r in rows:
+            reseller = reseller_map.get(r["id"])
+            r["is_reseller"] = bool(reseller)
+            r["reseller_seller_code"] = reseller["seller_code"] if reseller else None
+            r["is_customer_portal_user"] = customer_login_map.get(r["id"], False)
+
+    return {"partners": rows, "total": total}
 
 
 @router.patch("/{partner_id}/link-company")

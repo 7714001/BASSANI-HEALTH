@@ -4748,7 +4748,7 @@ Previously a single "signing authority" profile (name, title, signature image) w
 
 **Goal:** Rename "resellers" to "sales agents" throughout the portal UI and introduce a `commission_eligible` flag on agent accounts, so internal Bassani staff can hold sales agent accounts (managing a portfolio of customers) without appearing in commission statements or seeing the commission section.  
 **Status:** 🟢 Complete  
-**Completed:** 20.0–20.3 — 2026-07-08
+**Completed:** 20.0–20.3 — 2026-07-08 · 20.4 — 2026-09-20
 
 ### Context
 
@@ -4801,6 +4801,30 @@ No external-facing API breaking changes — existing resellers without the field
 - [x] Banking details section in Edit modal hidden for non-eligible agents
 - [x] Existing resellers without the `commission_eligible` field default to `true` — no data migration required
 - [x] Admin-targeted single-agent commission statement generation is not affected by the eligibility filter
+
+---
+
+### 20.4 — Register as Sales Agent (Partner Directory) + Invite-Based Account Creation — Complete 2026-09-20
+
+**Goal:** Add a "Register as Sales Agent" action to the Partner Directory so an admin can convert an already-known Odoo partner into a Sales Agent without leaving the page and re-searching for the same partner in a separate wizard. Investigating the existing wizard's username/password fields surfaced a real inconsistency: reseller creation (and staff creation) had an admin type a password directly, while customer portal access (`customer_routes.py::grant_portal_access`) already used a more secure, newer invite-based pattern — a random password never surfaced to anyone, delivered via a single-use 15-minute reset-token link. Per the product owner ("keep the app standardized... user management the same for everyone, we dont want to create duplicate accounts"), this sub-phase standardizes reseller account creation onto the invite pattern everywhere, not just the new entry point.
+
+- [x] `reseller_routes.py::ResellerCreate` — `username`/`password` fields removed entirely; `email` changed from optional to required (it's now the only way to deliver account access)
+- [x] `reseller_routes.py::create_reseller` — `username = email.lower().strip()` (same convention `grant_portal_access` already uses); password is `hash_password(secrets.token_urlsafe(32))`, never surfaced to the admin, never logged; after the existing rollback-safe user+reseller doc creation, generates a token via `auth_routes.py::create_password_reset_token()` (the same helper `forgot_password`/`grant_portal_access` already share) and fires a new `send_reseller_portal_invite` background email instead of `send_welcome_email` (which remains unchanged for staff creation in `user_routes.py` — different trust model, out of scope)
+- [x] New non-blocking cross-role check: if the target `odoo_partner_id` already has an active customer-role portal login (`users.companies.odoo_partner_id` match), the success response carries a `warning` string — informational only, a partner can legitimately be both a customer and a sales agent, this never blocks creation. No such check existed anywhere before this
+- [x] `email_service.py::send_reseller_portal_invite(email, name, invite_url)` — modeled directly on `send_customer_portal_invite`, same single-use/15-minute-link copy, same Email Standards
+- [x] `partner_routes.py::list_partners` — new batched `$in`-overlay step (same shape already proven twice in `customer_routes.py`) attaching `is_reseller`/`reseller_seller_code` (from `resellers.odoo_partner_id`) and `is_customer_portal_user` (from `users.companies.odoo_partner_id`, role `customer`) to each row — Partner Directory previously had zero awareness of either
+- [x] `frontend/src/components/RegisterSalesAgentModal.js` (new) — pre-fills name/email/phone from the row and VAT/seller-code-suggestion via the existing `GET /api/customers/{id}` call (same one `Resellers()`'s edit modal already makes); `commission_eligible` defaults on with the existing toggle; entity type defaults to Sole Proprietor for an unlinked individual row; no username/password fields, replaced with a static "an invite will be sent" notice; shows the cross-role warning inline when applicable
+- [x] `PartnerDirectory.js` — new "Register as Sales Agent" row action (`resellers.manage`-gated), shown for company rows and unlinked-individual rows only — not for a linked contact (a specific person at a company), the same ambiguity the general wizard's own resolve-to-parent logic already exists to avoid; disabled with a tooltip when the row has no email; replaced with a "Sales Agent" badge (parallel to the existing Customer/Supplier badges) once `is_reseller` is true
+- [x] `Views.js::Resellers()` — the general "Add Sales Agent" wizard retrofitted onto the same invite mechanism: the "Login Credentials" step removed entirely (4 steps → 3), `BLANK_FORM` drops `username`/`password`, `email` is now validated as required on the Business Details step, success toast confirms an invite was sent rather than implying immediate login. Edit modal/`ResellerUpdate` untouched — credentials were never editable there
+
+### Definition of Done (20.4)
+
+- [x] Exactly one reseller account-creation pattern exists in the app — no admin ever types or sees a Sales Agent's password, from either entry point
+- [x] `username = email` structurally prevents a duplicate login for an email that already belongs to any existing account (customer, staff, or another sales agent), via the existing `users.username`/`users.email` uniqueness checks
+- [x] Partner Directory shows "Sales Agent" instead of the action once a partner is already linked, and cannot attempt to re-register them
+- [x] A partner with no email on file cannot be registered from Partner Directory (button disabled, clear tooltip) — there'd be no way to deliver the invite
+- [x] Registering a partner that already has a customer portal login succeeds, with a non-blocking warning surfaced to the admin
+- [x] `npm run build` compiles cleanly; backend files byte-compile cleanly
 
 ---
 
