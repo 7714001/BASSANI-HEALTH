@@ -35,6 +35,16 @@ import OrderView from "./OrderView";
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Quote builder draft persistence (2026-09-20) — same localStorage pattern
+// already proven for the reseller/customer cart (Views.js::Orders(),
+// bassani_cart_${user.id}), scoped additionally per-ticket since a staff
+// member can have several tickets' quotes mid-build across tabs/sessions.
+// Confirmed via AuthContext.js/api.js that logout only ever removes the
+// "token" key, never other localStorage entries, so this survives an
+// inactivity-logout on the same browser same as the cart already does.
+const quoteDraftKey = (userId, ticketId) => `bassani_quote_draft_${userId}_${ticketId}`;
+const QUOTE_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days — avoid resurrecting a truly abandoned draft
+
 // Renders a compact Code 128 barcode for an Odoo order reference (e.g. "S00142").
 // Visible on screen and in print — lets warehouse staff scan the ticket on a tablet.
 function OrderBarcode({ orderRef }) {
@@ -231,7 +241,7 @@ export default function SalesTickets() {
     if (selectedCustomer.samples_account && !selectedRecipient) return toast.error("Select a sample recipient");
     setCreating(true);
     try {
-      await api.post("/api/tickets/", {
+      const r = await api.post("/api/tickets/", {
         customer_id: selectedCustomer.id,
         note: createNote || undefined,
         ...(selectedCustomer.samples_account && selectedRecipient ? {
@@ -240,7 +250,9 @@ export default function SalesTickets() {
         } : {}),
       });
       toast.success("Ticket created");
-      setCreateModal(false); load();
+      setCreateModal(false);
+      load();  // background refresh so the list is current once they navigate back
+      openDetail({ id: r.data.ticket_id });  // straight into the ticket, ready to build a quote
     } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
     finally { setCreating(false); }
   };
@@ -776,6 +788,13 @@ export default function SalesTickets() {
   const [quotePaymentTerms,    setQuotePaymentTerms   ] = useState([]);
   const [quotePaymentTermId,   setQuotePaymentTermId  ] = useState("");
 
+  // ── Draft persistence (2026-09-20) ────────────────────────────────────────
+  const [quoteDraftBanner, setQuoteDraftBanner] = useState(null); // edit-mode "restore?" prompt — draft object | null
+  const [quoteDraftActive, setQuoteDraftActive] = useState(false); // a local draft is currently applied — shows "Discard Draft"
+  const [quoteDraftSavedAt, setQuoteDraftSavedAt] = useState(null); // last successful local save, for the "Draft saved" indicator
+  const quoteDraftSkipNextSave = useRef(false); // true right after opening/restoring, so that load isn't itself re-saved as an "edit"
+  const quoteDraftSaveTimer    = useRef(null);
+
   useEffect(() => {
     if (quoteMode !== "edit" || quoteCustomerSearch.length < 2) { setQuoteCustomerResults([]); return; }
     const t = setTimeout(async () => {
@@ -834,17 +853,85 @@ export default function SalesTickets() {
     setQuoteInvoiceId(preInvoiceId ? String(preInvoiceId) : "");
   };
 
+  // Reads a saved local draft for this ticket, if any and not stale.
+  const readQuoteDraft = (ticketId) => {
+    if (!ticketId || !user?.id) return null;
+    try {
+      const raw = JSON.parse(localStorage.getItem(quoteDraftKey(user.id, ticketId)) || "null");
+      if (!raw?.lines?.length) return null;
+      const ageMs = Date.now() - new Date(raw.savedAt || 0).getTime();
+      if (ageMs > QUOTE_DRAFT_MAX_AGE_MS) {
+        localStorage.removeItem(quoteDraftKey(user.id, ticketId));
+        return null;
+      }
+      return raw;
+    } catch { return null; } // corrupt/unavailable storage — treat as no draft
+  };
+
+  const clearQuoteDraft = (ticketId) => {
+    if (!ticketId || !user?.id) return;
+    try { localStorage.removeItem(quoteDraftKey(user.id, ticketId)); } catch { /* non-fatal */ }
+  };
+
+  // Re-fetches live product data for a restored draft's lines — same "never
+  // trust a stale price" principle Views.js's Reorder feature (2026-08-21)
+  // already applies via the identical GET /api/products/?ids= call. A
+  // product no longer catalog-visible is dropped, not silently kept stale;
+  // Unit Price is already read-only/non-overridable in this builder, so
+  // there's no negotiated price to lose by refreshing it.
+  const refreshDraftLines = async (lines) => {
+    const ids = [...new Set(lines.filter(l => l.product_id).map(l => l.product_id))];
+    if (ids.length === 0) return { lines, dropped: 0 };
+    try {
+      const { data } = await api.get("/api/products/", { params: { ids: ids.join(","), limit: Math.min(ids.length, 200) } });
+      const productMap = new Map((data.products || []).map(p => [p.id, p]));
+      let dropped = 0;
+      const next = [];
+      lines.forEach(l => {
+        if (!l.product_id) { next.push(l); return; } // keep a blank trailing line as-is
+        const p = productMap.get(l.product_id);
+        if (!p) { dropped += 1; return; }
+        next.push({
+          ...l,
+          price_unit: p.list_price ?? l.price_unit,
+          _tax_rate:  p.tax_rate ?? l._tax_rate,
+          _sku:       p.default_code || l._sku,
+          _stock:     Math.max(0, p.virtual_available ?? 0),
+        });
+      });
+      return { lines: next.length > 0 ? next : [newLine()], dropped };
+    } catch {
+      return { lines, dropped: 0 }; // non-fatal — keep the draft's own cached figures
+    }
+  };
+
   const openQuoteBuilder = async (ticket) => {
-    const firstLine = newLine();
+    quoteDraftSkipNextSave.current = true;
+    const draft = readQuoteDraft(ticket?.id);
     setQuoteTicket(ticket);
-    setQuoteLines([firstLine]);
-    setLastAddedId(firstLine._id);
-    setQuoteNote("");
     setQuoteMode("create");
     setQuoteAddresses([]);
-    setQuoteShippingId("");
-    setQuoteInvoiceId("");
-    setQuotePaymentTermId("");
+    setQuoteDraftBanner(null);
+    setQuoteDraftActive(!!draft);
+    setQuoteDraftSavedAt(draft?.savedAt || null);
+    if (draft) {
+      const { lines: refreshed, dropped } = await refreshDraftLines(draft.lines);
+      setQuoteLines(refreshed);
+      setLastAddedId(null);
+      setQuoteNote(draft.note || "");
+      toast("Restored your saved quote draft", { icon: "📝" });
+      if (dropped > 0) {
+        toast(`${dropped} item${dropped > 1 ? "s" : ""} from your saved draft ${dropped > 1 ? "are" : "is"} no longer available and ${dropped > 1 ? "were" : "was"} removed`, { icon: "⚠️" });
+      }
+    } else {
+      const firstLine = newLine();
+      setQuoteLines([firstLine]);
+      setLastAddedId(firstLine._id);
+      setQuoteNote("");
+      setQuoteShippingId("");
+      setQuoteInvoiceId("");
+      setQuotePaymentTermId("");
+    }
     setView("quote-builder");
     const promises = [];
     if (quoteWarehouses.length === 0) {
@@ -866,12 +953,15 @@ export default function SalesTickets() {
       );
     }
     if (ticket?.customer_id) {
-      promises.push(loadQuoteCustomerContext(ticket.customer_id));
+      promises.push(loadQuoteCustomerContext(ticket.customer_id, draft?.shippingId, draft?.invoiceId, draft?.paymentTermId));
     }
     await Promise.all(promises);
   };
 
-  const openQuoteEdit = async () => {
+  // The real, unmodified quote lines as Odoo currently has them — the
+  // baseline openQuoteEdit loads from, and what a discarded local draft
+  // falls back to.
+  const detailOrderToQuoteLines = () => {
     const lines = (detailOrder?.lines || []).map(l => ({
       _id: Date.now() + Math.random(),
       product_id:      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
@@ -881,6 +971,12 @@ export default function SalesTickets() {
       price_unit:      l.price_unit,
       _tax_rate: 0, _sku: "", _stock: 0,
     }));
+    return lines.length > 0 ? lines : [newLine()];
+  };
+
+  const openQuoteEdit = async () => {
+    quoteDraftSkipNextSave.current = true;
+    const lines = detailOrderToQuoteLines();
     // Init customer from the live Odoo order, not the stale ticket field
     const currentCustomer = {
       id:   Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : null,
@@ -891,10 +987,15 @@ export default function SalesTickets() {
     setQuoteCustomerResults([]);
     setQuoteCustomerEditing(false);
     setQuoteTicket(detail);
-    setQuoteLines(lines.length > 0 ? lines : [newLine()]);
+    setQuoteLines(lines);
     setLastAddedId(null);
     setQuoteNote("");
     setQuoteMode("edit");
+    setQuoteDraftActive(false);
+    // Odoo's lines just loaded above ARE a real competing source of truth
+    // here (unlike create mode, where order_id is still null) — offer a
+    // restore instead of silently overriding what was just fetched.
+    setQuoteDraftBanner(readQuoteDraft(detail?.id));
     setView("quote-builder");
     // The order's own warehouse (fixed — the UI shows "Locked to existing
     // order" for this field in edit mode) was never propagated into
@@ -916,6 +1017,71 @@ export default function SalesTickets() {
       await loadQuoteCustomerContext(customerId, preShippingId, preInvoiceId, prePaymentTermId);
     }
   };
+
+  const restoreQuoteDraft = async () => {
+    if (!quoteDraftBanner) return;
+    quoteDraftSkipNextSave.current = true;
+    const { lines: refreshed, dropped } = await refreshDraftLines(quoteDraftBanner.lines);
+    setQuoteLines(refreshed);
+    setLastAddedId(null);
+    setQuoteNote(quoteDraftBanner.note || "");
+    if (quoteDraftBanner.shippingId)    setQuoteShippingId(quoteDraftBanner.shippingId);
+    if (quoteDraftBanner.invoiceId)     setQuoteInvoiceId(quoteDraftBanner.invoiceId);
+    if (quoteDraftBanner.paymentTermId) setQuotePaymentTermId(quoteDraftBanner.paymentTermId);
+    setQuoteDraftBanner(null);
+    setQuoteDraftActive(true);
+    setQuoteDraftSavedAt(quoteDraftBanner.savedAt || null);
+    toast("Restored your unsaved changes", { icon: "📝" });
+    if (dropped > 0) {
+      toast(`${dropped} item${dropped > 1 ? "s" : ""} from your saved draft ${dropped > 1 ? "are" : "is"} no longer available and ${dropped > 1 ? "were" : "was"} removed`, { icon: "⚠️" });
+    }
+  };
+
+  // Clears the local draft and drops back to a clean baseline — the fresh
+  // empty line in create mode, or the real unmodified Odoo lines in edit
+  // mode. Serves both the restore-banner's "Discard" and the toolbar's
+  // standalone "Discard Draft" action once a draft has been applied.
+  const discardQuoteDraft = () => {
+    clearQuoteDraft(quoteTicket?.id);
+    quoteDraftSkipNextSave.current = true;
+    setQuoteDraftBanner(null);
+    setQuoteDraftActive(false);
+    setQuoteDraftSavedAt(null);
+    if (quoteMode === "edit") {
+      setQuoteLines(detailOrderToQuoteLines());
+      toast("Discarded — reloaded the current quote from Odoo");
+    } else {
+      setQuoteLines([newLine()]);
+      setQuoteNote("");
+      toast("Draft discarded");
+    }
+  };
+
+  // Debounced local autosave — light 400ms debounce to coalesce rapid
+  // typing in the qty/price fields, cheap enough to not need a longer
+  // interval. Skips the first run right after opening/restoring so that
+  // load isn't itself immediately re-saved as if it were a fresh edit.
+  useEffect(() => {
+    if (view !== "quote-builder" || !quoteTicket?.id || !user?.id) return;
+    if (quoteDraftSkipNextSave.current) { quoteDraftSkipNextSave.current = false; return; }
+    if (quoteDraftSaveTimer.current) clearTimeout(quoteDraftSaveTimer.current);
+    quoteDraftSaveTimer.current = setTimeout(() => {
+      try {
+        const key = quoteDraftKey(user.id, quoteTicket.id);
+        const hasContent = quoteLines.some(l => l.product_id) || quoteNote.trim().length > 0;
+        if (!hasContent) { localStorage.removeItem(key); setQuoteDraftSavedAt(null); return; }
+        const savedAt = new Date().toISOString();
+        localStorage.setItem(key, JSON.stringify({
+          lines: quoteLines, note: quoteNote, warehouseId: quoteWarehouseId,
+          shippingId: quoteShippingId, invoiceId: quoteInvoiceId, paymentTermId: quotePaymentTermId,
+          mode: quoteMode, savedAt,
+        }));
+        setQuoteDraftSavedAt(savedAt);
+        setQuoteDraftActive(true);
+      } catch { /* storage full/unavailable — non-fatal, draft just won't survive a refresh */ }
+    }, 400);
+    return () => clearTimeout(quoteDraftSaveTimer.current);
+  }, [quoteLines, quoteNote, quoteWarehouseId, quoteShippingId, quoteInvoiceId, quotePaymentTermId, view, quoteTicket, quoteMode, user?.id]); // eslint-disable-line
 
   const addLine = () => {
     const l = newLine();
@@ -980,6 +1146,9 @@ export default function SalesTickets() {
         });
         toast.success("Quote created in Odoo — ticket advanced to Quote stage");
       }
+      clearQuoteDraft(tid);
+      setQuoteDraftActive(false);
+      setQuoteDraftSavedAt(null);
       setQuoteMode("create");
       setView("detail");
       refreshDetail(tid);
@@ -3230,7 +3399,19 @@ export default function SalesTickets() {
           title="Quote Builder"
           subtitle={quoteMode === "edit" ? (quoteCustomer?.name || quoteTicket?.customer_name) : quoteTicket?.customer_name}
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              {quoteDraftSavedAt && (
+                <span className="text-xs text-gray-400 italic hidden sm:inline">Draft saved</span>
+              )}
+              {quoteDraftActive && (
+                <button
+                  type="button"
+                  onClick={discardQuoteDraft}
+                  className="text-xs text-gray-400 hover:text-red-500 underline decoration-dotted"
+                >
+                  Discard Draft
+                </button>
+              )}
               <BtnSecondary onClick={() => setView("detail")}>← Back to Ticket</BtnSecondary>
               <BtnPrimary
                 onClick={submitQuote}
@@ -3245,6 +3426,19 @@ export default function SalesTickets() {
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="max-w-5xl mx-auto space-y-4">
+
+            {/* ── Unsaved local draft prompt (edit mode only — create mode auto-restores silently) ── */}
+            {quoteDraftBanner && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <span>
+                  You have unsaved local changes to this quote from {fmtDateTime(quoteDraftBanner.savedAt)}.
+                </span>
+                <div className="flex gap-2 shrink-0">
+                  <BtnSecondary onClick={discardQuoteDraft}>Discard</BtnSecondary>
+                  <BtnPrimary onClick={restoreQuoteDraft}>Restore</BtnPrimary>
+                </div>
+              </div>
+            )}
 
             {/* ── Document header ── */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
