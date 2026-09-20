@@ -305,9 +305,15 @@ async def get_monitor_data(token: str = Query("")):
         NO_ID,
     ).to_list(length=1000)
 
-    completed_today = await col("packing_board").count_documents(
-        {"status": "complete", "completed_at": {"$gte": today_start}}
-    )
+    # Fetched (not just counted) so completed_today_value can be summed below
+    # without a second query — the CFO/exco-facing "what did we ship today,
+    # in rand" figure alongside the ops-facing count.
+    completed_today_docs = await col("packing_board").find(
+        {"status": "complete", "completed_at": {"$gte": today_start}},
+        {"order_value": 1, "_id": 0},
+    ).to_list(length=1000)
+    completed_today       = len(completed_today_docs)
+    completed_today_value = round(sum(d.get("order_value") or 0 for d in completed_today_docs), 2)
 
     # open/quote = unconfirmed; sale_order = confirmed but not yet on packing board
     open_quotes = await col("tickets").find(
@@ -507,22 +513,36 @@ async def get_monitor_data(token: str = Query("")):
     }
     pipeline_value = round(sum(column_totals.values()), 2)
 
+    # Revenue at risk (2026-09-20) — the rand value specifically tied up in
+    # overdue-tier orders, not just the count. Deliberately not tied to any
+    # one column (an overdue order can sit in any of the six), so unlike
+    # column_totals above there's no single column heading this would
+    # duplicate — this is the one figure a CFO/exco viewer actually wants
+    # ("how much money is stuck," not just "how many orders").
+    revenue_at_risk = round(sum(c["order_value"] or 0 for c in all_active if c["age_tier"] == "overdue"), 2)
+
+    # KPI strip redesign (2026-09-20, same round as column_totals above) —
+    # every per-column count that used to live here (open_quotes,
+    # awaiting_deposit, in_packing, qa_pending, rp_pending,
+    # awaiting_collection) is now shown directly on that column's own
+    # heading badge, so repeating it a second time up here was pure
+    # duplication. What's kept/added are only the figures that are NOT
+    # visible on any single column heading: cross-column signals
+    # (backorders, in_production), cross-column aggregates (overdue,
+    # at_risk, compliance_hold, oldest_hours), and whole-pipeline financials
+    # (pipeline_value, revenue_at_risk, completed_today_value).
     return {
         "kpis": {
-            "overdue":             overdue_count,
-            "at_risk":             at_risk_count,
-            "compliance_hold":     len(qa_col) + len(rp_col),
-            "completed_today":     completed_today,
-            "open_quotes":         len(quotes_col),
-            "awaiting_deposit":    len(deposit_col),
-            "in_packing":          len(packing_col),
-            "qa_pending":          len(qa_col),
-            "rp_pending":          len(rp_col),
-            "awaiting_collection": len(collection_col),
-            "backorders":          len(backorder_map),
-            "in_production":       sum(1 for c in all_active if c["has_mo_pending"]),
-            "oldest_hours":        round(oldest_hours, 1) if oldest_hours is not None else None,
-            "pipeline_value":      pipeline_value,
+            "overdue":                overdue_count,
+            "at_risk":                at_risk_count,
+            "compliance_hold":        len(qa_col) + len(rp_col),
+            "completed_today":        completed_today,
+            "completed_today_value":  completed_today_value,
+            "backorders":             len(backorder_map),
+            "in_production":          sum(1 for c in all_active if c["has_mo_pending"]),
+            "oldest_hours":           round(oldest_hours, 1) if oldest_hours is not None else None,
+            "pipeline_value":         pipeline_value,
+            "revenue_at_risk":        revenue_at_risk,
         },
         "columns": {
             "quotes":     quotes_col,

@@ -4978,8 +4978,7 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `frontend/src/views/OrderMonitor.js` — full-screen dark theme TV display
   - Token read from `?token=` URL param; validated on mount against `GET /api/monitor/validate`
   - 30-second polling of `GET /api/monitor/data`; 1-second `setInterval` for live countdown badges
-  - KPI strip Row 1: Overdue / At Risk / Compliance Hold / Completed Today (all columns counted, no financials)
-  - KPI strip Row 2: Open Inquiries / Awaiting Deposit / In Packing / QA Pending / RP Pending / Awaiting Collection / Oldest Active (Awaiting Deposit added 2026-08-04)
+  - KPI strip **redesigned 23.8 (2026-09-20)** as two audience-scoped rows once per-column counts/values made the original Row 2 redundant with the column headings themselves — Row 1 ("needs action," sales clerks/ops): Overdue / At Risk / Backorders / In Production. Row 2 ("business health," CFO/exco): Pipeline Value / Revenue at Risk / Completed Today (count · rand) / Compliance Hold / Oldest Active. See 23.8 below for the full history and reasoning.
   - Kanban columns: Open Quotes (indigo) · Awaiting Deposit (gold, added 2026-08-04) · Packing (violet) · QA Review (cyan) · RP Review (teal) · Ready to Collect (amber)
   - Cards sorted oldest-first within each column (most urgent at top)
   - Age tier colour coding: ok=green, warning=amber, urgent=orange, overdue=red+animate-pulse
@@ -5197,22 +5196,27 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 
 ---
 
-### 23.8 — Revenue Tied Up Per Column — Complete 2026-09-20
+### 23.8 — Revenue Per Column + KPI Strip Redesign — Complete 2026-09-20
 
-**Goal:** requested directly by the product owner — show how much revenue is currently sitting in each pipeline stage on the Operations Monitor, not just how many orders. This is a deliberate, conscious extension of the monitor's original "no financials" KPI-strip design (23.1) — per-card values already existed (`order_value` on each card), this surfaces them as a stage-level and whole-pipeline total. Deliberately "value currently in the pipeline," not "revenue earned" — no `revenue_today`/`mtd_revenue` equivalent was built; that's a different, not-currently-planned metric (see 23.0's corrected task note above for why the original planning list's `revenue_today`/`mtd_revenue`/`units_today`/`avg_time_hours` were never implemented).
+**Goal:** requested directly by the product owner in two rounds of the same conversation. Round 1: show how much revenue is currently sitting in each pipeline stage, not just how many orders — a deliberate, conscious extension of the monitor's original "no financials" KPI-strip design (23.1). Round 2, immediately after seeing it live: the product owner pointed out the KPI strip had become repetitive — most of Row 2's per-column counts (Open Inquiries, Awaiting Deposit, In Packing, QA/RP Pending, Awaiting Collection) now just repeated a number already sitting on that same column's own heading, and asked for the strip to be rethought as genuinely useful to two different audiences: the CFO/exco team, and the sales clerks/staff who work the pipeline day to day. Deliberately "value currently in the pipeline," not "revenue earned" — no `revenue_today`/`mtd_revenue` equivalent exists; see 23.0's corrected task note above for why the original planning list's `revenue_today`/`mtd_revenue`/`units_today`/`avg_time_hours` were never implemented. `completed_today_value` and `revenue_at_risk` (this round) are the closest things to that, scoped to what the board can compute without a live Odoo revenue query.
 
 - [x] `monitor_routes.py::_ticket_card()` takes an `order_value: float | None` param instead of hardcoding `None` — a quote/deposit-stage ticket never had a `packing_board` doc yet to stamp a value onto in Mongo
 - [x] New bounded, degrade-gracefully `sale.order` read (`ticket_value_map`) for just the `order_id`s already on the current page's quote/deposit tickets — same shape as the existing `has_mo_pending`/`mo_pending_map` exception (23.4), non-fatal on any Odoo error (falls back to no value shown, never fails the board)
 - [x] `column_totals` (sum of each column's own `order_value`, `None` treated as 0) returned alongside `kpis`/`columns` in `GET /api/monitor/data`
 - [x] `kpis.pipeline_value` — sum of all six `column_totals`, a single whole-pipeline figure
+- [x] `kpis.revenue_at_risk` (round 2) — sum of `order_value` across every card, in any column, at the `overdue` age tier. Deliberately not a column total (an overdue order can be in any of the six columns), so it doesn't duplicate anything on a column heading — the one figure a CFO/exco viewer actually wants: how much money is stuck, not just how many orders
+- [x] `completed_today` (round 2) — the existing count query became a `.find()` fetching `order_value` too, so `kpis.completed_today_value` (rand fulfilled today) could be summed with zero extra queries
+- [x] Removed from `kpis` (round 2, now dead weight once every column shows its own count): `open_quotes`, `awaiting_deposit`, `in_packing`, `qa_pending`, `rp_pending`, `awaiting_collection`. Nothing else consumed these — `OrderMonitor.js` was the endpoint's only caller — so this is a real cleanup, not a breaking change
 - [x] `MonitorKit.js`'s shared `Column` component gains an optional `valueTotal` prop, rendered as a small line under the column heading (`"R123k tied up here"`, via the existing `fmtR()` formatter) — optional so Manufacturing/Onboarding monitors (which don't pass it) are visually unchanged
-- [x] `OrderMonitor.js` passes `valueTotal={column_totals?.[cfg.key]}` per column, and adds a "Pipeline Value" `KpiSmall` next to the existing "Oldest Active" tile
+- [x] `OrderMonitor.js` passes `valueTotal={column_totals?.[cfg.key]}` per column
+- [x] KPI strip rebuilt as two audience-scoped rows (round 2): **Row 1 (`KpiCard`, "needs action" — sales clerks/ops)** Overdue, At Risk, Backorders, In Production — the last two promoted here from the old Row 2 since they're the one thing there that was still real ops signal, not a duplicate column count. **Row 2 (`KpiSmall`, "business health" — CFO/exco)** Pipeline Value, Revenue at Risk, Completed Today (count · rand, combined in one tile), Compliance Hold, Oldest Active
 
 ### Definition of Done
 - [x] Every column heading on `/monitor` shows its own revenue total, updating live on every 30s poll / WebSocket-triggered refresh, same as card counts already do
-- [x] The "Pipeline Value" KPI equals the sum of all six column totals shown below it
+- [x] The "Pipeline Value" KPI equals the sum of all six column totals shown on the columns below it
 - [x] Packing/QA/RP/Ready-to-Collect column totals cost zero extra Odoo calls (values already stamped in Mongo at packing-board creation); Quotes/Deposit totals cost exactly one extra bounded, page-scoped `sale.order` read, matching this file's existing exception pattern
 - [x] A ticket with no draft order yet (a bare inquiry) contributes 0 to its column's total, not an error or a missing card
+- [x] No KPI strip tile duplicates a number already visible on a column heading badge
 - [x] `npm run build` compiles cleanly; backend files byte-compile cleanly
 
 ---

@@ -238,6 +238,16 @@ export default function OrderMonitor() {
       />
 
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
+      {/* Redesigned 2026-09-20: every per-column count that used to live here
+          (Open Inquiries, Awaiting Deposit, In Packing, QA/RP Pending,
+          Awaiting Collection) now shows directly on that column's own
+          heading badge below — repeating it up here was pure duplication.
+          Row 1 is "needs action" for sales clerks/ops staff working the
+          pipeline day to day; Row 2 is "business health" for the CFO/exco
+          audience glancing at the board — the only two Row-2-style numbers
+          that survived from the old design (Backorders, In Production) are
+          promoted into Row 1 instead, since they're the one thing here that
+          IS still actionable ops signal, not a duplicate of a column count. */}
       <div style={{ padding: "16px 20px 0", flexShrink: 0 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 10 }}>
           <KpiCard theme={theme}
@@ -254,31 +264,41 @@ export default function OrderMonitor() {
             color="#ea580c"
           />
           <KpiCard theme={theme}
-            label="Compliance Hold"
-            value={kpis.compliance_hold}
-            sub="Waiting on QA or RP sign-off"
-            color="#8b5cf6"
-            pulse={kpis.compliance_hold > 3}
+            label="Backorders"
+            value={kpis.backorders}
+            sub="Orders waiting on stock"
+            color="#dc2626"
+            pulse={kpis.backorders > 0}
           />
           <KpiCard theme={theme}
-            label="Completed Today"
-            value={kpis.completed_today}
-            sub="Orders fulfilled today"
-            color={t.brand}
+            label="In Production"
+            value={kpis.in_production}
+            sub="Orders waiting on manufacturing"
+            color="#2563eb"
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 10, marginBottom: 16 }}>
-          <KpiSmall theme={theme} label="Open Inquiries"      value={kpis.open_quotes}         color="#6366f1" />
-          <KpiSmall theme={theme} label="Awaiting Deposit"    value={kpis.awaiting_deposit}    color={kpis.awaiting_deposit > 0 ? "#ca8a04" : undefined} />
-          <KpiSmall theme={theme} label="In Packing"          value={kpis.in_packing}          color="#8b5cf6" />
-          <KpiSmall theme={theme} label="QA Pending"          value={kpis.qa_pending}          color={kpis.qa_pending  > 0 ? "#d97706" : undefined} />
-          <KpiSmall theme={theme} label="RP Pending"          value={kpis.rp_pending}          color={kpis.rp_pending  > 0 ? "#d97706" : undefined} />
-          <KpiSmall theme={theme} label="Awaiting Collection" value={kpis.awaiting_collection} color="#14b8a6" />
-          <KpiSmall theme={theme} label="Backorders"          value={kpis.backorders}          color={kpis.backorders > 0 ? "#dc2626" : undefined} />
-          <KpiSmall theme={theme} label="In Production"       value={kpis.in_production}       color={kpis.in_production > 0 ? "#2563eb" : undefined} />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+          <KpiSmall theme={theme}
+            label="Pipeline Value"
+            value={fmtR(kpis.pipeline_value)}
+            color={t.brand}
+          />
+          <KpiSmall theme={theme}
+            label="Revenue at Risk"
+            value={fmtR(kpis.revenue_at_risk)}
+            color={kpis.revenue_at_risk > 0 ? "#dc2626" : undefined}
+          />
+          <KpiSmall theme={theme}
+            label="Completed Today"
+            value={`${kpis.completed_today} · ${fmtR(kpis.completed_today_value)}`}
+            color={t.brand}
+          />
+          <KpiSmall theme={theme}
+            label="Compliance Hold"
+            value={kpis.compliance_hold}
+            color={kpis.compliance_hold > 3 ? "#8b5cf6" : undefined}
+          />
           <KpiSmall theme={theme}
             label="Oldest Active"
             value={fmtHours(kpis.oldest_hours)}
@@ -288,11 +308,6 @@ export default function OrderMonitor() {
               : kpis.oldest_hours > 48 ? "#ea580c"
               : t.brand
             }
-          />
-          <KpiSmall theme={theme}
-            label="Pipeline Value"
-            value={fmtR(kpis.pipeline_value)}
-            color={t.brand}
           />
         </div>
       </div>
