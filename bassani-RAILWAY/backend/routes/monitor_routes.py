@@ -9,11 +9,14 @@ Admin endpoints (JWT):
   GET  /api/monitor/token            — retrieve current token
   POST /api/monitor/token            — generate / rotate token
 
-Otherwise Mongo-only by design (cheap for frequent polling) — the one
-exception is the has_mo_pending signal (23.4, 2026-08-22), which makes a
-single bounded, degrade-gracefully Odoo call per poll since there is no
-Mongo mirror of mrp.production. Same class of exception
-manufacturing_monitor_routes.py and scheduler.py::run_mo_digest already are.
+Otherwise Mongo-only by design (cheap for frequent polling) — the exceptions
+are bounded, degrade-gracefully Odoo calls per poll, each scoped to only the
+ids already on the current page: the has_mo_pending signal (23.4,
+2026-08-22), since there is no Mongo mirror of mrp.production (same class of
+exception manufacturing_monitor_routes.py and scheduler.py::run_mo_digest
+already are); and the quote/deposit-stage order_value lookup (2026-09-20),
+since a ticket with no packing_board entry yet never had its order's
+amount_total stamped anywhere in Mongo.
 """
 import secrets
 from datetime import datetime, timezone
@@ -171,7 +174,7 @@ _QUOTE_STATUS_DEADLINE = {
 }
 
 
-def _ticket_card(ticket: dict) -> dict:
+def _ticket_card(ticket: dict, order_value: float | None = None) -> dict:
     clock   = ticket.get("created_at", datetime.now(timezone.utc))
     status  = ticket.get("status", "open")
     deadline = _QUOTE_STATUS_DEADLINE.get(status, QUOTE_HOURS)
@@ -186,7 +189,7 @@ def _ticket_card(ticket: dict) -> dict:
         "hours_elapsed":  round(elapsed, 2),
         "age_tier":       _age_tier(elapsed, deadline),
         "total_units":    0,
-        "order_value":    None,
+        "order_value":    order_value,
         "is_sample":      ticket.get("is_sample", False),
         "is_reseller":    bool(ticket.get("reseller_id")),
         "reseller_name":  ticket.get("reseller_name"),
@@ -422,6 +425,30 @@ async def get_monitor_data(token: str = Query("")):
         except Exception:
             pass
 
+    # Ticket-linked order value (2026-09-20) — a quote/deposit-stage ticket has
+    # no packing_board doc yet (that's only created post-deposit), so unlike
+    # packing/qa/rp/collection cards it never got order_value stamped anywhere
+    # in Mongo. Same bounded, degrade-gracefully shape as mo_pending_map above:
+    # one extra sale.order read for just the order_ids already on this page.
+    # A ticket with no order_id yet (never quoted) genuinely has no value.
+    ticket_value_map: dict = {}
+    ticket_order_ids = list({
+        t["order_id"] for t in (open_quotes + awaiting_deposit_tickets)
+        if t.get("order_id")
+    })
+    if ticket_order_ids:
+        try:
+            odoo = get_odoo_client()
+            value_rows = odoo.search_read(
+                "sale.order",
+                domain=[("id", "in", ticket_order_ids)],
+                fields=["id", "amount_total"],
+                limit=len(ticket_order_ids),
+            )
+            ticket_value_map = {str(r["id"]): float(r.get("amount_total") or 0) for r in value_rows}
+        except Exception:
+            pass
+
     # ── Build columns ─────────────────────────────────────────────────────────
     packing_col    = []
     qa_col         = []
@@ -441,8 +468,8 @@ async def get_monitor_data(token: str = Query("")):
             else:
                 rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
 
-    quotes_col     = [_ticket_card(t) for t in open_quotes]
-    deposit_col    = [_ticket_card(t) for t in awaiting_deposit_tickets]
+    quotes_col     = [_ticket_card(t, ticket_value_map.get(str(t.get("order_id")))) for t in open_quotes]
+    deposit_col    = [_ticket_card(t, ticket_value_map.get(str(t.get("order_id")))) for t in awaiting_deposit_tickets]
     collection_col = [
         _collection_card(t, board_coll_map.get(t.get("orders_ticket_ref", ""), {}))
         for t in collection_tickets
@@ -462,6 +489,24 @@ async def get_monitor_data(token: str = Query("")):
     at_risk_count = sum(1 for c in all_active if c["age_tier"] == "urgent")
     oldest_hours  = max((c["hours_elapsed"] for c in all_active), default=None)
 
+    # Revenue tied up per stage (2026-09-20) — the sum of each column's own
+    # order_value, whether that came from Mongo (packing/qa/rp/collection,
+    # stamped at packing-board creation) or the live sale.order read above
+    # (quotes/deposit). A card with no known value (e.g. a bare inquiry with
+    # no draft order yet) contributes 0, not an error.
+    def _col_total(cards: list) -> float:
+        return round(sum(c["order_value"] or 0 for c in cards), 2)
+
+    column_totals = {
+        "quotes":     _col_total(quotes_col),
+        "deposit":    _col_total(deposit_col),
+        "packing":    _col_total(packing_col),
+        "qa":         _col_total(qa_col),
+        "rp":         _col_total(rp_col),
+        "collection": _col_total(collection_col),
+    }
+    pipeline_value = round(sum(column_totals.values()), 2)
+
     return {
         "kpis": {
             "overdue":             overdue_count,
@@ -477,6 +522,7 @@ async def get_monitor_data(token: str = Query("")):
             "backorders":          len(backorder_map),
             "in_production":       sum(1 for c in all_active if c["has_mo_pending"]),
             "oldest_hours":        round(oldest_hours, 1) if oldest_hours is not None else None,
+            "pipeline_value":      pipeline_value,
         },
         "columns": {
             "quotes":     quotes_col,
@@ -486,5 +532,6 @@ async def get_monitor_data(token: str = Query("")):
             "rp":         rp_col,
             "collection": collection_col,
         },
+        "column_totals": column_totals,
         "server_time": now.isoformat(),
     }

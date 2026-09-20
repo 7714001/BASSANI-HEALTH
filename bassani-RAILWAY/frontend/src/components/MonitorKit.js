@@ -263,7 +263,7 @@ export function KpiSmall({ label, value, color, theme }) {
   );
 }
 
-export function Column({ config, count, headerColor, theme, children }) {
+export function Column({ config, count, valueTotal, headerColor, theme, children }) {
   const t = THEME[theme];
   return (
     <div style={{
@@ -281,26 +281,33 @@ export function Column({ config, count, headerColor, theme, children }) {
         padding: "14px 16px",
         borderBottom: `1px solid ${t.divider}`,
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
+        flexDirection: "column",
+        gap: 4,
         background: `linear-gradient(135deg, ${headerColor}${t.gradientAlpha} 0%, transparent 100%)`,
         flexShrink: 0,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 3, height: 20, background: headerColor, borderRadius: 2 }} />
-          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", color: t.textPrimary, textTransform: "uppercase" }}>
-            {config.label}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 3, height: 20, background: headerColor, borderRadius: 2 }} />
+            <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", color: t.textPrimary, textTransform: "uppercase" }}>
+              {config.label}
+            </span>
+          </div>
+          <span style={{
+            fontSize: 13, fontWeight: 800,
+            background: count === 0 ? t.countBgIdle : `${headerColor}22`,
+            color: count === 0 ? t.countTextIdle : headerColor,
+            padding: "2px 10px", borderRadius: 20,
+            minWidth: 28, textAlign: "center",
+          }}>
+            {count}
           </span>
         </div>
-        <span style={{
-          fontSize: 13, fontWeight: 800,
-          background: count === 0 ? t.countBgIdle : `${headerColor}22`,
-          color: count === 0 ? t.countTextIdle : headerColor,
-          padding: "2px 10px", borderRadius: 20,
-          minWidth: 28, textAlign: "center",
-        }}>
-          {count}
-        </span>
+        {valueTotal != null && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: t.textSecondary, marginLeft: 13 }}>
+            {fmtR(valueTotal)} tied up here
+          </span>
+        )}
       </div>
 
       <div style={{

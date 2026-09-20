@@ -4948,8 +4948,8 @@ The portal already reads `payment_state` on Finance's "Confirm Payment" action. 
 
 **Goal:** A growing family of live, read-only big-screen displays — one per team/pipeline — sharing the same architecture (no login, URL query-token, admin generate/rotate in Settings, 30s poll). Started with the order pipeline; exco liked it enough to ask for more, one per part of the business that benefits from an at-a-glance view instead of manually reviewing a list.  
 **Priority:** Medium  
-**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), 23.3 (Manufacturing Orders monitor, GACP facility), 23.4 (MO-blocked signal folded back into the order pipeline monitor), and 23.5 (MO status control + monitor discoverability + guides) all shipped  
-**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22 · 23.4 — 2026-08-22 · 23.5 — 2026-08-22
+**Status:** 🟢 Complete — 23.0/23.1 (order pipeline monitor), 23.2 (onboarding pipeline monitor), 23.3 (Manufacturing Orders monitor, GACP facility), 23.4 (MO-blocked signal folded back into the order pipeline monitor), 23.5 (MO status control + monitor discoverability + guides), 23.6 (light/dark theme + order grouping), 23.7 (age/priority signal on admin screens), and 23.8 (revenue tied up per column) all shipped  
+**Completed:** 23.0/23.1 — 2026-07-15 · 23.2 — 2026-08-21 · 23.3 — 2026-08-22 · 23.4 — 2026-08-22 · 23.5 — 2026-08-22 · 23.6 — 2026-08-23 · 23.7 — 2026-08-26 · 23.8 — 2026-09-20
 
 ### Context
 
@@ -4967,7 +4967,7 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `GET /api/monitor/validate?token=` (public): 200 or 403
 - [x] `GET /api/monitor/data?token=` (public): full KPIs + column card sets — no Odoo calls, all MongoDB
 - [x] Age tiers: ok (0–33%), warning (33–66%), urgent (66–100%), overdue (>100%) — all relative to 72h deadline (48h for quotes)
-- [x] KPIs: overdue, at_risk, in_pipeline, completed_today, units_today, open_quotes, avg_time_hours, pipeline_value, revenue_today, mtd_revenue
+- [x] KPIs: overdue, at_risk, completed_today, open_quotes, oldest_hours, and per-column counts (`in_packing`/`qa_pending`/`rp_pending`/`awaiting_collection`/`awaiting_deposit`) — `pipeline_value` added in 23.8 (2026-09-20); `revenue_today`/`mtd_revenue`/`units_today`/`avg_time_hours` from this original planning list were never built and are not currently planned (this is a process-age board, not a revenue-realized dashboard — see 23.8 below for why `pipeline_value` is different, "value currently sitting in the pipeline," not revenue actually earned)
 - [x] Columns: quotes (open/quote status), packing (queued/packing), qa (ready + no qa_approved_at), rp (ready + qa_approved_at set), collection (ready_for_collection) — **deposit column added 2026-08-04, see follow-up note below**
 - [x] order_value stamped on packing board entry at confirm_order from Odoo `amount_total`
 - [x] order_value added to `BoardEntry` Pydantic model as `Optional[float]`
@@ -5193,6 +5193,26 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] The same order's age tier can never disagree across the Operations Monitor, Sales Tickets, Orders Tickets, and Order Passport — all four read from the identical `services/age_tier.py` logic and deadline constants
 - [x] A ticket/entry with no meaningful tier (post-packing-board Sales tickets; collected/incomplete/cancelled/cleared packing entries) shows no badge, not a stale or default one
 - [x] List pages show zero UI when there are no overdue/at-risk rows, not an empty "0 Overdue" strip
+- [x] `npm run build` compiles cleanly; backend files byte-compile cleanly
+
+---
+
+### 23.8 — Revenue Tied Up Per Column — Complete 2026-09-20
+
+**Goal:** requested directly by the product owner — show how much revenue is currently sitting in each pipeline stage on the Operations Monitor, not just how many orders. This is a deliberate, conscious extension of the monitor's original "no financials" KPI-strip design (23.1) — per-card values already existed (`order_value` on each card), this surfaces them as a stage-level and whole-pipeline total. Deliberately "value currently in the pipeline," not "revenue earned" — no `revenue_today`/`mtd_revenue` equivalent was built; that's a different, not-currently-planned metric (see 23.0's corrected task note above for why the original planning list's `revenue_today`/`mtd_revenue`/`units_today`/`avg_time_hours` were never implemented).
+
+- [x] `monitor_routes.py::_ticket_card()` takes an `order_value: float | None` param instead of hardcoding `None` — a quote/deposit-stage ticket never had a `packing_board` doc yet to stamp a value onto in Mongo
+- [x] New bounded, degrade-gracefully `sale.order` read (`ticket_value_map`) for just the `order_id`s already on the current page's quote/deposit tickets — same shape as the existing `has_mo_pending`/`mo_pending_map` exception (23.4), non-fatal on any Odoo error (falls back to no value shown, never fails the board)
+- [x] `column_totals` (sum of each column's own `order_value`, `None` treated as 0) returned alongside `kpis`/`columns` in `GET /api/monitor/data`
+- [x] `kpis.pipeline_value` — sum of all six `column_totals`, a single whole-pipeline figure
+- [x] `MonitorKit.js`'s shared `Column` component gains an optional `valueTotal` prop, rendered as a small line under the column heading (`"R123k tied up here"`, via the existing `fmtR()` formatter) — optional so Manufacturing/Onboarding monitors (which don't pass it) are visually unchanged
+- [x] `OrderMonitor.js` passes `valueTotal={column_totals?.[cfg.key]}` per column, and adds a "Pipeline Value" `KpiSmall` next to the existing "Oldest Active" tile
+
+### Definition of Done
+- [x] Every column heading on `/monitor` shows its own revenue total, updating live on every 30s poll / WebSocket-triggered refresh, same as card counts already do
+- [x] The "Pipeline Value" KPI equals the sum of all six column totals shown below it
+- [x] Packing/QA/RP/Ready-to-Collect column totals cost zero extra Odoo calls (values already stamped in Mongo at packing-board creation); Quotes/Deposit totals cost exactly one extra bounded, page-scoped `sale.order` read, matching this file's existing exception pattern
+- [x] A ticket with no draft order yet (a bare inquiry) contributes 0 to its column's total, not an error or a missing card
 - [x] `npm run build` compiles cleanly; backend files byte-compile cleanly
 
 ---

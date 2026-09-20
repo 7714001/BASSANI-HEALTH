@@ -220,7 +220,7 @@ export default function OrderMonitor() {
   }
 
   const t = THEME[theme];
-  const { kpis, columns } = data;
+  const { kpis, columns, column_totals } = data;
   const lastUpdatedStr = lastUpdated
     ? lastUpdated.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—";
@@ -289,6 +289,11 @@ export default function OrderMonitor() {
               : t.brand
             }
           />
+          <KpiSmall theme={theme}
+            label="Pipeline Value"
+            value={fmtR(kpis.pipeline_value)}
+            color={t.brand}
+          />
         </div>
       </div>
 
@@ -302,6 +307,7 @@ export default function OrderMonitor() {
               key={cfg.key}
               config={cfg}
               count={cards.length}
+              valueTotal={column_totals?.[cfg.key]}
               headerColor={resolveHeaderColor(cards, cfg.accent, theme)}
               theme={theme}
             >
