@@ -163,14 +163,31 @@ export default function SalesTickets() {
 
   const location = useLocation();
 
+  // Search is also run server-side (2026-09-21): the list only loads the 500
+  // most recent tickets, and the SO number lives in Odoo, so a purely
+  // client-side filter could never find an older ticket or match an SO name.
+  // The debounced value drives a re-fetch; the client-side filter below still
+  // applies instantly to whatever is already loaded.
+  const [serverSearch, setServerSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(listSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [listSearch]);
+  const loadedOnce = useRef(false);
+  const loadReqId  = useRef(0);
   const load = useCallback(async () => {
-    setLoading(true);
+    const reqId = ++loadReqId.current;
+    // Full-page spinner only for the very first load; later refreshes
+    // (including every search keystroke) swap the rows in place.
+    if (!loadedOnce.current) setLoading(true);
     try {
-      const r = await api.get("/api/tickets/");
+      const r = await api.get("/api/tickets/", { params: serverSearch ? { search: serverSearch } : {} });
+      if (reqId !== loadReqId.current) return;  // a newer request superseded this one
       setTickets(r.data.tickets || []);
-    } catch { toast.error("Failed to load tickets"); }
-    finally { setLoading(false); }
-  }, []);
+      loadedOnce.current = true;
+    } catch { if (reqId === loadReqId.current) toast.error("Failed to load tickets"); }
+    finally { if (reqId === loadReqId.current) setLoading(false); }
+  }, [serverSearch]);
   useEffect(() => { load(); }, [load]);
 
   // Auto-open a specific ticket when navigated from the Invoices page
@@ -1556,10 +1573,15 @@ export default function SalesTickets() {
     }
     if (listSearch.trim()) {
       const q = listSearch.trim().toLowerCase();
+      const tktRef = t.id ? `tkt-${String(t.id).slice(-8)}`.toLowerCase() : "";
+      const tktQuery = q.startsWith("tkt") ? q.replace(/^tkt-?/, "tkt-") : null;
       if (
         !(t.customer_name         || "").toLowerCase().includes(q) &&
         !(t.customer_company_name || "").toLowerCase().includes(q) &&
-        !String(t.order_id        || "").includes(q)
+        !(t.order_name            || "").toLowerCase().includes(q) &&
+        !(t.reseller_name         || "").toLowerCase().includes(q) &&
+        !(t.assigned_to_name      || "").toLowerCase().includes(q) &&
+        !(tktQuery && tktRef.startsWith(tktQuery))
       ) return false;
     }
     return true;
@@ -3728,7 +3750,7 @@ export default function SalesTickets() {
             <SearchBar
               value={listSearch}
               onChange={setListSearch}
-              placeholder="Search customer or SO number…"
+              placeholder="Search customer, SO number, ticket ref, agent…"
             />
             {!isReseller && (
               <div className="flex items-center gap-1">

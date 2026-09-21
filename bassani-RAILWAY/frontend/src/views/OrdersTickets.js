@@ -6,7 +6,7 @@
 // responsible_pharmacist: RP Approve (when ready)
 // tickets.manage: Override Stage
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import api from "../api";
@@ -75,11 +75,28 @@ export default function OrdersTickets() {
   const [view, setView]       = useState("list");
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listSearch,   setListSearch  ] = useState("");
+
+  // Search also runs server-side (2026-09-21): the board endpoint used to cap
+  // at 100 entries oldest-first, so newer orders were never loaded at all and
+  // no client-side filter could find them. Debounced value drives a re-fetch;
+  // the client-side filter further down still applies instantly on top.
+  const [serverSearch, setServerSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(listSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [listSearch]);
+  const loadedOnce = useRef(false);
+  const loadReqId  = useRef(0);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const reqId = ++loadReqId.current;
+    // Full-page spinner only for the first load; later refreshes (including
+    // search keystrokes) swap rows in place.
+    if (!loadedOnce.current) setLoading(true);
     try {
-      const r = await api.get("/api/packing/board");
+      const r = await api.get("/api/packing/board", { params: serverSearch ? { search: serverSearch } : {} });
+      if (reqId !== loadReqId.current) return;  // superseded by a newer request
       // The backend's get_board_state() sorts oldest-first (queued_at
       // ascending) — correct and deliberate for the physical warehouse-
       // floor display it also feeds via WebSocket (packers should tackle
@@ -93,9 +110,10 @@ export default function OrdersTickets() {
         new Date(b.queued_at || 0) - new Date(a.queued_at || 0)
       );
       setEntries(sorted);
-    } catch { toast.error("Failed to load orders tickets"); }
-    finally { setLoading(false); }
-  }, []);
+      loadedOnce.current = true;
+    } catch { if (reqId === loadReqId.current) toast.error("Failed to load orders tickets"); }
+    finally { if (reqId === loadReqId.current) setLoading(false); }
+  }, [serverSearch]);
   useEffect(() => { load(); }, [load]);
 
   // ── Detail state ────────────────────────────────────────────────────────────
@@ -116,7 +134,6 @@ export default function OrdersTickets() {
   // look and feel: SearchBar + FilterPill/ChipRow instead of plain buttons,
   // an interactive AgePriorityStrip, and a Source bucket driven by the same
   // ticket.source vocabulary (Internal/Resellers/Customers).
-  const [listSearch,   setListSearch  ] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [ageFilter,    setAgeFilter   ] = useState(null);
   const [mos,        setMos       ] = useState([]);
@@ -1273,11 +1290,20 @@ export default function OrdersTickets() {
     if (sourceFilter === "customer" && e.ticket_source !== "portal") return false;
     if (ageFilter && e.age_tier !== ageFilter) return false;
     if (statusFilter.size > 0 && !statusFilter.has(e.status)) return false;
-    if (listSearch.trim()) {
+    // Once the server has answered for exactly this query its result set is
+    // authoritative (it also matches company name and the TKT ref via the
+    // linked ticket, which aren't on the entry itself); the instant
+    // client-side match below only bridges the debounce gap while typing.
+    if (listSearch.trim() && serverSearch !== listSearch.trim()) {
       const q = listSearch.trim().toLowerCase();
+      const tktRef = e.ticket_id ? `tkt-${String(e.ticket_id).slice(-8)}`.toLowerCase() : "";
       if (
         !(e.customer_name || "").toLowerCase().includes(q) &&
-        !(e.ps_num         || "").toLowerCase().includes(q)
+        !(e.ps_num         || "").toLowerCase().includes(q) &&
+        !(e.dn_num         || "").toLowerCase().includes(q) &&
+        !(e.inv_num        || "").toLowerCase().includes(q) &&
+        !(e.packer_name    || "").toLowerCase().includes(q) &&
+        !(q.startsWith("tkt") && tktRef.startsWith(q.replace(/^tkt-?/, "tkt-")))
       ) return false;
     }
     return true;
@@ -1335,7 +1361,7 @@ export default function OrdersTickets() {
             <SearchBar
               value={listSearch}
               onChange={setListSearch}
-              placeholder="Search customer or SO number…"
+              placeholder="Search customer, SO number, ticket ref, packer…"
             />
             <div className="flex items-center gap-1">
               {[["all", "All"], ["internal", "Internal"], ["reseller", "Resellers"], ["customer", "Customers"]].map(([val, label]) => (

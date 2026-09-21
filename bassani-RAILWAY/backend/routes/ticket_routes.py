@@ -13,6 +13,7 @@ existing `packing_board` document, extended in Phase 8.3. See
 import jwt
 import logging
 import os
+import re
 import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from typing import Optional, List
@@ -582,12 +583,46 @@ async def create_ticket(
     return {"success": True, "ticket_id": str(result.inserted_id)}
 
 
+_TKT_REF_SEARCH_RE = re.compile(r"^TKT-?([0-9a-fA-F]{1,8})$", re.IGNORECASE)
+
+
+def _ticket_search_clause(q: str) -> Optional[dict]:
+    """
+    Mongo `$or` for the Sales Tickets list search (2026-09-21). Runs server-side
+    so it covers the full ticket history, not just the 500 most recent tickets
+    the list loads by default. Matches customer/company/reseller/assignee names
+    and the TKT-XXXXXXXX reference (full or partial suffix). The SO number
+    lives in Odoo, not Mongo, so the caller resolves it separately and ORs
+    the resulting order_ids in.
+    """
+    q = q.strip()
+    if not q:
+        return None
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    clauses: list = [
+        {"customer_name": rx},
+        {"customer_company_name": rx},
+        {"reseller_name": rx},
+        {"assigned_to_name": rx},
+    ]
+    m = _TKT_REF_SEARCH_RE.match(q)
+    if m:
+        # Partial suffix match on the ObjectId's last 8 hex chars, the same
+        # ref format the rest of the app displays as TKT-XXXXXXXX.
+        clauses.append({"$expr": {"$regexMatch": {
+            "input": {"$toLower": {"$substrCP": [{"$toString": "$_id"}, 16, 8]}},
+            "regex": "^" + re.escape(m.group(1).lower()),
+        }}})
+    return {"$or": clauses}
+
+
 @router.get("/")
 async def list_tickets(
     status: Optional[str] = None,
     exit_status: Optional[str] = None,
     assigned_to: Optional[str] = None,
     reseller_id: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: dict = Depends(_require_ticket_viewer),
 ):
     """
@@ -638,6 +673,23 @@ async def list_tickets(
             {"assigned_to": None, "reseller_id": None},
             {"reseller_id": {"$ne": None}},
         ]
+
+    # Server-side search (2026-09-21) — combined with the role-scoped query via
+    # $and so a search can never widen what this caller is allowed to see.
+    search_clause = _ticket_search_clause(search or "")
+    if search_clause:
+        # SO numbers live in Odoo, not Mongo: resolve matching sale.order ids
+        # by name (partial, so "1116" finds S01116) and OR them in. Non-fatal:
+        # if Odoo is unavailable the Mongo-side fields still match.
+        try:
+            so_rows = get_odoo_client().search_read(
+                "sale.order", domain=[("name", "ilike", search.strip())], fields=["id"], limit=50,
+            )
+            if so_rows:
+                search_clause["$or"].append({"order_id": {"$in": [r["id"] for r in so_rows]}})
+        except Exception as e:
+            logger.warning("list_tickets_search_so_lookup_failed q=%s error=%s", search, e)
+        query = {"$and": [query, search_clause]}
 
     tickets = await col("tickets").find(query).sort("updated_at", -1).to_list(length=500)
 

@@ -17,6 +17,7 @@ import asyncio
 import json
 import jwt
 import logging
+import re
 from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
@@ -140,16 +141,78 @@ async def _with_ticket_summary(entry: dict) -> dict:
     return entry
 
 
-async def get_board_state(warehouse_id: Optional[int] = None) -> list:
+_BOARD_TERMINAL = ["collected", "incomplete", "cancelled"]
+
+
+async def _board_search_clause(q: str) -> Optional[dict]:
+    """Mongo `$or` for the Orders Tickets list search (2026-09-21). Matches
+    the entry's own customer/SO/DN/invoice/packer fields, plus anything found
+    via the linked Sales ticket (company name, TKT-XXXXXXXX reference) —
+    resolved to order_ids first, since packing_board stores order_id as a
+    string and the ticket reference isn't stored on the entry itself."""
+    q = q.strip()
+    if not q:
+        return None
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    clauses: list = [
+        {"customer_name": rx}, {"ps_num": rx}, {"dn_num": rx},
+        {"inv_num": rx}, {"packer_name": rx}, {"order_id": q},
+    ]
+    ticket_or: list = [{"customer_company_name": rx}, {"customer_name": rx}]
+    m = re.match(r"^TKT-?([0-9a-fA-F]{1,8})$", q, re.IGNORECASE)
+    if m:
+        ticket_or.append({"$expr": {"$regexMatch": {
+            "input": {"$toLower": {"$substrCP": [{"$toString": "$_id"}, 16, 8]}},
+            "regex": "^" + re.escape(m.group(1).lower()),
+        }}})
+    try:
+        ids = [
+            str(t["order_id"])
+            async for t in col("tickets").find(
+                {"type": "sales", "order_id": {"$ne": None}, "$or": ticket_or}, {"order_id": 1},
+            ).limit(200)
+        ]
+        if ids:
+            clauses.append({"order_id": {"$in": ids}})
+    except Exception as e:
+        logger.warning("board_search_ticket_lookup_failed q=%s error=%s", q, e)
+    return {"$or": clauses}
+
+
+async def get_board_state(warehouse_id: Optional[int] = None, search: Optional[str] = None, admin_view: bool = False) -> list:
     query: dict = {"status": {"$ne": "cleared"}}
     if warehouse_id is not None:
         query["warehouse_id"] = warehouse_id
-    entries = await (
-        col("packing_board")
-        .find(query, NO_ID)
-        .sort("queued_at", 1)
-        .to_list(length=100)
-    )
+    search_clause = await _board_search_clause(search or "")
+    if search_clause:
+        query = {"$and": [query, search_clause]}
+    if admin_view:
+        # Admin list (OrdersTickets.js): every active entry, however old, plus
+        # the most recent finished ones. The original single oldest-first
+        # 100-entry cap (still used, unchanged, by the warehouse floor display
+        # and its WebSocket feed below) silently dropped the NEWEST orders once
+        # collected/complete history filled it, so they could never be seen or
+        # searched (found live 2026-09-21).
+        active = await (
+            col("packing_board")
+            .find({"$and": [query, {"status": {"$nin": _BOARD_TERMINAL}}]}, NO_ID)
+            .sort("queued_at", 1)
+            .to_list(length=500)
+        )
+        finished = await (
+            col("packing_board")
+            .find({"$and": [query, {"status": {"$in": _BOARD_TERMINAL}}]}, NO_ID)
+            .sort("queued_at", -1)
+            .to_list(length=200)
+        )
+        entries = active + finished
+    else:
+        entries = await (
+            col("packing_board")
+            .find(query, NO_ID)
+            .sort("queued_at", 1)
+            .to_list(length=100)
+        )
     entries = [_with_age(e) for e in entries]
 
     # Batch-resolve each entry's linked Sales ticket (2026-08-27, for
@@ -2468,8 +2531,8 @@ async def assign_lot(
 
 
 @router.get("/board")
-async def get_board(warehouse_id: Optional[int] = None, _: dict = Depends(require_board_access)):
-    return {"entries": await get_board_state(warehouse_id)}
+async def get_board(warehouse_id: Optional[int] = None, search: Optional[str] = None, _: dict = Depends(require_board_access)):
+    return {"entries": await get_board_state(warehouse_id, search=search, admin_view=True)}
 
 
 @router.get("/packers")
