@@ -969,6 +969,9 @@ export default function SalesTickets() {
       name:            l.name,
       product_uom_qty: l.product_uom_qty,
       price_unit:      l.price_unit,
+      // Display only: the server carries the real discount across the edit
+      // from Odoo's own lines, this is never sent back (8.61).
+      discount:        l.discount || 0,
       _tax_rate: 0, _sku: "", _stock: 0,
     }));
     return lines.length > 0 ? lines : [newLine()];
@@ -1527,8 +1530,8 @@ export default function SalesTickets() {
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
   // ── Quote totals ──────────────────────────────────────────────────────────
-  const quoteSubtotal = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
-  const quoteVat      = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (l._tax_rate / 100), 0);
+  const quoteSubtotal = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100), 0);
+  const quoteVat      = quoteLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100) * (l._tax_rate / 100), 0);
   const quoteTotal    = quoteSubtotal + quoteVat;
   const hasValidLines = quoteLines.some(l => l.product_id);
   const today         = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" });
@@ -1760,6 +1763,9 @@ export default function SalesTickets() {
                               <th className="text-left p-3 pl-6 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
                               <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
                               <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Unit Price</th>
+                              {(detailOrder.lines || []).some(l => l.discount > 0) && (
+                                <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Discount</th>
+                              )}
                               <th className="text-right p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Subtotal</th>
                             </tr>
                           </thead>
@@ -1785,6 +1791,11 @@ export default function SalesTickets() {
                                 </td>
                                 <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
                                 <td className="p-3 text-right text-sm text-gray-600">{fmtR(line.price_unit)}</td>
+                                {(detailOrder.lines || []).some(l => l.discount > 0) && (
+                                  <td className="p-3 text-right text-sm text-green-700">
+                                    {line.discount > 0 ? `${Number(line.discount.toFixed(2))}%` : ""}
+                                  </td>
+                                )}
                                 <td className="p-3 pr-6 text-right text-sm font-semibold text-gray-900">{fmtR(line.price_subtotal)}</td>
                               </tr>
                             ); })}

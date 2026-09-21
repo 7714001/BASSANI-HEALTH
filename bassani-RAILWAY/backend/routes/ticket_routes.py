@@ -1434,7 +1434,21 @@ async def update_order_from_ticket(
 
     # Replace lines atomically: unlink all existing, then create the new set
     existing_line_ids = order.get("order_line") or []
+    # Carry each product's current discount % across the unlink/recreate below
+    # (8.61) so editing a discounted quote never silently resets it to 0. Taken
+    # from Odoo's own lines, never from the request body, so this endpoint can't
+    # become a way to set a discount without going through the approval flow.
+    # Matched per product in order, so duplicate product lines each keep theirs.
+    carried_discounts: dict = {}
     if existing_line_ids:
+        try:
+            for el in odoo.read("sale.order.line", existing_line_ids, fields=["product_id", "discount", "display_type", "is_downpayment"]):
+                if el.get("display_type") or el.get("is_downpayment") or not el.get("discount"):
+                    continue
+                pid = el["product_id"][0] if isinstance(el.get("product_id"), (list, tuple)) else el.get("product_id")
+                carried_discounts.setdefault(pid, []).append(el["discount"])
+        except Exception:
+            logger.warning("update_order_from_ticket: could not read existing line discounts for order %s", order_id)
         try:
             odoo.unlink("sale.order.line", existing_line_ids)
         except Exception as e:
@@ -1448,6 +1462,8 @@ async def update_order_from_ticket(
                 "product_uom_qty": l.product_uom_qty,
                 "price_unit": round(l.price_unit, 2),
             }
+            if carried_discounts.get(l.product_id):
+                line_vals["discount"] = carried_discounts[l.product_id].pop(0)
             if l.name:
                 line_vals["name"] = l.name
             odoo.create("sale.order.line", line_vals, context=ctx)

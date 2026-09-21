@@ -362,7 +362,7 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
             lines = odoo.read(
                 "account.move.line",
                 invoice["invoice_line_ids"],
-                fields=["product_id", "name", "quantity", "price_unit", "price_subtotal", "tax_ids"],
+                fields=["product_id", "name", "quantity", "price_unit", "discount", "price_subtotal", "tax_ids"],
             )
             lines = [l for l in lines if l.get("name") and l.get("price_unit") is not None]
 

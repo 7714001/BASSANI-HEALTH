@@ -248,7 +248,12 @@ function InvoiceView({ invoice, onClose }) {
                       )}
                     </td>
                     <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>{line.quantity?.toFixed ? `${line.quantity.toFixed(2)} Units` : line.quantity}</td>
-                    <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>{fmt(line.price_unit)}</td>
+                    <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>
+                      {fmt(line.price_unit)}
+                      {line.discount > 0 && (
+                        <span style={{ display: "block", fontSize: 9.5, color: "#15803d", marginTop: 1 }}>{Number(line.discount.toFixed(2))}% discount</span>
+                      )}
+                    </td>
                     <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5, color: "#666" }}>{line.tax_display || "—"}</td>
                     <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5, fontWeight: 600 }}>R {fmt(line.price_subtotal)}</td>
                   </tr>

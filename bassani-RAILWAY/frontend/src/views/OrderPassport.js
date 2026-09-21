@@ -982,6 +982,9 @@ export default function OrderPassport() {
                           <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide w-16">Ordered</th>
                           <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide w-20">Delivered</th>
                           <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide hidden sm:table-cell">Unit Price</th>
+                          {order.lines.some(l => l.discount > 0) && (
+                            <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide w-16">Disc.</th>
+                          )}
                           <th className="text-right text-gray-400 font-semibold pb-2 uppercase tracking-wide">Subtotal</th>
                         </tr>
                       </thead>
@@ -1038,6 +1041,11 @@ export default function OrderPassport() {
                                 )}
                               </td>
                               <td className="py-2 text-right tabular-nums text-gray-600 hidden sm:table-cell align-top">{fmtR(line.price_unit)}</td>
+                              {order.lines.some(l => l.discount > 0) && (
+                                <td className="py-2 text-right tabular-nums text-green-700 align-top">
+                                  {line.discount > 0 ? `${Number(line.discount.toFixed(2))}%` : ""}
+                                </td>
+                              )}
                               <td className="py-2 text-right tabular-nums font-medium text-gray-800 align-top">{fmtR(line.price_subtotal)}</td>
                             </tr>
                           );

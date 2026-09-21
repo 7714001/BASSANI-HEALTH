@@ -2213,6 +2213,55 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.61 — Line Discounts and Staff Discount Approval — In Progress (Part 1 built 2026-09-21)
+
+**Goal:** Show Odoo's native per-line discount percentage everywhere order lines appear, and let internal staff request a discount on quote lines that Finance approves, rejects, or counters before it is applied. Discounts are a native Odoo feature (`sale.order.line.discount`); the portal adds only the approval flow and the display, never its own discount maths.
+
+**Confirmed decisions (product owner, 2026-09-21):**
+- Every request is approved manually. There are no auto-approve thresholds.
+- Approvers can approve, reject, or approve a different (counter) percentage.
+- The draft SO is created at normal pricing immediately. Send Quote and Confirm Order are blocked while a request is pending. Approval or counter writes `discount` onto the draft SO lines; rejection leaves the SO unchanged.
+- Scope is the staff quote builder only. Resellers and customers never request discounts.
+- Reminder emails go to approvers for requests that sit unactioned.
+
+**Gap this also closes:** the portal never reads the discount field, so a discount entered manually in Odoo makes order totals correct but leaves each line looking wrong, with no percentage shown.
+
+**Part 1: Display (independent of the approval flow)**
+- [x] Live read-only `fields_get` check (2026-09-21): `discount` exists, is stored and writable on both `sale.order.line` and `account.move.line`; real discounted lines already exist (e.g. S01116, 33.33% x 5 lines). No Odoo setting change needed for the API.
+- [x] `order_routes.py` `get_order` and `get_order_passport` return `discount` alongside Odoo's own `price_subtotal` per line
+- [x] Discount % column (shown only when at least one line has a discount) on Order Passport and the Sales Ticket order detail; Edit Quote builder shows a per-line "N% discount applied" note and its subtotal/VAT account for it. Line totals on the read-only views come from Odoo's `price_subtotal`.
+- [x] Portal-rendered invoice view (`Invoices.js`) had the same gap: `invoice_routes.py` now reads `account.move.line.discount`; `Invoices.js` and `OrderView.js` show it under the unit price
+- [x] Edit Quote preserves discounts: `update_order_from_ticket` reads each existing line's discount from Odoo before its unlink/recreate and re-applies it per product (never from the request body, so it cannot become a way around the approval flow)
+
+**Part 2: Request and approval flow**
+- [ ] New `discount_requests` Mongo collection: ticket, order, lines with requested %, reason (mandatory), status (`pending`, `approved`, `countered`, `rejected`, `cancelled`), approver, decision note, approved %, timestamps
+- [ ] New permission `discounts.approve`, added to `auth.py` and to `Users.js` in all 3 places (PERMISSION_GROUPS, DEFAULT_ADMIN_PERMS, ROLE_DEFAULT_PERMS), on by default for `finance`
+- [ ] Quote builder: per-line "Request discount" with percentage and mandatory reason; the request is created alongside the draft SO
+- [ ] While pending: Send Quote and Confirm Order blocked server-side, ticket shows a "Discount pending" badge and banner
+- [ ] Editing lines while a request is pending invalidates it (cancelled, requester must re-request)
+- [ ] Approval queue page for `discounts.approve` holders showing list price, requested price, margin context (Odoo cost) and the reason; actions are Approve, Reject, Counter (different %)
+- [ ] Server-side separation of duties: a user cannot decide their own request
+- [ ] Approve or counter writes `discount` to the draft SO lines in Odoo; reject changes nothing
+- [ ] `audit_log()` on request, decision, counter and cancellation
+
+**Part 3: Notifications**
+- [ ] New `discount_request_to` `EmailRoutingConfig` field, `ROUTING_KEYS` entry in `EmailSettings.js`, and `TEST_EMAIL_SENDERS` lambda
+- [ ] Approver email with a button deep-linking to the approval page (login redirect if signed out); approval only happens in the portal, never from the email
+- [ ] Outcome email to the requester (approved, countered, rejected), following Email Standards
+- [ ] Reminder emails for requests pending beyond the configured interval, via the existing scheduler loops
+- [ ] The routing list is notification only; the `discounts.approve` permission is enforced server-side on every decision
+
+### Definition of Done
+- [ ] Discounts entered in Odoo or approved via the portal show as a % per line, with correct line totals, on Order Passport, Sales Ticket detail and Edit Quote
+- [ ] A staff member can request a discount with a reason; Send Quote and Confirm Order are blocked until it is decided
+- [ ] An approver can approve, reject, or counter; the draft SO reflects the outcome in Odoo
+- [ ] Nobody can approve their own request
+- [ ] Approvers are emailed with a working deep link and reminded while a request sits
+- [ ] Editing a discounted quote preserves its discounts
+- [ ] Every step is audit-logged
+
+---
+
 #### 8.41 — Reseller Quote Visibility in Staff Queue — Complete 2026-07-21
 
 **Goal:** Reseller-created draft quotes are visible to Bassani sales staff from the moment they are submitted, so staff can assign them, track them, and confirm them on the reseller's behalf if the reseller is unavailable.

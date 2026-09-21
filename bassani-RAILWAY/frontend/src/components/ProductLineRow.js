@@ -83,6 +83,7 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       name:                p.description_sale || baseName,
       _description_sale:   p.description_sale || "",
       price_unit:          isSample ? 0 : (p.list_price || 0),
+      discount:            0,
       _tax_rate:           p.tax_rate   || 0,
       _sku:                p.default_code || "",
       _stock:              stock,
@@ -285,8 +286,13 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       {/* ── Line subtotal ── */}
       <td className="p-2.5 w-36 text-right">
         <span className="text-sm font-semibold text-gray-900">
-          {fmtR(line.product_uom_qty * line.price_unit)}
+          {fmtR(line.product_uom_qty * line.price_unit * (1 - (line.discount || 0) / 100))}
         </span>
+        {line.discount > 0 && (
+          <span className="block text-[10px] font-medium text-green-700">
+            {Number(line.discount.toFixed(2))}% discount applied
+          </span>
+        )}
       </td>
 
       {/* ── Remove ── */}

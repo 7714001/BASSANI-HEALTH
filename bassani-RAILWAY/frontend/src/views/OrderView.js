@@ -381,7 +381,12 @@ export default function OrderView({ order: o, onClose, onConfirm, onCancel, conf
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>
                     {line.product_uom_qty?.toFixed ? `${line.product_uom_qty.toFixed(2)} Units` : line.product_uom_qty}
                   </td>
-                  <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>{fmt(line.price_unit)}</td>
+                  <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5 }}>
+                    {fmt(line.price_unit)}
+                    {line.discount > 0 && (
+                      <span style={{ display: "block", fontSize: 9.5, color: "#15803d", marginTop: 1 }}>{Number(line.discount.toFixed(2))}% discount</span>
+                    )}
+                  </td>
                   <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11.5, fontWeight: 600 }}>R {fmt(line.price_subtotal)}</td>
                   {hasAnyBackorder && (
                     <td style={{ padding: "9px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "right", fontSize: 11 }}>

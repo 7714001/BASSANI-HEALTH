@@ -667,7 +667,7 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
         if order.get("order_line"):
             _line_fields = [
                 "product_id", "name", "product_uom_qty",
-                "price_unit", "price_subtotal", "qty_delivered", "qty_invoiced",
+                "price_unit", "discount", "price_subtotal", "qty_delivered", "qty_invoiced",
                 "display_type", "is_downpayment",
             ]
             try:
@@ -1220,7 +1220,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     if order.get("order_line"):
         try:
             _line_fields = [
-                "product_id", "name", "product_uom_qty", "price_unit",
+                "product_id", "name", "product_uom_qty", "price_unit", "discount",
                 "price_subtotal", "qty_delivered", "qty_invoiced",
                 "display_type", "is_downpayment",
             ]
