@@ -96,6 +96,7 @@ const NAV = [
   { label: "Backorders",         path: "/orders/backorders", icon: Clock,  section: "Orders",  permission: "orders.view" },
   { label: "Manufacturing Orders", path: "/orders/manufacturing-orders", icon: Factory, section: "Orders", permission: "orders.view" },
   { label: "Recurring Orders",   path: "/orders/recurring",  icon: Repeat, section: "Orders",  permission: "orders.recurring_manage" },
+  { label: "Discount Approvals", path: "/tickets/discounts", icon: Percent, section: "Orders", permission: "discounts.approve" },
   { label: "Batch Registry",     path: "/production/batches",   icon: Layers,       section: "Production", permission: "production.batch_generate" },
   { label: "Vault Logbook",      path: "/production/vault",     icon: Archive,      section: "Production", permission: "production.vault" },
   { label: "S6 Receiving",       path: "/production/receiving", icon: PackageCheck, section: "Production", permission: "production.vault" },

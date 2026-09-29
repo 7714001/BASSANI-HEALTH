@@ -16,7 +16,7 @@ import {
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
   Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
-  ClipboardCheck, RefreshCw,
+  ClipboardCheck, RefreshCw, Percent,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -671,6 +671,57 @@ export default function SalesTickets() {
   // flag automatically on success, so this is only needed for that no-
   // payment-registered case.
   const [markingPopReviewed, setMarkingPopReviewed] = useState(false);
+
+  // ── Discount request (8.61) ─────────────────────────────────────────────
+  // Staff quote builder only — reseller/customer never request a discount.
+  // The request is raised against the already-saved draft SO's real Odoo
+  // lines (detailOrder.lines), not the in-progress quote builder state, so
+  // it can never disagree with what Odoo will actually apply the % to.
+  const [discountModal, setDiscountModal] = useState(false);
+  const [discountLines, setDiscountLines] = useState([]);   // [{product_id, product_name, qty, unit_price, pct}]
+  const [discountReason, setDiscountReason] = useState("");
+  const [discountSubmitting, setDiscountSubmitting] = useState(false);
+  const [withdrawingDiscount, setWithdrawingDiscount] = useState(false);
+
+  const openDiscountModal = () => {
+    setDiscountLines((detailOrder.lines || []).map(l => ({
+      product_id: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
+      product_name: l.name || (Array.isArray(l.product_id) ? l.product_id[1] : ""),
+      qty: l.product_uom_qty, unit_price: l.price_unit, pct: "",
+    })));
+    setDiscountReason("");
+    setDiscountModal(true);
+  };
+
+  const submitDiscountRequest = async () => {
+    // Every line on the order is sent, not just the discounted ones (2026-09-28)
+    // — a line the requester left alone goes through at requested_pct: 0, so
+    // the approver sees the full order for context, not just the lines asked
+    // about in isolation.
+    const lines = discountLines
+      .map(l => ({ product_id: l.product_id, product_name: l.product_name, qty: l.qty, unit_price: l.unit_price, requested_pct: l.pct === "" ? 0 : Number(l.pct) }));
+    if (!lines.some(l => l.requested_pct > 0)) return toast.error("Enter a discount % on at least one line");
+    if (!discountReason.trim()) return toast.error("A reason is required");
+    setDiscountSubmitting(true);
+    try {
+      await api.post("/api/discount-requests/", { ticket_id: detail.id, lines, reason: discountReason.trim() });
+      toast.success("Discount request sent for approval");
+      setDiscountModal(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not submit discount request"); }
+    finally { setDiscountSubmitting(false); }
+  };
+
+  const withdrawDiscountRequest = async () => {
+    if (!detail.discount_request_id) return;
+    setWithdrawingDiscount(true);
+    try {
+      await api.post(`/api/discount-requests/${detail.discount_request_id}/cancel`);
+      toast.success("Discount request withdrawn");
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not withdraw request"); }
+    finally { setWithdrawingDiscount(false); }
+  };
   const markPopReviewed = async () => {
     setMarkingPopReviewed(true);
     const tid = detail.id;
@@ -1777,8 +1828,37 @@ export default function SalesTickets() {
                           </div>
                         </div>
 
+                        {/* Discount request banner (8.61) — the quote cannot be
+                            sent or confirmed while this shows. Withdraw is
+                            offered here rather than only from the requester's
+                            own view, since any staff member looking at the
+                            ticket should be able to tell what's blocking it. */}
+                        {!isReseller && detail.discount_status === "pending" && (
+                          <div className="mx-6 mt-4 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                            <div className="flex items-center gap-2 text-sm text-amber-800">
+                              <Percent size={14} className="shrink-0" />
+                              <span>A discount request is awaiting approval. This quote can't be sent or confirmed until it's decided.</span>
+                            </div>
+                            {can("tickets.sales") && (
+                              <BtnSecondary size="sm" onClick={withdrawDiscountRequest} disabled={withdrawingDiscount}
+                                className="shrink-0 text-amber-700 border-amber-300 hover:bg-amber-100">
+                                {withdrawingDiscount ? <Loader2 size={12} className="animate-spin" /> : "Withdraw"}
+                              </BtnSecondary>
+                            )}
+                          </div>
+                        )}
+
                         {/* Line items table */}
                         <div className="overflow-x-auto">
+                        <div className="flex items-center justify-between px-6 pt-4">
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Order Lines</p>
+                          {!isReseller && can("tickets.sales") && detail.order_id && !detail.discount_status
+                            && ["draft", "sent"].includes(detailOrder.state) && (detailOrder.lines || []).length > 0 && (
+                            <BtnSecondary size="sm" onClick={openDiscountModal}>
+                              <Percent size={12} />Request Discount
+                            </BtnSecondary>
+                          )}
+                        </div>
                         <table className="w-full">
                           <thead>
                             <tr className="border-b border-gray-100 bg-slate-50/50">
@@ -3419,6 +3499,53 @@ export default function SalesTickets() {
         {pdfView && (
           <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
         )}
+        {discountModal && (
+          <Modal title="Request Discount" onClose={() => setDiscountModal(false)}>
+            <p className="text-sm text-gray-500 mb-4">
+              Enter a discount % on any line you want reviewed, plus a reason. The quote stays at normal
+              pricing until a holder of Discount Approvals decides this request.
+            </p>
+            <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Unit Price</th>
+                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Discount %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discountLines.map((l, i) => (
+                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
+                      <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
+                      <td className="p-2 text-right text-gray-500">{l.qty}</td>
+                      <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
+                      <td className="p-2 pr-3">
+                        <input
+                          type="number" min="0" max="100" step="0.01" value={l.pct}
+                          onChange={e => setDiscountLines(ls => ls.map((x, xi) => xi === i ? { ...x, pct: e.target.value } : x))}
+                          placeholder="0"
+                          className="w-full text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <FormGroup label="Reason (required)">
+              <Textarea value={discountReason} onChange={e => setDiscountReason(e.target.value)} rows={2}
+                placeholder="e.g. Bulk order, first-time customer, matching a competitor quote…" />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setDiscountModal(false)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={submitDiscountRequest} disabled={discountSubmitting}>
+                {discountSubmitting ? <Loader2 size={14} className="animate-spin" /> : "Submit for Approval"}
+              </BtnPrimary>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -3945,6 +4072,9 @@ export default function SalesTickets() {
                       awaiting review, so both can show at once. */}
                   {t.pop_awaiting_review && (
                     <Badge color="amber"><Upload size={9} className="inline mr-0.5" />POP Uploaded</Badge>
+                  )}
+                  {t.discount_status === "pending" && (
+                    <Badge color="amber"><Percent size={9} className="inline mr-0.5" />Discount Pending</Badge>
                   )}
                 </div>
               )},

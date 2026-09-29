@@ -25,6 +25,7 @@ from services.email_service import (
     send_qa_rp_daily_digest,
     send_backorder_daily_digest,
     send_mo_daily_digest,
+    send_discount_reminder,
 )
 from routes.recurring_order_routes import (
     generate_recurring_notices,
@@ -192,6 +193,51 @@ async def run_mo_digest() -> None:
     send_mo_daily_digest(to, items)
 
 
+async def check_pending_discount_requests() -> None:
+    """Reminder emails for staff discount requests still sitting pending
+    (8.61) — every request blocks its own quote from being sent or
+    confirmed, so a stale one is worth chasing more urgently than an
+    end-of-day digest. First reminder fires once a request has been pending
+    4+ hours; `last_reminder_at` then gates it to at most once per 20 hours
+    after that (this loop polls hourly, so "daily" in practice) — deliberately
+    just under 24h so a reminder sent at, say, 09:00 doesn't slip a few
+    minutes later each day and eventually cross into the next business day."""
+    to = await _get_routing_list("discount_request_to")
+    if not to:
+        return
+    now = datetime.now(timezone.utc)
+    first_cutoff = now - timedelta(hours=4)
+    repeat_cutoff = now - timedelta(hours=20)
+    pending = await col("discount_requests").find({
+        "status": "pending",
+        "created_at": {"$lt": first_cutoff},
+        "$or": [
+            {"last_reminder_at": {"$exists": False}},
+            {"last_reminder_at": {"$lt": repeat_cutoff}},
+        ],
+    }).to_list(length=None)
+    if not pending:
+        return
+    items = []
+    ids = []
+    for r in pending:
+        created_at = r.get("created_at")
+        if created_at and created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        hours_pending = (now - created_at).total_seconds() / 3600 if created_at else 4.0
+        items.append({
+            "order_ref": r.get("order_name", ""),
+            "customer_name": r.get("customer_name", ""),
+            "hours_pending": hours_pending,
+        })
+        ids.append(r["_id"])
+    send_discount_reminder(to, items)
+    await col("discount_requests").update_many(
+        {"_id": {"$in": ids}},
+        {"$set": {"last_reminder_at": now}},
+    )
+
+
 def start_notification_schedulers() -> None:
     """Called once from server.py's startup event."""
     asyncio.create_task(_interval_loop("application_escalation", 1800, check_stale_applications))
@@ -202,4 +248,7 @@ def start_notification_schedulers() -> None:
     # sweep for occurrences nobody responded to in time.
     asyncio.create_task(_daily_loop("recurring_notice", 8, 0, generate_recurring_notices))
     asyncio.create_task(_daily_loop("recurring_expire", 18, 0, expire_unaccepted_occurrences))
+    # 8.61 — polled hourly rather than a fixed daily time, since a blocked
+    # quote is time-sensitive in a way an end-of-day digest isn't.
+    asyncio.create_task(_interval_loop("discount_reminder", 3600, check_pending_discount_requests))
     logger.info("notification_schedulers_started")

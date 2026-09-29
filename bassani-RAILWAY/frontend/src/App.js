@@ -52,6 +52,7 @@ import PublicRegister        from "./views/PublicRegister";
 import SigningPage           from "./views/SigningPage";
 import RecurringOrderReview  from "./views/RecurringOrderReview";
 import RecurringOrders       from "./views/RecurringOrders";
+import DiscountApprovals     from "./views/DiscountApprovals";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
@@ -304,6 +305,9 @@ export default function App() {
         } />
         <Route path="/orders/recurring" element={
           <ProtectedRoute permission="orders.recurring_manage"><AppLayout><RecurringOrders /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/tickets/discounts" element={
+          <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountApprovals /></AppLayout></ProtectedRoute>
         } />
         <Route path="/catalogue/categories" element={
           <ProtectedRoute permission="products.manage"><AppLayout><ProductCategories /></AppLayout></ProtectedRoute>

@@ -173,6 +173,13 @@ const PERMISSION_GROUPS = [
       { key: "manage",         label: "Sync staged stock records, resolve receiving flags, readiness probe and product list (admin)" },
     ],
   },
+  {
+    domain: "discounts",
+    label: "Discount Approvals",
+    actions: [
+      { key: "approve", label: "Approve, reject or counter a staff discount request" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -241,6 +248,7 @@ const DEFAULT_ADMIN_PERMS = {
   signing_authority: { sign: false },
   finance:           { bank_reconciliation: false },
   production:        { batch_generate: false, vault: false, manage: false, rp_release: false },
+  discounts:         { approve: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
@@ -267,6 +275,7 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
+    discounts:         { approve: false },
   },
   orders_clerk: {
     products:   { manage: false },
@@ -286,6 +295,7 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
+    discounts:         { approve: false },
   },
   finance: {
     products:   { manage: false },
@@ -305,6 +315,8 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: true },
+    // Finance is the default approver for staff discount requests (8.61).
+    discounts:         { approve: true },
   },
   qa_manager: {
     products:   { manage: false },
@@ -324,6 +336,7 @@ const ROLE_DEFAULT_PERMS = {
     onboarding:        { inbox: false },
     signing_authority: { sign: true },
     finance:           { bank_reconciliation: false },
+    discounts:         { approve: false },
   },
   responsible_pharmacist: {
     products:   { manage: false },
@@ -344,6 +357,7 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: true },
     finance:           { bank_reconciliation: false },
     production:        { batch_generate: false, vault: false, manage: false, rp_release: true },
+    discounts:         { approve: false },
   },
   vault_custodian: {
     products:   { manage: false },
@@ -364,6 +378,7 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
     production:        { batch_generate: true, vault: true, manage: false, rp_release: false },
+    discounts:         { approve: false },
   },
 };
 

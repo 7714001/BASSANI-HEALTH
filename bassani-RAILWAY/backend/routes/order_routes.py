@@ -2021,8 +2021,17 @@ async def _confirm_order_core(
     # not just quotes they personally placed. _sales_ticket is still fetched here
     # (for is_sample and, further below, packing-board/traceability display).
     _sales_ticket = await col("tickets").find_one(
-        {"type": "sales", "order_id": order_id, "exit_status": None}, {"is_sample": 1}
+        {"type": "sales", "order_id": order_id, "exit_status": None}, {"is_sample": 1, "discount_status": 1}
     )
+    # 8.61 — a pending discount request must be decided before the quote it
+    # was raised against can be confirmed (the confirm chokepoint is the same
+    # one used by staff, reseller, customer, and the recurring-order accept
+    # path, so this one check covers all of them).
+    if _sales_ticket and _sales_ticket.get("discount_status") == "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="A discount request on this quote is awaiting approval before it can be confirmed.",
+        )
     if current_user.get("role") == "reseller":
         _res_doc = await col("resellers").find_one({"user_id": current_user["id"]}, {"id": 1, "_id": 0})
         _my_rid = _res_doc["id"] if _res_doc else None

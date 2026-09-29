@@ -40,6 +40,7 @@ from services.email_service import (
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
+from discount_requests import cancel_pending_request
 from services.age_tier import ticket_age_fields
 
 logger = logging.getLogger(__name__)
@@ -1422,6 +1423,12 @@ async def update_order_from_ticket(
     if not body.order_line:
         raise HTTPException(status_code=400, detail="At least one product line is required")
 
+    # 8.61 — editing lines invalidates a pending discount request: it was
+    # built against a line set that's about to no longer exist. Best-effort,
+    # never blocks the edit itself.
+    if ticket.get("discount_status") == "pending":
+        await cancel_pending_request(ticket, "Quote lines were edited before a decision was made", actor=current_user)
+
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
 
@@ -1713,6 +1720,8 @@ async def send_quote(
         await _assert_reseller_owns_ticket(ticket, rid)
     if ticket.get("exit_status"):
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
+    if ticket.get("discount_status") == "pending":
+        raise HTTPException(status_code=400, detail="A discount request on this quote is awaiting approval before it can be sent.")
     return await _send_quote_impl(ticket_id, oid, ticket, current_user, background_tasks, recipients=body.recipients)
 
 

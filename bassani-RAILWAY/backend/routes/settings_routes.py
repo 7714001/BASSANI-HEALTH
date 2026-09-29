@@ -22,6 +22,7 @@ from services.email_service import (
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
     send_order_confirmed_partial_customer,
     send_pop_uploaded_notification,
+    send_discount_request_notification,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -51,6 +52,12 @@ TEST_EMAIL_SENDERS: dict = {
     "pop_uploaded_to": lambda to: send_pop_uploaded_notification(
         [to], ticket_ref="TICKET-TEST01", customer_name="Test Pharmacy (Pty) Ltd", filename="proof_of_payment.pdf",
         ticket_id="000000000000000000000000",
+    ),
+    "discount_request_to": lambda to: send_discount_request_notification(
+        [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", requested_by="Test Sales Rep",
+        reason="Bulk order, first-time customer.",
+        lines=[{"product_name": "Test Flower 1G", "requested_pct": 10.0}],
+        request_id="000000000000000000000000",
     ),
     "qa_approval_to": lambda to: send_qa_approval_needed(
         [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",
@@ -150,6 +157,7 @@ class EmailRoutingConfig(BaseModel):
     recurring_order_declined_to: List[str] = []  # customer declined a recurring order occurrence
     recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
     pop_uploaded_to:             List[str] = []  # customer/reseller uploaded a proof of payment
+    discount_request_to:         List[str] = []  # 8.61 — staff requested a discount, needs discounts.approve review
 
 
 async def get_email_routing() -> dict:
@@ -176,6 +184,7 @@ async def get_email_routing() -> dict:
         "recurring_order_declined_to": doc.get("recurring_order_declined_to", []),
         "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
         "pop_uploaded_to":          doc.get("pop_uploaded_to", []),
+        "discount_request_to":      doc.get("discount_request_to", []),
     }
 
 

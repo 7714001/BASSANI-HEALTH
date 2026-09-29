@@ -750,6 +750,7 @@ from routes.manufacturing_monitor_routes import router as manufacturing_monitor_
 from routes.places_routes             import router as places_router
 from routes.production_routes         import router as production_router
 from routes.recurring_order_routes    import router as recurring_order_router
+from routes.discount_routes           import router as discount_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -764,7 +765,7 @@ for router in [
     doc_template_router, signing_authority_router, profile_router,
     label_router, bank_recon_router, gtin_pool_router, search_router, monitor_router,
     onboarding_monitor_router, manufacturing_monitor_router,
-    places_router, production_router, recurring_order_router,
+    places_router, production_router, recurring_order_router, discount_router,
 ]:
     app.include_router(router)
 

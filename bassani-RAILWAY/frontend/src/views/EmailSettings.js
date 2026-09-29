@@ -255,6 +255,13 @@ const ROUTING_KEYS = [
     placeholder: "finance@bassanihealth.com",
   },
   {
+    key: "discount_request_to", group: "finance", icon: Mail,
+    title: "Finance: Discount Request Awaiting Approval",
+    description: "Triggered when a staff member requests a discount on a quote in the quote builder. The quote cannot be sent or confirmed until the request is approved, rejected or countered.",
+    note: "Add whoever holds the Discount Approvals permission. If this list is empty, the request still appears in the approval queue, but nobody is emailed about it.",
+    placeholder: "finance@bassanihealth.com",
+  },
+  {
     key: "s6_flag_to", group: "production", icon: Mail,
     title: "Production: Stock Received Without Purchase Order",
     description: "Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved.",

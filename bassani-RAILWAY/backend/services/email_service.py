@@ -581,6 +581,120 @@ def send_pop_uploaded_notification(
     _send(to_emails, f"Proof of Payment Uploaded: {customer_name}", _wrap(body))
 
 
+def send_discount_request_notification(
+    to_emails: "list[str]",
+    order_ref: str,
+    customer_name: str,
+    requested_by: str,
+    reason: str,
+    lines: "list[dict]",
+    request_id: str,
+) -> None:
+    """Sent to whoever holds discounts.approve (8.61) the moment a staff
+    member requests a discount on a quote. Approval never happens from this
+    email — the button deep-links into the portal's own approval queue,
+    which re-verifies the discounts.approve permission on every decision;
+    this is purely the "something needs your attention" trigger, same
+    non-actionable-by-email shape as send_pop_uploaded_notification above."""
+    if not to_emails:
+        return
+    rows = "".join(
+        f'<tr><td style="padding:7px 0;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{l.get("product_name","")}</td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#0f172a;font-weight:600;text-align:right;border-bottom:1px solid #e2e8f030;">{l.get("requested_pct",0):.2f}%</td></tr>'
+        for l in lines
+    )
+    lines_table = (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        f'<tr><td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Product</td>'
+        f'<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;text-align:right;">Requested</td></tr>'
+        f'{rows}</table>'
+    )
+    body = (
+        _h1("Discount request awaiting approval")
+        + _p(f"{requested_by} has requested a discount on a quote for {customer_name}.")
+        + _info_box([
+            ("Quote", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Requested by", requested_by),
+            ("Reason", reason or "Not provided"),
+        ], tint="#fffbeb", border="#fde68a")
+        + lines_table
+        + _button("Review request", f"{settings.portal_url}/tickets/discounts?request={request_id}")
+        + _divider()
+        + _p("The quote cannot be sent or confirmed until this request is approved, rejected or countered.", muted=True)
+    )
+    _send(to_emails, f"Discount Request: {order_ref} ({customer_name})", _wrap(body))
+
+
+def send_discount_decision_notification(
+    to_email: str,
+    order_ref: str,
+    customer_name: str,
+    status: str,
+    decided_by: str,
+    request_id: str,
+    note: str = "",
+) -> None:
+    """Sent to the staff member who requested the discount once it's been
+    decided (8.61). `status` is "approved", "countered" or "rejected" —
+    countered still applied a discount, just not the one requested, so its
+    copy is phrased as a qualified approval rather than a rejection."""
+    if not to_email:
+        return
+    if status == "approved":
+        headline, lead = "Discount approved", f"Your discount request for {order_ref} was approved by {decided_by}."
+    elif status == "countered":
+        headline, lead = "Discount approved at a different rate", f"{decided_by} approved a different discount than requested for {order_ref}. See the applied rate on the quote."
+    else:
+        headline, lead = "Discount request declined", f"Your discount request for {order_ref} was declined by {decided_by}."
+    body = (
+        _h1(headline)
+        + _p(lead)
+        + _info_box([
+            ("Quote", f"<strong>{order_ref}</strong>"),
+            ("Customer", customer_name),
+            ("Decision note", note or "Not provided"),
+        ])
+        + _button("Open ticket", f"{settings.portal_url}/tickets/discounts?request={request_id}")
+        + _divider()
+        + _p("The quote is now unblocked and can be sent or confirmed as usual.", muted=True)
+    )
+    _send(to_email, f"Discount {status.capitalize()}: {order_ref}", _wrap(body))
+
+
+def send_discount_reminder(
+    to_emails: "list[str]",
+    items: "list[dict]",
+) -> None:
+    """Reminder for discount requests still sitting pending (8.61) — first
+    fired a few hours after a request is raised, then repeated daily until
+    it's decided. Same shape as the existing 17:00 SAST digests, but interval-
+    driven rather than a fixed daily time since urgency here is real-time,
+    not end-of-day."""
+    if not to_emails or not items:
+        return
+    rows = "".join(
+        f'<tr><td style="padding:7px 0;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #e2e8f030;">{i.get("order_ref","")}</td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{i.get("customer_name","")}</td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#64748b;text-align:right;border-bottom:1px solid #e2e8f030;">{i.get("hours_pending",0):.0f}h</td></tr>'
+        for i in items
+    )
+    n = len(items)
+    body = (
+        _h1("Discount requests awaiting your decision")
+        + _p(f"{n} discount request{'s are' if n != 1 else ' is'} still pending approval.")
+        + f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+          f'<tr><td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Quote</td>'
+          f'<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Customer</td>'
+          f'<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;text-align:right;">Pending</td></tr>'
+          f'{rows}</table>'
+        + _button("Review requests", f"{settings.portal_url}/tickets/discounts")
+        + _divider()
+        + _p("Neither of these quotes can be sent or confirmed until a decision is made.", muted=True)
+    )
+    _send(to_emails, f"{n} Discount Request{'s' if n != 1 else ''} Pending Approval", _wrap(body))
+
+
 def send_countersign_complete_notification(
     to_emails: "list[str]",
     company_name: str,

@@ -2213,7 +2213,7 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
-#### 8.61 — Line Discounts and Staff Discount Approval — In Progress (Part 1 built 2026-09-21)
+#### 8.61 — Line Discounts and Staff Discount Approval — Complete 2026-09-24
 
 **Goal:** Show Odoo's native per-line discount percentage everywhere order lines appear, and let internal staff request a discount on quote lines that Finance approves, rejects, or counters before it is applied. Discounts are a native Odoo feature (`sale.order.line.discount`); the portal adds only the approval flow and the display, never its own discount maths.
 
@@ -2234,31 +2234,31 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] Edit Quote preserves discounts: `update_order_from_ticket` reads each existing line's discount from Odoo before its unlink/recreate and re-applies it per product (never from the request body, so it cannot become a way around the approval flow)
 
 **Part 2: Request and approval flow**
-- [ ] New `discount_requests` Mongo collection: ticket, order, lines with requested %, reason (mandatory), status (`pending`, `approved`, `countered`, `rejected`, `cancelled`), approver, decision note, approved %, timestamps
-- [ ] New permission `discounts.approve`, added to `auth.py` and to `Users.js` in all 3 places (PERMISSION_GROUPS, DEFAULT_ADMIN_PERMS, ROLE_DEFAULT_PERMS), on by default for `finance`
-- [ ] Quote builder: per-line "Request discount" with percentage and mandatory reason; the request is created alongside the draft SO
-- [ ] While pending: Send Quote and Confirm Order blocked server-side, ticket shows a "Discount pending" badge and banner
-- [ ] Editing lines while a request is pending invalidates it (cancelled, requester must re-request)
-- [ ] Approval queue page for `discounts.approve` holders showing list price, requested price, margin context (Odoo cost) and the reason; actions are Approve, Reject, Counter (different %)
-- [ ] Server-side separation of duties: a user cannot decide their own request
-- [ ] Approve or counter writes `discount` to the draft SO lines in Odoo; reject changes nothing
-- [ ] `audit_log()` on request, decision, counter and cancellation
+- [x] New `discount_requests` Mongo collection: ticket, order, lines with requested %, reason (mandatory, one per request), status (`pending`, `approved`, `countered`, `rejected`, `cancelled`), requested_by, decision (by/at/note, plus `applied_lines` for a counter), timestamps. `backend/discount_requests.py` holds the one shared helper (`cancel_pending_request`) both `ticket_routes.py` and `routes/discount_routes.py` need, to avoid a route-importing-route cycle.
+- [x] New permission `discounts.approve`, added to `auth.py` (`DEFAULT_ADMIN_PERMISSIONS`, `FULL_PERMISSIONS`, all 6 `ROLE_DEFAULT_PERMISSIONS` roles) and to `Users.js` in all 3 places (PERMISSION_GROUPS, DEFAULT_ADMIN_PERMS, ROLE_DEFAULT_PERMS), on by default for `finance`
+- [x] Quote builder (`SalesTickets.js` ticket detail): a **Request Discount** button on the Order Lines card (staff, `tickets.sales`, draft/sent order only) opens a modal pre-filled from the draft SO's real Odoo lines, collecting a % per line plus one mandatory reason for the whole request. Raised against the already-saved order, not the in-progress builder state, so it can never disagree with what Odoo will apply the % to.
+- [x] While pending: Send Quote (`ticket_routes.py::send_quote`) and Confirm Order (`order_routes.py::_confirm_order_core`, the single chokepoint for staff/reseller/customer/recurring-accept) both return 400. Ticket list shows a "Discount Pending" badge; the ticket detail shows an amber banner with a Withdraw action.
+- [x] Editing lines while a request is pending invalidates it: `update_order_from_ticket` calls `cancel_pending_request()` before replacing the lines, best-effort and non-blocking to the edit itself
+- [x] Approval queue page (`DiscountApprovals.js`, `/tickets/discounts`, `discounts.approve`-gated nav item) listing every request, filterable by status, expandable to the full order (every line, discounted ones highlighted, plus the order total) and reason; actions are Approve, Reject, Counter (different % per line). **Fixed 2026-09-28** (found while explaining the flow to the product owner): the request originally only carried the discounted lines — an approver adding 3 discounts on a 5-line order couldn't see the other 2 lines or the order total without leaving the queue. `discount_requests.lines[]` is now the full order snapshot (`requested_pct: 0` for a line left alone) plus a stored `order_total`; approve/counter still only ever touch lines with `requested_pct > 0`. **Not built:** margin/cost context (Odoo `standard_price`) alongside the requested price — flagged as a natural follow-up, not blocking, since list price, order total, and the requested % are already enough to judge a request.
+- [x] Server-side separation of duties (`_assert_not_own_request`): a user cannot decide their own request, enforced unconditionally including for super_admin, which `require_permission()` would otherwise let bypass the check entirely
+- [x] Approve writes the requested `discount` to each matching `sale.order.line`; Counter writes the approver's own per-line %; Reject writes nothing. All three clear the ticket's pending flag; a request can also be cancelled/withdrawn by its requester or an admin.
+- [x] `audit_log()` on request, approve, reject, counter and cancel
 
 **Part 3: Notifications**
-- [ ] New `discount_request_to` `EmailRoutingConfig` field, `ROUTING_KEYS` entry in `EmailSettings.js`, and `TEST_EMAIL_SENDERS` lambda
-- [ ] Approver email with a button deep-linking to the approval page (login redirect if signed out); approval only happens in the portal, never from the email
-- [ ] Outcome email to the requester (approved, countered, rejected), following Email Standards
-- [ ] Reminder emails for requests pending beyond the configured interval, via the existing scheduler loops
-- [ ] The routing list is notification only; the `discounts.approve` permission is enforced server-side on every decision
+- [x] New `discount_request_to` `EmailRoutingConfig` field, `ROUTING_KEYS` entry in `EmailSettings.js` (Finance group), and `TEST_EMAIL_SENDERS` lambda
+- [x] Approver email (`send_discount_request_notification`) with a button deep-linking to `/tickets/discounts?request={id}` (a real URL query param, so it survives a fresh page load from the email, same mechanism `send_pop_uploaded_notification` already uses) — the button only opens the queue, the actual decision still runs through the normal permission-checked endpoints
+- [x] Outcome email to the requester (`send_discount_decision_notification` — approved/countered/rejected), following Email Standards
+- [x] Reminder emails (`send_discount_reminder`, `scheduler.py::check_pending_discount_requests`, hourly interval loop): first reminder once a request has been pending 4+ hours, repeated at most once per 20 hours after that (a 24h cap would risk creeping later each day against an hourly poll)
+- [x] The routing list is notification only; `discounts.approve` is enforced server-side on every decision regardless of who's on the list
 
 ### Definition of Done
-- [ ] Discounts entered in Odoo or approved via the portal show as a % per line, with correct line totals, on Order Passport, Sales Ticket detail and Edit Quote
-- [ ] A staff member can request a discount with a reason; Send Quote and Confirm Order are blocked until it is decided
-- [ ] An approver can approve, reject, or counter; the draft SO reflects the outcome in Odoo
-- [ ] Nobody can approve their own request
-- [ ] Approvers are emailed with a working deep link and reminded while a request sits
-- [ ] Editing a discounted quote preserves its discounts
-- [ ] Every step is audit-logged
+- [x] Discounts entered in Odoo or approved via the portal show as a % per line, with correct line totals, on Order Passport, Sales Ticket detail and Edit Quote
+- [x] A staff member can request a discount with a reason; Send Quote and Confirm Order are blocked until it is decided
+- [x] An approver can approve, reject, or counter; the draft SO reflects the outcome in Odoo
+- [x] Nobody can approve their own request
+- [x] Approvers are emailed with a working deep link and reminded while a request sits
+- [x] Editing a discounted quote preserves its discounts
+- [x] Every step is audit-logged
 
 ---
 

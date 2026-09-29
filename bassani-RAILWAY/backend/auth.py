@@ -61,6 +61,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "labels":             {"print": False},
     "finance":            {"bank_reconciliation": False},
     "production":         {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
+    "discounts":          {"approve": False},  # 8.61 — approve/reject/counter a staff discount request
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -86,6 +87,7 @@ FULL_PERMISSIONS: dict = {
     "labels":             {"print": True},
     "finance":            {"bank_reconciliation": True},
     "production":         {"batch_generate": True, "vault": True, "manage": True, "rp_release": True},
+    "discounts":          {"approve": True},
 }
 
 # Full default permission sets for each staff role.
@@ -116,6 +118,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
+        "discounts":         {"approve": False},
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -139,6 +142,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "labels":            {"print": True},
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
+        "discounts":         {"approve": False},
     },
     "finance": {
         "products":   {"manage": False},
@@ -162,6 +166,8 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": True},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
+        # Finance is the default approver for staff discount requests (8.61).
+        "discounts":         {"approve": True},
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -185,6 +191,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
+        "discounts":         {"approve": False},
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -210,6 +217,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         # S6 imported-stock release: the RP verifies each receipt (docs, quoted
         # vs received, PO link) and releases the batch from quarantine.
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": True},
+        "discounts":         {"approve": False},
     },
     # Phase 13 — vault custodian (Patricia). Production-side only: generates
     # batch IDs and records vault movements. Sees nothing of the commercial
@@ -236,6 +244,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "labels":            {"print": False},
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": True, "vault": True, "manage": False, "rp_release": False},
+        "discounts":         {"approve": False},
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias
