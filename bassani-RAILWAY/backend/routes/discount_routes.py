@@ -138,6 +138,24 @@ def _discount_amount(doc_lines: list, pct_by_product: dict) -> float:
     )
 
 
+def _build_final_lines(doc_lines: list, pct_by_product: dict) -> list:
+    """The 8.63 reporting/Customer-360 data model needs a durable record of
+    what was *actually* granted (approve → the requested %; counter → the
+    approver's own %), separate from `lines[]` which stays the immutable
+    original ask. Built the same way for both approve and counter so a
+    report can treat every granted line identically regardless of which
+    path produced it."""
+    return [
+        {
+            "product_id": l["product_id"], "product_name": l["product_name"],
+            "qty": l["qty"], "unit_price": l["unit_price"],
+            "final_pct": pct_by_product[l["product_id"]],
+            "final_amount": l["qty"] * l["unit_price"] * (pct_by_product[l["product_id"]] / 100),
+        }
+        for l in doc_lines if l["product_id"] in pct_by_product
+    ]
+
+
 async def _push_ticket_activity(ticket_id: str, current_user: dict, note: str) -> None:
     """Adds a note-only stage_history entry (status/exit_status unchanged) so
     the ticket's Activity Log (frontend/src/components/OrderTimeline.js's
@@ -216,6 +234,16 @@ async def create_discount_request(
         "order_name": order_name,
         "order_total": order_total,
         "customer_name": ticket.get("customer_name", ""),
+        # Resolved the same way ticket_routes.py::_ticket_customer_partner_id
+        # does (prefer the resolved-company id over a contact-person id) —
+        # inlined rather than imported to avoid a route-importing-route risk,
+        # matching this codebase's precedent for trivial one-liners shared
+        # across route files. Lets 8.63's reporting/Customer 360 features
+        # group reliably by company rather than matching on customer_name
+        # text. May be None for a ticket predating this field or with no
+        # resolved customer id at all — reporting groups those separately
+        # rather than merging them under different customers by mistake.
+        "customer_partner_id": ticket.get("customer_company_id") or ticket.get("customer_id"),
         "requested_by": {"id": current_user["id"], "name": _actor(current_user)},
         "reason": body.reason.strip(),
         "status": "pending",
@@ -224,6 +252,10 @@ async def create_discount_request(
         # lets the approval queue show the full order in context rather than
         # only the discounted lines in isolation.
         "lines": [l.model_dump() for l in body.lines],
+        # Populated only on approve/counter (8.63) — the *actual* discount
+        # granted, distinct from `lines[]` (the immutable original ask).
+        # Reject/cancel leave this empty since nothing was ever given.
+        "final_lines": [],
         "decision": None,
         "created_at": now,
         "updated_at": now,
@@ -262,13 +294,213 @@ async def create_discount_request(
 @router.get("/")
 async def list_discount_requests(
     status: Optional[str] = None,
+    customer_partner_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    requested_by_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     current_user: dict = Depends(require_permission("discounts.approve")),
 ):
+    """8.63: filters for the Discount Approvals screen's filter bar (Customer
+    360's own drill-through uses customer_partner_id alone). product_id
+    matches against the full lines[] snapshot, not just final_lines, so a
+    still-pending or rejected request involving that product is still
+    findable — reporting is what cares specifically about *granted*
+    discounts, not this list."""
     query: dict = {}
     if status:
         query["status"] = status
-    docs = await col("discount_requests").find(query).sort("created_at", -1).to_list(length=200)
+    if customer_partner_id is not None:
+        query["customer_partner_id"] = customer_partner_id
+    if product_id is not None:
+        query["lines.product_id"] = product_id
+    if requested_by_id:
+        query["requested_by.id"] = requested_by_id
+    if date_from or date_to:
+        date_query: dict = {}
+        if date_from:
+            date_query["$gte"] = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if date_to:
+            # End-of-day, inclusive — a bare "$lte" on midnight would exclude
+            # every request created later that same day (matches
+            # report_routes.py::parse_date_str's own end_of_day convention).
+            date_query["$lte"] = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+        query["created_at"] = date_query
+    docs = await col("discount_requests").find(query).sort("created_at", -1).to_list(length=500)
     return {"requests": [_serialize(d) for d in docs]}
+
+
+def _fetch_costs(odoo, product_ids: list) -> dict:
+    """Batch-reads product.product.standard_price for a set of ids, returning
+    {product_id: cost_or_None}. A cost of exactly 0 is treated as "not set"
+    (2026-09-29 live probe: 100% of Bassani's 1,592 active sellable products
+    have standard_price == 0 — nobody has entered cost data in Odoo yet) —
+    every consumer of this must show "not set" rather than a fabricated
+    R0.00/100%-margin figure. Never raises; a failed Odoo read degrades every
+    id to unknown rather than failing the whole request."""
+    if not product_ids:
+        return {}
+    try:
+        rows = odoo.read("product.product", product_ids, fields=["standard_price"])
+        return {r["id"]: (r["standard_price"] or None) for r in rows}
+    except Exception as exc:
+        logger.warning("discount_cost_lookup_failed product_ids=%s error=%s", product_ids, exc)
+        return {pid: None for pid in product_ids}
+
+
+@router.get("/{request_id}/financial-detail")
+async def get_discount_financial_detail(
+    request_id: str,
+    current_user: dict = Depends(require_permission("discounts.approve")),
+):
+    """8.63 — cost price per line (every line, matching the existing
+    full-order-context convention) plus a request-level rollup, fetched once
+    when an approver expands a row rather than per-product-click. BOM detail
+    is deliberately a separate, on-demand endpoint (get_discount_bom below)
+    since most products have none and it isn't worth an mrp.bom search per
+    line on every row expansion."""
+    try:
+        oid = ObjectId(request_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request ID")
+    doc = await col("discount_requests").find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Discount request not found")
+
+    odoo = get_odoo_client()
+    product_ids = list({l["product_id"] for l in doc["lines"]})
+    costs = _fetch_costs(odoo, product_ids)
+
+    lines_out = []
+    discounted_known = []  # lines with requested_pct > 0 AND a known cost
+    total_requested_discount = 0.0
+    for l in doc["lines"]:
+        cost = costs.get(l["product_id"])
+        lines_out.append({
+            **l, "cost_price": cost, "cost_set": cost is not None,
+        })
+        if l.get("requested_pct"):
+            amt = l["qty"] * l["unit_price"] * (l["requested_pct"] / 100)
+            total_requested_discount += amt
+            if cost is not None:
+                discounted_known.append({**l, "cost_price": cost})
+
+    rollup = {
+        "order_total": doc.get("order_total"),
+        "total_requested_discount": total_requested_discount,
+        "discounted_lines_count": sum(1 for l in doc["lines"] if l.get("requested_pct")),
+        "lines_with_known_cost": sum(1 for c in costs.values() if c is not None),
+        "lines_total": len(product_ids),
+        "margin": None,
+    }
+    if discounted_known:
+        unit_value = sum(l["qty"] * l["unit_price"] for l in discounted_known)
+        discounted_value = sum(l["qty"] * l["unit_price"] * (1 - l["requested_pct"] / 100) for l in discounted_known)
+        cost_value = sum(l["qty"] * l["cost_price"] for l in discounted_known)
+        margin_impact = sum(l["qty"] * l["unit_price"] * (l["requested_pct"] / 100) for l in discounted_known)
+        rollup["margin"] = {
+            "lines_covered": len(discounted_known),
+            "lines_discounted_total": rollup["discounted_lines_count"],
+            "margin_before_pct": (unit_value - cost_value) / unit_value * 100 if unit_value else None,
+            "margin_after_pct": (discounted_value - cost_value) / discounted_value * 100 if discounted_value else None,
+            "margin_impact_total": margin_impact,
+        }
+    return {"lines": lines_out, "rollup": rollup}
+
+
+@router.get("/{request_id}/bom/{product_id}")
+async def get_discount_bom(
+    request_id: str,
+    product_id: int,
+    current_user: dict = Depends(require_permission("discounts.approve")),
+):
+    """8.63 — on-demand BOM breakdown behind the Cost Price column's click
+    target. Live probe (2026-09-29, read-only): mrp.bom/mrp.bom.line are
+    accessible with the fields used here, but coverage for what's actually
+    sold is almost nonexistent (2 of 147 recently-ordered products had any
+    BOM at all) — this degrades to found: false rather than erroring, since
+    "no BOM" is the expected common case, not a failure."""
+    try:
+        ObjectId(request_id)  # validated for consistency with sibling endpoints; not otherwise used
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request ID")
+
+    odoo = get_odoo_client()
+    prod_rows = odoo.read("product.product", [product_id], fields=["name", "standard_price", "product_tmpl_id"])
+    if not prod_rows:
+        raise HTTPException(status_code=404, detail="Product not found in Odoo")
+    prod = prod_rows[0]
+    cost = prod["standard_price"] or None
+    tmpl_id = prod["product_tmpl_id"][0] if prod.get("product_tmpl_id") else None
+
+    bom_out = {"found": False, "bom_id": None, "type": None, "components": [], "total_component_cost": None,
+               "components_with_cost": 0, "components_total": 0}
+    if tmpl_id:
+        try:
+            boms = odoo.search_read(
+                "mrp.bom", domain=[["product_tmpl_id", "=", tmpl_id], ["active", "=", True]],
+                fields=["type", "bom_line_ids"], limit=1,
+            )
+        except Exception as exc:
+            logger.warning("discount_bom_lookup_failed product_id=%s error=%s", product_id, exc)
+            boms = []
+        if boms and boms[0].get("bom_line_ids"):
+            bom = boms[0]
+            bom_lines = odoo.read("mrp.bom.line", bom["bom_line_ids"], fields=["product_id", "product_qty"])
+            comp_ids = list({bl["product_id"][0] for bl in bom_lines if bl.get("product_id")})
+            comp_costs = _fetch_costs(odoo, comp_ids)
+            comp_names = {r["id"]: r["name"] for r in (odoo.read("product.product", comp_ids, fields=["name"]) if comp_ids else [])}
+            components = []
+            total_known = 0.0
+            known_count = 0
+            for bl in bom_lines:
+                pid = bl["product_id"][0] if bl.get("product_id") else None
+                c_cost = comp_costs.get(pid)
+                components.append({
+                    "product_id": pid, "name": comp_names.get(pid, ""),
+                    "qty_per_unit": bl["product_qty"], "unit_cost": c_cost, "cost_set": c_cost is not None,
+                })
+                if c_cost is not None:
+                    total_known += bl["product_qty"] * c_cost
+                    known_count += 1
+            bom_out = {
+                "found": True, "bom_id": bom["id"], "type": bom.get("type"),
+                "components": components,
+                "total_component_cost": total_known if known_count else None,
+                "components_with_cost": known_count, "components_total": len(components),
+            }
+    return {
+        "product_id": product_id, "product_name": prod["name"],
+        "cost_price": cost, "cost_set": cost is not None,
+        "bom": bom_out,
+    }
+
+
+@router.get("/customer-summary/{customer_partner_id}")
+async def get_customer_discount_summary(
+    customer_partner_id: int,
+    current_user: dict = Depends(require_permission("discounts.approve")),
+):
+    """8.63 — backs the Customer 360 Discounts card. Only counts requests
+    that actually granted something (approved/countered) toward the total R
+    figure — a rejected or still-pending request never discounted anything,
+    so it would be misleading to include it in "how much this customer has
+    been given"."""
+    docs = await col("discount_requests").find({"customer_partner_id": customer_partner_id}).to_list(length=500)
+    granted = [d for d in docs if d["status"] in ("approved", "countered")]
+    total_amount = sum(fl["final_amount"] for d in granted for fl in d.get("final_lines", []))
+    all_pcts = [fl["final_pct"] for d in granted for fl in d.get("final_lines", [])]
+    return {
+        "total_requests": len(docs),
+        "approved_count": sum(1 for d in docs if d["status"] == "approved"),
+        "countered_count": sum(1 for d in docs if d["status"] == "countered"),
+        "rejected_count": sum(1 for d in docs if d["status"] == "rejected"),
+        "pending_count": sum(1 for d in docs if d["status"] == "pending"),
+        "total_discount_amount": total_amount,
+        "avg_pct": sum(all_pcts) / len(all_pcts) if all_pcts else 0,
+    }
 
 
 @router.get("/{request_id}")
@@ -307,8 +539,9 @@ async def approve_discount_request(
     amount = _discount_amount(doc["lines"], pct_by_product)
     avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
     n = len(pct_by_product)
+    final_lines = _build_final_lines(doc["lines"], pct_by_product)
     await col("discount_requests").update_one(
-        {"_id": doc["_id"]}, {"$set": {"status": "approved", "decision": decision, "updated_at": now}},
+        {"_id": doc["_id"]}, {"$set": {"status": "approved", "decision": decision, "final_lines": final_lines, "updated_at": now}},
     )
     await _clear_ticket_flag(doc["ticket_id"])
     activity_note = f"Discount approved: {n} line{'s' if n != 1 else ''}, R{amount:,.2f} (avg {avg_pct:.1f}%)"
@@ -409,8 +642,9 @@ async def counter_discount_request(
     amount = _discount_amount(doc["lines"], pct_by_product)
     avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
     n = len(pct_by_product)
+    final_lines = _build_final_lines(doc["lines"], pct_by_product)
     await col("discount_requests").update_one(
-        {"_id": doc["_id"]}, {"$set": {"status": "countered", "decision": decision, "updated_at": now}},
+        {"_id": doc["_id"]}, {"$set": {"status": "countered", "decision": decision, "final_lines": final_lines, "updated_at": now}},
     )
     await _clear_ticket_flag(doc["ticket_id"])
     activity_note = f"Discount countered: {n} line{'s' if n != 1 else ''} adjusted, R{amount:,.2f} (avg {avg_pct:.1f}%)"

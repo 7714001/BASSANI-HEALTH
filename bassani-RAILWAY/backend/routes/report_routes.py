@@ -677,6 +677,92 @@ async def best_customers(
         raise HTTPException(status_code=502, detail=f"Report error: {str(e)}")
 
 
+# ── Discounts (8.63) ─────────────────────────────────────────────────────────
+# Filtered by decision date, not request date — "how much discount did we
+# give this month" is about when it was actually granted, not when someone
+# asked. Only approved/countered requests ever count; a rejected or
+# cancelled request granted nothing. No warehouse scoping — a discount
+# request has no warehouse dimension in its own schema (mongoDB, not Odoo
+# stock), unlike the other reports on this page.
+
+def _discount_period_bounds(year: Optional[int], month: Optional[int], from_date: Optional[str], to_date: Optional[str]):
+    today = date.today()
+    if from_date and to_date:
+        return parse_date_str(from_date), parse_date_str(to_date, end_of_day=True)
+    year  = year  or today.year
+    month = month or today.month
+    return first_day_of_month(year, month), last_day_of_month(year, month)
+
+
+@router.get("/discounts-by-product")
+async def discounts_by_product(
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
+    current_user: dict = Depends(require_admin),
+):
+    """Reports page leaderboard: which products carry the most granted
+    discount value in the selected period."""
+    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
+    pipeline = [
+        {"$match": {"status": {"$in": ["approved", "countered"]}, "decision.at": {"$gte": _from, "$lte": _to}}},
+        {"$unwind": "$final_lines"},
+        {"$group": {
+            "_id": "$final_lines.product_id",
+            "product_name": {"$first": "$final_lines.product_name"},
+            "total_discount": {"$sum": "$final_lines.final_amount"},
+            "line_count": {"$sum": 1},
+            "avg_pct": {"$avg": "$final_lines.final_pct"},
+        }},
+        {"$sort": {"total_discount": -1}},
+        {"$limit": 50},
+    ]
+    rows = await col("discount_requests").aggregate(pipeline).to_list(length=50)
+    return {"products": [
+        {"rank": i + 1, "product_id": r["_id"], "product_name": r["product_name"],
+         "total_discount": r["total_discount"], "line_count": r["line_count"], "avg_pct": r["avg_pct"]}
+        for i, r in enumerate(rows)
+    ]}
+
+
+@router.get("/discounts-by-customer")
+async def discounts_by_customer(
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
+    current_user: dict = Depends(require_admin),
+):
+    """Reports page leaderboard: which customers have been given the most
+    discount value in the selected period. Grouped on (customer_partner_id,
+    customer_name) rather than partner_id alone, since a pre-8.63 request may
+    have no partner_id at all — grouping strictly on a possibly-null id would
+    otherwise merge unrelated legacy customers into one bucket."""
+    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
+    pipeline = [
+        {"$match": {"status": {"$in": ["approved", "countered"]}, "decision.at": {"$gte": _from, "$lte": _to}}},
+        {"$addFields": {
+            "_request_total": {"$sum": "$final_lines.final_amount"},
+            "_request_avg_pct": {"$avg": "$final_lines.final_pct"},
+        }},
+        {"$group": {
+            "_id": {"partner_id": "$customer_partner_id", "name": "$customer_name"},
+            "total_discount": {"$sum": "$_request_total"},
+            "request_count": {"$sum": 1},
+            "avg_pct": {"$avg": "$_request_avg_pct"},
+        }},
+        {"$sort": {"total_discount": -1}},
+        {"$limit": 50},
+    ]
+    rows = await col("discount_requests").aggregate(pipeline).to_list(length=50)
+    return {"customers": [
+        {"rank": i + 1, "customer_partner_id": r["_id"]["partner_id"], "customer_name": r["_id"]["name"] or "Unknown",
+         "total_discount": r["total_discount"], "request_count": r["request_count"], "avg_pct": r["avg_pct"]}
+        for i, r in enumerate(rows)
+    ]}
+
+
 # ── Dead Stock ────────────────────────────────────────────────────────────────
 
 @router.get("/dead-stock")

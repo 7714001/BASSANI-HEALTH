@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2, Mail, Link2, Clock, CheckCircle } from "lucide-react";
+import { ChevronDown, ShoppingCart, FileText, TrendingUp, AlertCircle, CreditCard, User, Pencil, Plus, Download, Upload, Trash2, Loader2, Mail, Link2, Clock, CheckCircle, Percent, ExternalLink } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { useAuth } from "../AuthContext";
@@ -560,6 +560,18 @@ export default function CustomerProfile() {
       .catch(() => {});
   }, [id]); // eslint-disable-line
 
+  // 8.63 — Discounts card. Gated on discounts.approve, the same permission
+  // the Discount Approvals queue itself requires, rather than a new
+  // permission — if you can't approve discounts, this summary isn't
+  // actionable for you either.
+  const [discountSummary, setDiscountSummary] = useState(null);
+  useEffect(() => {
+    if (!can("discounts.approve")) return;
+    api.get(`/api/discount-requests/customer-summary/${id}`)
+      .then(r => setDiscountSummary(r.data))
+      .catch(() => {});
+  }, [id]); // eslint-disable-line
+
   useEffect(() => {
     setAddrLoading(true);
     api.get(`/api/customers/${id}/addresses`)
@@ -1005,6 +1017,44 @@ export default function CustomerProfile() {
               <KpiCard label="Account Manager" value={ownership.reseller_name}        sub="Onboarded via reseller"     icon={User}         accent="bg-purple-500" />
             )}
           </div>
+
+          {/* Discounts (8.63) — total requests are shown even for a customer
+              with zero granted, so a viewer can tell "no discounts asked
+              for" apart from "no data loaded yet"; the R total only ever
+              counts approved/countered requests (see customer-summary's own
+              docstring for why a rejected request contributes nothing). */}
+          {can("discounts.approve") && discountSummary && discountSummary.total_requests > 0 && (
+            <Section
+              title="Discounts"
+              actions={
+                <button
+                  onClick={() => navigate("/tickets/discounts", { state: { customerPartnerId: id } })}
+                  className="inline-flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 hover:underline"
+                >
+                  View All <ExternalLink size={11} />
+                </button>
+              }
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-5 py-4">
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Total Requests</p>
+                  <p className="text-lg font-bold text-gray-900">{discountSummary.total_requests}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Approved / Countered</p>
+                  <p className="text-lg font-bold text-gray-900">{discountSummary.approved_count + discountSummary.countered_count}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Total Discount Given</p>
+                  <p className="text-lg font-bold text-gray-900">{fmtR(discountSummary.total_discount_amount)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">Average %</p>
+                  <p className="text-lg font-bold text-gray-900">{discountSummary.avg_pct.toFixed(1)}%</p>
+                </div>
+              </div>
+            </Section>
+          )}
 
           {/* Addresses */}
           <Section title={`Addresses (${addresses.length})`}>

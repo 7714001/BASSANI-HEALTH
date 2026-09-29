@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, and 8.62 Discount Workflow Correctness & UX, 2026-09-29 — 8.63 Discount Financial Insight & Reporting not yet started) |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX, and 8.63 Discount Financial Insight & Reporting, both 2026-09-29) |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
@@ -2287,26 +2287,41 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
-#### 8.63 — Discount Financial Insight & Reporting — Not Started
+#### 8.63 — Discount Financial Insight & Reporting — Complete 2026-09-29
 
-**Goal:** Cost price + BOM context on the approval screen so Finance can judge whether a discount is worth it, plus customer/product-level discount reporting (Customer 360, Discount Approvals filtering/grouping/export, two new Reports leaderboards). Scoped separately from 8.62 because it touches Odoo models (`mrp.bom`) not previously used anywhere in this codebase and depends on data quality findings from the live probe above.
+**Goal:** Cost price + BOM context on the approval screen so Finance can judge whether a discount is worth it, plus customer/product-level discount reporting (Customer 360, Discount Approvals filtering/grouping/export, two new Reports leaderboards). Scoped separately from 8.62 because it touches Odoo models (`mrp.bom`) not previously used anywhere in this codebase and depended on data-quality findings from 8.62's live probe.
 
-**Decision (confirmed with product owner, 2026-09-29):** build it now with honest degradation, rather than waiting on Bassani to populate cost prices in Odoo first. A margin panel must never compute against an unset cost as if it were R0 (that would show a fabricated 100% margin) — every surface shows "Cost price not set in Odoo" / "No Bill of Materials found for this product" instead, and lights up correctly the moment Bassani's data improves, with no further portal changes.
+**Decision (confirmed with product owner, 2026-09-29):** built with honest degradation rather than waiting on Bassani to populate cost prices in Odoo first. A margin panel never computes against an unset cost as if it were R0 (that would show a fabricated 100% margin) — every surface shows "Cost price not set in Odoo" / "No Bill of Materials found for this product" instead, and will light up correctly the moment Bassani's data improves, with no further portal changes needed.
 
-**Scope (not yet started):**
-- [ ] Cost Price column on the Discount Approvals expanded line table, sourced from `product.product.standard_price`; renders "Not set" rather than "R0.00" when unset
-- [ ] Clickable Cost Price opens a modal: BOM components + costs when a BOM exists (`mrp.bom`/`mrp.bom.line`, one level), else a clear "no BOM" message; plus a full per-line financial panel (unit price, discount %, discounted price, cost, margin before/after in R and %, revenue impact) and a request-level rollup, all gated on cost > 0 for any margin math
-- [ ] `discount_requests` gains `customer_partner_id` (resolved the same way `_ticket_customer_partner_id()` does) and a `final_pct`/`final_amount` stamped per line at decision time (approve → requested_pct; counter → applied_lines' pct; reject → not counted as "given"), so reporting doesn't need to reconstruct outcomes from `decision.applied_lines` every time
-- [ ] Discount Approvals: filters (customer, product, requested-by, date range), a Group-by-Customer / Group-by-Product toggle, Excel export (client-side `xlsx`, same convention as the Reports page)
-- [ ] Customer 360 (`CustomerProfile.js`): a Discounts card (total requests, total approved/countered R, average %) with a "View All" link deep-linking into a pre-filtered Discount Approvals view
-- [ ] Two new Reports leaderboards ("Discounts by Product", "Discounts by Customer" — total R given, count, avg %), sortable and Excel-exportable, gated by `reports.export`
+**Data model (`backend/routes/discount_routes.py`):**
+- [x] `discount_requests` gains `customer_partner_id` at creation (`ticket.get("customer_company_id") or ticket.get("customer_id")`, the same resolution `ticket_routes.py::_ticket_customer_partner_id()` uses, inlined rather than imported to avoid a route-importing-route risk) and `final_lines[]` (populated only on approve/counter via `_build_final_lines()` — `{product_id, product_name, qty, unit_price, final_pct, final_amount}` per granted line; stays empty on reject/cancel since nothing was given). `lines[]` itself is untouched — it stays the immutable original ask; `final_lines[]` is the durable "what was actually granted" record reporting reads from.
+- [x] `GET /` (`list_discount_requests`) gained `customer_partner_id`, `product_id`, `requested_by_id`, `date_from`/`date_to` filters (the fetch cap was also raised 200 → 500 to support export/filter use cases) — backs the Approvals screen's filter bar.
+
+**Cost/BOM/margin (`discount_routes.py`, `DiscountApprovals.js`):**
+- [x] `GET /{id}/financial-detail` (gated `discounts.approve`) batch-reads `product.product.standard_price` for every line on the request (not just discounted ones, matching the existing full-order-context convention) and returns a request-level rollup — total discount requested, cost-data coverage (N of M lines), and blended margin before/after % when at least one discounted line has a known cost. Fetched once per request on first expand, not per-line.
+- [x] `GET /{id}/bom/{product_id}` (gated `discounts.approve`) — on-demand BOM lookup behind the Cost Price cell's click target: `mrp.bom` search on `product_tmpl_id` (one level, `mrp.bom.line` component read + batched component cost lookup). Degrades to `found: false` rather than erroring — confirmed via a live read-only probe that this is the expected common case (2 of 147 recently-ordered products have any BOM at all).
+- [x] `BomMarginModal` (`DiscountApprovals.js`) — unit price, discounted price, cost, revenue impact, and margin before/after (only rendered when cost is set) plus the BOM component table or a "not found" message. Every "not set"/"not found" state is a real, styled UI state, never a silently-computed zero.
+- [x] Expanded-row rollup panel shows the same coverage-and-margin summary the financial-detail endpoint returns, with an honest fallback ("Cost price not set in Odoo for any discounted line") when no line has cost data.
+
+**Approvals screen (`DiscountApprovals.js`):**
+- [x] Search (customer, quote #, requested-by, product — client-side over the loaded page), a From/To date range (server-side, re-fetches), and a Clear Filters action
+- [x] Group by Customer toggle — clusters the existing request rows under a customer heading (a browsing view, not a second aggregate); Group by Product was deliberately not added here since a request can touch several products and the resulting duplication reads poorly in a request-list UI — that analysis lives in the Reports leaderboard instead, which aggregates it properly
+- [x] Export button — one row per request (customer, requested by, reason, status, lines/avg %, order total, requested R, granted R, decision info), client-side `xlsx`, same dynamic-import convention as every other export in this codebase
+
+**Customer 360 (`CustomerProfile.js`):**
+- [x] `GET /customer-summary/{customer_partner_id}` (gated `discounts.approve`) — total requests, approved/countered/rejected/pending counts, total granted R (approved+countered only), average %
+- [x] Discounts `Section` card (only rendered when the customer has at least one request, and only for a `discounts.approve` holder) with a "View All" link that navigates to `/tickets/discounts` with `{state: {customerPartnerId}}` — `DiscountApprovals.js` reads this on mount and filters server-side via the new `customer_partner_id` param, showing a clearable "Filtered to one customer" banner
+
+**Reports leaderboards (`backend/routes/report_routes.py`, `Views.js::Reports()`):** built as two new report keys on the *existing* Reports page rather than under `/api/discount-requests` — this reuses the page's own FY/month period selector and its `require_admin`-gated read / `reports.export`-gated Excel-export convention exactly, instead of inventing a second, inconsistent access pattern just for discounts. Filtered by **decision date** (`decision.at`), not request date — "how much discount did we give this month" is about when it was actually granted.
+- [x] `GET /api/reports/discounts-by-product` and `GET /api/reports/discounts-by-customer` — Mongo aggregations over `final_lines`/`final_lines.final_amount` for `status in (approved, countered)` within the selected period; customer grouping keys on `(customer_partner_id, customer_name)` rather than partner_id alone, since a legacy pre-8.63 request may have no partner_id at all and grouping strictly on a possibly-null id would merge unrelated customers
+- [x] Two new `ANALYTICS` entries ("Discounts by Product", "Discounts by Customer") with their own leaderboard tables and two new sheets in the existing "Export Excel" batch
 
 ### Definition of Done
-- [ ] Cost Price and margin figures never show a fabricated number when Odoo has no cost data
-- [ ] BOM detail shows when it exists, degrades honestly when it doesn't
-- [ ] Discount Approvals is filterable, groupable by customer/product, and exportable
-- [ ] Customer 360 shows a discount summary with drill-through to the underlying requests
-- [ ] Reports page has "Discounts by Product" and "Discounts by Customer" leaderboards
+- [x] Cost Price and margin figures never show a fabricated number when Odoo has no cost data
+- [x] BOM detail shows when it exists, degrades honestly when it doesn't
+- [x] Discount Approvals is filterable, groupable by customer, and exportable
+- [x] Customer 360 shows a discount summary with drill-through to the underlying requests
+- [x] Reports page has "Discounts by Product" and "Discounts by Customer" leaderboards, period-scoped like the other six reports
 
 ---
 

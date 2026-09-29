@@ -4,14 +4,24 @@
 // quote at normal pricing), or Counter (apply a different % than requested).
 // Nobody can decide their own request — enforced server-side regardless of
 // role, including super_admin.
-import { useState, useEffect, useCallback } from "react";
+//
+// 8.63 additions: Cost Price + BOM/margin popup on the expanded line table
+// (backed by GET /{id}/financial-detail and GET /{id}/bom/{product_id}, both
+// degrading honestly to "not set"/"no BOM found" rather than a fabricated
+// number — see discount_routes.py's live-probe note: 100% of Bassani's
+// active products have no cost price in Odoo today), plus filters, a
+// Group by Customer view, and an Excel export.
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { CheckCircle2, XCircle, PenLine, ChevronDown, ChevronRight, Percent, ExternalLink } from "lucide-react";
+import {
+  CheckCircle2, XCircle, PenLine, ChevronDown, ChevronRight, Percent, ExternalLink,
+  Download, Users, List as ListIcon, Loader2, Package,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
 import {
-  TopBar, Modal, FormGroup, Textarea, BtnSecondary, BtnDanger, BtnPrimary, Badge,
-  EmptyState, LoadingState, FilterPill, ChipRow, fmtDateTime,
+  TopBar, Modal, FormGroup, Textarea, Input, BtnSecondary, BtnDanger, BtnPrimary, Badge,
+  EmptyState, LoadingState, FilterPill, ChipRow, SearchBar, fmtDateTime, fmtDate,
 } from "../components/UI";
 
 const STATUS_LABEL = { pending: "Pending", approved: "Approved", countered: "Countered", rejected: "Rejected", cancelled: "Cancelled" };
@@ -28,8 +38,123 @@ const LEGEND = [
 const LEGEND_DOT = { green: "bg-green-500", orange: "bg-orange-500", red: "bg-red-500", amber: "bg-amber-500" };
 
 const fmtR = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
 
-function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, navigate }) {
+// ── BOM / margin popup (8.63) ────────────────────────────────────────────────
+// Opened from a line's Cost Price cell. Fetches on demand rather than eagerly
+// for every line — most products have no BOM at all (live-probe confirmed:
+// 2 of 147 recently-ordered products), so eagerly searching mrp.bom for
+// every row would mostly be wasted calls.
+function BomMarginModal({ requestId, line, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.get(`/api/discount-requests/${requestId}/bom/${line.product_id}`)
+      .then(r => { if (!cancelled) setData(r.data); })
+      .catch(() => { if (!cancelled) toast.error("Could not load cost/BOM detail"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [requestId, line.product_id]);
+
+  const pct = line.requested_pct || 0;
+  const discountedPrice = line.unit_price * (1 - pct / 100);
+  const cost = data?.cost_price;
+  const costSet = data?.cost_set;
+  const marginBefore = costSet ? line.unit_price - cost : null;
+  const marginAfter = costSet ? discountedPrice - cost : null;
+  const revenueImpact = (line.unit_price - discountedPrice) * line.qty;
+
+  return (
+    <Modal title={`Cost & Margin — ${line.product_name}`} onClose={onClose}>
+      {loading ? <LoadingState /> : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Unit Price</p>
+              <p className="font-semibold text-gray-900">{fmtR(line.unit_price)}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discounted Price ({fmtPct(pct)})</p>
+              <p className="font-semibold text-gray-900">{fmtR(discountedPrice)}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Cost Price</p>
+              <p className={`font-semibold ${costSet ? "text-gray-900" : "text-gray-400 italic"}`}>
+                {costSet ? fmtR(cost) : "Not set in Odoo"}
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Revenue Impact ({line.qty} units)</p>
+              <p className="font-semibold text-red-600">-{fmtR(revenueImpact)}</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Margin</p>
+            {costSet ? (
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+                  <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide">Before Discount</p>
+                  <p className="font-semibold text-green-800">{fmtR(marginBefore)} ({fmtPct(line.unit_price ? marginBefore / line.unit_price * 100 : 0)})</p>
+                </div>
+                <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
+                  <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">After Discount</p>
+                  <p className="font-semibold text-amber-800">{fmtR(marginAfter)} ({fmtPct(discountedPrice ? marginAfter / discountedPrice * 100 : 0)})</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 italic bg-gray-50 rounded-lg p-3">
+                Cost price not set in Odoo for this product — margin can't be calculated.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Bill of Materials</p>
+            {!data?.bom?.found ? (
+              <p className="text-xs text-gray-400 italic bg-gray-50 rounded-lg p-3">
+                No Bill of Materials found for this product in Odoo.
+              </p>
+            ) : (
+              <>
+                <table className="w-full text-xs border border-gray-100 rounded-lg overflow-hidden">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="text-left p-2 pl-3 font-semibold text-gray-400 uppercase">Component</th>
+                      <th className="text-right p-2 font-semibold text-gray-400 uppercase">Qty / Unit</th>
+                      <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.bom.components.map((c, i) => (
+                      <tr key={i} className="border-t border-gray-50">
+                        <td className="p-2 pl-3 text-gray-700">{c.name || `#${c.product_id}`}</td>
+                        <td className="p-2 text-right text-gray-500">{c.qty_per_unit}</td>
+                        <td className="p-2 pr-3 text-right text-gray-500">{c.cost_set ? fmtR(c.unit_cost) : <span className="text-gray-300 italic">Not set</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  {data.bom.total_component_cost != null
+                    ? `Total component cost: ${fmtR(data.bom.total_component_cost)} (${data.bom.components_with_cost} of ${data.bom.components_total} components have a cost price set)`
+                    : `No component cost prices set in Odoo (0 of ${data.bom.components_total} components).`}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="flex justify-end mt-4">
+        <BtnSecondary onClick={onClose}>Close</BtnSecondary>
+      </div>
+    </Modal>
+  );
+}
+
+function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, navigate, financial, onOpenBom }) {
   const allLines = req.lines || [];
   // Every line on the order is stored (2026-09-28), not just the discounted
   // ones — requested_pct is 0 for a line the requester left alone. The row
@@ -38,6 +163,11 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
   const discountedLines = allLines.filter(l => (l.requested_pct || 0) > 0);
   const n = discountedLines.length;
   const avgPct = n > 0 ? discountedLines.reduce((s, l) => s + (l.requested_pct || 0), 0) / n : 0;
+  // 8.63: once financial-detail has loaded, prefer its per-line cost_price
+  // (looked up fresh from Odoo); render lines from it if available so the
+  // Cost Price column has data, else fall back to the plain request lines.
+  const linesToRender = financial?.lines || allLines;
+  const rollup = financial?.rollup;
   return (
     <>
       <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => onToggle(req.id)}>
@@ -87,6 +217,40 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
                 </button>
               </div>
             </div>
+
+            {/* 8.63 — request-level financial rollup, fetched once on expand */}
+            {!financial ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400 mb-3"><Loader2 size={12} className="animate-spin" />Loading cost detail…</div>
+            ) : rollup && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                <div className="bg-white border border-gray-100 rounded-lg p-2.5">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discount Requested</p>
+                  <p className="text-sm font-semibold text-gray-900">{fmtR(rollup.total_requested_discount)}</p>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-lg p-2.5">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Cost Data Coverage</p>
+                  <p className="text-sm font-semibold text-gray-900">{rollup.lines_with_known_cost} of {rollup.lines_total} lines</p>
+                </div>
+                {rollup.margin ? (
+                  <>
+                    <div className="bg-green-50 border border-green-100 rounded-lg p-2.5">
+                      <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide">Margin Before</p>
+                      <p className="text-sm font-semibold text-green-800">{fmtPct(rollup.margin.margin_before_pct)}</p>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-100 rounded-lg p-2.5">
+                      <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Margin After</p>
+                      <p className="text-sm font-semibold text-amber-800">{fmtPct(rollup.margin.margin_after_pct)}</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="bg-gray-50 border border-gray-100 rounded-lg p-2.5 col-span-2">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Margin Impact</p>
+                    <p className="text-xs text-gray-400 italic">Cost price not set in Odoo for any discounted line</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Every line on the order — the discounted ones stand out so the
                 approver can judge the request against the full quote, not
                 just the lines asked about in isolation. */}
@@ -96,17 +260,31 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
                   <th className="text-left p-2 pl-3 font-semibold text-gray-400 uppercase">Product</th>
                   <th className="text-right p-2 font-semibold text-gray-400 uppercase">Qty</th>
                   <th className="text-right p-2 font-semibold text-gray-400 uppercase">Unit Price</th>
+                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Cost Price</th>
                   <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Discount</th>
                 </tr>
               </thead>
               <tbody>
-                {allLines.map((l, i) => {
+                {linesToRender.map((l, i) => {
                   const isRequested = (l.requested_pct || 0) > 0;
+                  const hasCostInfo = financial != null;
                   return (
                     <tr key={i} className={`border-t border-gray-50 ${isRequested ? "bg-amber-50/60" : ""}`}>
                       <td className="p-2 pl-3 text-gray-700">{l.product_name}</td>
                       <td className="p-2 text-right text-gray-500">{l.qty}</td>
                       <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
+                      <td className="p-2 text-right">
+                        {hasCostInfo ? (
+                          <button
+                            onClick={() => onOpenBom(l)}
+                            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                            title="View cost breakdown and Bill of Materials"
+                          >
+                            <Package size={11} />
+                            {l.cost_set ? fmtR(l.cost_price) : <span className="italic">Not set</span>}
+                          </button>
+                        ) : <span className="text-gray-300">…</span>}
+                      </td>
                       <td className="p-2 pr-3 text-right">
                         {isRequested
                           ? <span className="font-semibold text-amber-700">{Number(l.requested_pct).toFixed(2)}% requested</span>
@@ -137,15 +315,34 @@ export default function DiscountApprovals() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("pending");
   const [expandedId, setExpandedId] = useState(null);
+  // 8.63 — filters (search is client-side over the loaded page; the date
+  // range re-fetches, matching the backend's own date_from/date_to params)
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [groupBy, setGroupBy] = useState("list"); // "list" | "customer"
+  // 8.63 — financial-detail fetched lazily per request on first expand
+  const [financialByRequest, setFinancialByRequest] = useState({});
+  const [bomLine, setBomLine] = useState(null); // {requestId, line} | null
+
+  // 8.63 — Customer 360's "View All" link lands here with the customer's
+  // Odoo partner id in location.state, filtering server-side (via the same
+  // customer_partner_id param list_discount_requests now accepts) rather
+  // than relying on the client-side text search to match a name correctly.
+  const [customerFilterId, setCustomerFilterId] = useState(location.state?.customerPartnerId || null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/api/discount-requests/", { params: statusFilter === "all" ? {} : { status: statusFilter } });
+      const params = statusFilter === "all" ? {} : { status: statusFilter };
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      if (customerFilterId) params.customer_partner_id = customerFilterId;
+      const r = await api.get("/api/discount-requests/", { params });
       setRequests(r.data.requests || []);
     } catch { toast.error("Failed to load discount requests"); }
     finally { setLoading(false); }
-  }, [statusFilter]);
+  }, [statusFilter, dateFrom, dateTo, customerFilterId]);
   useEffect(() => { load(); }, [load]);
 
   // Auto-expand a specific request when arriving via an email deep link
@@ -154,9 +351,80 @@ export default function DiscountApprovals() {
   useEffect(() => {
     const rid = new URLSearchParams(location.search).get("request");
     if (rid) { setStatusFilter("all"); setExpandedId(rid); }
+    if (location.state?.customerPartnerId) setStatusFilter("all");
   }, []); // eslint-disable-line
 
-  const toggle = (id) => setExpandedId(prev => prev === id ? null : id);
+  const toggle = (id) => {
+    setExpandedId(prev => {
+      const next = prev === id ? null : id;
+      if (next && !financialByRequest[next]) {
+        api.get(`/api/discount-requests/${next}/financial-detail`)
+          .then(r => setFinancialByRequest(m => ({ ...m, [next]: r.data })))
+          .catch(() => toast.error("Could not load cost detail for this request"));
+      }
+      return next;
+    });
+  };
+
+  // Client-side search — matches customer, quote ref, requested-by name, or
+  // any product on the request (including lines that weren't discounted,
+  // since "filterable by product" should find the request even if that
+  // particular product wasn't the one given a discount).
+  const filteredRequests = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return requests;
+    return requests.filter(r =>
+      (r.customer_name || "").toLowerCase().includes(q) ||
+      (r.order_name || "").toLowerCase().includes(q) ||
+      (r.requested_by?.name || "").toLowerCase().includes(q) ||
+      (r.lines || []).some(l => (l.product_name || "").toLowerCase().includes(q))
+    );
+  }, [requests, search]);
+
+  // Group by Customer (8.63) — clusters the same request rows under a
+  // customer heading rather than a second aggregate view; the Reports page's
+  // own "Discounts by Customer"/"Discounts by Product" leaderboards handle
+  // the cross-request aggregate analysis, so this stays a browsing view.
+  const groupedByCustomer = useMemo(() => {
+    if (groupBy !== "customer") return null;
+    const groups = new Map();
+    for (const r of filteredRequests) {
+      const key = r.customer_partner_id != null ? `id:${r.customer_partner_id}` : `name:${r.customer_name || "Unknown"}`;
+      if (!groups.has(key)) groups.set(key, { name: r.customer_name || "Unknown", requests: [] });
+      groups.get(key).requests.push(r);
+    }
+    return Array.from(groups.values()).sort((a, b) => b.requests.length - a.requests.length);
+  }, [filteredRequests, groupBy]);
+
+  // Export (8.63) — one row per request, client-side over whatever's
+  // currently filtered/loaded, same dynamic-import convention as every
+  // other Excel export in this codebase (Views.js, productExport.js).
+  const exportExcel = async () => {
+    const XLSX = await import("xlsx");
+    const rows = filteredRequests.map(r => {
+      const discounted = (r.lines || []).filter(l => (l.requested_pct || 0) > 0);
+      const grantedTotal = (r.final_lines || []).reduce((s, l) => s + (l.final_amount || 0), 0);
+      return {
+        "Quote": r.order_name,
+        "Customer": r.customer_name || "",
+        "Requested By": r.requested_by?.name || "",
+        "Reason": r.reason || "",
+        "Status": STATUS_LABEL[r.status] || r.status,
+        "Lines Discounted": discounted.length,
+        "Avg % Requested": discounted.length ? (discounted.reduce((s, l) => s + (l.requested_pct || 0), 0) / discounted.length).toFixed(2) : "0",
+        "Order Total (R)": (r.order_total || 0).toFixed(2),
+        "Requested (R)": discounted.reduce((s, l) => s + l.qty * l.unit_price * (l.requested_pct / 100), 0).toFixed(2),
+        "Granted (R)": grantedTotal.toFixed(2),
+        "Requested On": r.created_at ? fmtDate(r.created_at) : "",
+        "Decided By": r.decision?.by?.name || "",
+        "Decided On": r.decision?.at ? fmtDate(r.decision.at) : "",
+        "Decision Note": r.decision?.note || "",
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Discount Requests");
+    XLSX.writeFile(wb, `Bassani Discount Requests ${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   // ── Approve ──
   const [approveTarget, setApproveTarget] = useState(null);
@@ -222,9 +490,46 @@ export default function DiscountApprovals() {
     finally { setCountering(false); }
   };
 
+  const renderTable = (rows) => (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-gray-100 bg-slate-50/50">
+            <th className="p-3 w-8"></th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Quote</th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested By</th>
+            <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Lines</th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested</th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</th>
+            <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(req => (
+            <RequestRow
+              key={req.id} req={req} expanded={expandedId === req.id} onToggle={toggle}
+              onApprove={setApproveTarget} onReject={setRejectTarget} onCounter={openCounter}
+              navigate={navigate} financial={financialByRequest[req.id]}
+              onOpenBom={(line) => setBomLine({ requestId: req.id, line })}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <TopBar title="Discount Approvals" subtitle="Approve, reject or counter staff discount requests" />
+      <TopBar
+        title="Discount Approvals"
+        subtitle="Approve, reject or counter staff discount requests"
+        actions={
+          <BtnSecondary onClick={exportExcel} disabled={filteredRequests.length === 0}>
+            <Download size={14} />Export
+          </BtnSecondary>
+        }
+      />
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mb-2">
           <ChipRow>
@@ -233,42 +538,55 @@ export default function DiscountApprovals() {
             ))}
           </ChipRow>
         </div>
-        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
           {LEGEND.map(l => (
             <span key={l.color} className="inline-flex items-center gap-1.5 text-xs text-gray-500">
               <span className={`w-2 h-2 rounded-full ${LEGEND_DOT[l.color]}`} />{l.label}
             </span>
           ))}
         </div>
-        {loading ? <LoadingState /> : requests.length === 0 ? (
-          <EmptyState icon={Percent} heading="No requests" message="Nothing matches this filter." />
-        ) : (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-slate-50/50">
-                  <th className="p-3 w-8"></th>
-                  <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Quote</th>
-                  <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
-                  <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested By</th>
-                  <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Lines</th>
-                  <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested</th>
-                  <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</th>
-                  <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map(req => (
-                  <RequestRow
-                    key={req.id} req={req} expanded={expandedId === req.id} onToggle={toggle}
-                    onApprove={setApproveTarget} onReject={setRejectTarget} onCounter={openCounter}
-                    navigate={navigate}
-                  />
-                ))}
-              </tbody>
-            </table>
+        {customerFilterId && (
+          <div className="mb-3 flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700 w-fit">
+            <span>Filtered to one customer{filteredRequests[0]?.customer_name ? `: ${filteredRequests[0].customer_name}` : ""}</span>
+            <button onClick={() => setCustomerFilterId(null)} className="text-blue-500 hover:text-blue-800 font-semibold">Clear</button>
           </div>
         )}
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <SearchBar value={search} onChange={setSearch} placeholder="Customer, quote #, requester or product…" />
+          <FormGroup label="From">
+            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </FormGroup>
+          <FormGroup label="To">
+            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </FormGroup>
+          {(dateFrom || dateTo || search) && (
+            <BtnSecondary onClick={() => { setDateFrom(""); setDateTo(""); setSearch(""); }}>Clear filters</BtnSecondary>
+          )}
+          <div className="ml-auto inline-flex rounded-lg border border-gray-200 overflow-hidden">
+            <button type="button" onClick={() => setGroupBy("list")}
+              className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 ${groupBy === "list" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+              <ListIcon size={12} />List
+            </button>
+            <button type="button" onClick={() => setGroupBy("customer")}
+              className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 border-l border-gray-200 ${groupBy === "customer" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+              <Users size={12} />By Customer
+            </button>
+          </div>
+        </div>
+        {loading ? <LoadingState /> : filteredRequests.length === 0 ? (
+          <EmptyState icon={Percent} heading="No requests" message="Nothing matches this filter." />
+        ) : groupBy === "customer" ? (
+          <div className="space-y-4">
+            {groupedByCustomer.map(g => (
+              <div key={g.name}>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 px-1">
+                  {g.name} <span className="text-gray-300 font-normal">({g.requests.length} request{g.requests.length !== 1 ? "s" : ""})</span>
+                </p>
+                {renderTable(g.requests)}
+              </div>
+            ))}
+          </div>
+        ) : renderTable(filteredRequests)}
       </main>
 
       {approveTarget && (
@@ -378,6 +696,10 @@ export default function DiscountApprovals() {
             <BtnPrimary onClick={doCounter} disabled={countering}>{countering ? "Applying…" : "Apply Counter-Offer"}</BtnPrimary>
           </div>
         </Modal>
+      )}
+
+      {bomLine && (
+        <BomMarginModal requestId={bomLine.requestId} line={bomLine.line} onClose={() => setBomLine(null)} />
       )}
     </div>
   );

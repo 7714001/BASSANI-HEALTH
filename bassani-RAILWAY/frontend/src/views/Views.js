@@ -3949,6 +3949,8 @@ export function Reports() {
     { key:"best-resellers",        label:"Best Resellers"        },
     { key:"dead-stock",            label:"Dead Stock"            },
     { key:"category-performance",  label:"Category Performance"  },
+    { key:"discounts-by-product",  label:"Discounts by Product"  },
+    { key:"discounts-by-customer", label:"Discounts by Customer" },
   ];
 
   const INVENTORY = [
@@ -3988,13 +3990,15 @@ export function Reports() {
     try {
       const XLSX   = await import('xlsx');
       const params = getPeriodParams();
-      const [t0,t1,t2,t3,t4,t5] = await Promise.allSettled([
-        api.get('/api/reports/monthly-turnover',     { params }),
-        api.get('/api/reports/best-sellers',         { params }),
-        api.get('/api/reports/best-customers',       { params }),
-        api.get('/api/reports/best-resellers',       { params: { fy_start_year: fyStart } }),
+      const [t0,t1,t2,t3,t4,t5,t6,t7] = await Promise.allSettled([
+        api.get('/api/reports/monthly-turnover',       { params }),
+        api.get('/api/reports/best-sellers',           { params }),
+        api.get('/api/reports/best-customers',         { params }),
+        api.get('/api/reports/best-resellers',         { params: { fy_start_year: fyStart } }),
         api.get('/api/reports/dead-stock'),
-        api.get('/api/reports/category-performance', { params }),
+        api.get('/api/reports/category-performance',   { params }),
+        api.get('/api/reports/discounts-by-product',   { params }),
+        api.get('/api/reports/discounts-by-customer',  { params }),
       ]);
       const wb = XLSX.utils.book_new();
 
@@ -4054,6 +4058,22 @@ export function Reports() {
             'Revenue (R)': c.revenue?.toFixed(2), 'Share %': c.pct,
           }))
         ), 'Categories');
+      }
+      if (t6.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t6.value.data.products||[]).map(p=>({
+            Rank: p.rank, Product: p.product_name, 'Discounted Lines': p.line_count,
+            'Total Discount (R)': p.total_discount?.toFixed(2), 'Avg %': p.avg_pct?.toFixed(1),
+          }))
+        ), 'Discounts by Product');
+      }
+      if (t7.status==='fulfilled') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (t7.value.data.customers||[]).map(c=>({
+            Rank: c.rank, Customer: c.customer_name, Requests: c.request_count,
+            'Total Discount (R)': c.total_discount?.toFixed(2), 'Avg %': c.avg_pct?.toFixed(1),
+          }))
+        ), 'Discounts by Customer');
       }
 
       const fyLabel     = `FY${fyStart}-${String(fyStart+1).slice(2)}`;
@@ -4193,6 +4213,60 @@ function ReportContent({ type, data }) {
           ))}
         </tbody>
       </table></div>
+    </div>
+  );
+
+  if (type === "discounts-by-product") return (
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-50">
+        <h3 className="text-sm font-semibold">Products with the most discount given</h3>
+        <p className="text-xs text-gray-400 mt-0.5">Only approved/countered requests count — a rejected request never actually discounted anything.</p>
+      </div>
+      {(data.products || []).length === 0 ? (
+        <p className="text-sm text-gray-400 px-5 py-6">No discounts granted in this period.</p>
+      ) : (
+      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
+        <thead><tr className="bg-gray-50">{["#","Product","Discounted Lines","Total Discount","Avg %"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
+        <tbody>
+          {data.products?.map((p,i)=>(
+            <tr key={p.product_id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
+              <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":i===2?"bg-bassani-50 text-bassani-700":"bg-gray-50 text-gray-400"}`}>{p.rank}</span></Td>
+              <Td className="font-medium">{p.product_name}</Td>
+              <Td>{p.line_count}</Td>
+              <Td className="font-semibold text-red-600">{fmtR(p.total_discount)}</Td>
+              <Td className="text-gray-500">{p.avg_pct?.toFixed(1)}%</Td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+      )}
+    </div>
+  );
+
+  if (type === "discounts-by-customer") return (
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-50">
+        <h3 className="text-sm font-semibold">Customers given the most discount</h3>
+        <p className="text-xs text-gray-400 mt-0.5">Only approved/countered requests count — a rejected request never actually discounted anything.</p>
+      </div>
+      {(data.customers || []).length === 0 ? (
+        <p className="text-sm text-gray-400 px-5 py-6">No discounts granted in this period.</p>
+      ) : (
+      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[400px]">
+        <thead><tr className="bg-gray-50">{["#","Customer","Requests","Total Discount","Avg %"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
+        <tbody>
+          {data.customers?.map((c,i)=>(
+            <tr key={c.customer_partner_id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
+              <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":"bg-gray-50 text-gray-400"}`}>{c.rank}</span></Td>
+              <Td className="font-medium">{c.customer_name}</Td>
+              <Td>{c.request_count}</Td>
+              <Td className="font-semibold text-red-600">{fmtR(c.total_discount)}</Td>
+              <Td className="text-gray-500">{c.avg_pct?.toFixed(1)}%</Td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+      )}
     </div>
   );
 
