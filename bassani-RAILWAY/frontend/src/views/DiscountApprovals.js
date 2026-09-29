@@ -22,20 +22,8 @@ import api from "../api";
 import {
   TopBar, Modal, FormGroup, Textarea, Input, BtnSecondary, BtnDanger, BtnPrimary, Badge,
   EmptyState, LoadingState, FilterPill, ChipRow, SearchBar, fmtDateTime, fmtDate,
+  DISCOUNT_STATUS_LABEL as STATUS_LABEL, DISCOUNT_STATUS_COLOR as STATUS_COLOR, DiscountStatusKey,
 } from "../components/UI";
-
-const STATUS_LABEL = { pending: "Pending", approved: "Approved", countered: "Countered", rejected: "Rejected", cancelled: "Cancelled" };
-// Countered is orange, not teal (2026-09-29) — matches the Red/Orange/Green
-// "full reject / partial change / full approve" convention requested for
-// this screen. The legend below spells this out for anyone new to the page.
-const STATUS_COLOR = { pending: "amber", approved: "green", countered: "orange", rejected: "red", cancelled: "gray" };
-const LEGEND = [
-  { color: "green",  label: "Approved: applied exactly as requested" },
-  { color: "orange", label: "Countered: applied at a different rate" },
-  { color: "red",    label: "Rejected: no discount applied" },
-  { color: "amber",  label: "Pending: awaiting a decision" },
-];
-const LEGEND_DOT = { green: "bg-green-500", orange: "bg-orange-500", red: "bg-red-500", amber: "bg-amber-500" };
 
 const fmtR = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
@@ -446,9 +434,13 @@ export default function DiscountApprovals() {
   const [rejectNote, setRejectNote] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const doReject = async () => {
+    // A reason is mandatory (2026-09-30) — enforced server-side too, this
+    // is just the earlier, friendlier check. Sales staff read this reason
+    // straight off the ticket's decision banner to explain the rejection.
+    if (!rejectNote.trim()) return toast.error("A reason is required so sales staff can explain this to the customer");
     setRejecting(true);
     try {
-      await api.post(`/api/discount-requests/${rejectTarget.id}/reject`, { note: rejectNote || undefined });
+      await api.post(`/api/discount-requests/${rejectTarget.id}/reject`, { note: rejectNote });
       toast.success("Discount request rejected");
       setRejectTarget(null); setRejectNote("");
       load();
@@ -505,11 +497,15 @@ export default function DiscountApprovals() {
       : { ...x, approved_amt: x.approved_amt === "" ? "" : Number(x.approved_amt).toFixed(2) }));
   };
   const doCounter = async () => {
+    // A reason is mandatory (2026-09-30) — a counter is exactly the case
+    // sales staff need to go back to the customer about, so there must
+    // always be something to relay. Enforced server-side too.
+    if (!counterNote.trim()) return toast.error("A reason is required so sales staff can explain the counter-offer to the customer");
     setCountering(true);
     try {
       await api.post(`/api/discount-requests/${counterTarget.id}/counter`, {
         lines: counterLines.map(l => ({ product_id: l.product_id, approved_pct: Number(l.approved_pct) })),
-        note: counterNote || undefined,
+        note: counterNote,
       });
       toast.success("Counter-offer applied");
       setCounterTarget(null);
@@ -566,13 +562,7 @@ export default function DiscountApprovals() {
             ))}
           </ChipRow>
         </div>
-        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {LEGEND.map(l => (
-            <span key={l.color} className="inline-flex items-center gap-1.5 text-xs text-gray-500">
-              <span className={`w-2 h-2 rounded-full ${LEGEND_DOT[l.color]}`} />{l.label}
-            </span>
-          ))}
-        </div>
+        <DiscountStatusKey className="mb-3" />
         {customerFilterId && (
           <div className="mb-3 flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700 w-fit">
             <span>Filtered to one customer{filteredRequests[0]?.customer_name ? `: ${filteredRequests[0].customer_name}` : ""}</span>
@@ -638,12 +628,13 @@ export default function DiscountApprovals() {
             The quote for {rejectTarget.order_name} will stay at normal pricing. This cannot be undone from here
             — the requester would need to submit a new request.
           </p>
-          <FormGroup label="Note (optional)">
-            <Textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2} />
+          <FormGroup label="Reason" required>
+            <Textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
+              placeholder="This is what sales staff will use to explain the rejection to the customer…" />
           </FormGroup>
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setRejectTarget(null)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={doReject} disabled={rejecting}>{rejecting ? "Rejecting…" : "Reject"}</BtnDanger>
+            <BtnDanger onClick={doReject} disabled={rejecting || !rejectNote.trim()}>{rejecting ? "Rejecting…" : "Reject"}</BtnDanger>
           </div>
         </Modal>
       )}
@@ -719,13 +710,13 @@ export default function DiscountApprovals() {
               </tbody>
             </table>
           </div>
-          <FormGroup label="Note (optional)">
+          <FormGroup label="Reason" required>
             <Textarea value={counterNote} onChange={e => setCounterNote(e.target.value)} rows={2}
-              placeholder="e.g. Approved at a lower rate given order size" />
+              placeholder="e.g. Approved at a lower rate given order size — this is what sales staff will tell the customer" />
           </FormGroup>
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setCounterTarget(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={doCounter} disabled={countering}>{countering ? "Applying…" : "Apply Counter-Offer"}</BtnPrimary>
+            <BtnPrimary onClick={doCounter} disabled={countering || !counterNote.trim()}>{countering ? "Applying…" : "Apply Counter-Offer"}</BtnPrimary>
           </div>
         </Modal>
       )}

@@ -1304,6 +1304,38 @@ export function Badge({ status, label, color, children, className = "" }) {
   return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${style} ${className}`}>{text}</span>;
 }
 
+// ── Discount request status colors (8.61/8.62/8.64) ──────────────────────────
+// Single source of truth for the Red/Orange/Green/Amber convention, shared by
+// DiscountApprovals.js (the approval queue) and SalesTickets.js (the ticket
+// list badge + ticket detail decision banner) — the whole point of 8.64's
+// "sales staff read the color to decide whether to contact the customer"
+// design is that the same status always maps to the same color everywhere
+// it appears, so this must never be defined twice.
+export const DISCOUNT_STATUS_LABEL = { pending: "Pending", approved: "Approved", countered: "Countered", rejected: "Rejected", cancelled: "Cancelled" };
+export const DISCOUNT_STATUS_COLOR = { pending: "amber", approved: "green", countered: "orange", rejected: "red", cancelled: "gray" };
+const DISCOUNT_LEGEND_DOT = { green: "bg-green-500", orange: "bg-orange-500", red: "bg-red-500", amber: "bg-amber-500", gray: "bg-gray-400" };
+export const DISCOUNT_LEGEND = [
+  { color: "green",  label: "Approved: send the discounted quote and continue" },
+  { color: "orange", label: "Countered: contact the customer with the reason before continuing" },
+  { color: "red",    label: "Rejected: quote stays at normal pricing" },
+  { color: "amber",  label: "Pending: awaiting a decision" },
+];
+
+// The color key itself — deliberately more prominent on the Sales Ticket
+// side (where staff act on it) than on the Discount Approvals page (where
+// the colors are mostly self-evident to whoever is actively deciding).
+export function DiscountStatusKey({ className = "" }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 ${className}`}>
+      {DISCOUNT_LEGEND.map(l => (
+        <span key={l.color} className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${DISCOUNT_LEGEND_DOT[l.color]}`} />{l.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ── Age / priority tier (2026-08-26) ─────────────────────────────────────────
 // Shared across SalesTickets.js, OrdersTickets.js, and OrderPassport.js.
 // The tier value itself (ok/warning/urgent/overdue) always comes from the

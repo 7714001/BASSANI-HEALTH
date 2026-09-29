@@ -22,7 +22,7 @@ import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
   BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate, fmtDateTime,
   SearchBar, ChipRow, FilterPill, parseDisplayName, OdooPdfViewerModal, openMonitorDisplay,
-  AgeTierBadge, AgePriorityStrip,
+  AgeTierBadge, AgePriorityStrip, DiscountStatusKey, DISCOUNT_STATUS_COLOR, DISCOUNT_STATUS_LABEL,
 } from "../components/UI";
 import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
@@ -34,6 +34,23 @@ import OrderView from "./OrderView";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Discount decision banner (8.64) — colors must match DiscountStatusKey/
+// DISCOUNT_STATUS_COLOR (UI.js) exactly, since the whole point is that
+// sales staff learn to read the color without re-reading the text every
+// time: green = send the quote, orange = call the customer, red = stays
+// at normal pricing.
+const DECISION_BANNER_STYLE = {
+  approved:  "bg-green-50 border-green-200 text-green-800",
+  countered: "bg-orange-50 border-orange-200 text-orange-800",
+  rejected:  "bg-red-50 border-red-200 text-red-800",
+};
+const DECISION_BANNER_ICON = { approved: CheckCircle2, countered: AlertTriangle, rejected: XCircle };
+const DECISION_BANNER_HEADLINE = {
+  approved:  (d) => `Discount approved by ${d.decided_by} — send the discounted quote and continue`,
+  countered: (d) => `Discount countered by ${d.decided_by} — contact the customer before continuing`,
+  rejected:  (d) => `Discount rejected by ${d.decided_by} — the quote stays at normal pricing`,
+};
 
 // Quote builder draft persistence (2026-09-20) — same localStorage pattern
 // already proven for the reseller/customer cart (Views.js::Orders(),
@@ -1893,6 +1910,41 @@ export default function SalesTickets() {
                             )}
                           </div>
                         )}
+
+                        {/* Discount decision banner (8.64) — persists after the
+                            pending flag clears, so staff always know at a glance
+                            whether to send the quote (green) or contact the
+                            customer first (orange), and why (red). The color key
+                            is shown here, not just on the Approvals page, since
+                            this is where sales staff actually act on it. */}
+                        {!isReseller && detail.discount_status !== "pending" && detail.last_discount_decision && (() => {
+                          const d = detail.last_discount_decision;
+                          const DecisionIcon = DECISION_BANNER_ICON[d.status] || Percent;
+                          return (
+                            <div className={`mx-6 mt-4 rounded-lg border px-4 py-3 ${DECISION_BANNER_STYLE[d.status] || "bg-gray-50 border-gray-200 text-gray-700"}`}>
+                              <div className="flex items-start gap-2 text-sm">
+                                <DecisionIcon size={16} className="shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold">
+                                    {(DECISION_BANNER_HEADLINE[d.status] || (() => "Discount decided"))(d)}
+                                  </p>
+                                  {d.status !== "rejected" && d.lines_count != null && (
+                                    <p className="text-xs opacity-80 mt-0.5">
+                                      {d.lines_count} line{d.lines_count !== 1 ? "s" : ""} discounted, avg {Number(d.avg_pct || 0).toFixed(1)}%, {fmtR(d.total_amount)} total
+                                    </p>
+                                  )}
+                                  {d.note && (
+                                    <p className="text-xs mt-1.5 bg-white/70 rounded px-2 py-1.5 border border-black/5">
+                                      "{d.note}"
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] opacity-60 mt-1.5">{fmtDateTime(d.decided_at)}</p>
+                                </div>
+                              </div>
+                              <DiscountStatusKey className="mt-2.5 pt-2.5 border-t border-black/10" />
+                            </div>
+                          );
+                        })()}
 
                         {/* Line items table */}
                         <div className="overflow-x-auto">
@@ -4173,6 +4225,16 @@ export default function SalesTickets() {
                   )}
                   {t.discount_status === "pending" && (
                     <Badge color="amber"><Percent size={9} className="inline mr-0.5" />Discount Pending</Badge>
+                  )}
+                  {/* 8.64 — same color-coded status as the ticket detail's
+                      decision banner and the Approvals page, so a sales rep
+                      scanning the list can tell at a glance which tickets
+                      need a call before they even open one. */}
+                  {t.discount_status !== "pending" && t.last_discount_decision && (
+                    <Badge color={DISCOUNT_STATUS_COLOR[t.last_discount_decision.status] || "gray"}>
+                      <Percent size={9} className="inline mr-0.5" />
+                      Discount {DISCOUNT_STATUS_LABEL[t.last_discount_decision.status] || t.last_discount_decision.status}
+                    </Badge>
                   )}
                 </div>
               )},

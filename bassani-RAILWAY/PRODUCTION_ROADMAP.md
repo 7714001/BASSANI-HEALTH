@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX, and 8.63 Discount Financial Insight & Reporting, both 2026-09-29) |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX and 8.63 Discount Financial Insight & Reporting, both 2026-09-29, and 8.64 Discount Decision Visibility for Sales Staff, 2026-09-30) |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
@@ -2323,6 +2323,26 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] Discount Approvals is filterable, groupable by customer, and exportable
 - [x] Customer 360 shows a discount summary with drill-through to the underlying requests
 - [x] Reports page has "Discounts by Product" and "Discounts by Customer" leaderboards, period-scoped like the other six reports
+
+---
+
+#### 8.64 — Discount Decision Visibility for Sales Staff — Complete 2026-09-30
+
+**Goal:** Once a discount request is decided, sales staff need to know the outcome without re-opening Discount Approvals — and specifically, whether they need to call the customer before proceeding. Raised after live use of 8.61/8.62: the Sales Ticket's pending-request banner disappeared the moment a decision was made (the blocking `discount_status`/`discount_request_id` flags are cleared on decision), leaving no trace of the outcome anywhere on the ticket itself.
+
+**Design:** the Red/Orange/Green/Amber color convention (8.62) now means something operationally specific to sales staff, not just a status color: **green (approved)** — send the discounted quote and continue; **orange (countered)** — contact the customer with the reason before continuing; **red (rejected)** — quote stays at normal pricing. The color key is shown more prominently on the Sales Ticket side than on the Approvals page, since that's where staff act on it.
+
+- [x] **Persistent decision record, not just a blocking flag:** `discount_routes.py::_clear_ticket_flag()` gained an optional `last_decision` param — approve/reject/counter now stamp `tickets.last_discount_decision` (`{request_id, status, decided_by, decided_at, note, lines_count, avg_pct, total_amount}`) alongside clearing the blocking `discount_status`/`discount_request_id` pair. This field is never cleared by anything — it's the durable "what happened last" record, independent of whether a *new* request is currently pending. `cancel`/withdraw deliberately does **not** stamp it (nothing to relay about a request nobody decided).
+- [x] **Reason made mandatory for Reject and Counter** (was optional for both) — both now 400 without one server-side, and the frontend disables the button until filled. Approve stays optional (nothing to explain about a straight approval).
+- [x] **Shared color constants** (`frontend/src/components/UI.js`): `DISCOUNT_STATUS_LABEL`, `DISCOUNT_STATUS_COLOR`, `DISCOUNT_LEGEND`, and a `DiscountStatusKey` component — extracted from `DiscountApprovals.js`'s previously-local copies so the Approvals page and `SalesTickets.js` can never disagree about what a color means. `DiscountApprovals.js` now imports these instead of defining its own.
+- [x] **Sales Ticket detail decision banner** (`SalesTickets.js`) — renders whenever `discount_status !== "pending"` and `last_discount_decision` exists (mutually exclusive with the existing amber pending banner): headline naming who decided and what to do next, the discounted-lines summary (approved/countered only), the decision note in its own callout, and `DiscountStatusKey` beneath it.
+- [x] **Sales Ticket list badge** — a second, color-coded badge next to the existing "Discount Pending" one, showing the last decided outcome so staff can see which tickets need a call before opening any of them.
+
+### Definition of Done
+- [x] Approving, countering, or rejecting a discount is visible on the Sales Ticket itself, not only on the Approvals page, and survives the blocking flag being cleared
+- [x] The banner's color always matches the same color used in Discount Approvals and the ticket list badge
+- [x] A counter or rejection cannot be submitted without a reason
+- [x] The color key is visible on the Sales Ticket page, not only the Approvals page
 
 ---
 

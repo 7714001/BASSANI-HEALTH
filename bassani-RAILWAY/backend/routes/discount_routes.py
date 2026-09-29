@@ -179,12 +179,23 @@ async def _push_ticket_activity(ticket_id: str, current_user: dict, note: str) -
         logger.warning("discount_activity_log_failed ticket_id=%s error=%s", ticket_id, exc)
 
 
-async def _clear_ticket_flag(ticket_id: str) -> None:
+async def _clear_ticket_flag(ticket_id: str, last_decision: Optional[dict] = None) -> None:
+    """Clears the blocking pending-request flag (discount_status/
+    discount_request_id) — this is what unblocks Send Quote/Confirm Order,
+    unchanged. `last_decision`, when given (approve/reject/counter, never
+    cancel/withdraw — there's nothing to relay to a customer about a request
+    that was simply withdrawn), is separately stamped as `last_discount_decision`
+    and is NEVER cleared here or anywhere else — it's the durable record the
+    Sales Ticket detail page's decision banner and the ticket list's badge
+    read from, and it must keep showing the latest outcome even once the
+    blocking flag above is gone (2026-09-30, requested so sales staff always
+    know, at a glance, whether to contact the customer about a counter and
+    why)."""
     try:
-        await col("tickets").update_one(
-            {"_id": ObjectId(ticket_id)},
-            {"$unset": {"discount_status": "", "discount_request_id": ""}},
-        )
+        update: dict = {"$unset": {"discount_status": "", "discount_request_id": ""}}
+        if last_decision:
+            update["$set"] = {"last_discount_decision": last_decision}
+        await col("tickets").update_one({"_id": ObjectId(ticket_id)}, update)
     except Exception:
         pass  # Best-effort — the request doc's own status is the durable source of truth
 
@@ -543,7 +554,11 @@ async def approve_discount_request(
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "approved", "decision": decision, "final_lines": final_lines, "updated_at": now}},
     )
-    await _clear_ticket_flag(doc["ticket_id"])
+    await _clear_ticket_flag(doc["ticket_id"], last_decision={
+        "request_id": request_id, "status": "approved",
+        "decided_by": _actor(current_user), "decided_at": now, "note": note,
+        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount,
+    })
     activity_note = f"Discount approved: {n} line{'s' if n != 1 else ''}, R{amount:,.2f} (avg {avg_pct:.1f}%)"
     if note:
         activity_note += f' (note: "{note}")'
@@ -572,14 +587,22 @@ async def reject_discount_request(
 ):
     doc = await _load_pending_request(request_id)
     _assert_not_own_request(doc, current_user)
+    # A reason is mandatory (2026-09-30) — sales staff read this straight off
+    # the ticket's decision banner to know what to tell the customer; a
+    # rejection with no reason leaves them unable to explain why.
+    note = (body.note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="A reason is required so sales staff can explain the rejection to the customer")
 
     now = datetime.now(timezone.utc)
-    note = (body.note or "").strip() or None
     decision = {"by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note}
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "rejected", "decision": decision, "updated_at": now}},
     )
-    await _clear_ticket_flag(doc["ticket_id"])
+    await _clear_ticket_flag(doc["ticket_id"], last_decision={
+        "request_id": request_id, "status": "rejected",
+        "decided_by": _actor(current_user), "decided_at": now, "note": note,
+    })
     activity_note = "Discount request rejected"
     if note:
         activity_note += f' (reason: "{note}")'
@@ -610,6 +633,12 @@ async def counter_discount_request(
     _assert_not_own_request(doc, current_user)
     if not body.lines:
         raise HTTPException(status_code=400, detail="At least one line is required")
+    # A reason is mandatory (2026-09-30) — a counter is exactly the case
+    # sales staff must go back to the customer about, so there must always
+    # be something to tell them.
+    note = (body.note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="A reason is required so sales staff can explain the counter-offer to the customer")
     # Only lines that were actually asked about can be countered — a line the
     # requester left alone (requested_pct 0, kept only for full-order context)
     # is not a candidate. Every originally-requested line must be resolved by
@@ -634,7 +663,6 @@ async def counter_discount_request(
     _write_line_discounts(odoo, doc["order_id"], pct_by_product)
 
     now = datetime.now(timezone.utc)
-    note = (body.note or "").strip() or None
     decision = {
         "by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note,
         "applied_lines": [{"product_id": l.product_id, "approved_pct": l.approved_pct} for l in body.lines],
@@ -646,7 +674,11 @@ async def counter_discount_request(
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "countered", "decision": decision, "final_lines": final_lines, "updated_at": now}},
     )
-    await _clear_ticket_flag(doc["ticket_id"])
+    await _clear_ticket_flag(doc["ticket_id"], last_decision={
+        "request_id": request_id, "status": "countered",
+        "decided_by": _actor(current_user), "decided_at": now, "note": note,
+        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount,
+    })
     activity_note = f"Discount countered: {n} line{'s' if n != 1 else ''} adjusted, R{amount:,.2f} (avg {avg_pct:.1f}%)"
     if note:
         activity_note += f' (note: "{note}")'
