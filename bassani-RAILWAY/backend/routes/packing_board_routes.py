@@ -705,6 +705,32 @@ async def update_status(
     return {"success": True}
 
 
+async def _log_signoff_activity(order_id: str, current_user: dict, note: str) -> None:
+    """QA/RP sign-off (2026-09-29) already writes a full audit_logs entry via
+    audit_log(), but never touched the linked ticket's own stage_history —
+    so the Activity Log a sales/ops user actually looks at (SalesTickets.js /
+    OrdersTickets.js / OrderPassport.js's ActivityLogCard) showed the deposit
+    and the terminal outcome but skipped the two sign-offs in between. Mirrors
+    _sync_sales_ticket's own note-only push shape (status/exit_status
+    unchanged) — best-effort and silent, must never block a sign-off that
+    already wrote to Odoo/packing_board."""
+    try:
+        ticket = await col("tickets").find_one({"type": "sales", "order_id": int(order_id), "exit_status": None})
+        if not ticket:
+            return
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {"$push": {"stage_history": {
+                "status": ticket.get("status"), "exit_status": None,
+                "actor_id": current_user.get("id"),
+                "actor_name": current_user.get("name") or current_user.get("username") or "system",
+                "at": datetime.now(timezone.utc), "note": note,
+            }}},
+        )
+    except Exception as exc:
+        logger.warning("signoff_activity_log_failed order_id=%s error=%s", order_id, exc)
+
+
 @router.put("/qa-approve")
 async def qa_approve(
     body: OrderIdBody,
@@ -727,6 +753,7 @@ async def qa_approve(
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.qa_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await _log_signoff_activity(body.order_id, current_user, f"QA approved by {current_user.get('name') or current_user.get('username')}")
     await broadcast_monitor_refresh()
     return {"success": True}
 
@@ -754,6 +781,7 @@ async def rp_approve(
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.rp_approve", "packing_board", body.order_id, entity_label=body.order_id, user=current_user)
+    await _log_signoff_activity(body.order_id, current_user, f"RP approved by {current_user.get('name') or current_user.get('username')}")
     await broadcast_monitor_refresh()
     return {"success": True}
 

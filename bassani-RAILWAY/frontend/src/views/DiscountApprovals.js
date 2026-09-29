@@ -15,7 +15,17 @@ import {
 } from "../components/UI";
 
 const STATUS_LABEL = { pending: "Pending", approved: "Approved", countered: "Countered", rejected: "Rejected", cancelled: "Cancelled" };
-const STATUS_COLOR = { pending: "amber", approved: "green", countered: "teal", rejected: "red", cancelled: "gray" };
+// Countered is orange, not teal (2026-09-29) — matches the Red/Orange/Green
+// "full reject / partial change / full approve" convention requested for
+// this screen. The legend below spells this out for anyone new to the page.
+const STATUS_COLOR = { pending: "amber", approved: "green", countered: "orange", rejected: "red", cancelled: "gray" };
+const LEGEND = [
+  { color: "green",  label: "Approved: applied exactly as requested" },
+  { color: "orange", label: "Countered: applied at a different rate" },
+  { color: "red",    label: "Rejected: no discount applied" },
+  { color: "amber",  label: "Pending: awaiting a decision" },
+];
+const LEGEND_DOT = { green: "bg-green-500", orange: "bg-orange-500", red: "bg-red-500", amber: "bg-amber-500" };
 
 const fmtR = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -183,10 +193,17 @@ export default function DiscountApprovals() {
   const [counterLines, setCounterLines] = useState([]);
   const [counterNote, setCounterNote] = useState("");
   const [countering, setCountering] = useState(false);
+  // Amount (R) / Percent toggle (2026-09-29) — same idea as the request
+  // modal in SalesTickets.js. approved_pct is always the value actually
+  // submitted; this only changes what the approver types into the input.
+  const [counterMode, setCounterMode] = useState("pct");
   const openCounter = (req) => {
     setCounterTarget(req);
+    setCounterMode("pct");
     // Only the lines actually asked about (requested_pct > 0) are
-    // counterable — the rest of req.lines is full-order context only.
+    // counterable — the rest of req.lines is full-order context only. The
+    // backend now requires every one of these to be resolved in the same
+    // counter call, so none can be dropped from this list before submit.
     setCounterLines((req.lines || []).filter(l => (l.requested_pct || 0) > 0)
       .map(l => ({ product_id: l.product_id, product_name: l.product_name, approved_pct: l.requested_pct })));
     setCounterNote("");
@@ -209,12 +226,19 @@ export default function DiscountApprovals() {
     <div className="flex-1 flex flex-col overflow-hidden">
       <TopBar title="Discount Approvals" subtitle="Approve, reject or counter staff discount requests" />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="mb-4">
+        <div className="mb-2">
           <ChipRow>
             {["pending", "approved", "countered", "rejected", "cancelled", "all"].map(s => (
               <FilterPill key={s} label={s === "all" ? "All" : STATUS_LABEL[s]} active={statusFilter === s} onClick={() => setStatusFilter(s)} />
             ))}
           </ChipRow>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+          {LEGEND.map(l => (
+            <span key={l.color} className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-2 h-2 rounded-full ${LEGEND_DOT[l.color]}`} />{l.label}
+            </span>
+          ))}
         </div>
         {loading ? <LoadingState /> : requests.length === 0 ? (
           <EmptyState icon={Percent} heading="No requests" message="Nothing matches this filter." />
@@ -280,32 +304,64 @@ export default function DiscountApprovals() {
 
       {counterTarget && (
         <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)}>
-          <p className="text-sm text-gray-600 mb-4">
-            Apply a different discount % than requested for {counterTarget.order_name}. This is applied
-            immediately, same as an approval.
+          <p className="text-sm text-gray-600 mb-3">
+            Apply a different discount than requested for {counterTarget.order_name}. This is applied
+            immediately, same as an approval. Every originally requested line must be given a rate below,
+            even if that rate is 0%.
           </p>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
+            <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+              <button type="button" onClick={() => setCounterMode("pct")}
+                className={`px-3 py-1 text-xs font-medium ${counterMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                Percent
+              </button>
+              <button type="button" onClick={() => setCounterMode("amount")}
+                className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${counterMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                Rand Amount
+              </button>
+            </div>
+          </div>
           <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg mb-4">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-20">Requested</th>
-                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-24">Approved %</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Requested</th>
+                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Approved</th>
                 </tr>
               </thead>
               <tbody>
                 {counterLines.map((l, i) => {
                   const original = counterTarget.lines.find(x => x.product_id === l.product_id);
+                  const subtotal = (original?.qty || 0) * (original?.unit_price || 0);
+                  const pct = l.approved_pct === "" ? 0 : Number(l.approved_pct);
+                  const amount = subtotal * pct / 100;
+                  const requestedAmount = subtotal * (original?.requested_pct || 0) / 100;
+                  const onPctChange = (v) => setCounterLines(ls => ls.map((x, xi) => xi === i ? { ...x, approved_pct: v } : x));
+                  const onAmountChange = (v) => {
+                    const amt = v === "" ? "" : Number(v);
+                    const newPct = amt === "" || subtotal === 0 ? "" : (amt / subtotal) * 100;
+                    onPctChange(newPct === "" ? "" : newPct);
+                  };
                   return (
                     <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
                       <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
-                      <td className="p-2 text-right text-gray-500">{Number(original?.requested_pct || 0).toFixed(2)}%</td>
+                      <td className="p-2 text-right text-gray-500">
+                        {Number(original?.requested_pct || 0).toFixed(2)}%
+                        <span className="block text-[10px] text-gray-300">{fmtR(requestedAmount)}</span>
+                      </td>
                       <td className="p-2 pr-3">
                         <input
-                          type="number" min="0" max="100" step="0.01" value={l.approved_pct}
-                          onChange={e => setCounterLines(ls => ls.map((x, xi) => xi === i ? { ...x, approved_pct: e.target.value } : x))}
+                          type="number" min="0" step="0.01"
+                          max={counterMode === "pct" ? 100 : undefined}
+                          value={counterMode === "pct" ? l.approved_pct : (amount || amount === 0 ? amount.toFixed(2) : "")}
+                          onChange={e => counterMode === "pct" ? onPctChange(e.target.value) : onAmountChange(e.target.value)}
                           className="w-full text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
                         />
+                        <span className="block text-[10px] text-gray-400 text-right mt-0.5">
+                          {counterMode === "pct" ? fmtR(amount) : `${pct.toFixed(2)}%`}
+                        </span>
                       </td>
                     </tr>
                   );

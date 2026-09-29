@@ -682,6 +682,10 @@ export default function SalesTickets() {
   const [discountReason, setDiscountReason] = useState("");
   const [discountSubmitting, setDiscountSubmitting] = useState(false);
   const [withdrawingDiscount, setWithdrawingDiscount] = useState(false);
+  const [withdrawDiscountConfirm, setWithdrawDiscountConfirm] = useState(false);
+  // Amount (R) / Percent toggle (2026-09-29) — pct is always the canonical
+  // value actually submitted; this only changes what the requester types.
+  const [discountMode, setDiscountMode] = useState("pct");
 
   const openDiscountModal = () => {
     setDiscountLines((detailOrder.lines || []).map(l => ({
@@ -690,6 +694,7 @@ export default function SalesTickets() {
       qty: l.product_uom_qty, unit_price: l.price_unit, pct: "",
     })));
     setDiscountReason("");
+    setDiscountMode("pct");
     setDiscountModal(true);
   };
 
@@ -714,6 +719,7 @@ export default function SalesTickets() {
 
   const withdrawDiscountRequest = async () => {
     if (!detail.discount_request_id) return;
+    setWithdrawDiscountConfirm(false);
     setWithdrawingDiscount(true);
     try {
       await api.post(`/api/discount-requests/${detail.discount_request_id}/cancel`);
@@ -1592,8 +1598,12 @@ export default function SalesTickets() {
   const showCancelQuote       = detail?.order_id && PRE_CONFIRM.has(detail?.status) && canDrive;
   const showLinkOrder         = !detail?.order_id && canDrive;
   const showNotInterested     = !detail?.order_id && canDrive;
+  // 8.62 — moved here from its old standalone spot on the Order Lines card
+  // header, so every action on the order lives in one place (Actions card).
+  const showRequestDiscount   = !isReseller && can("tickets.sales") && detail?.order_id && !detail?.discount_status
+    && detailOrder && ["draft", "sent"].includes(detailOrder.state) && (detailOrder.lines || []).length > 0;
 
-  const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested;
+  const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount;
   const showPaymentGroup   = showRegisterDeposit || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
@@ -1840,7 +1850,7 @@ export default function SalesTickets() {
                               <span>A discount request is awaiting approval. This quote can't be sent or confirmed until it's decided.</span>
                             </div>
                             {can("tickets.sales") && (
-                              <BtnSecondary size="sm" onClick={withdrawDiscountRequest} disabled={withdrawingDiscount}
+                              <BtnSecondary size="sm" onClick={() => setWithdrawDiscountConfirm(true)} disabled={withdrawingDiscount}
                                 className="shrink-0 text-amber-700 border-amber-300 hover:bg-amber-100">
                                 {withdrawingDiscount ? <Loader2 size={12} className="animate-spin" /> : "Withdraw"}
                               </BtnSecondary>
@@ -1852,12 +1862,6 @@ export default function SalesTickets() {
                         <div className="overflow-x-auto">
                         <div className="flex items-center justify-between px-6 pt-4">
                           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Order Lines</p>
-                          {!isReseller && can("tickets.sales") && detail.order_id && !detail.discount_status
-                            && ["draft", "sent"].includes(detailOrder.state) && (detailOrder.lines || []).length > 0 && (
-                            <BtnSecondary size="sm" onClick={openDiscountModal}>
-                              <Percent size={12} />Request Discount
-                            </BtnSecondary>
-                          )}
                         </div>
                         <table className="w-full">
                           <thead>
@@ -2644,6 +2648,14 @@ export default function SalesTickets() {
                         {showMakeRecurring && (
                           <button onClick={() => setRecurringModalOpen(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
                             <Repeat size={14} className="text-gray-400 shrink-0" />Make Recurring
+                          </button>
+                        )}
+
+                        {/* 8.61/8.62 — moved here from the Order Lines card header so every
+                            order-related action lives in one place */}
+                        {showRequestDiscount && (
+                          <button onClick={openDiscountModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                            <Percent size={14} className="text-gray-400 shrink-0" />Request Discount
                           </button>
                         )}
 
@@ -3499,12 +3511,40 @@ export default function SalesTickets() {
         {pdfView && (
           <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
         )}
+        {withdrawDiscountConfirm && (
+          <Modal title="Withdraw Discount Request" onClose={() => setWithdrawDiscountConfirm(false)}>
+            <p className="text-sm text-gray-600 mb-4">
+              This withdraws the pending discount request on {detail?.order_id ? detailOrder?.name : "this quote"}.
+              The quote returns to normal pricing and Send Quote / Confirm Order are unblocked immediately.
+              You'd need to submit a new request to ask again.
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setWithdrawDiscountConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={withdrawDiscountRequest} disabled={withdrawingDiscount}>
+                {withdrawingDiscount ? "Withdrawing…" : "Withdraw Request"}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
         {discountModal && (
           <Modal title="Request Discount" onClose={() => setDiscountModal(false)}>
-            <p className="text-sm text-gray-500 mb-4">
-              Enter a discount % on any line you want reviewed, plus a reason. The quote stays at normal
+            <p className="text-sm text-gray-500 mb-3">
+              Enter a discount on any line you want reviewed, plus a reason. The quote stays at normal
               pricing until a holder of Discount Approvals decides this request.
             </p>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                <button type="button" onClick={() => setDiscountMode("pct")}
+                  className={`px-3 py-1 text-xs font-medium ${discountMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                  Percent
+                </button>
+                <button type="button" onClick={() => setDiscountMode("amount")}
+                  className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${discountMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                  Rand Amount
+                </button>
+              </div>
+            </div>
             <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg mb-4">
               <table className="w-full text-sm">
                 <thead>
@@ -3512,25 +3552,43 @@ export default function SalesTickets() {
                     <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
                     <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
                     <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Unit Price</th>
-                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Discount %</th>
+                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Discount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {discountLines.map((l, i) => (
+                  {discountLines.map((l, i) => {
+                    const subtotal = l.qty * l.unit_price;
+                    const pct = l.pct === "" ? 0 : Number(l.pct);
+                    const amount = subtotal * pct / 100;
+                    const onPctChange = (v) => setDiscountLines(ls => ls.map((x, xi) => xi === i ? { ...x, pct: v } : x));
+                    const onAmountChange = (v) => {
+                      const amt = v === "" ? "" : Number(v);
+                      const newPct = amt === "" || subtotal === 0 ? "" : (amt / subtotal) * 100;
+                      onPctChange(newPct);
+                    };
+                    return (
                     <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
                       <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
                       <td className="p-2 text-right text-gray-500">{l.qty}</td>
                       <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
                       <td className="p-2 pr-3">
                         <input
-                          type="number" min="0" max="100" step="0.01" value={l.pct}
-                          onChange={e => setDiscountLines(ls => ls.map((x, xi) => xi === i ? { ...x, pct: e.target.value } : x))}
+                          type="number" min="0" step="0.01"
+                          max={discountMode === "pct" ? 100 : undefined}
+                          value={discountMode === "pct" ? l.pct : (amount || amount === 0 ? (l.pct === "" ? "" : amount.toFixed(2)) : "")}
+                          onChange={e => discountMode === "pct" ? onPctChange(e.target.value) : onAmountChange(e.target.value)}
                           placeholder="0"
                           className="w-full text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
                         />
+                        {l.pct !== "" && (
+                          <span className="block text-[10px] text-gray-400 text-right mt-0.5">
+                            {discountMode === "pct" ? fmtR(amount) : `${pct.toFixed(2)}%`}
+                          </span>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -12,6 +12,7 @@ Separation of duties is enforced unconditionally (including for super_admin):
 nobody decides their own request. Every request is decided manually — there
 are no auto-approve thresholds.
 """
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -30,6 +31,7 @@ from services.email_service import (
 )
 
 router = APIRouter(prefix="/api/discount-requests", tags=["discount-requests"])
+logger = logging.getLogger(__name__)
 
 
 class DiscountRequestLineIn(BaseModel):
@@ -127,6 +129,36 @@ def _assert_not_own_request(doc: dict, current_user: dict) -> None:
     entirely. This is a business rule, not a permission gate."""
     if doc.get("requested_by", {}).get("id") == current_user.get("id"):
         raise HTTPException(status_code=403, detail="You cannot decide your own discount request")
+
+
+def _discount_amount(doc_lines: list, pct_by_product: dict) -> float:
+    return sum(
+        l["qty"] * l["unit_price"] * (pct_by_product[l["product_id"]] / 100)
+        for l in doc_lines if l["product_id"] in pct_by_product
+    )
+
+
+async def _push_ticket_activity(ticket_id: str, current_user: dict, note: str) -> None:
+    """Adds a note-only stage_history entry (status/exit_status unchanged) so
+    the ticket's Activity Log (frontend/src/components/OrderTimeline.js's
+    ActivityLogCard) shows a discount *decision*, not just the original
+    request (create_discount_request already pushes one of these for the
+    request itself, same shape). Best-effort and silent on failure — this
+    must never block a decision that already wrote to Odoo."""
+    try:
+        ticket = await col("tickets").find_one({"_id": ObjectId(ticket_id)}, {"status": 1, "exit_status": 1})
+        if not ticket:
+            return
+        await col("tickets").update_one(
+            {"_id": ticket["_id"]},
+            {"$push": {"stage_history": {
+                "status": ticket.get("status"), "exit_status": ticket.get("exit_status"),
+                "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                "at": datetime.now(timezone.utc), "note": note,
+            }}},
+        )
+    except Exception as exc:
+        logger.warning("discount_activity_log_failed ticket_id=%s error=%s", ticket_id, exc)
 
 
 async def _clear_ticket_flag(ticket_id: str) -> None:
@@ -272,19 +304,28 @@ async def approve_discount_request(
     now = datetime.now(timezone.utc)
     note = (body.note or "").strip() or None
     decision = {"by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note}
+    amount = _discount_amount(doc["lines"], pct_by_product)
+    avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
+    n = len(pct_by_product)
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "approved", "decision": decision, "updated_at": now}},
     )
     await _clear_ticket_flag(doc["ticket_id"])
+    activity_note = f"Discount approved: {n} line{'s' if n != 1 else ''}, R{amount:,.2f} (avg {avg_pct:.1f}%)"
+    if note:
+        activity_note += f' (note: "{note}")'
+    await _push_ticket_activity(doc["ticket_id"], current_user, activity_note)
     await audit_log(
         "discount_request.approve", "discount_request", request_id,
         entity_label=doc["order_name"], user=current_user, after=decision,
     )
     requester_email = await _resolve_user_email(doc.get("requested_by", {}).get("id"))
     if requester_email:
+        routing = await get_email_routing()
+        cc = [e for e in (routing.get("discount_request_to") or []) if e != requester_email]
         background_tasks.add_task(
             send_discount_decision_notification, requester_email, doc["order_name"], doc["customer_name"],
-            "approved", _actor(current_user), request_id, note or "",
+            "approved", _actor(current_user), request_id, note or "", cc,
         )
     return {"success": True}
 
@@ -306,15 +347,21 @@ async def reject_discount_request(
         {"_id": doc["_id"]}, {"$set": {"status": "rejected", "decision": decision, "updated_at": now}},
     )
     await _clear_ticket_flag(doc["ticket_id"])
+    activity_note = "Discount request rejected"
+    if note:
+        activity_note += f' (reason: "{note}")'
+    await _push_ticket_activity(doc["ticket_id"], current_user, activity_note)
     await audit_log(
         "discount_request.reject", "discount_request", request_id,
         entity_label=doc["order_name"], user=current_user, after=decision,
     )
     requester_email = await _resolve_user_email(doc.get("requested_by", {}).get("id"))
     if requester_email:
+        routing = await get_email_routing()
+        cc = [e for e in (routing.get("discount_request_to") or []) if e != requester_email]
         background_tasks.add_task(
             send_discount_decision_notification, requester_email, doc["order_name"], doc["customer_name"],
-            "rejected", _actor(current_user), request_id, note or "",
+            "rejected", _actor(current_user), request_id, note or "", cc,
         )
     return {"success": True}
 
@@ -332,12 +379,20 @@ async def counter_discount_request(
         raise HTTPException(status_code=400, detail="At least one line is required")
     # Only lines that were actually asked about can be countered — a line the
     # requester left alone (requested_pct 0, kept only for full-order context)
-    # is not a candidate.
+    # is not a candidate. Every originally-requested line must be resolved by
+    # this one counter call, no more and no less (2026-09-29 tightening) — an
+    # approver leaving a requested line out used to silently skip a decision
+    # on it (no discount written, no record it was ever considered), which
+    # isn't acceptable for an approval workflow. Reject/Approve stay whole-
+    # request decisions already; Counter now is too, just at a per-line rate.
     requested_pids = {l["product_id"] for l in doc["lines"] if l.get("requested_pct")}
+    submitted_pids = {l.product_id for l in body.lines}
+    if submitted_pids - requested_pids:
+        raise HTTPException(status_code=400, detail="Cannot counter a product that wasn't part of the original request")
+    if requested_pids - submitted_pids:
+        raise HTTPException(status_code=400, detail="Every originally requested line must be included in the counter-offer")
     pct_by_product: dict = {}
     for l in body.lines:
-        if l.product_id not in requested_pids:
-            raise HTTPException(status_code=400, detail="Cannot counter a product that wasn't part of the original request")
         if not (0 <= l.approved_pct <= 100):
             raise HTTPException(status_code=400, detail="Discount percentage must be between 0 and 100")
         pct_by_product[l.product_id] = l.approved_pct
@@ -351,19 +406,28 @@ async def counter_discount_request(
         "by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note,
         "applied_lines": [{"product_id": l.product_id, "approved_pct": l.approved_pct} for l in body.lines],
     }
+    amount = _discount_amount(doc["lines"], pct_by_product)
+    avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
+    n = len(pct_by_product)
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "countered", "decision": decision, "updated_at": now}},
     )
     await _clear_ticket_flag(doc["ticket_id"])
+    activity_note = f"Discount countered: {n} line{'s' if n != 1 else ''} adjusted, R{amount:,.2f} (avg {avg_pct:.1f}%)"
+    if note:
+        activity_note += f' (note: "{note}")'
+    await _push_ticket_activity(doc["ticket_id"], current_user, activity_note)
     await audit_log(
         "discount_request.counter", "discount_request", request_id,
         entity_label=doc["order_name"], user=current_user, after=decision,
     )
     requester_email = await _resolve_user_email(doc.get("requested_by", {}).get("id"))
     if requester_email:
+        routing = await get_email_routing()
+        cc = [e for e in (routing.get("discount_request_to") or []) if e != requester_email]
         background_tasks.add_task(
             send_discount_decision_notification, requester_email, doc["order_name"], doc["customer_name"],
-            "countered", _actor(current_user), request_id, note or "",
+            "countered", _actor(current_user), request_id, note or "", cc,
         )
     return {"success": True}
 

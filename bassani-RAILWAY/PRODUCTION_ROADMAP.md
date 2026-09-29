@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, and 8.49 Ready-for-Collection customer notification, 2026-08-04) |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, and 8.62 Discount Workflow Correctness & UX, 2026-09-29 — 8.63 Discount Financial Insight & Reporting not yet started) |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
@@ -2259,6 +2259,54 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] Approvers are emailed with a working deep link and reminded while a request sits
 - [x] Editing a discounted quote preserves its discounts
 - [x] Every step is audit-logged
+
+---
+
+#### 8.62 — Discount Workflow Correctness & UX — Complete 2026-09-29
+
+**Goal:** Tweaks raised after live testing of 8.61 with Bassani — amount-based entry, fuller notifications, consistent colour coding, tidier button placement, a missing confirmation step, and a complete activity trail for a discount's full lifecycle, not just its creation. Split from the financial/reporting half of this feedback round (cost price, BOM lookup, customer/product discount reporting), which is its own sub-phase (8.63) pending a decision on scope — see that entry for why.
+
+**Live Odoo probe (read-only, before building 8.63):** confirmed `mrp.bom`/`mrp.bom.line` are accessible with the needed fields, but found `product.product.standard_price` is 0.00 on 100% of 1,592 active sellable products (checked against the full catalog and the 500 most recently ordered lines alike) — Bassani has never populated cost prices in Odoo. BOM coverage is separately almost nonexistent for what's actually sold (2 of 147 distinct products on recent order lines have any BOM at all). This is an Odoo master-data gap, not a portal bug — 8.63 is scoped to degrade gracefully around it (see that entry).
+
+- [x] **Amount (R) / Percent toggle** — both the Request Discount modal (`SalesTickets.js`) and the Counter-Offer modal (`DiscountApprovals.js`) now have a per-modal entry-mode toggle. The canonical value submitted to the backend is always a % (Odoo only stores a discount percentage on `sale.order.line`); the toggle only changes what the user types, converting live against each line's `qty * unit_price` subtotal, with the converted figure always shown alongside.
+- [x] **Colour coding + legend** — `DiscountApprovals.js`'s `STATUS_COLOR` changed `countered` from teal to **orange**, giving the intended Red (rejected) / Orange (countered) / Green (approved) / Amber (pending) scheme. A legend row (colour dot + one-line meaning) sits under the status filter chips.
+- [x] **Counter must resolve every originally-requested line** — `counter_discount_request` now rejects a counter-offer that omits any line that was part of the original request (previously an approver could silently leave a line undecided, with no discount applied and no record it was ever considered). Approve/Reject were already whole-request decisions; Counter now is too, just at a per-line rate. The frontend UI already pre-fills every requested line and offers no way to remove one, so this was a backend-only tightening.
+- [x] **Full decision notifications** — `send_discount_decision_notification` (approved/countered/rejected) now also CCs the `discount_request_to` routing list, not just the original requester, on every decision — full visibility for Finance, not only whoever asked.
+- [x] **Request Discount button moved into the Actions card** — was a standalone button on the Order Lines card header; now lives in the Actions card's existing **Order** group (`SalesTickets.js`, alongside Edit Quote / Send Quote / Confirm Order / Make Recurring), so every order-related action is in one place.
+- [x] **Withdraw confirmation modal** — `withdrawDiscountRequest()` fired immediately on click with no confirmation at all, the one real gap found against this codebase's standing "no bare destructive click" convention. Now opens a standard `Modal` + `BtnDanger` confirm step first, matching every other status-changing action in the file.
+- [x] **Activity Log completeness** — `create_discount_request` already pushed a `stage_history` entry for the request itself; `approve`/`reject`/`counter` did not push anything, so a decided request left no trace on the ticket once its `discount_status` flag was cleared. All three now push a note-only activity entry (e.g. "Discount approved: 3 lines, R750.00 (avg 15.0%)"), visible in the same `ActivityLogCard` (`OrderTimeline.js`) already used by Sales Tickets, Orders Tickets, and Order Passport. Separately, a full-pipeline audit surfaced that **QA approval and RP approval** (`packing_board_routes.py::qa_approve`/`rp_approve`) wrote to `audit_logs` but never to the ticket's own `stage_history` — fixed via a new shared `_log_signoff_activity()` helper, so the Activity Log now shows the full inquiry → quote → deposit → QA → RP → invoice → payment chain, not just its endpoints. Mark Complete was already covered (`_sync_sales_ticket`'s existing `ready_for_collection`/`partially_fulfilled` push) — no change needed there.
+
+### Definition of Done
+- [x] A discount can be requested and countered in either % or R, converting correctly against the line subtotal
+- [x] `countered` renders orange everywhere on the Approvals screen, with a visible legend
+- [x] A counter-offer cannot leave any originally-requested line undecided
+- [x] Finance (the full `discount_request_to` list) is copied on every decision email, not just the requester
+- [x] Request Discount is reachable only from the Actions card, not a second location
+- [x] Withdrawing a pending request requires an explicit confirmation step
+- [x] Every discount decision (approve/reject/counter) and every QA/RP sign-off appears in the ticket's Activity Log with the real actor and a plain-language note
+
+---
+
+#### 8.63 — Discount Financial Insight & Reporting — Not Started
+
+**Goal:** Cost price + BOM context on the approval screen so Finance can judge whether a discount is worth it, plus customer/product-level discount reporting (Customer 360, Discount Approvals filtering/grouping/export, two new Reports leaderboards). Scoped separately from 8.62 because it touches Odoo models (`mrp.bom`) not previously used anywhere in this codebase and depends on data quality findings from the live probe above.
+
+**Decision (confirmed with product owner, 2026-09-29):** build it now with honest degradation, rather than waiting on Bassani to populate cost prices in Odoo first. A margin panel must never compute against an unset cost as if it were R0 (that would show a fabricated 100% margin) — every surface shows "Cost price not set in Odoo" / "No Bill of Materials found for this product" instead, and lights up correctly the moment Bassani's data improves, with no further portal changes.
+
+**Scope (not yet started):**
+- [ ] Cost Price column on the Discount Approvals expanded line table, sourced from `product.product.standard_price`; renders "Not set" rather than "R0.00" when unset
+- [ ] Clickable Cost Price opens a modal: BOM components + costs when a BOM exists (`mrp.bom`/`mrp.bom.line`, one level), else a clear "no BOM" message; plus a full per-line financial panel (unit price, discount %, discounted price, cost, margin before/after in R and %, revenue impact) and a request-level rollup, all gated on cost > 0 for any margin math
+- [ ] `discount_requests` gains `customer_partner_id` (resolved the same way `_ticket_customer_partner_id()` does) and a `final_pct`/`final_amount` stamped per line at decision time (approve → requested_pct; counter → applied_lines' pct; reject → not counted as "given"), so reporting doesn't need to reconstruct outcomes from `decision.applied_lines` every time
+- [ ] Discount Approvals: filters (customer, product, requested-by, date range), a Group-by-Customer / Group-by-Product toggle, Excel export (client-side `xlsx`, same convention as the Reports page)
+- [ ] Customer 360 (`CustomerProfile.js`): a Discounts card (total requests, total approved/countered R, average %) with a "View All" link deep-linking into a pre-filtered Discount Approvals view
+- [ ] Two new Reports leaderboards ("Discounts by Product", "Discounts by Customer" — total R given, count, avg %), sortable and Excel-exportable, gated by `reports.export`
+
+### Definition of Done
+- [ ] Cost Price and margin figures never show a fabricated number when Odoo has no cost data
+- [ ] BOM detail shows when it exists, degrades honestly when it doesn't
+- [ ] Discount Approvals is filterable, groupable by customer/product, and exportable
+- [ ] Customer 360 shows a discount summary with drill-through to the underlying requests
+- [ ] Reports page has "Discounts by Product" and "Discounts by Customer" leaderboards
 
 ---
 

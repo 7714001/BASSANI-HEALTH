@@ -634,11 +634,15 @@ def send_discount_decision_notification(
     decided_by: str,
     request_id: str,
     note: str = "",
+    cc: "list[str] | None" = None,
 ) -> None:
     """Sent to the staff member who requested the discount once it's been
     decided (8.61). `status` is "approved", "countered" or "rejected" —
     countered still applied a discount, just not the one requested, so its
-    copy is phrased as a qualified approval rather than a rejection."""
+    copy is phrased as a qualified approval rather than a rejection.
+    `cc` (2026-09-29) copies the discount_request_to routing list on every
+    decision, not just the initial request — full visibility for whoever
+    approves discounts, not only the requester finding out."""
     if not to_email:
         return
     if status == "approved":
@@ -659,7 +663,7 @@ def send_discount_decision_notification(
         + _divider()
         + _p("The quote is now unblocked and can be sent or confirmed as usual.", muted=True)
     )
-    _send(to_email, f"Discount {status.capitalize()}: {order_ref}", _wrap(body))
+    _send(to_email, f"Discount {status.capitalize()}: {order_ref}", _wrap(body), cc=cc)
 
 
 def send_discount_reminder(
