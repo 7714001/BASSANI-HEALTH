@@ -569,26 +569,44 @@ export default function DiscountApprovals() {
             <button onClick={() => setCustomerFilterId(null)} className="text-blue-500 hover:text-blue-800 font-semibold">Clear</button>
           </div>
         )}
+        {/* Every item in this row follows the same [label row][control row]
+            shape, including the ones that don't logically need a visible
+            label — FormGroup's own baked-in mb-4 was pushing the From/To
+            fields up relative to the plain, label-less SearchBar inside this
+            items-end row (found live, looked "offset"); giving every item an
+            identical label height, even an invisible one, is what actually
+            guarantees their controls share one baseline, not items-end alone. */}
         <div className="flex flex-wrap items-end gap-3 mb-4">
-          <SearchBar value={search} onChange={setSearch} placeholder="Customer, quote #, requester or product…" />
-          <FormGroup label="From">
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Search</label>
+            <SearchBar value={search} onChange={setSearch} placeholder="Customer, quote #, requester or product…" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">From</label>
             <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </FormGroup>
-          <FormGroup label="To">
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">To</label>
             <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </FormGroup>
+          </div>
           {(dateFrom || dateTo || search) && (
-            <BtnSecondary onClick={() => { setDateFrom(""); setDateTo(""); setSearch(""); }}>Clear filters</BtnSecondary>
+            <div>
+              <label className="block text-[10px] mb-1.5 select-none" aria-hidden="true">&nbsp;</label>
+              <BtnSecondary onClick={() => { setDateFrom(""); setDateTo(""); setSearch(""); }}>Clear filters</BtnSecondary>
+            </div>
           )}
-          <div className="ml-auto inline-flex rounded-lg border border-gray-200 overflow-hidden">
-            <button type="button" onClick={() => setGroupBy("list")}
-              className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 ${groupBy === "list" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-              <ListIcon size={12} />List
-            </button>
-            <button type="button" onClick={() => setGroupBy("customer")}
-              className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 border-l border-gray-200 ${groupBy === "customer" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-              <Users size={12} />By Customer
-            </button>
+          <div className="ml-auto">
+            <label className="block text-[10px] mb-1.5 select-none" aria-hidden="true">&nbsp;</label>
+            <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+              <button type="button" onClick={() => setGroupBy("list")}
+                className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 ${groupBy === "list" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                <ListIcon size={12} />List
+              </button>
+              <button type="button" onClick={() => setGroupBy("customer")}
+                className={`px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 border-l border-gray-200 ${groupBy === "customer" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                <Users size={12} />By Customer
+              </button>
+            </div>
           </div>
         </div>
         {loading ? <LoadingState /> : filteredRequests.length === 0 ? (

@@ -1498,14 +1498,33 @@ async def update_order_from_ticket(
     # from Odoo's own lines, never from the request body, so this endpoint can't
     # become a way to set a discount without going through the approval flow.
     # Matched per product in order, so duplicate product lines each keep theirs.
+    #
+    # Quantity-decrease forfeiture (8.65, 2026-09-30): a discount was granted
+    # against a specific quantity, not just a percentage — reducing the
+    # quantity while keeping the discount would let staff quietly undercut
+    # what was actually approved (e.g. "20% off for 100 units", then edited
+    # down to 10 while keeping the 20%). Compared at the PRODUCT level
+    # (summed across all lines of that product) against whatever is
+    # currently in Odoo right before this save — not the quantity at the
+    # moment of original approval — since Edit Quote is the only place
+    # quantity ever changes on a draft order, so "current" and "at approval"
+    # are the same number unless a prior edit already raised it; a later
+    # edit that reduces back toward (but still above) the original approved
+    # quantity still forfeits, because the discount stands against whatever
+    # the quote currently reflects, not just its original numbers.
+    # Increasing or holding steady always keeps the discount, unchanged from
+    # the pre-8.65 behaviour.
     carried_discounts: dict = {}
+    old_qty_by_product: dict = {}
     if existing_line_ids:
         try:
-            for el in odoo.read("sale.order.line", existing_line_ids, fields=["product_id", "discount", "display_type", "is_downpayment"]):
-                if el.get("display_type") or el.get("is_downpayment") or not el.get("discount"):
+            for el in odoo.read("sale.order.line", existing_line_ids, fields=["product_id", "discount", "product_uom_qty", "display_type", "is_downpayment"]):
+                if el.get("display_type") or el.get("is_downpayment"):
                     continue
                 pid = el["product_id"][0] if isinstance(el.get("product_id"), (list, tuple)) else el.get("product_id")
-                carried_discounts.setdefault(pid, []).append(el["discount"])
+                old_qty_by_product[pid] = old_qty_by_product.get(pid, 0) + (el.get("product_uom_qty") or 0)
+                if el.get("discount"):
+                    carried_discounts.setdefault(pid, []).append(el["discount"])
         except Exception:
             logger.warning("update_order_from_ticket: could not read existing line discounts for order %s", order_id)
         try:
@@ -1513,6 +1532,31 @@ async def update_order_from_ticket(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Odoo error unlinking lines: {str(e)}")
 
+    new_qty_by_product: dict = {}
+    for l in body.order_line:
+        new_qty_by_product[l.product_id] = new_qty_by_product.get(l.product_id, 0) + l.product_uom_qty
+    forfeited_pids = [
+        pid for pid in carried_discounts
+        if new_qty_by_product.get(pid, 0) < old_qty_by_product.get(pid, 0)
+    ]
+    forfeitures: list = []
+    if forfeited_pids:
+        try:
+            names = {p["id"]: p["name"] for p in odoo.read("product.product", forfeited_pids, fields=["name"])}
+        except Exception:
+            names = {}
+        for pid in forfeited_pids:
+            forfeitures.append({
+                "product_id": pid, "product_name": names.get(pid, f"Product #{pid}"),
+                "old_qty": old_qty_by_product.get(pid, 0), "new_qty": new_qty_by_product.get(pid, 0),
+                "old_pct": carried_discounts[pid][0] if carried_discounts.get(pid) else 0,
+                "at": datetime.now(timezone.utc),
+            })
+            carried_discounts[pid] = []  # never re-applied below
+
+    final_lines_count = 0
+    final_pct_sum = 0.0
+    final_total_amount = 0.0
     try:
         for l in body.order_line:
             line_vals = {
@@ -1522,7 +1566,11 @@ async def update_order_from_ticket(
                 "price_unit": round(l.price_unit, 2),
             }
             if carried_discounts.get(l.product_id):
-                line_vals["discount"] = carried_discounts[l.product_id].pop(0)
+                pct = carried_discounts[l.product_id].pop(0)
+                line_vals["discount"] = pct
+                final_lines_count += 1
+                final_pct_sum += pct
+                final_total_amount += l.product_uom_qty * l.price_unit * (pct / 100)
             if l.name:
                 line_vals["name"] = l.name
             odoo.create("sale.order.line", line_vals, context=ctx)
@@ -1544,25 +1592,40 @@ async def update_order_from_ticket(
         timeline_note += f". {body.note}"
 
     mongo_set = {"updated_at": now, **ticket_field_updates}
-    await col("tickets").update_one(
-        {"_id": oid},
-        {
-            "$set": mongo_set,
-            "$push": {"stage_history": {
-                "status": ticket["status"], "exit_status": None,
-                "actor_id": current_user["id"], "actor_name": _actor(current_user),
-                "at": now, "note": timeline_note,
-            }},
-        },
-    )
+    stage_history_entries = [{
+        "status": ticket["status"], "exit_status": None,
+        "actor_id": current_user["id"], "actor_name": _actor(current_user),
+        "at": now, "note": timeline_note,
+    }]
+    push_clause: dict = {"stage_history": {"$each": stage_history_entries}}
+    # 8.65 — a forfeiture only means something if there's a live decision to
+    # adjust; a ticket with no last_discount_decision at all (or one whose
+    # only decision was "rejected"/"cancelled", which never applied anything)
+    # has nothing to recompute. Recomputes lines_count/avg_pct/total_amount
+    # from what's ACTUALLY still applied post-edit (final_* accumulated in
+    # the write loop above, which already excludes forfeited products) —
+    # the banner must reflect reality, not the original approval's stale
+    # figures, once a line's discount has been zeroed out from under it.
+    if forfeitures and (ticket.get("last_discount_decision") or {}).get("status") in ("approved", "countered"):
+        mongo_set["last_discount_decision.lines_count"] = final_lines_count
+        mongo_set["last_discount_decision.avg_pct"] = (final_pct_sum / final_lines_count) if final_lines_count else 0
+        mongo_set["last_discount_decision.total_amount"] = final_total_amount
+        push_clause["last_discount_decision.forfeitures"] = {"$each": forfeitures}
+        forfeit_summary = ", ".join(f"{f['product_name']} ({f['old_qty']}→{f['new_qty']})" for f in forfeitures)
+        stage_history_entries.append({
+            "status": ticket["status"], "exit_status": None,
+            "actor_id": current_user["id"], "actor_name": _actor(current_user),
+            "at": now, "note": f"Discount forfeited: quantity reduced on {forfeit_summary} — discount removed for the affected line(s)",
+        })
+    await col("tickets").update_one({"_id": oid}, {"$set": mongo_set, "$push": push_clause})
     await audit_log(
         "ticket.update_order", "ticket", ticket_id,
         entity_label=ticket_field_updates.get("customer_name", ticket.get("customer_name", "")),
         user=current_user,
-        after={"order_id": order_id, "line_count": n, **ticket_field_updates},
+        after={"order_id": order_id, "line_count": n, **ticket_field_updates, "discount_forfeitures": forfeitures or None},
     )
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
-    return {"success": True, "odoo_order_id": order_id}
+    return {"success": True, "odoo_order_id": order_id, "discounts_forfeited": forfeitures}
 
 
 async def _send_quote_impl(ticket_id: str, oid: ObjectId, ticket: dict, current_user: dict, background_tasks: BackgroundTasks, recipients: Optional[List[str]] = None) -> dict:

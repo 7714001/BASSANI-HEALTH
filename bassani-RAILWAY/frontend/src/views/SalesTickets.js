@@ -715,11 +715,25 @@ export default function SalesTickets() {
   const [discountMode, setDiscountMode] = useState("amount");
 
   const openDiscountModal = () => {
-    setDiscountLines((detailOrder.lines || []).map(l => ({
-      product_id: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
-      product_name: l.name || (Array.isArray(l.product_id) ? l.product_id[1] : ""),
-      qty: l.product_uom_qty, unit_price: l.price_unit, pct: "", amt: "",
-    })));
+    // Prefilled from the line's live Odoo discount (2026-09-30) — a ticket
+    // can be re-requested any number of times (a decided request never
+    // blocks a new one, only a still-pending one does: create_discount_request
+    // only 400s on discount_status === "pending"); a new approval simply
+    // overwrites the line's discount % in Odoo when decided, it never stacks
+    // with or is blocked by the prior one. Prefilling the modal with what's
+    // currently applied means "the client wants to try a different amount"
+    // starts from the real current number instead of a blank field.
+    setDiscountLines((detailOrder.lines || []).map(l => {
+      const pct = l.discount > 0 ? Number(l.discount) : "";
+      return {
+        product_id: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
+        product_name: l.name || (Array.isArray(l.product_id) ? l.product_id[1] : ""),
+        qty: l.product_uom_qty, unit_price: l.price_unit,
+        pct: pct === "" ? "" : pct.toFixed(2),
+        amt: pct === "" ? "" : (l.price_unit * pct / 100).toFixed(2),
+        origPct: pct, // immutable reference — never edited, used only to show "(currently applied)"
+      };
+    }));
     setDiscountReason("");
     setDiscountMode("amount");
     setDiscountModal(true);
@@ -920,6 +934,12 @@ export default function SalesTickets() {
   const [quoteDraftActive, setQuoteDraftActive] = useState(false); // a local draft is currently applied — shows "Discard Draft"
   const [quoteDraftSavedAt, setQuoteDraftSavedAt] = useState(null); // last successful local save, for the "Draft saved" indicator
   const quoteDraftSkipNextSave = useRef(false); // true right after opening/restoring, so that load isn't itself re-saved as an "edit"
+  // 8.65 — immutable snapshot of each discounted product's quantity at the
+  // moment Edit Quote was opened (never mutated afterward, unlike
+  // quoteLines itself), so submitQuote can detect a quantity decrease on a
+  // discounted line before saving. Keyed by product_id: { qty, pct, name }.
+  const originalDiscountedQtyRef = useRef({});
+  const [discountForfeitWarning, setDiscountForfeitWarning] = useState(null); // null | [{product_id, product_name, old_qty, new_qty, pct}]
   const quoteDraftSaveTimer    = useRef(null);
 
   useEffect(() => {
@@ -1107,6 +1127,20 @@ export default function SalesTickets() {
   const openQuoteEdit = async () => {
     quoteDraftSkipNextSave.current = true;
     const lines = detailOrderToQuoteLines();
+    // 8.65 — snapshot each discounted product's qty right now, before any
+    // edits happen, so submitQuote can tell a genuine decrease from this
+    // baseline apart from a qty that was always this size.
+    const snapshot = {};
+    for (const l of lines) {
+      if (l.discount > 0) {
+        const existing = snapshot[l.product_id];
+        snapshot[l.product_id] = {
+          qty: (existing?.qty || 0) + Number(l.product_uom_qty || 0),
+          pct: l.discount, name: l._product_label || l.name || `Product #${l.product_id}`,
+        };
+      }
+    }
+    originalDiscountedQtyRef.current = snapshot;
     // Init customer from the live Odoo order, not the stale ticket field
     const currentCustomer = {
       id:   Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : null,
@@ -1241,9 +1275,37 @@ export default function SalesTickets() {
     finally { setSaving(false); }
   };
 
-  const submitQuote = async () => {
+  // 8.65 — entry point the Save button actually calls. Only intercepts in
+  // edit mode (create mode has no prior discount to protect); if any
+  // discounted product's quantity has been reduced below its snapshot at
+  // openQuoteEdit() time, the save is held and a confirmation is shown
+  // instead of silently forfeiting — doSubmitQuote (the real save) only
+  // runs once that's explicitly confirmed, or immediately if nothing's at risk.
+  const submitQuote = () => {
     const validLines = quoteLines.filter(l => l.product_id);
     if (validLines.length === 0) return toast.error("Add at least one product before saving");
+    if (quoteMode === "edit") {
+      const newQtyByProduct = {};
+      for (const l of validLines) {
+        newQtyByProduct[l.product_id] = (newQtyByProduct[l.product_id] || 0) + Number(l.product_uom_qty || 0);
+      }
+      const forfeits = Object.entries(originalDiscountedQtyRef.current)
+        .filter(([pid, info]) => (newQtyByProduct[pid] || 0) < info.qty)
+        .map(([pid, info]) => ({
+          product_id: pid, product_name: info.name, pct: info.pct,
+          old_qty: info.qty, new_qty: newQtyByProduct[pid] || 0,
+        }));
+      if (forfeits.length > 0) {
+        setDiscountForfeitWarning(forfeits);
+        return;
+      }
+    }
+    doSubmitQuote();
+  };
+
+  const doSubmitQuote = async () => {
+    const validLines = quoteLines.filter(l => l.product_id);
+    setDiscountForfeitWarning(null);
     setQuoteSaving(true);
     const tid = quoteTicket?.id;
     const linePayload = validLines.map(l => ({
@@ -1252,7 +1314,7 @@ export default function SalesTickets() {
     }));
     try {
       if (quoteMode === "edit") {
-        await api.put(`/api/tickets/${tid}/update-order`, {
+        const r = await api.put(`/api/tickets/${tid}/update-order`, {
           order_line: linePayload,
           customer_id:        quoteCustomer?.id || undefined,
           partner_shipping_id: quoteShippingId ? parseInt(quoteShippingId) : undefined,
@@ -1260,7 +1322,16 @@ export default function SalesTickets() {
           payment_term_id:     quotePaymentTermId ? parseInt(quotePaymentTermId) : undefined,
           note: quoteNote || undefined,
         });
-        toast.success("Quote updated in Odoo");
+        // Defense in depth: the backend enforces this regardless of whether
+        // the frontend's own pre-check above caught it (e.g. a discount
+        // approved by someone else in another tab moments ago). Surfaces it
+        // even if that happens.
+        const forfeited = r.data?.discounts_forfeited || [];
+        if (forfeited.length > 0) {
+          toast(`Discount forfeited on ${forfeited.map(f => f.product_name).join(", ")} — quantity was reduced below the approved amount`, { icon: "⚠️", duration: 6000 });
+        } else {
+          toast.success("Quote updated in Odoo");
+        }
       } else {
         // create-order deliberately does NOT send the quote (reverted
         // 2026-09-07 — a direct-inquiry clerk routinely needs to come back
@@ -1937,6 +2008,19 @@ export default function SalesTickets() {
                                     <p className="text-xs mt-1.5 bg-white/70 rounded px-2 py-1.5 border border-black/5">
                                       "{d.note}"
                                     </p>
+                                  )}
+                                  {/* 8.65 — a later Edit Quote reduced quantity below what this
+                                      discount was granted for; the figures above already reflect
+                                      the surviving discount only, this explains why they changed. */}
+                                  {d.forfeitures?.length > 0 && (
+                                    <div className="text-xs mt-1.5 bg-red-50 border border-red-100 rounded px-2 py-1.5 text-red-700">
+                                      <p className="font-semibold">Partially forfeited — quantity reduced:</p>
+                                      {d.forfeitures.map((f, i) => (
+                                        <p key={i} className="mt-0.5">
+                                          {f.product_name}: {f.old_qty} → {f.new_qty} units ({Number(f.old_pct).toFixed(2)}% removed)
+                                        </p>
+                                      ))}
+                                    </div>
                                   )}
                                   <p className="text-[10px] opacity-60 mt-1.5">{fmtDateTime(d.decided_at)}</p>
                                 </div>
@@ -3651,7 +3735,14 @@ export default function SalesTickets() {
                     const lineTotal = l.unit_price * (pct / 100) * l.qty;
                     return (
                     <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
-                      <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
+                      <td className="p-2 pl-3 text-gray-800">
+                        {l.product_name}
+                        {l.origPct > 0 && (
+                          <span className="block text-[10px] text-teal-600 mt-0.5">
+                            {l.origPct.toFixed(2)}% currently applied — edit to request a different rate
+                          </span>
+                        )}
+                      </td>
                       <td className="p-2 text-right text-gray-500">{l.qty}</td>
                       <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
                       <td className="p-2">
@@ -3987,6 +4078,38 @@ export default function SalesTickets() {
           warehouseId={quoteWarehouseId ? parseInt(quoteWarehouseId) : undefined}
           onAdd={handlePickerAdd}
         />
+
+        {/* 8.65 — a discount was granted against a specific quantity; reducing
+            it below that would let the discount silently ride along on a
+            smaller deal than it was approved for. Backend enforces this
+            unconditionally regardless of what happens here; this is purely
+            so staff see the consequence before it happens rather than being
+            surprised by a changed total afterward. */}
+        {discountForfeitWarning && (
+          <Modal title="This will forfeit an approved discount" onClose={() => setDiscountForfeitWarning(null)}>
+            <p className="text-sm text-gray-600 mb-3">
+              The quantity below has been reduced under what its approved discount was granted for.
+              Saving will remove the discount on the affected line(s) — this can't be undone without
+              a new discount request.
+            </p>
+            <div className="border border-amber-200 bg-amber-50 rounded-lg divide-y divide-amber-100 mb-4">
+              {discountForfeitWarning.map(f => (
+                <div key={f.product_id} className="px-3 py-2 text-sm">
+                  <p className="font-medium text-amber-800">{f.product_name}</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {f.old_qty} → {f.new_qty} units — {Number(f.pct).toFixed(2)}% discount will be removed
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setDiscountForfeitWarning(null)}>Cancel, Keep Editing</BtnSecondary>
+              <BtnDanger onClick={doSubmitQuote} disabled={quoteSaving}>
+                {quoteSaving ? "Saving…" : "Save & Forfeit Discount"}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
