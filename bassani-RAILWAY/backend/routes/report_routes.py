@@ -756,9 +756,19 @@ async def discounts_by_customer(
         {"$limit": 50},
     ]
     rows = await col("discount_requests").aggregate(pipeline).to_list(length=50)
+    # r["_id"] uses .get(), not [...] (found live, Sentry #150266293): Mongo
+    # omits a $group _id subfield ENTIRELY (not null) when the source field
+    # is completely absent from a document, not just unset — every
+    # discount_requests doc created before 8.63 shipped (2026-09-29) has no
+    # customer_partner_id key at all, so "partner_id" was missing from the
+    # _id dict outright and a plain [...] lookup raised KeyError. avg_pct is
+    # similarly None for a legacy doc with no final_lines array at all (the
+    # $addFields $avg/$sum above run per-document, outside $group, where a
+    # missing array evaluates to null/0 rather than being skipped the way
+    # $unwind drops it in discounts_by_product's pipeline).
     return {"customers": [
-        {"rank": i + 1, "customer_partner_id": r["_id"]["partner_id"], "customer_name": r["_id"]["name"] or "Unknown",
-         "total_discount": r["total_discount"], "request_count": r["request_count"], "avg_pct": r["avg_pct"]}
+        {"rank": i + 1, "customer_partner_id": r["_id"].get("partner_id"), "customer_name": r["_id"].get("name") or "Unknown",
+         "total_discount": r.get("total_discount") or 0, "request_count": r["request_count"], "avg_pct": r.get("avg_pct") or 0}
         for i, r in enumerate(rows)
     ]}
 
