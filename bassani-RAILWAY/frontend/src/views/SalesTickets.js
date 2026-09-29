@@ -678,24 +678,60 @@ export default function SalesTickets() {
   // lines (detailOrder.lines), not the in-progress quote builder state, so
   // it can never disagree with what Odoo will actually apply the % to.
   const [discountModal, setDiscountModal] = useState(false);
-  const [discountLines, setDiscountLines] = useState([]);   // [{product_id, product_name, qty, unit_price, pct}]
+  const [discountLines, setDiscountLines] = useState([]);   // [{product_id, product_name, qty, unit_price, pct, amt}]
   const [discountReason, setDiscountReason] = useState("");
   const [discountSubmitting, setDiscountSubmitting] = useState(false);
   const [withdrawingDiscount, setWithdrawingDiscount] = useState(false);
   const [withdrawDiscountConfirm, setWithdrawDiscountConfirm] = useState(false);
-  // Amount (R) / Percent toggle (2026-09-29) — pct is always the canonical
-  // value actually submitted; this only changes what the requester types.
-  const [discountMode, setDiscountMode] = useState("pct");
+  // Amount (R) / Percent toggle (2026-09-29, defaulted to Rand + rewritten
+  // 2026-09-30 after live testing found two real bugs). pct is always the
+  // canonical value actually submitted. Both `pct` and `amt` are kept as
+  // independent raw fields on each line — whichever one the user is
+  // currently typing into is bound straight to its own raw string with zero
+  // reformatting; the *other* field is recomputed in the background only
+  // (never fed back into the field being typed) and is re-formatted to a
+  // clean 2dp string once, at the moment the mode is switched, not on every
+  // keystroke. Feeding a live-recomputed, reformatted value back into the
+  // field the user is actively typing was the root cause of "type 50, see
+  // 5.00, can't backspace" — every keystroke was round-tripping through a
+  // percent conversion and being re-rounded mid-type.
+  const [discountMode, setDiscountMode] = useState("amount");
 
   const openDiscountModal = () => {
     setDiscountLines((detailOrder.lines || []).map(l => ({
       product_id: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
       product_name: l.name || (Array.isArray(l.product_id) ? l.product_id[1] : ""),
-      qty: l.product_uom_qty, unit_price: l.price_unit, pct: "",
+      qty: l.product_uom_qty, unit_price: l.price_unit, pct: "", amt: "",
     })));
     setDiscountReason("");
-    setDiscountMode("pct");
+    setDiscountMode("amount");
     setDiscountModal(true);
+  };
+
+  // The Rand field is always a per-unit discount off Unit Price (unit_price
+  // * pct / 100) — not qty * unit_price. A discount % in Odoo is a per-unit
+  // rate; converting the Rand box against the full line subtotal instead of
+  // the unit price meant "R250 unit price, 10%" showed R50 for a qty-2 line
+  // instead of the expected R25, which read as a bug even though the qty*2
+  // math was technically consistent with the line total. The line's full
+  // Rand impact (qty included) is still shown as a secondary figure so nothing's hidden.
+  const setDiscountPct = (i, v) => setDiscountLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const n = Number(v);
+    return { ...x, pct: v, amt: v === "" ? "" : (isNaN(n) ? x.amt : n / 100 * x.unit_price) };
+  }));
+  const setDiscountAmt = (i, v) => setDiscountLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const n = Number(v);
+    return { ...x, amt: v, pct: v === "" || !x.unit_price ? "" : (isNaN(n) ? x.pct : n / x.unit_price * 100) };
+  }));
+  // Re-formats only the field that's about to become visible/editable, once,
+  // at the moment of switching — never mid-type.
+  const switchDiscountMode = (mode) => {
+    setDiscountMode(mode);
+    setDiscountLines(ls => ls.map(x => mode === "pct"
+      ? { ...x, pct: x.pct === "" ? "" : Number(x.pct).toFixed(2) }
+      : { ...x, amt: x.amt === "" ? "" : Number(x.amt).toFixed(2) }));
   };
 
   const submitDiscountRequest = async () => {
@@ -3527,7 +3563,7 @@ export default function SalesTickets() {
           </Modal>
         )}
         {discountModal && (
-          <Modal title="Request Discount" onClose={() => setDiscountModal(false)}>
+          <Modal title="Request Discount" onClose={() => setDiscountModal(false)} width="max-w-3xl">
             <p className="text-sm text-gray-500 mb-3">
               Enter a discount on any line you want reviewed, plus a reason. The quote stays at normal
               pricing until a holder of Discount Approvals decides this request.
@@ -3535,56 +3571,60 @@ export default function SalesTickets() {
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
               <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
-                <button type="button" onClick={() => setDiscountMode("pct")}
+                <button type="button" onClick={() => switchDiscountMode("pct")}
                   className={`px-3 py-1 text-xs font-medium ${discountMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
                   Percent
                 </button>
-                <button type="button" onClick={() => setDiscountMode("amount")}
+                <button type="button" onClick={() => switchDiscountMode("amount")}
                   className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${discountMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
                   Rand Amount
                 </button>
               </div>
             </div>
-            <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg mb-4">
+            <div className="max-h-[28rem] overflow-y-auto border border-gray-100 rounded-lg mb-4">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
+                  <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
                     <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
                     <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
                     <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Unit Price</th>
-                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Discount</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-32">Discount / Unit</th>
+                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Line Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {discountLines.map((l, i) => {
-                    const subtotal = l.qty * l.unit_price;
                     const pct = l.pct === "" ? 0 : Number(l.pct);
-                    const amount = subtotal * pct / 100;
-                    const onPctChange = (v) => setDiscountLines(ls => ls.map((x, xi) => xi === i ? { ...x, pct: v } : x));
-                    const onAmountChange = (v) => {
-                      const amt = v === "" ? "" : Number(v);
-                      const newPct = amt === "" || subtotal === 0 ? "" : (amt / subtotal) * 100;
-                      onPctChange(newPct);
-                    };
+                    const perUnitAmt = l.amt === "" ? 0 : Number(l.amt);
+                    const lineTotal = l.unit_price * (pct / 100) * l.qty;
                     return (
                     <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
                       <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
                       <td className="p-2 text-right text-gray-500">{l.qty}</td>
                       <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
-                      <td className="p-2 pr-3">
-                        <input
-                          type="number" min="0" step="0.01"
-                          max={discountMode === "pct" ? 100 : undefined}
-                          value={discountMode === "pct" ? l.pct : (amount || amount === 0 ? (l.pct === "" ? "" : amount.toFixed(2)) : "")}
-                          onChange={e => discountMode === "pct" ? onPctChange(e.target.value) : onAmountChange(e.target.value)}
-                          placeholder="0"
-                          className="w-full text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
-                        />
-                        {l.pct !== "" && (
+                      <td className="p-2">
+                        <div className="flex items-center justify-end gap-1">
+                          {discountMode === "amount" && <span className="text-gray-400 text-xs">R</span>}
+                          <input
+                            type="number" min="0" step="0.01"
+                            max={discountMode === "pct" ? 100 : undefined}
+                            value={discountMode === "pct" ? l.pct : l.amt}
+                            onChange={e => discountMode === "pct" ? setDiscountPct(i, e.target.value) : setDiscountAmt(i, e.target.value)}
+                            placeholder="0"
+                            className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                          />
+                          {discountMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
+                        </div>
+                        {(l.pct !== "" || l.amt !== "") && (
                           <span className="block text-[10px] text-gray-400 text-right mt-0.5">
-                            {discountMode === "pct" ? fmtR(amount) : `${pct.toFixed(2)}%`}
+                            {discountMode === "pct" ? `${fmtR(perUnitAmt)} off/unit` : `${pct.toFixed(2)}% off/unit`}
                           </span>
                         )}
+                      </td>
+                      <td className="p-2 pr-3 text-right">
+                        {pct > 0 ? (
+                          <span className="font-semibold text-amber-700">{fmtR(lineTotal)}</span>
+                        ) : <span className="text-gray-300">—</span>}
                       </td>
                     </tr>
                     );

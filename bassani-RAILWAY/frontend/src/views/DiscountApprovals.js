@@ -461,20 +461,48 @@ export default function DiscountApprovals() {
   const [counterLines, setCounterLines] = useState([]);
   const [counterNote, setCounterNote] = useState("");
   const [countering, setCountering] = useState(false);
-  // Amount (R) / Percent toggle (2026-09-29) — same idea as the request
-  // modal in SalesTickets.js. approved_pct is always the value actually
-  // submitted; this only changes what the approver types into the input.
-  const [counterMode, setCounterMode] = useState("pct");
+  // Amount (R) / Percent toggle (2026-09-29, defaulted to Rand + rewritten
+  // 2026-09-30 after live testing — see the identical fix/rationale on
+  // SalesTickets.js's Request Discount modal for the two bugs this fixes:
+  // the Rand figure now converts against unit_price alone, not qty *
+  // unit_price, so it matches what's shown in the Unit Price column; and
+  // the input no longer round-trips through a live percent conversion on
+  // every keystroke, which was breaking typing/backspacing entirely.
+  // approved_pct is always the canonical value actually submitted.
+  const [counterMode, setCounterMode] = useState("amount");
   const openCounter = (req) => {
     setCounterTarget(req);
-    setCounterMode("pct");
+    setCounterMode("amount");
     // Only the lines actually asked about (requested_pct > 0) are
     // counterable — the rest of req.lines is full-order context only. The
     // backend now requires every one of these to be resolved in the same
     // counter call, so none can be dropped from this list before submit.
     setCounterLines((req.lines || []).filter(l => (l.requested_pct || 0) > 0)
-      .map(l => ({ product_id: l.product_id, product_name: l.product_name, approved_pct: l.requested_pct })));
+      .map(l => ({
+        product_id: l.product_id, product_name: l.product_name,
+        approved_pct: Number(l.requested_pct).toFixed(2),
+        approved_amt: (l.unit_price * l.requested_pct / 100).toFixed(2),
+      })));
     setCounterNote("");
+  };
+  const setCounterPct = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
+    const n = Number(v);
+    return { ...x, approved_pct: v, approved_amt: v === "" ? "" : (isNaN(n) ? x.approved_amt : n / 100 * (original?.unit_price || 0)) };
+  }));
+  const setCounterAmt = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
+    const n = Number(v);
+    const unitPrice = original?.unit_price || 0;
+    return { ...x, approved_amt: v, approved_pct: v === "" || !unitPrice ? "" : (isNaN(n) ? x.approved_pct : n / unitPrice * 100) };
+  }));
+  const switchCounterMode = (mode) => {
+    setCounterMode(mode);
+    setCounterLines(ls => ls.map(x => mode === "pct"
+      ? { ...x, approved_pct: x.approved_pct === "" ? "" : Number(x.approved_pct).toFixed(2) }
+      : { ...x, approved_amt: x.approved_amt === "" ? "" : Number(x.approved_amt).toFixed(2) }));
   };
   const doCounter = async () => {
     setCountering(true);
@@ -621,7 +649,7 @@ export default function DiscountApprovals() {
       )}
 
       {counterTarget && (
-        <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)}>
+        <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)} width="max-w-3xl">
           <p className="text-sm text-gray-600 mb-3">
             Apply a different discount than requested for {counterTarget.order_name}. This is applied
             immediately, same as an approval. Every originally requested line must be given a rate below,
@@ -630,56 +658,60 @@ export default function DiscountApprovals() {
           <div className="flex items-center gap-2 mb-3">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
             <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
-              <button type="button" onClick={() => setCounterMode("pct")}
+              <button type="button" onClick={() => switchCounterMode("pct")}
                 className={`px-3 py-1 text-xs font-medium ${counterMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
                 Percent
               </button>
-              <button type="button" onClick={() => setCounterMode("amount")}
+              <button type="button" onClick={() => switchCounterMode("amount")}
                 className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${counterMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
                 Rand Amount
               </button>
             </div>
           </div>
-          <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg mb-4">
+          <div className="max-h-[28rem] overflow-y-auto border border-gray-100 rounded-lg mb-4">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-100">
+                <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
                   <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Requested</th>
-                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Approved</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Requested / Unit</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-32">Approved / Unit</th>
+                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Line Total</th>
                 </tr>
               </thead>
               <tbody>
                 {counterLines.map((l, i) => {
                   const original = counterTarget.lines.find(x => x.product_id === l.product_id);
-                  const subtotal = (original?.qty || 0) * (original?.unit_price || 0);
+                  const unitPrice = original?.unit_price || 0;
+                  const qty = original?.qty || 0;
                   const pct = l.approved_pct === "" ? 0 : Number(l.approved_pct);
-                  const amount = subtotal * pct / 100;
-                  const requestedAmount = subtotal * (original?.requested_pct || 0) / 100;
-                  const onPctChange = (v) => setCounterLines(ls => ls.map((x, xi) => xi === i ? { ...x, approved_pct: v } : x));
-                  const onAmountChange = (v) => {
-                    const amt = v === "" ? "" : Number(v);
-                    const newPct = amt === "" || subtotal === 0 ? "" : (amt / subtotal) * 100;
-                    onPctChange(newPct === "" ? "" : newPct);
-                  };
+                  const perUnitAmt = l.approved_amt === "" ? 0 : Number(l.approved_amt);
+                  const lineTotal = unitPrice * (pct / 100) * qty;
+                  const requestedPerUnit = unitPrice * (original?.requested_pct || 0) / 100;
                   return (
                     <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
                       <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
                       <td className="p-2 text-right text-gray-500">
                         {Number(original?.requested_pct || 0).toFixed(2)}%
-                        <span className="block text-[10px] text-gray-300">{fmtR(requestedAmount)}</span>
+                        <span className="block text-[10px] text-gray-300">{fmtR(requestedPerUnit)}</span>
                       </td>
-                      <td className="p-2 pr-3">
-                        <input
-                          type="number" min="0" step="0.01"
-                          max={counterMode === "pct" ? 100 : undefined}
-                          value={counterMode === "pct" ? l.approved_pct : (amount || amount === 0 ? amount.toFixed(2) : "")}
-                          onChange={e => counterMode === "pct" ? onPctChange(e.target.value) : onAmountChange(e.target.value)}
-                          className="w-full text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
-                        />
+                      <td className="p-2">
+                        <div className="flex items-center justify-end gap-1">
+                          {counterMode === "amount" && <span className="text-gray-400 text-xs">R</span>}
+                          <input
+                            type="number" min="0" step="0.01"
+                            max={counterMode === "pct" ? 100 : undefined}
+                            value={counterMode === "pct" ? l.approved_pct : l.approved_amt}
+                            onChange={e => counterMode === "pct" ? setCounterPct(i, e.target.value) : setCounterAmt(i, e.target.value)}
+                            className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                          />
+                          {counterMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
+                        </div>
                         <span className="block text-[10px] text-gray-400 text-right mt-0.5">
-                          {counterMode === "pct" ? fmtR(amount) : `${pct.toFixed(2)}%`}
+                          {counterMode === "pct" ? `${fmtR(perUnitAmt)}` : `${pct.toFixed(2)}%`}
                         </span>
+                      </td>
+                      <td className="p-2 pr-3 text-right">
+                        {pct > 0 ? <span className="font-semibold text-teal-700">{fmtR(lineTotal)}</span> : <span className="text-gray-300">—</span>}
                       </td>
                     </tr>
                   );
