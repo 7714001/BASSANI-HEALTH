@@ -23,6 +23,8 @@ from services.email_service import (
     send_order_confirmed_partial_customer,
     send_pop_uploaded_notification,
     send_discount_request_notification,
+    send_support_case_new_internal, send_support_case_received, send_support_sla_escalation,
+    send_order_feedback_request,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -58,6 +60,35 @@ TEST_EMAIL_SENDERS: dict = {
         reason="Bulk order, first-time customer.",
         lines=[{"product_name": "Test Flower 1G", "requested_pct": 10.0}],
         request_id="000000000000000000000000",
+    ),
+    # Phase 28 support desk — one list per category, same template for each.
+    **{
+        key: (lambda label: (lambda to: send_support_case_new_internal(
+            [to], case_ref="SUP-00001", case_id="000000000000000000000000",
+            subject="Test request subject", customer_name="Test Pharmacy (Pty) Ltd",
+            category_label=label, priority_label="Normal", raised_by="Jane Customer",
+            message="This is a test message from the Bassani Health support desk.",
+            order_ref="S00999",
+        )))(label)
+        for key, label in (
+            ("support_order_to", "Order or delivery query"),
+            ("support_invoice_to", "Invoice or payment query"),
+            ("support_quality_to", "Product quality complaint"),
+            ("support_general_to", "General query"),
+        )
+    },
+    "support_escalation_to": lambda to: send_support_sla_escalation(
+        [to], items=[{"case_ref": "SUP-00001", "case_id": "000000000000000000000000",
+                      "customer_name": "Test Pharmacy (Pty) Ltd", "priority_label": "High", "hours_waiting": 9}],
+    ),
+    # Preview-only — always sent to the customer contact on the request itself.
+    "support_customer_ack": lambda to: send_support_case_received(
+        to, contact_name="Jane Customer", case_ref="SUP-00001", subject="Test request subject",
+        category_label="Order or delivery query", case_url=f"{settings.portal_url}/help/case/test-token",
+    ),
+    "order_feedback_request": lambda to: send_order_feedback_request(
+        to, customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        feedback_url=f"{settings.portal_url}/help/order/test-token?feedback=1",
     ),
     "qa_approval_to": lambda to: send_qa_approval_needed(
         [to], order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_id="999",
@@ -158,6 +189,14 @@ class EmailRoutingConfig(BaseModel):
     recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
     pop_uploaded_to:             List[str] = []  # customer/reseller uploaded a proof of payment
     discount_request_to:         List[str] = []  # 8.61 — staff requested a discount, needs discounts.approve review
+    # Phase 28 — customer support desk. A request with an empty category list
+    # falls back to support_general_to, then to the support_email env var, so
+    # a customer complaint can never silently reach nobody.
+    support_order_to:            List[str] = []  # order / delivery queries
+    support_invoice_to:          List[str] = []  # invoice / payment queries
+    support_quality_to:          List[str] = []  # product quality complaints (QA/RP)
+    support_general_to:          List[str] = []  # account, feedback, anything else
+    support_escalation_to:       List[str] = []  # requests past their response target
 
 
 async def get_email_routing() -> dict:
@@ -185,6 +224,11 @@ async def get_email_routing() -> dict:
         "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
         "pop_uploaded_to":          doc.get("pop_uploaded_to", []),
         "discount_request_to":      doc.get("discount_request_to", []),
+        "support_order_to":         doc.get("support_order_to", []),
+        "support_invoice_to":       doc.get("support_invoice_to", []),
+        "support_quality_to":       doc.get("support_quality_to", []),
+        "support_general_to":       doc.get("support_general_to", []),
+        "support_escalation_to":    doc.get("support_escalation_to", []),
     }
 
 

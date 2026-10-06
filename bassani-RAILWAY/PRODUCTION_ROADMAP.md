@@ -37,6 +37,7 @@
 | 24 | Named Patient & Section 21 Compliance Archive (Cannati) | 🔵 Concept — Needs Scoping | One-way ingest from Cannaverse's Cannati store: patients, S21 applications, scripts. Depends on Phase 14.10–14.13 (Cannati is a connected store) |
 | 25 | Customer Self-Service Portal Accounts & WhatsApp Bot API | 🟡 In Progress | 25.0/25.1 complete (2026-08-21) — `customer` portal role live: admin-initiated per-contact login provisioning, company-level order/invoice sharing, self-service catalogue/orders/invoices/dashboard. 25.1.1 complete (2026-08-25) — portal login management + duplicate-login merge tool, reachable from the customer profile and Users screen. 25.2–25.6 (WhatsApp Bot API) still Concept — Needs Scoping, now layered on top of the shipped role/data model |
 | 26 | Sage Business Cloud Accounting Sync | 🔴 Not Started | Architecture fully designed 2026-08-26 (evaluated and rejected the `tl_sage_connector` Odoo App Store module — manual-trigger only, no sales-order/stock coverage, unconfirmed Sage Business Cloud Accounting compatibility). Odoo stays master; Sage receives a one-way mirror of contacts/products/invoices/vendor bills, and only payment/reconciliation status flows back. Full staged/shadow-mode-first rollout plan below (26.1–26.7); deliberately not started yet — revisit once ready to run the technical spike against Bassani's real Sage sandbox |
+| 28 | Customer Support Desk (Queries, Complaints & Order Feedback) | 🟡 Built — awaiting testing | Built 2026-10-06: support queue + `support.*` permissions, signed no-login links in customer emails, QA/RP quality-complaint track, response targets + escalation, order ratings |
 
 **Status Key:** 🔴 Not Started · 🟡 In Progress · 🟢 Complete · ⏸ Deferred · 🔵 Concept (needs scoping)
 
@@ -5987,3 +5988,101 @@ Bassani's own spec named "Counter A / Counter B," with Counter A described as a 
 - `backend/services/batch_id.py` / `CLAUDE.md`'s Batch Traceability section — the existing lot/batch model this phase's per-line granularity must stay consistent with
 - `backend/auth.py` + `frontend/src/views/Users.js` — three-places permission model for the three new permission keys
 - `frontend/src/views/BankReconciliation.js` — UI shape `SageSyncDashboard.js` is built on
+
+
+---
+
+## Phase 28 — Customer Support Desk (Queries, Complaints & Order Feedback)
+
+**Status:** 🟡 Built 2026-10-06 — awaiting live testing
+
+### Context
+
+Before this phase there was no structured way for a customer to raise a query or complaint. Order Passport's "Need Help" card was a `mailto:` link to `support_email`; queries arrived in the Sales/Orders inboxes as untracked email with no owner, status, response target or audit trail; and an order-level messaging thread had been explicitly deferred (25.1.2). Product quality complaints, a GMP compliance event for a Schedule 6 business, had no recorded investigation path at all.
+
+The product owner's direction (2026-10-06): add an industry-standard helpdesk; declare which Bassani users handle requests via access rights; and, critically, **most customers have no portal login**, so they must be able to raise and follow up on queries and complaints from a link in their email, while customers who do have a login do it inside the portal.
+
+### Design decisions
+
+- **One queue, three ways in.** Portal users (customer/reseller roles) raise requests in-portal; customers without a login use signed links in the emails they already receive; staff log requests on a customer's behalf (phone, walk-in, email). Every path goes through the same `_create_case_core()`/`_add_message_core()` so behaviour cannot drift.
+- **No-login access via stateless signed links** (`backend/support_links.py`), not stored tokens. An *order* link (`/help/order/<token>`, 180 days) is embedded in the pro-forma, invoice, ready-for-collection and post-collection feedback emails; a *case* link (`/help/case/<token>`) is in every support email to the customer. Links carry an `aud` claim and no `sub`, so they can never be used as a login token (verified: the auth decoder rejects them with `InvalidAudienceError`). Scope is one order or one case only.
+- **MongoDB only** (`support_cases`, `order_feedback`), Architecture Principle #5. Odoo is read for order/invoice/customer context, never written.
+- **Product quality complaints are a compliance track inside the same queue** (EU GMP Chapter 8). Routed to QA/RP; only a `support.quality_review` holder can resolve or close one, and only after a recorded quality review (investigation, root cause, outcome, CAPA, recall decision, SAHPRA adverse-event report flag). A possible adverse reaction auto-escalates to Urgent.
+- **Industry-standard lifecycle:** New → Open → Awaiting Customer → Resolved → Closed. A staff reply hands the request to the customer (SLA clock stops); a customer reply hands it back (clock restarts) and reopens a resolved request. Resolved requests auto-close after 7 days; the customer can confirm and rate (CSAT) instead.
+- **Response targets per priority:** Urgent 4h, High 8h, Normal 24h, Low 48h (calendar hours), using the same tier thresholds as `services/age_tier.py` so "Overdue"/"At Risk" mean the same thing everywhere.
+- **Internal notes** visible only to staff, never sent to the customer.
+- **Order feedback:** a 1–5 rating offered once an order is collected (email + Order Passport). A rating of 1 or 2 automatically opens a follow-up request, so a detractor is never left unread in a report.
+- **Notifications never reach nobody:** category list → General list → `SUPPORT_EMAIL` env var fallback.
+
+### 28.0 — Permissions
+
+- [x] New `support` domain in `auth.py` (all three permission dicts) and `Users.js` (all three places): `view`, `respond`, `manage`, `quality_review`
+- [x] Role defaults: sales / orders_clerk / finance get view + respond; qa_manager / responsible_pharmacist get view + respond + quality_review; new admins get view only; vault_custodian nothing; full-permission admins everything
+- [x] Startup backfill in `server.py` applies each role's defaults to existing accounts that predate the domain
+
+### 28.1 — Backend: cases, messages, lifecycle (`routes/support_routes.py`)
+
+- [x] `support_cases` collection with sequential `SUP-00001` refs (`counters` collection), indexes in `server.py`
+- [x] Create (portal, staff on behalf), list (filters: status, type, assigned, waiting on, search, customer, order), detail, reply / internal note, update status/priority/type, assign (self with `respond`, anyone with `manage`), resolve (mandatory resolution note, emailed), close without resolving (`manage`), quality review (`quality_review`), customer rating, attachment download (presigned R2)
+- [x] External viewers scoped server-side: customer → its active company; reseller → customers it owns (7.13 ownership). Internal notes and quality review never returned to them
+- [x] Attachments: up to 5 files, 8MB each, PDF/images/Office/CSV/TXT, R2 key `support/{case_id}/…`; validated before any upload
+- [x] Linked Sales ticket's assignee is notified, and a note is added to that ticket's Activity Log
+- [x] Every staff action audit-logged via `audit_log()`
+
+### 28.2 — Backend: public signed-link endpoints
+
+- [x] `/api/public/support/order/{token}` (order summary, requests on that order, rating status), raise a request, rate the order
+- [x] `/api/public/support/case/{token}` read thread, reply (reopens if resolved), rate, download attachments
+- [x] Rate-limited via the shared `slowapi` limiter (reads 60/min, creates 10/hour, replies 30/hour)
+
+### 28.3 — Notifications, SLA and automation
+
+- [x] New routing keys in `EmailRoutingConfig`: `support_order_to`, `support_invoice_to`, `support_quality_to`, `support_general_to`, `support_escalation_to`; Send Test entries for each plus preview-only `support_customer_ack` and `order_feedback_request`
+- [x] Templates: request received (customer), new request (staff, URGENT prefix for adverse reactions), staff reply (customer), customer reply (assignee, else category team), assigned (assignee), resolved (customer, with rate/reopen link), past response target (digest), how did we do (customer)
+- [x] Hourly `run_support_sla_checks` (scheduler): escalate once per waiting period, auto-close resolved requests after 7 days
+- [x] Help link added to existing customer emails: pro-forma (order confirm), final invoice (automatic and manual send from a ticket), ready for collection. Standalone Invoices-page send left unchanged (no linked order to scope a link to)
+- [x] "How did we do?" email is a **manual** staff action (product owner, 2026-10-06), not automatic at collection: `POST /api/support/order-feedback/request` from a completed Sales ticket, with the standard recipient picker. Shown as the Next Step once the order is complete, then Resend in the Actions card's Customer Feedback group until the customer rates. Stamps `feedback_requested_at`/`by` and an Activity Log note on the ticket
+- [x] Fixed in passing: the ready-for-collection customer email showed the internal numeric order id instead of the real order number (e.g. `974` instead of `S00972`)
+
+### 28.4 — Frontend
+
+- [x] `views/Support.js` at `/support`: staff **Support Desk** (KPI tiles, filters, response-target badges, assignment, status/priority/type, internal notes, resolve/close, quality review card, Order Feedback report tab) and customer/reseller **Help & Support** (their requests, reply, confirm-and-rate, reopen by replying)
+- [x] `views/PublicSupport.js`: `/help/order/:token` and `/help/case/:token` no-login pages, independent of `UI.js`/`AuthContext`
+- [x] `components/SupportKit.js` (shared thread, composer, attachments, rating, form fields) and `components/NewSupportCaseModal.js` (portal + staff log-on-behalf)
+- [x] Nav: "Support Desk" (staff, `support.view`, badge = waiting on us), "Help & Support" (customer and reseller, badge = waiting on their reply)
+- [x] Order Passport: Need Help card raises a request about that order and lists existing ones; Rate This Order card once collected; staff Customer Support card (requests + rating, Log request)
+- [x] Invoices: "Query" action per invoice for customer/reseller
+- [x] Settings → Email Notifications: new "Customer Support" group
+
+### Definition of Done
+
+- [ ] A customer **without** a portal login can open the link in their pro-forma / invoice / ready-for-collection / feedback email, raise a query or complaint about that order with attachments, receive a reference by email, and follow up from the case link without ever logging in
+- [ ] A customer **with** a login can raise, track, reply to, and rate requests inside the portal, from Help & Support, Order Passport and Invoices
+- [ ] A reseller sees and can raise requests only for customers it owns
+- [ ] Each new request emails the team configured for its type (falling back to General, then the support email) and the linked Sales ticket's assignee
+- [ ] Staff reply → customer is emailed and status moves to Awaiting Customer; customer reply → assignee is emailed and the request reopens
+- [ ] A request past its response target escalates once and shows Overdue on the desk
+- [ ] A product quality complaint cannot be resolved or closed without a saved quality review by a `support.quality_review` holder; an adverse reaction is flagged Urgent
+- [ ] On a completed Sales ticket, the Next Step is Request Customer Feedback; sending it emails the chosen contacts, logs it on the ticket, and the card then shows it as awaiting the customer (Resend in Actions)
+- [ ] A 1–2 star order rating opens a follow-up request automatically
+- [ ] Internal notes never reach the customer, in the portal, the public page, or email
+- [ ] Every staff action appears in the Audit Trail
+
+### Not built (deliberately)
+
+- **Inbound email-to-case** (a customer replying directly to a support email). Replies go through the link instead, which keeps attachments and identity reliable. The existing Sales/Orders inboxes still receive anything emailed to them; converting an inbox thread into a case is a natural follow-up.
+- **Returns / RMA** stays deferred (`return_routes.py` backend exists, no UI). A justified quality complaint's recall/return is recorded in the quality review notes for now.
+- **Business-hours SLA calendar.** Targets run on calendar hours, consistent with the rest of the portal.
+- **Customer 360 support card** on `CustomerProfile.js`: staff can search the desk by customer name meanwhile.
+- **Push notifications** for support events (email only for now).
+
+### Key files
+
+- `backend/routes/support_routes.py`, `backend/support_links.py`
+- `backend/services/email_service.py` (Support desk emails section, `_support_line`)
+- `backend/routes/settings_routes.py`, `backend/services/scheduler.py`, `backend/server.py`, `backend/auth.py`
+- `backend/routes/packing_board_routes.py`, `order_routes.py`, `ticket_routes.py` (help links in existing emails)
+- `frontend/src/views/SalesTickets.js` (Request Customer Feedback: Next Step + Actions card)
+- `frontend/src/views/Support.js`, `frontend/src/views/PublicSupport.js`
+- `frontend/src/components/SupportKit.js`, `frontend/src/components/NewSupportCaseModal.js`
+- `frontend/src/views/OrderPassport.js`, `Invoices.js`, `Users.js`, `EmailSettings.js`, `components/UI.js`, `App.js`

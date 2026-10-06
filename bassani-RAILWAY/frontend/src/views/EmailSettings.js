@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package, Send } from "lucide-react";
+import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package, Send, LifeBuoy } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, LoadingState } from "../components/UI";
@@ -112,6 +112,7 @@ const GROUPS = [
   { id: "orders",     label: "Orders & Fulfilment",       icon: Truck },
   { id: "finance",    label: "Finance",                   icon: DollarSign },
   { id: "production", label: "Production & Vault",        icon: Package },
+  { id: "support",    label: "Customer Support",          icon: LifeBuoy },
 ];
 
 const ROUTING_KEYS = [
@@ -267,6 +268,53 @@ const ROUTING_KEYS = [
     description: "Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved.",
     note: "If this list is empty, no notification is sent. Typically the compliance officer.",
     placeholder: "compliance@bassanihealth.com",
+  },
+  {
+    key: "support_order_to", group: "support", icon: Mail,
+    title: "Support: Order or Delivery Query",
+    description: "Triggered when a customer raises a query about an order, delivery or collection, from the portal or from the help link in their order emails. Customer replies on unassigned requests also go here.",
+    note: "The staff member assigned to the order's Sales ticket is always notified as well. If this list is empty, the General list (or the support email) is used instead.",
+    placeholder: "orders@bassanihealth.com",
+  },
+  {
+    key: "support_invoice_to", group: "support", icon: Mail,
+    title: "Support: Invoice or Payment Query",
+    description: "Triggered when a customer raises a query about an invoice, payment, statement or credit note.",
+    note: "If this list is empty, the General list (or the support email) is used instead.",
+    placeholder: "finance@bassanihealth.com",
+  },
+  {
+    key: "support_quality_to", group: "support", icon: Mail,
+    title: "Support: Product Quality Complaint",
+    description: "Triggered when a customer reports a problem with a product itself. Complaints flagged as a possible adverse reaction are marked URGENT and always go to this list.",
+    note: "Add QA and the Responsible Pharmacist. These complaints can only be resolved by someone holding the quality review permission.",
+    placeholder: "qa@bassanihealth.com",
+  },
+  {
+    key: "support_general_to", group: "support", icon: Mail,
+    title: "Support: General Query and Low Order Ratings",
+    description: "Triggered for account questions, general queries, and the follow-up request opened automatically when a customer rates an order 1 or 2 stars. Also the fallback for any empty list above.",
+    note: "If this list is empty too, notifications fall back to the support email set in Railway environment variables, so a customer request is never missed.",
+    placeholder: "support@bassanihealth.com",
+  },
+  {
+    key: "support_escalation_to", group: "support", icon: Mail,
+    title: "Support: Past Response Target",
+    description: "Sent when a request has been waiting on us longer than its priority allows (Urgent 4h, High 8h, Normal 24h, Low 48h). Each request escalates once per waiting period; the assignee is always included.",
+    note: "Checked every hour. If this list is empty, the escalation goes to the request's own category list instead.",
+    placeholder: "ops@bassanihealth.com",
+  },
+  {
+    key: "support_customer_ack", group: "support", icon: Mail, previewOnly: true,
+    title: "Request Received (Customer Notice)",
+    description: "Sent to the customer the moment a request is logged, with their reference number and a link to follow it up. The link works without a portal login.",
+    note: "This one always goes straight to the contact on the request, not a configurable staff list. There's nothing to save here, but you can still send a preview.",
+  },
+  {
+    key: "order_feedback_request", group: "support", icon: Mail, previewOnly: true,
+    title: "How Did We Do? (Customer Notice)",
+    description: "Sent when a staff member clicks Request Customer Feedback on a completed Sales Ticket, asking the customer to rate the order. The same page lets them raise a query or complaint without logging in.",
+    note: "This one always goes straight to the customer account on file. There's nothing to save here, but you can still send a preview.",
   },
 ];
 

@@ -4,7 +4,7 @@ import bwipjs from "bwip-js";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 import toast from "react-hot-toast";
-import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight, Eye, CreditCard } from "lucide-react";
+import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight, Eye, CreditCard, LifeBuoy } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow, Pager,
   Modal, FormGroup, Input, Select, Textarea,
@@ -13,6 +13,7 @@ import {
   fmtR, fmtDate,
 } from "../components/UI";
 import SendRecipientsModal from "../components/SendRecipientsModal";
+import NewSupportCaseModal from "../components/NewSupportCaseModal";
 
 // ── Static Bassani details ─────────────────────────────────────────────────────
 const BASSANI = {
@@ -297,7 +298,7 @@ function InvoiceView({ invoice, onClose }) {
 // per order (a deposit invoice + a final invoice), so seeing them grouped
 // answers "what's the full picture for this order" at a glance instead of
 // scanning a flat list to spot which two rows belong together.
-function InvoiceOrderGroupRow({ group, defaultExpanded, navigate, onView }) {
+function InvoiceOrderGroupRow({ group, defaultExpanded, navigate, onView, onQuery }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <>
@@ -356,9 +357,16 @@ function InvoiceOrderGroupRow({ group, defaultExpanded, navigate, onView }) {
                   <span className="text-[10px] text-red-600 font-medium whitespace-nowrap">{fmtR(inv.amount_residual)} due</span>
                 )}
               </div>
-              <ActionChip onClick={() => onView(inv)} icon={Eye} color="bassani">
-                View
-              </ActionChip>
+              <div className="flex items-center gap-1.5">
+                <ActionChip onClick={() => onView(inv)} icon={Eye} color="bassani">
+                  View
+                </ActionChip>
+                {onQuery && (
+                  <ActionChip onClick={() => onQuery(inv)} icon={LifeBuoy} color="amber" title="Raise a query about this invoice">
+                    Query
+                  </ActionChip>
+                )}
+              </div>
             </div>
           </td>
         </tr>
@@ -406,6 +414,7 @@ export default function Invoices() {
 
   // Per-row action states — keyed by invoice id
   const [sendingId,        setSendingId       ] = useState(null);
+  const [queryInvoice,     setQueryInvoice    ] = useState(null); // Phase 28 — raise a support request about an invoice
   const [creatingTicketId,       setCreatingTicketId      ] = useState(null);
   const [ticketPreflightModal,   setTicketPreflightModal  ] = useState(null); // { inv, orderName, has_linked_ticket, existing_ticket_id, unlinked_tickets }
 
@@ -748,6 +757,7 @@ export default function Invoices() {
                           defaultExpanded={i === 0}
                           navigate={navigate}
                           onView={openViewInvoice}
+                          onQuery={setQueryInvoice}
                         />
                       ))}
                     </tbody>
@@ -831,6 +841,11 @@ export default function Invoices() {
                     <ActionChip onClick={() => openViewInvoice(inv)} disabled={viewLoading} icon={Eye} color="bassani">
                       View
                     </ActionChip>
+                    {isExternalRole && (
+                      <ActionChip onClick={() => setQueryInvoice(inv)} icon={LifeBuoy} color="amber" title="Raise a query about this invoice">
+                        Query
+                      </ActionChip>
+                    )}
 
                     {isPosted && isOutInv && canFinance && (
                       <ActionChip onClick={() => sendInvoice(inv)} loading={isSending} icon={Send} color="blue" title="Send invoice email to customer">
@@ -878,6 +893,14 @@ export default function Invoices() {
 
       {/* Full-screen invoice viewer */}
       {viewInvoice && <InvoiceView invoice={viewInvoice} onClose={() => setViewInvoice(null)} />}
+
+      {/* Raise a support request about an invoice (Phase 28, customer/reseller) */}
+      {queryInvoice && (
+        <NewSupportCaseModal
+          prefill={{ invoiceId: queryInvoice.id, invoiceName: queryInvoice.name, category: "invoice" }}
+          onClose={() => setQueryInvoice(null)}
+        />
+      )}
 
       {/* Send Invoice recipient picker (2026-08-27) */}
       {sendModalInvoice && (

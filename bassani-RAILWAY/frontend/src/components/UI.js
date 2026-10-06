@@ -14,7 +14,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Menu, X, ChevronsUpDown,
   ScrollText, Target, ClipboardCheck, ClipboardList, ShieldCheck, History, Ticket, Tag, Ruler, Mail, Truck, Settings, UserCircle, Landmark, Search, Clock, Link2,
   Layers, Archive, PackageCheck, FolderTree, Repeat, AlertTriangle, Building2, Factory,
-  Eye, EyeOff, ReceiptText,
+  Eye, EyeOff, ReceiptText, LifeBuoy,
 } from "lucide-react";
 
 export const SidebarContext = createContext({ open: false, toggle: () => {}, close: () => {} });
@@ -79,6 +79,7 @@ const NAV = [
   { label: "Partner Directory", path: "/partners",        icon: Users,         section: "Customers", permission: "customers.manage"    },
   { label: "Applications",    path: "/applications",     icon: ClipboardCheck, section: "Customers", permission: "customers.view", showApplicationsBadge: true },
   { label: "Onboarding Inbox",path: "/onboarding-inbox", icon: Mail,           section: "Customers", permission: "onboarding.inbox", showOnboardingInboxBadge: true },
+  { label: "Support Desk",    path: "/support",          icon: LifeBuoy,       section: "Customers", permission: "support.view", showSupportBadge: true },
   { label: "Suppliers",    path: "/suppliers",   icon: Truck,           section: "Main",     permission: "suppliers.view"      },
   { label: "Orders",       path: "/orders",      icon: ShoppingCart,    section: "Main",     permission: "orders.view"         },
   { label: "Sales Agents", path: "/resellers",   icon: DollarSign,      section: "Resellers",permission: "resellers.view"      },
@@ -114,6 +115,7 @@ const RESELLER_NAV = [
   { label: "My Customers",    path: "/customers",        icon: Users,         section: "Customers" },
   { label: "My Applications", path: "/my-applications",  icon: ClipboardList, section: "Customers" },
   { label: "Invite Customer", path: "/onboarding-docs",  icon: Link2,         section: "Customers" },
+  { label: "Help & Support",  path: "/support",          icon: LifeBuoy,      section: "Customers", showSupportBadge: true },
 ];
 
 // Phase 25 — self-service customer login. No commission, no "my customers"
@@ -124,6 +126,7 @@ const CUSTOMER_NAV = [
   { label: "Products",  path: "/products", icon: Package,         section: "Main" },
   { label: "My Orders", path: "/orders",   icon: Ticket,          section: "Orders" },
   { label: "Invoices",  path: "/invoices", icon: FileText,        section: "Orders" },
+  { label: "Help & Support", path: "/support", icon: LifeBuoy,   section: "Orders", showSupportBadge: true },
 ];
 
 export function Sidebar() {
@@ -134,6 +137,7 @@ export function Sidebar() {
   const [inboxCount,            setInboxCount           ] = useState(0);
   const [onboardingInboxCount,  setOnboardingInboxCount ] = useState(0);
   const [pendingAppsCount,      setPendingAppsCount     ] = useState(0);
+  const [supportCount,          setSupportCount         ] = useState(0);
 
   useEffect(() => {
     if (!can("inbox.view")) return;
@@ -167,6 +171,20 @@ export function Sidebar() {
     const id = setInterval(fetchCount, 60000);
     return () => clearInterval(id);
   }, [isAdmin]);
+
+  // Phase 28 — staff: requests waiting on us; customer/reseller: requests
+  // waiting on their reply or confirmation.
+  const supportExternal = user?.role === "reseller" || user?.role === "customer";
+  useEffect(() => {
+    if (!supportExternal && !can("support.view")) return;
+    const fetchCount = () =>
+      api.get("/api/support/summary")
+        .then(r => setSupportCount((supportExternal ? r.data.awaiting_your_reply : r.data.waiting_on_us) || 0))
+        .catch(() => {});
+    fetchCount();
+    const id = setInterval(fetchCount, 60000);
+    return () => clearInterval(id);
+  }, [can, supportExternal]);
 
   const isReseller = user?.role === "reseller";
   const isCustomer = user?.role === "customer";
@@ -213,7 +231,7 @@ export function Sidebar() {
               item.children
                 ? <NavGroup key={item.label} group={item} pathname={pathname} navigate={navigate} />
                 : <NavItem key={item.path} item={item} pathname={pathname} navigate={navigate}
-                    badge={item.showInboxBadge ? inboxCount : item.showOnboardingInboxBadge ? onboardingInboxCount : item.showApplicationsBadge ? pendingAppsCount : 0} />
+                    badge={item.showInboxBadge ? inboxCount : item.showOnboardingInboxBadge ? onboardingInboxCount : item.showApplicationsBadge ? pendingAppsCount : item.showSupportBadge ? supportCount : 0} />
             )}
           </div>
         ))}

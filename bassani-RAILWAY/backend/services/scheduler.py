@@ -27,6 +27,7 @@ from services.email_service import (
     send_mo_daily_digest,
     send_discount_reminder,
 )
+from routes.support_routes import run_support_sla_checks
 from routes.recurring_order_routes import (
     generate_recurring_notices,
     expire_unaccepted_occurrences,
@@ -251,4 +252,7 @@ def start_notification_schedulers() -> None:
     # 8.61 — polled hourly rather than a fixed daily time, since a blocked
     # quote is time-sensitive in a way an end-of-day digest isn't.
     asyncio.create_task(_interval_loop("discount_reminder", 3600, check_pending_discount_requests))
+    # Phase 28 — support desk: escalate requests past their response target,
+    # auto-close resolved requests the customer never came back to. Hourly.
+    asyncio.create_task(_interval_loop("support_sla", 3600, run_support_sla_checks))
     logger.info("notification_schedulers_started")

@@ -2244,7 +2244,71 @@ Either way, the order exists the moment either button is clicked — cancelling 
 - **Upload proof of payment (2026-08-21).** On any order's page (Order Passport, opened from My Orders), a "Proof of Payment" card lets the customer upload a photo or PDF of their payment confirmation. **This is optional** — Bassani will still confirm payment through the usual process either way — but sharing it can help speed things up, since it puts the file straight in front of Finance instead of them having to be told separately. Uploaded files stay listed there with a "View" link.
 - **View the pro-forma invoice (2026-08-25).** Once an order is confirmed, a "View Pro-Forma Invoice" button appears on its page — this opens the exact document already emailed showing the 50% deposit amount due, so it can be found again without searching an inbox.
 - **See where the order is going (2026-08-25).** An order's page shows the delivery/collection address at the top — either the account's usual registered address, or the specific "Deliver To" address picked at checkout if a different one was chosen.
-- **Get help (2026-08-25).** Every order's page has a "Need Help?" card with a direct email link to Bassani support, for whenever a question about that specific order comes up.
+- **Get help.** Every order's page has a "Need Help?" card to raise a query or complaint about that specific order and see the requests already raised on it. **Help & Support** in the menu lists all of them, and each invoice has a **Query** button. Once an order is collected, the order's page also asks for a quick rating. See Customer Support Desk below.
+
+---
+
+## Customer Support Desk
+
+The Support Desk is where every customer query, complaint and piece of order feedback is handled, whichever way it arrives. Every request gets a reference number (for example **SUP-00042**), an owner, a status, a response target, and a full history.
+
+### How customers raise a request
+
+- **Customers with a portal login** use **Help & Support** in their menu, the **Need Help?** card on any order's page, or the **Query** button next to an invoice. The order or invoice is linked automatically.
+- **Customers without a portal login** don't need one. Every pro-forma, invoice and "ready for collection" email they receive, and the "How did we do?" email we send after an order is complete, carries a secure link to that order's help page. From there they can raise a query or complaint (with photos or documents), see requests already raised on that order, and rate the order once collected. Every reply we send them includes a link back to their request, so they can follow up without logging in.
+- **Staff** can log a request on a customer's behalf (phone call, walk-in, or an email that came in elsewhere) with **Log Request** on the Support Desk, or **Log request** on an order's page. Tick "Email the customer an acknowledgement" so they get their reference and link.
+
+### Request types and who handles them
+
+| Type | Goes to (Settings → Email Notifications → Customer Support) |
+|---|---|
+| Order or delivery | Support: Order or Delivery Query |
+| Invoice or payment | Support: Invoice or Payment Query |
+| Product quality complaint | Support: Product Quality Complaint (QA and the Responsible Pharmacist) |
+| Account, feedback, anything else | Support: General Query and Low Order Ratings |
+
+If a list is empty, the request goes to the General list, and if that is empty too, to the support email address, so nothing is ever missed. The staff member assigned to the order's Sales ticket is always notified as well, and the request appears in that ticket's Activity Log.
+
+### Who can do what (Users → permissions → Customer Support Desk)
+
+| Permission | Allows |
+|---|---|
+| View | See the Support Desk and order feedback |
+| Respond | Reply to customers, add internal notes, log requests, take a request, resolve it |
+| Manage | Assign requests to anyone, close a request without resolving it |
+| Quality review | Investigate and sign off product quality complaints |
+
+By default Sales, Orders Clerk and Finance can respond; QA Manager and Responsible Pharmacist can respond and quality-review; new admins can view. Adjust per person on the Users page.
+
+### Working a request
+
+1. Open **Support Desk**. The tiles show what's waiting on us, what's unassigned, what's yours, and what's past its response target. Filter by type, assignee or status; the Overdue/At Risk chips filter to the urgent ones.
+2. Take the request with **Assign to me** (or a manager assigns it).
+3. **Reply to customer** emails them your message with a link to respond. The request moves to *Awaiting Customer* and its response clock stops. Use **Internal note** for anything the customer must not see. Notes are never sent or shown to them.
+4. When the customer replies, the request moves back to *Open*, the clock restarts, and the assignee is emailed.
+5. **Resolve** with a short explanation of the outcome. The customer is emailed; they can confirm and rate it, or reply to reopen it. Resolved requests close automatically after 7 days.
+6. **Close without resolving** (managers) is for duplicates or requests handled another way. The customer is not emailed.
+
+### Response targets
+
+| Priority | First response target |
+|---|---|
+| Urgent | 4 hours |
+| High | 8 hours |
+| Normal | 24 hours |
+| Low | 48 hours |
+
+Priority is set automatically (quality complaints start at High; a reported reaction is Urgent) and can be changed by staff. A request still waiting on us past its target shows **Overdue** and is escalated once by email to the "Support: Past Response Target" list and the assignee.
+
+### Product quality complaints
+
+These are handled as quality complaint records, not ordinary queries. The customer can give the product and batch/lot number, and flag that someone had an unexpected reaction, which marks the complaint **Urgent** and shows a red warning on it.
+
+Only QA or the Responsible Pharmacist (the **Quality review** permission) can finish one. They first complete the **Quality Review** card: investigation summary, root cause, outcome (justified, not justified, inconclusive), corrective and preventive action, whether a recall is required, and, for a reported reaction, whether a SAHPRA adverse-event report was made. Resolve and Close stay locked until that review is saved.
+
+### Order feedback
+
+Feedback is requested by hand, so we choose when to ask. Once an order is complete (collected), its Sales Ticket shows **Request Customer Feedback** as the Next Step. Click it, choose which contacts to email, and send. The customer gets a "How did we do?" link to rate the order from 1 to 5 stars, with no login needed (portal customers can also rate it on the order's page). The ticket then shows the request as waiting on the customer; **Resend Feedback Request** is in the Actions card if they haven't responded. When they rate it, the Next Step card shows their stars and comment. A rating of 1 or 2 automatically opens a follow-up request so someone gets back to them. The **Order Feedback** tab on the Support Desk shows the average rating, the percentage of satisfied customers, and every rating with its comment.
 
 ---
 

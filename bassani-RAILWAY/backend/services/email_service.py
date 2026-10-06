@@ -11,6 +11,7 @@ FastAPI's BackgroundTasks so they never block an API response:
     background_tasks.add_task(send_welcome_email, username=..., ...)
 """
 
+import html as _html
 import os
 import resend
 from config import get_settings
@@ -182,6 +183,20 @@ def _mono(text: str) -> str:
             f'color:#0f172a;padding:2px 7px;border-radius:4px;font-size:13px;">{text}</code>')
 
 
+def _support_line(support_url: str = None, lead: str = "Have a question or concern about this order?") -> str:
+    """Phase 28 — the self-service help link appended to customer order
+    emails. support_url is a signed, order-scoped link (support_links.py), so
+    a customer with no portal login can still raise a query or complaint
+    about this exact order. Renders nothing when no link is given."""
+    if not support_url:
+        return ""
+    return _p(
+        f'{lead} <a href="{support_url}" style="color:#0f6e56;font-weight:600;">'
+        f"Raise a query with our team</a> and we will get back to you.",
+        muted=True, margin_bottom="0",
+    )
+
+
 # Account emails
 
 def send_welcome_email(username: str, name: str, email: str) -> None:
@@ -336,6 +351,7 @@ def send_deposit_due_proforma(
     order_total: float,
     pdf_bytes: bytes,
     cc: "list[str] | None" = None,
+    support_url: str = None,
 ) -> None:
     """Sent to the customer the moment staff confirm their order (or a recurring
     order auto-confirms on acceptance) — Phase 8.47. Attaches Odoo's Pro-Forma
@@ -362,6 +378,7 @@ def send_deposit_due_proforma(
         + _divider()
         + _p("Once your deposit has been received and confirmed, we will begin "
              "preparing your order.", muted=True)
+        + _support_line(support_url)
     )
     _send(
         customer_email, f"Order Confirmed, Deposit Due: {order_ref}",
@@ -418,6 +435,7 @@ def send_invoice_email(
     cc: "list[str] | None" = None,
     payment_state: str = None,
     payment_reference: str = None,
+    support_url: str = None,
 ) -> None:
     """Sent when the final delivery invoice is created and posted (after
     QA + RP sign-off, or a deliberate manual/resend send) — replaces the
@@ -456,7 +474,8 @@ def send_invoice_email(
         ])
         + payment_line
         + _divider()
-        + _p("If you have any questions about this invoice, please get in touch.", muted=True)
+        + (_support_line(support_url, "Have a question about this invoice?") if support_url
+           else _p("If you have any questions about this invoice, please get in touch.", muted=True))
     )
     _send(
         customer_email, f"Invoice {invoice_ref}: {order_ref}",
@@ -1411,6 +1430,7 @@ def send_order_ready_for_collection_customer(
     order_ref: str,
     customer_name: str,
     cc: "list[str] | None" = None,
+    support_url: str = None,
 ) -> None:
     """Sent to the actual customer account (main company email, cc'd to every
     other contact on file) when their order is ready for collection —
@@ -1435,6 +1455,7 @@ def send_order_ready_for_collection_customer(
             "Please visit our facility to collect, or contact us to arrange dispatch.",
             muted=True,
         )
+        + _support_line(support_url)
     )
     _send(customer_email, f"Your Order is Ready for Collection: {order_ref}",
           _wrap(body), cc=cc or None)
@@ -2129,3 +2150,257 @@ def send_recurring_order_skipped_internal(to: "list[str]", customer_name: str, o
         + _p("No action is required.", muted=True)
     )
     _send(to, f"Recurring Order Skipped: {order_ref}", _wrap(body))
+
+
+# Support desk emails (Phase 28)
+#
+# Anything the customer typed (subject, message) is HTML-escaped before it
+# goes anywhere near a template; staff-authored replies are escaped too since
+# they are free text. Customer-facing copy speaks as Bassani in the first
+# person. Every customer-facing email carries the case link: a portal deep
+# link for a customer who raised it while logged in, otherwise a signed link
+# (support_links.py) that works with no login at all.
+
+def _quote(text: str, limit: int = 1200) -> str:
+    """Escaped, length-capped, line-break-preserving block for user text."""
+    text = (text or "").strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "..."
+    safe = _html.escape(text).replace("\n", "<br>")
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        '<tr><td style="border-left:3px solid #cbd5e1;padding:4px 0 4px 14px;font-size:14px;'
+        f'color:#334155;line-height:1.65;">{safe}</td></tr></table>'
+    )
+
+
+def _staff_case_url(case_id: str) -> str:
+    return f"{settings.portal_url}/support?case={case_id}"
+
+
+def send_support_case_received(
+    customer_email: str,
+    contact_name: str,
+    case_ref: str,
+    subject: str,
+    category_label: str,
+    case_url: str,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Acknowledgement to the customer the moment a request is logged, with
+    its reference number and the link to follow it up."""
+    if not customer_email:
+        return
+    body = (
+        _h1("We have received your request")
+        + _p(f"Hi {_html.escape(contact_name or 'there')},")
+        + _p("Thank you for getting in touch. Your request has been logged and a member "
+             "of our team will respond as soon as possible.")
+        + _info_box([
+            ("Reference", f"<strong>{case_ref}</strong>"),
+            ("Subject", _html.escape(subject)),
+            ("Type", category_label),
+        ])
+        + _button("View your request", case_url)
+        + _divider()
+        + _p("You can use the link above at any time to add more information, attach "
+             "files, or check on progress. Please keep your reference number handy if "
+             "you contact us another way.", muted=True)
+    )
+    _send(customer_email, f"Request Received: {case_ref}", _wrap(body), cc=cc or None)
+
+
+def send_support_case_new_internal(
+    to: "list[str]",
+    case_ref: str,
+    case_id: str,
+    subject: str,
+    customer_name: str,
+    category_label: str,
+    priority_label: str,
+    raised_by: str,
+    message: str,
+    order_ref: str = None,
+    adverse_event: bool = False,
+) -> None:
+    """New customer request, sent to the team configured for its category."""
+    if not to:
+        return
+    rows = [
+        ("Reference", f"<strong>{case_ref}</strong>"),
+        ("Customer", _html.escape(customer_name or "Not provided")),
+        ("Type", category_label),
+        ("Priority", priority_label),
+        ("Raised by", _html.escape(raised_by or "Not provided")),
+    ]
+    if order_ref:
+        rows.append(("Order", order_ref))
+    warning = ""
+    if adverse_event:
+        warning = _p(
+            '<strong style="color:#b91c1c;">The customer has reported a possible adverse '
+            "reaction. This needs urgent QA and Responsible Pharmacist review.</strong>"
+        )
+    body = (
+        _h1("New customer request")
+        + _p(f"<strong>{_html.escape(subject)}</strong>")
+        + warning
+        + _info_box(rows, tint="#fffbeb" if adverse_event else "#f0fdf9",
+                    border="#fde68a" if adverse_event else "#bbf7d0")
+        + _quote(message)
+        + _button("Open request", _staff_case_url(case_id))
+    )
+    prefix = "URGENT Complaint" if adverse_event else "New Request"
+    _send(to, f"{prefix}: {case_ref} ({customer_name})", _wrap(body))
+
+
+def send_support_reply_customer(
+    customer_email: str,
+    contact_name: str,
+    case_ref: str,
+    subject: str,
+    author_name: str,
+    message: str,
+    case_url: str,
+) -> None:
+    """A staff member replied on the customer's request."""
+    if not customer_email:
+        return
+    body = (
+        _h1("We have replied to your request")
+        + _p(f"Hi {_html.escape(contact_name or 'there')},")
+        + _p(f"{_html.escape(author_name)} from our team has replied to your request "
+             f"<strong>{case_ref}</strong> ({_html.escape(subject)}).")
+        + _quote(message)
+        + _button("View and reply", case_url)
+        + _divider()
+        + _p("Please reply using the link above so your response stays with your request.",
+             muted=True)
+    )
+    _send(customer_email, f"Update on Your Request: {case_ref}", _wrap(body))
+
+
+def send_support_reply_internal(
+    to: "list[str]",
+    case_ref: str,
+    case_id: str,
+    subject: str,
+    customer_name: str,
+    message: str,
+) -> None:
+    """The customer replied. Sent to the assignee, or to the category team
+    when nobody is assigned yet."""
+    if not to:
+        return
+    body = (
+        _h1("Customer replied")
+        + _p(f"{_html.escape(customer_name or 'The customer')} replied on <strong>{case_ref}</strong> "
+             f"({_html.escape(subject)}).")
+        + _quote(message)
+        + _button("Open request", _staff_case_url(case_id))
+    )
+    _send(to, f"Customer Reply: {case_ref} ({customer_name})", _wrap(body))
+
+
+def send_support_case_assigned(
+    to_email: str,
+    case_ref: str,
+    case_id: str,
+    subject: str,
+    customer_name: str,
+    assigned_by: str,
+) -> None:
+    if not to_email:
+        return
+    body = (
+        _h1("A customer request was assigned to you")
+        + _p(f"{_html.escape(assigned_by)} assigned <strong>{case_ref}</strong> to you.")
+        + _info_box([
+            ("Customer", _html.escape(customer_name or "Not provided")),
+            ("Subject", _html.escape(subject)),
+        ])
+        + _button("Open request", _staff_case_url(case_id))
+    )
+    _send(to_email, f"Assigned to You: {case_ref}", _wrap(body))
+
+
+def send_support_case_resolved(
+    customer_email: str,
+    contact_name: str,
+    case_ref: str,
+    subject: str,
+    resolution_note: str,
+    case_url: str,
+) -> None:
+    """The team marked the request resolved. The customer can confirm, rate
+    the outcome, or reopen it from the link."""
+    if not customer_email:
+        return
+    body = (
+        _h1("Your request has been resolved")
+        + _p(f"Hi {_html.escape(contact_name or 'there')},")
+        + _p(f"We have marked your request <strong>{case_ref}</strong> "
+             f"({_html.escape(subject)}) as resolved.")
+        + _quote(resolution_note)
+        + _p("If this has not fully resolved things, you can reopen the request from the link "
+             "below. We would also really appreciate a quick rating of how we did.")
+        + _button("Rate or reopen", case_url)
+        + _divider()
+        + _p("If we do not hear back, the request will close automatically after 7 days.",
+             muted=True)
+    )
+    _send(customer_email, f"Request Resolved: {case_ref}", _wrap(body))
+
+
+def send_support_sla_escalation(to: "list[str]", items: list) -> None:
+    """Requests waiting on us past their response target. Each request is
+    escalated once per waiting period."""
+    if not to or not items:
+        return
+    rows = "".join(
+        f'<tr><td style="padding:7px 0;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #e2e8f030;">'
+        f'<a href="{_staff_case_url(i["case_id"])}" style="color:#0f6e56;">{i["case_ref"]}</a></td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{_html.escape(i.get("customer_name") or "")}</td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{i.get("priority_label", "")}</td>'
+        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#b91c1c;text-align:right;border-bottom:1px solid #e2e8f030;">{i.get("hours_waiting", 0):.0f}h</td></tr>'
+        for i in items
+    )
+    n = len(items)
+    body = (
+        _h1("Customer requests past their response target")
+        + _p(f"{n} customer request{'s have' if n != 1 else ' has'} been waiting on us longer "
+             "than the response target for its priority.")
+        + '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+          '<tr><td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Request</td>'
+          '<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Customer</td>'
+          '<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Priority</td>'
+          '<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;text-align:right;">Waiting</td></tr>'
+          f'{rows}</table>'
+        + _button("Open Support Desk", f"{settings.portal_url}/support")
+    )
+    _send(to, f"{n} Customer Request{'s' if n != 1 else ''} Overdue", _wrap(body))
+
+
+def send_order_feedback_request(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    feedback_url: str,
+    cc: "list[str] | None" = None,
+) -> None:
+    """Sent when staff click Request Customer Feedback on a completed Sales
+    ticket (manual by design, never automatic): a one-tap rating plus the
+    route to raise anything that went wrong with the order."""
+    if not customer_email or not feedback_url:
+        return
+    body = (
+        _h1("How did we do?")
+        + _p(f"Hi {_html.escape(customer_name or 'there')},")
+        + _p(f"Thank you for collecting your order <strong>{order_ref}</strong>. We would love "
+             "to know how it went. It takes less than a minute.")
+        + _button("Rate your order", feedback_url)
+        + _divider()
+        + _p("If anything was not right with your order, you can also raise a query or "
+             "complaint from the same page and our team will follow up.", muted=True)
+    )
+    _send(customer_email, f"How Did We Do? Order {order_ref}", _wrap(body), cc=cc or None)

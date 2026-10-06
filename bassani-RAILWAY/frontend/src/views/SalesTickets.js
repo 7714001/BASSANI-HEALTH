@@ -16,7 +16,7 @@ import {
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
   Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
-  ClipboardCheck, RefreshCw, Percent,
+  ClipboardCheck, RefreshCw, Percent, Star,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -28,6 +28,7 @@ import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 import SendRecipientsModal from "../components/SendRecipientsModal";
+import { StarRating, RATING_WORDS } from "../components/SupportKit";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import OrderView from "./OrderView";
@@ -1369,6 +1370,30 @@ export default function SalesTickets() {
   const [sendInvoiceModal, setSendInvoiceModal] = useState(false);
   const sendInvoice = () => setSendInvoiceModal(true);
 
+  // Customer feedback request (Phase 28) — manual by design: once an order is
+  // complete, staff decide when to email the customer the "How did we do?"
+  // link (no automatic send at collection). Offered as the Next Step on a
+  // completed ticket, then as Resend in the Actions card until they respond.
+  const [orderFeedback, setOrderFeedback] = useState(null); // { feedback, eligible } | null
+  const [feedbackModal, setFeedbackModal] = useState(false);
+  const orderIsComplete = detail?.exit_status === "complete";
+  const canRequestFeedback = !isReseller && (can("tickets.sales") || can("support.respond"));
+  useEffect(() => {
+    setOrderFeedback(null);
+    if (!orderIsComplete || !detail?.order_id) return;
+    api.get(`/api/support/order-feedback/order/${detail.order_id}`)
+      .then(r => setOrderFeedback(r.data))
+      .catch(() => {});
+  }, [orderIsComplete, detail?.order_id, detail?.feedback_requested_at]);
+
+  const doRequestFeedback = async (recipients) => {
+    try {
+      const r = await api.post("/api/support/order-feedback/request", { ticket_id: detail.id, recipients });
+      toast.success(`Feedback request sent to ${r.data.sent_to.join(", ")}`);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send the feedback request"); throw e; }
+  };
+
   const doSendInvoice = async (recipients) => {
     setSendingInvoice(true);
     try {
@@ -1672,6 +1697,12 @@ export default function SalesTickets() {
       desc: "A balance remains outstanding on this order.",
       onClick: openBalanceModal,
     };
+  } else if (orderIsComplete && canRequestFeedback && detail?.order_id && !detail?.feedback_requested_at && !orderFeedback?.feedback) {
+    nextAction = {
+      key: "requestFeedback", icon: Star, label: "Request Customer Feedback",
+      desc: "This order is complete. Email the customer a quick link to rate it. They can also raise a query from the same page, no login needed.",
+      onClick: () => setFeedbackModal(true),
+    };
   }
 
   // No urgent action for this viewer — say what's actually happening instead,
@@ -1697,6 +1728,11 @@ export default function SalesTickets() {
     } else {
       waitingText = "No action needed right now.";
     }
+  }
+  if (!nextAction && orderIsComplete && !orderFeedback?.feedback) {
+    waitingText = detail?.feedback_requested_at
+      ? `Feedback requested ${fmtDateTime(detail.feedback_requested_at)}${detail.feedback_requested_by ? ` by ${detail.feedback_requested_by}` : ""}. Waiting for the customer to respond.`
+      : "Order complete.";
   }
 
   // ── Actions card grouping (2026-08-26) ───────────────────────────────────────
@@ -1726,6 +1762,9 @@ export default function SalesTickets() {
   // header, so every action on the order lives in one place (Actions card).
   const showRequestDiscount   = !isReseller && can("tickets.sales") && detail?.order_id && !detail?.discount_status
     && detailOrder && ["draft", "sent"].includes(detailOrder.state) && (detailOrder.lines || []).length > 0;
+
+  const showRequestFeedbackBtn = orderIsComplete && canRequestFeedback && detail?.order_id && !orderFeedback?.feedback && nextAction?.key !== "requestFeedback";
+  const showFeedbackGroup      = showRequestFeedbackBtn;
 
   const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount;
   const showPaymentGroup   = showRegisterDeposit || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
@@ -2238,7 +2277,7 @@ export default function SalesTickets() {
                       I do now" indicator, the first thing any role sees on this
                       page. See the nextAction/waitingText computation above for
                       the priority order this reflects. */}
-                  {!detail.exit_status && (
+                  {(!detail.exit_status || orderIsComplete) && (
                     <div className="bg-white rounded-2xl shadow-sm border-2 border-bassani-100 p-4 space-y-2">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-semibold text-bassani-600 uppercase tracking-wide flex items-center gap-1.5">
@@ -2253,6 +2292,23 @@ export default function SalesTickets() {
                             <nextAction.icon size={14} />{nextAction.label}
                           </BtnPrimary>
                         </>
+                      ) : orderIsComplete && orderFeedback?.feedback ? (
+                        <div className="space-y-1.5">
+                          <p className="text-sm text-gray-600">Order complete. The customer rated it:</p>
+                          <div className="flex items-center gap-2">
+                            <StarRating value={orderFeedback.feedback.rating} readOnly size={16} />
+                            <span className="text-xs font-medium text-gray-600">{RATING_WORDS[orderFeedback.feedback.rating]}</span>
+                          </div>
+                          {orderFeedback.feedback.comment && (
+                            <p className="text-xs text-gray-500 italic">"{orderFeedback.feedback.comment}"</p>
+                          )}
+                          {orderFeedback.feedback.case_id && (
+                            <button onClick={() => navigate(`/support?case=${orderFeedback.feedback.case_id}`)}
+                              className="text-xs font-medium text-bassani-700 hover:underline">
+                              Follow-up request {orderFeedback.feedback.case_ref}
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <p className="text-sm text-gray-500">{waitingText}</p>
                       )}
@@ -2756,12 +2812,23 @@ export default function SalesTickets() {
                   )}
 
                   {/* Actions */}
-                  {!detail.exit_status && (
+                  {(!detail.exit_status || showFeedbackGroup) && (
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                       <div className="px-4 py-3 border-b border-gray-50">
                         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</p>
                       </div>
                       <div className="p-2">
+                        {/* ── Customer Feedback group (Phase 28) — completed orders only ── */}
+                        {showFeedbackGroup && (
+                          <>
+                            <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold text-gray-300 uppercase tracking-wide">Customer Feedback</p>
+                            <button onClick={() => setFeedbackModal(true)} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
+                              <Star size={14} className="text-amber-500 shrink-0" />
+                              {detail.feedback_requested_at ? "Resend Feedback Request" : "Request Customer Feedback"}
+                            </button>
+                          </>
+                        )}
+                        {!detail.exit_status && (<>
 
                         {/* ── Order group ── */}
                         {showOrderGroup && (
@@ -2952,6 +3019,7 @@ export default function SalesTickets() {
                             )}
                           </>
                         )}
+                        </>)}
 
                       </div>
                     </div>
@@ -3251,6 +3319,14 @@ export default function SalesTickets() {
             title="Send Quote"
             onClose={() => setSendQuoteModal(false)}
             onSend={doSendQuote}
+          />
+        )}
+        {feedbackModal && (
+          <SendRecipientsModal
+            partnerId={Array.isArray(detailOrder?.partner_id) ? detailOrder.partner_id[0] : detail.customer_id}
+            title="Request Customer Feedback"
+            onClose={() => setFeedbackModal(false)}
+            onSend={doRequestFeedback}
           />
         )}
         {sendInvoiceModal && (

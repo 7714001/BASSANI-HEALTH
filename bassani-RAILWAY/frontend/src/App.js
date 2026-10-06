@@ -53,6 +53,8 @@ import SigningPage           from "./views/SigningPage";
 import RecurringOrderReview  from "./views/RecurringOrderReview";
 import RecurringOrders       from "./views/RecurringOrders";
 import DiscountApprovals     from "./views/DiscountApprovals";
+import Support               from "./views/Support";
+import { PublicOrderHelp, PublicCaseHelp } from "./views/PublicSupport";
 import PartnerDirectory      from "./views/PartnerDirectory";
 import PublicDocUpload       from "./views/PublicDocUpload";
 import MyProfile            from "./views/MyProfile";
@@ -181,6 +183,9 @@ export default function App() {
         <Route path="/sign/:token"  element={<SigningPage />} />
         <Route path="/recurring/:token" element={<RecurringOrderReview />} />
         <Route path="/upload-docs/:token" element={<PublicDocUpload />} />
+        {/* Phase 28 — signed no-login help links from customer emails */}
+        <Route path="/help/order/:token" element={<PublicOrderHelp />} />
+        <Route path="/help/case/:token" element={<PublicCaseHelp />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" replace /> : <ForgotPassword />} />
         <Route path="/reset-password" element={user ? <Navigate to="/" replace /> : <ResetPassword />} />
         <Route path="/change-password" element={<AuthRequired><ChangePassword /></AuthRequired>} />
@@ -305,6 +310,9 @@ export default function App() {
         } />
         <Route path="/orders/recurring" element={
           <ProtectedRoute permission="orders.recurring_manage"><AppLayout><RecurringOrders /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/support" element={
+          <ProtectedRoute permission="support.view" allowRoles={["reseller", "customer"]}><AppLayout><Support /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/discounts" element={
           <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountApprovals /></AppLayout></ProtectedRoute>

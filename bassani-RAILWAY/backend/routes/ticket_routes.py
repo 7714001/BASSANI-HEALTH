@@ -37,6 +37,7 @@ from services.email_service import (
     send_ticket_assigned, send_pop_uploaded_notification,
     send_quote_email, send_invoice_email,
 )
+from support_links import order_help_url
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
@@ -3029,6 +3030,7 @@ async def send_invoice(
                 pdf_bytes=bytes(pdf_bytes),
                 payment_state=inv.get("payment_state"),
                 payment_reference=inv.get("payment_reference"),
+                support_url=order_help_url(ticket.get("order_id")) if ticket.get("order_id") else None,
             )
             invoice_email_sent = True
     except Exception as e:

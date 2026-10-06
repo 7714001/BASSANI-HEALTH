@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from config import get_settings
-from auth import hash_password, FULL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS
+from auth import hash_password, FULL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS, DEFAULT_ADMIN_PERMISSIONS
 from rate_limit import limiter
 from logging_config import setup_logging
 
@@ -197,6 +197,29 @@ async def initialise_users():
     await col("tickets").create_index([("assigned_to", 1)])
     await col("tickets").create_index([("order_id", 1)])
     await col("tickets").create_index([("updated_at", -1)])
+
+    # Phase 28 — customer support desk
+    await col("support_cases").create_index([("ref", 1)], unique=True)
+    await col("support_cases").create_index([("customer_partner_id", 1), ("updated_at", -1)])
+    await col("support_cases").create_index([("order_id", 1)])
+    await col("support_cases").create_index([("status", 1), ("waiting_on", 1)])
+    await col("support_cases").create_index([("assigned_to.id", 1)])
+    await col("support_cases").create_index([("updated_at", -1)])
+    await col("order_feedback").create_index([("order_id", 1)], unique=True)
+    await col("order_feedback").create_index([("created_at", -1)])
+
+    # Phase 28 — backfill the new `support` permission domain onto existing
+    # staff accounts that predate it, using each role's own defaults (admins
+    # get the view-only admin default; super admins bypass permissions).
+    for _role, _perms in ROLE_DEFAULT_PERMISSIONS.items():
+        await col("users").update_many(
+            {"role": _role, "permissions.support": {"$exists": False}},
+            {"$set": {"permissions.support": _perms["support"]}},
+        )
+    await col("users").update_many(
+        {"role": "admin", "permissions.support": {"$exists": False}},
+        {"$set": {"permissions.support": DEFAULT_ADMIN_PERMISSIONS["support"]}},
+    )
 
     await col("monthly_commission_statements").create_index(
         [("reseller_id", 1), ("year", 1), ("month", 1)],
@@ -751,6 +774,7 @@ from routes.places_routes             import router as places_router
 from routes.production_routes         import router as production_router
 from routes.recurring_order_routes    import router as recurring_order_router
 from routes.discount_routes           import router as discount_router
+from routes.support_routes            import router as support_router, public_router as support_public_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -766,6 +790,7 @@ for router in [
     label_router, bank_recon_router, gtin_pool_router, search_router, monitor_router,
     onboarding_monitor_router, manufacturing_monitor_router,
     places_router, production_router, recurring_order_router, discount_router,
+    support_router, support_public_router,
 ]:
     app.include_router(router)
 

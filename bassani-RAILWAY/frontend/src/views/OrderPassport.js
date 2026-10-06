@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import {
   ChevronLeft, Package, FileText, Truck, FileSearch,
   CheckCircle2, Clock, ExternalLink, RefreshCw, Check, ClipboardCheck,
-  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle, Mail, Pencil,
+  Repeat, RotateCcw, Upload, Loader2, Factory, X, AlertTriangle, XCircle, Mail, Pencil, LifeBuoy,
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
@@ -14,6 +14,8 @@ import {
   ageTierTextClass, AgeTierBadge,
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
+import NewSupportCaseModal from "../components/NewSupportCaseModal";
+import { SupportStatusBadge, RatingForm, StarRating, RATING_WORDS } from "../components/SupportKit";
 import { HorizontalTimelineCard, ticketStageLabel, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 
@@ -541,6 +543,36 @@ export default function OrderPassport() {
   };
 
   useEffect(() => { load(); }, [orderId]); // eslint-disable-line
+
+  // Phase 28 — support requests raised about this order, and the customer's
+  // rating of it once collected. Customers/resellers see their own; staff
+  // with support.view see them too, as context for the order.
+  const canSeeSupport = isReseller || isCustomer || can("support.view");
+  const [supportCases, setSupportCases] = useState([]);
+  const [orderFeedback, setOrderFeedback] = useState(null);
+  const [newCaseOpen, setNewCaseOpen] = useState(false);
+  const passportOrderId = data?.order?.id;
+  const loadSupport = (oid) => {
+    if (!oid || !canSeeSupport) return;
+    api.get("/api/support/cases", { params: { order_id: oid, limit: 20 } })
+      .then((r) => setSupportCases(r.data.cases || [])).catch(() => {});
+    api.get(`/api/support/order-feedback/order/${oid}`)
+      .then((r) => setOrderFeedback(r.data)).catch(() => {});
+  };
+  useEffect(() => { loadSupport(passportOrderId); }, [passportOrderId, canSeeSupport]); // eslint-disable-line
+
+  const submitOrderRating = async (rating, comment) => {
+    try {
+      const r = await api.post("/api/support/order-feedback", { order_id: passportOrderId, rating, comment });
+      toast.success(r.data.feedback?.case_ref
+        ? `Thank you. We're sorry it wasn't better, so we've opened request ${r.data.feedback.case_ref} to follow up.`
+        : "Thank you for your feedback");
+      loadSupport(passportOrderId);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not save your rating");
+      throw e;
+    }
+  };
 
   const retryInvoiceCreation = async () => {
     if (!data?.order?.id) return;
@@ -1514,28 +1546,94 @@ export default function OrderPassport() {
               </div>
               )}
 
-              {/* ── Need Help (2026-08-25) ────────────────────────────────────
-                  Reseller/customer only. Every error toast on this page and
-                  in the checkout flow ("contact Bassani directly") previously
-                  pointed the customer somewhere with no actual contact detail
-                  on screen — this closes that gap with the same address
-                  already used as the fallback recipient across the backend's
-                  own notification emails (settings.support_email). */}
-              {(isReseller || isCustomer) && support_email && (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1.5">
-                    <Mail size={12} />Need Help?
-                  </p>
+              {/* ── Rate this order (Phase 28) ── customer/reseller, once collected */}
+              {(isReseller || isCustomer) && orderFeedback?.eligible && (
+                <SideCard icon={CheckCircle2} title="Rate This Order">
+                  {orderFeedback.feedback ? (
+                    <div className="flex items-center gap-2">
+                      <StarRating value={orderFeedback.feedback.rating} readOnly size={16} />
+                      <span className="text-xs text-gray-500">Thank you for rating this order.</span>
+                    </div>
+                  ) : (
+                    <RatingForm subtitle="How did this order go? It takes less than a minute." onSubmit={submitOrderRating} />
+                  )}
+                </SideCard>
+              )}
+
+              {/* ── Need Help (2026-08-25; Phase 28 support desk) ─────────────
+                  Reseller/customer: raise a tracked query or complaint about
+                  this exact order (lands in the staff Support Desk with the
+                  order already linked) and see requests already raised on it.
+                  The support email stays as a secondary fallback. */}
+              {(isReseller || isCustomer) && (
+                <SideCard icon={LifeBuoy} title="Need Help?">
                   <p className="text-xs text-gray-500">
-                    Questions about this order? Get in touch and we'll help.
+                    Questions or a problem with this order? Raise a request and our team will get back to you.
                   </p>
-                  <a
-                    href={`mailto:${support_email}?subject=${encodeURIComponent(`Order ${order.name}`)}`}
-                    className="flex items-center justify-center gap-1.5 text-xs font-medium text-bassani-600 hover:text-bassani-800 border border-bassani-100 bg-bassani-50 rounded-xl px-3 py-2"
-                  >
-                    <Mail size={13} />{support_email}
-                  </a>
-                </div>
+                  <BtnPrimary onClick={() => setNewCaseOpen(true)} className="w-full justify-center">
+                    <LifeBuoy size={13} className="mr-1" />Raise a Query or Complaint
+                  </BtnPrimary>
+                  {supportCases.length > 0 && (
+                    <div className="divide-y divide-gray-100 border-t border-gray-100 pt-1">
+                      {supportCases.map((c) => (
+                        <button key={c.id} onClick={() => navigate(`/support?case=${c.id}`)}
+                          className="w-full flex items-center justify-between gap-2 py-2 text-left group">
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium text-gray-800 truncate group-hover:text-bassani-700">{c.subject}</span>
+                            <span className="block text-[11px] text-gray-400">{c.ref}</span>
+                          </span>
+                          <SupportStatusBadge status={c.status} external />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {support_email && (
+                    <a href={`mailto:${support_email}?subject=${encodeURIComponent(`Order ${order.name}`)}`}
+                      className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 hover:text-bassani-700">
+                      <Mail size={11} />Or email {support_email}
+                    </a>
+                  )}
+                </SideCard>
+              )}
+
+              {/* ── Customer Support (staff, Phase 28) ── requests + rating for this order */}
+              {!isReseller && !isCustomer && can("support.view") && (
+                <SideCard icon={LifeBuoy} title="Customer Support"
+                  action={can("support.respond") && (
+                    <button onClick={() => setNewCaseOpen(true)} className="text-[11px] font-medium text-bassani-700 hover:underline">Log request</button>
+                  )}>
+                  {orderFeedback?.feedback && (
+                    <div className="flex items-center gap-2">
+                      <StarRating value={orderFeedback.feedback.rating} readOnly size={14} />
+                      <span className="text-xs text-gray-600 min-w-0 truncate">
+                        {RATING_WORDS[orderFeedback.feedback.rating]}{orderFeedback.feedback.comment ? `: "${orderFeedback.feedback.comment}"` : ""}
+                      </span>
+                    </div>
+                  )}
+                  {supportCases.length > 0 ? (
+                    <div className="divide-y divide-gray-100">
+                      {supportCases.map((c) => (
+                        <button key={c.id} onClick={() => navigate(`/support?case=${c.id}`)}
+                          className="w-full flex items-center justify-between gap-2 py-2 text-left group">
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium text-gray-800 truncate group-hover:text-bassani-700">{c.subject}</span>
+                            <span className="block text-[11px] text-gray-400">{c.ref} · {c.category_label}</span>
+                          </span>
+                          <SupportStatusBadge status={c.status} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400">No customer requests about this order.</p>
+                  )}
+                </SideCard>
+              )}
+              {newCaseOpen && (
+                <NewSupportCaseModal
+                  prefill={{ orderId: order.id, orderName: order.name }}
+                  onClose={() => setNewCaseOpen(false)}
+                  onCreated={() => loadSupport(order.id)}
+                />
               )}
 
             </div>

@@ -42,6 +42,7 @@ from services.email_service import (
     send_rp_approval_needed,
     send_invoice_email,
 )
+from support_links import order_help_url
 from services.notification_service import notify_ticket_handoff
 from services.age_tier import board_entry_age_fields
 
@@ -368,12 +369,21 @@ async def _sync_sales_ticket(
                 odoo = get_odoo_client()
                 company_email, other_emails = await _resolve_customer_notification_recipients(odoo, partner_id)
                 if company_email:
+                    # Show the customer their real order number (e.g. S00972),
+                    # not the internal numeric id order_id holds here.
+                    _order_ref = str(order_id)
+                    try:
+                        _so = odoo.read("sale.order", [int(order_id)], fields=["name"])
+                        _order_ref = _so[0]["name"] if _so else _order_ref
+                    except Exception:
+                        pass
                     background_tasks.add_task(
                         send_order_ready_for_collection_customer,
                         customer_email=company_email,
-                        order_ref=str(order_id),
+                        order_ref=_order_ref,
                         customer_name=ticket.get("customer_name", ""),
                         cc=other_emails or None,
+                        support_url=order_help_url(order_id),
                     )
     except Exception as e:
         logger.warning("sales_ticket_sync_failed order_id=%s error=%s", order_id, e)
@@ -1104,6 +1114,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                         pdf_bytes=bytes(_pdf_bytes),
                         payment_state=_inv.get("payment_state"),
                         payment_reference=_inv.get("payment_reference"),
+                        support_url=order_help_url(sale_order_id),
                     )
                     invoice_sent = True
                     # Chatter note (2026-08-28) — see the matching note in

@@ -14,6 +14,7 @@ from credit import credit_status
 from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
+from support_links import order_help_url
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
@@ -2235,6 +2236,7 @@ async def _confirm_order_core(
                     order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
                     pdf_bytes=bytes(_pdf_bytes),
                     cc=[_reseller_email_cc] if _reseller_email_cc else None,
+                    support_url=order_help_url(order_id),
                 )
     except Exception as e:
         logger.warning("proforma_invoice_failed", extra={"order_id": order_id, "error": str(e)})
