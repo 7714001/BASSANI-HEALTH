@@ -25,7 +25,7 @@
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
 | 12 | Barcode Integration | 🟡 In Progress | Starting 12.0 — 2026-06-29 |
 | 13 | Production & Cultivation Module (GrowerIQ In-House) | 🟡 In Progress — 13.0 built | 13.0 Vault Movement Module (Track A starter) built 2026-07-24 in staged mode: batch ID generator + registry, vault movement logbook (Patricia replacement), vault ledger, readiness probe, `vault_custodian` role. Live Odoo writes gated on `GACP_ODOO_WRITES=on` + GACP access confirmation + sub-location setup. Track B still gated on Odoo BoMs. SAHPRA reporting requirements not yet obtained. |
-| 14 | External Ecommerce API | 🔵 Concept — Needs Scoping | Three modes: WooCommerce sync (preferred — Green Clouds) + direct REST + Integration Partner API (multi-tenant, Cannaverse first). Compliance flag outstanding before 14.6/14.7 order endpoints — does not block the partner path (14.10–14.17) |
+| 14 | External Ecommerce API | 🟡 In Progress | Foundation 14.0–14.3 built 2026-10-06: API clients with hashed keys + rotate/revoke, per-key rate limiting, kill switch, encrypted sales-channel credentials, `channels.manage` permission, Settings → External API tab, and the API-key read API (catalogue, categories, stock, priced from an Odoo pricelist). Next: Web Store channel 14.4–14.8 (blocked on Green Clouds being visible in Odoo; intake 14.6 also on the compliance flag D1). Integration Partner API 14.10–14.17 unblocked |
 | 15 | Stock Report | 🟢 Complete | 15.0–15.2 complete — 2026-07-06 |
 | 16 | Self-Service Customer Registration | 🟢 Complete | 16.0–16.4 complete — 2026-07-16 |
 | 17 | Document Template Management | 🟢 Complete | 17.0–17.5 complete — 2026-07-07; 17.6 Welcome Pack slot-based management — 2026-07-14 |
@@ -4103,136 +4103,142 @@ On top of the compliance foundation, the yield band system provides operational 
 
 ## Phase 14 — External Ecommerce API
 
-**Goal:** Expose a secure, warehouse-scoped API that allows external systems to read Bassani's product catalogue and real-time stock levels, with three integration modes: a WooCommerce sync mode (portal pushes products and stock to WC; WC fires order webhooks back), a direct REST mode for systems with REST client capability, and a general-purpose **Integration Partner API** for any POS platform whose users are themselves Stores under the existing reseller model — one Sales Agent account per platform, with every connected store an owned customer under it. The first integration target for WooCommerce is Green Clouds Pharmacy's WooCommerce store; the first Integration Partner is Nick's own Cannaverse Production Flutter app (the dispensary POS/management app stores use — see 14.10 below), with the explicit intent that other POS vendors integrate the same way later.  
-**Estimate:** 3–4 weeks (WooCommerce + direct REST) + 4–5 weeks (Integration Partner API, 14.10–14.17 — larger than originally scoped once partner governance, sandbox mode, and reliability were factored in; see Notes)  
-**Status:** 🔵 Concept — Needs Scoping  
+**Goal:** Let external sales channels sell Bassani stock without ever becoming a parallel ledger. Two tracks share one foundation (14.0–14.3): a **Web Store channel** (14.4–14.9; WooCommerce first, for Green Clouds Pharmacy's retail site), where the portal manages which products are listed and at what retail price, pushes them to WooCommerce, and pulls paid orders back into the standard order pipeline; and a general-purpose **Integration Partner API** (14.10–14.17) for POS platforms whose users are Stores under the existing reseller model (Cannaverse first).
+**Estimate:** 1 week (foundation, 14.0–14.3) + 3–4 weeks (Web Store channel, 14.4–14.8) + 4–5 weeks (Integration Partner API, 14.10–14.17)
+**Status:** 🟡 In Progress — foundation 14.0–14.3 built 2026-10-06 (Web Store track rescoped the same day; see Notes). Web Store order intake (14.6) is still blocked on the compliance flag (D1) and on Green Clouds being visible in Odoo.
 **Completed:** —
 
 ### Context
 
-Green Clouds Pharmacy is building a WooCommerce ecommerce site to sell Bassani's products. Bassani controls the Green Clouds warehouse in Odoo — it already exists as a company in the current portal setup. The WP developer is experienced with WooCommerce but not with custom REST API clients or Odoo, and builds primarily with drag-and-drop WooCommerce tooling. The **WooCommerce sync mode** is therefore the recommended path: the portal manages product data directly inside WC via the WC REST API, and WooCommerce fires its native order-created webhook when a purchase is made. This means the WP developer does not need to write custom API code — WooCommerce's built-in features handle the storefront, cart, and checkout entirely.
+Green Clouds Pharmacy is building a WooCommerce site to sell Bassani products at **retail**, to its own customers. The Green Clouds warehouse already exists as its own company in Bassani's Odoo. The WordPress developer knows WooCommerce well but not REST client code or Odoo, so the integration has to need **zero custom code on the WordPress side**. WooCommerce does storefront, cart, checkout and payment capture with its own native features; everything else is the portal's job.
 
-A **direct REST mode** is documented alongside it for future integrations where the consuming system has its own REST client and does not need WooCommerce.
+**How the Web Store channel works (the standard ERP-to-ecommerce pattern, adapted to this portal's architecture principles):**
 
-**Compliance flag — must be resolved before building the WooCommerce/direct-REST order endpoints (14.6, 14.7):** Confirm with Green Clouds whether customers purchasing on the WP site are named patients (requiring a SAHPRA Section 21 Authorisation Letter per order, per medicine) or licensed dispensaries (who manage their own scripts and authorisations). Named patients require the portal to validate a Section 21 Authorisation before creating each `sale.order` in Odoo — this changes the architecture of the order intake endpoint materially. Do not scope or build 14.6 or 14.7 until this is answered in writing. **This flag does not block 14.10–14.13** — Cannaverse stores ordering via the Reseller Link API are themselves Section 21 "Stores" under Bassani's existing Store Onboarding Agreement (the same legal category as every reseller onboarded through the portal today), placing ordinary B2B stock-replenishment orders, not per-patient purchases.
+1. **Odoo owns the retail price. The portal is where staff edit it.** Each channel gets its own Odoo **pricelist** (e.g. "Green Clouds Web Retail"). Staff set retail prices in the portal, and the portal writes them to that pricelist. Every web `sale.order` is created against the same pricelist, so the order, the invoice and what WooCommerce charged all agree, and retail prices live in the financial source of truth, not in Mongo (Architecture Principles #1 and #5). This replaces the original single `markup_pct` field: a flat markup can't express per-product retail pricing, and storing it portal-side would make the portal a second price ledger.
+2. **Mongo holds only the listing: what to show and how.** That means which products are listed, plus web-specific presentation (title, short description, WooCommerce category, sort order), the mapping to WooCommerce product ids, and sync state.
+3. **An order only enters Odoo once WooCommerce says it is paid.** WooCommerce status `processing` means paid. `pending` and `on-hold` (e.g. an unpaid EFT) are not imported; they come in when their status changes to paid. This keeps abandoned and unpaid checkouts out of Odoo entirely.
+4. **A web order is a real `sale.order` in the Green Clouds company and goes through the normal pipeline** (Architecture Principle #4): Sales ticket (`source: "web"`), packing board, QA/RP sign-off, collection or dispatch. No bespoke fulfilment path.
+5. **Invoicing follows the existing "paid in full via deposit" mechanism.** The customer has already paid in full at checkout. The portal registers that payment as a full-amount deposit (the same `sale.advance.payment.inv` down-payment invoice path as Register Deposit, 8.47), posted and paid against a dedicated web-payments clearing journal. This issues a tax invoice at the point of payment, which matches SA VAT's time-of-supply rule (the earlier of invoice or payment). The final invoice is then created automatically at `mark_complete`, as for every order, and nets the down payment to a zero balance. This is the "paid in full via deposit" case the portal already supports (2026-08-26). No new invoicing logic is needed, and it satisfies the universal deposit gate rather than bypassing it.
+6. **Stock is reserved at confirmation and only leaves at delivery.** Confirming the SO reserves stock in Odoo, so it immediately stops being available to sell. Physical stock only decreases when the delivery is validated, which already happens at `mark_complete`. WooCommerce gets the sellable quantity (Odoo `free_qty`: on hand minus reserved) minus a configurable safety buffer, not raw on-hand, so a WooCommerce shopper can't buy units already promised to a portal order. WooCommerce's own decrement at checkout is just an optimistic local copy; the portal's push is authoritative.
+7. **Never trust a webhook alone.** Every inbound path (order webhook) has a scheduled reconciliation poll behind it. This is the lesson of the 2026-07-24 Graph subscription lapse (11.D).
 
-**Why a third mode, not just 14.7/14.8 reused:** the WooCommerce/direct-REST modes were scoped around an anonymous storefront customer — `POST /customers` (14.8) takes just `{email, name}`, auto-creates an Odoo partner, and has no identity verification at all. That's the right amount of friction for a patient checking out on a WordPress site, and the wrong amount for a business partner: no per-store order attribution, no reuse of the existing onboarding/document-signing/admin-review flow, no commission tracking, and — most importantly — email-only matching is not safe for linking a request to an *existing* Bassani customer record (a bad actor claiming to be an established store could otherwise hijack that store's pricing and order history). Cannaverse stores map naturally onto the existing `reseller` role and `customer_ownership` model (see "Reseller model" and "Customer onboarding" in `CLAUDE.md`) — the Reseller Link API's job is to let a store securely attach itself to that existing infrastructure over an API instead of through the portal's own UI.
+**Odoo access blocker, found 2026-10-06 (blocks 14.4 onward, not the foundation):** a read-only probe of the live Odoo instance found **no Green Clouds company or warehouse visible to the portal's service account**. The only warehouses it can see are Bassani Health, Vault, La Farmacia, Samples @ La Farmacia, GMP Vault, and one data-cleanup warehouse. Either Green Clouds has not been set up in Odoo yet, or the API user has not been granted access to that company (the same class of Access Rights issue as other Odoo service-account permission faults). This must be resolved in Odoo, with a Green Clouds company, warehouse, sales tax and a "Green Clouds Web Retail" pricelist, before listings, pricing or sync can target it. The Context paragraph above saying the warehouse "already exists" was not confirmed live.
 
----
+**Compliance flag — must be resolved before building web order intake (14.6) or the direct REST order mode (14.9):** confirm in writing whether customers buying on the WooCommerce site are named patients (each order needs a SAHPRA Section 21 Authorisation Letter per medicine, validated before the `sale.order` is created) or licensed dispensaries (who manage their own scripts and authorisations). This is the architectural fork for order intake, not an edge case. It does **not** block 14.0–14.5 (catalogue, pricing, product and stock sync) or the Integration Partner path (14.10–14.17): Cannaverse stores are Section 21 "Stores" under Bassani's existing Store Onboarding Agreement, placing ordinary B2B replenishment orders.
 
-### 14.0 — API Key Management (Super Admin)
+**Decisions — D2–D6 confirmed by the product owner 2026-10-06 (the bold recommendation is now the decision); D1 still open:**
 
-Super admin gets a new "External API" section in settings to create and manage external API clients.
-
-- [ ] `api_clients` collection in MongoDB: `{ id, name, description, warehouse_id, key_prefix (first 8 chars for display), key_hash (SHA-256 of full key — raw key never stored), markup_pct, scoped_category_ids (null = all categories), wc_store_url, wc_consumer_key, wc_consumer_secret, active, created_at, last_used_at }`
-- [ ] Generate API key: 256-bit `secrets.token_urlsafe(32)`, returned **once** in plaintext on creation (not retrievable again), stored as SHA-256 hash only
-- [ ] Key rotation: generates new key, immediately invalidates old one — atomic swap, no window where both are valid
-- [ ] Revoke / deactivate client
-- [ ] Super Admin → Settings → External API: table of clients showing name, warehouse, last used, active status — with rotate/revoke actions
-- [ ] Client detail page: edit markup %, category scope, WC credentials, view key prefix
-- [ ] `APIKeyAuth` FastAPI dependency: reads `X-API-Key` header, SHA-256 hashes it, looks up matching active `api_clients` document, resolves `warehouse_id` via `warehouse_context.py` — used on every `/api/external/v1/` endpoint
-
----
-
-### 14.1 — Product Catalogue Endpoint
-
-Read-only. Scoped to the client's warehouse and optional category restrictions.
-
-- [ ] `GET /api/external/v1/products` — paginated (`?page`, `?per_page`), filterable by `?category_id`
-- [ ] Response per product: `{ id, sku, name, description, category_id, category_name, price_ex_vat, price_inc_vat, unit, in_stock, qty_available, image_url }`
-- [ ] Pricing: `price_inc_vat` = Odoo list price × `(1 + markup_pct / 100)` × `(1 + vat_rate)`, rounded to 2 decimal places. `price_ex_vat` = Odoo list price × `(1 + markup_pct / 100)`
-- [ ] Category scope: if `scoped_category_ids` is set on the client, only products in those categories are returned regardless of what the caller requests
-- [ ] `GET /api/external/v1/products/{product_id}` — single product
+| # | Decision | Why it matters | Recommendation |
+|---|---|---|---|
+| D1 | Named patients or licensed dispensaries? (the compliance flag above) | Decides whether order intake must validate a Section 21 Authorisation per order | **Open.** Must be answered in writing by Green Clouds; no default |
+| D2 | Whose stock does the web store sell: Green Clouds' own stock in the Green Clouds company, or Bassani stock that has to move between companies? | Decides which company the `sale.order` and invoice belong to, and whether an intercompany transfer step is needed | **Green Clouds sells its own stock from its own warehouse/company.** Bassani supplies Green Clouds the normal way (a B2B order), and nothing intercompany happens inside the web flow |
+| D3 | Can a gateway-confirmed payment be registered automatically as the full deposit, or must Finance still click Register Deposit? | 8.47 made the deposit gate "no exceptions, one explicit staff click" | **Register automatically, to a clearing journal only, from a verified paid WooCommerce order.** The money is already captured, not promised. Finance still reconciles the gateway payout against that clearing journal in Bank Reconciliation (Phase 22). The gate itself (no packing before a registered payment) is unchanged |
+| D4 | Collection or courier delivery for web orders? | Bassani today is collection-only; web retail usually ships | Decide per channel. If courier: WooCommerce shipping lines map to a delivery product line on the SO, and a tracking reference is added to fulfilment |
+| D5 | Is the retail price entered including or excluding VAT? | SA consumer prices must be displayed VAT-inclusive (CPA); Odoo pricelists follow the tax's `price_include` setting | **Staff enter the VAT-inclusive shelf price in the portal**; the portal converts to whatever the Green Clouds sales tax expects (live-verify the tax config first) |
+| D6 | Which system emails the web customer? | Without a rule, the customer gets duplicate emails from WooCommerce and the portal | **WooCommerce sends order received/paid. The portal sends only what WooCommerce can't know** (ready for collection/dispatched, tax invoice), and the order status is pushed back to WooCommerce (14.7) |
 
 ---
 
-### 14.2 — Category Endpoint
+### 14.0 — Foundation: API Clients, Sales Channels and Kill Switch — Built 2026-10-06
 
-- [ ] `GET /api/external/v1/categories` — list of product categories available to this client (filtered by `scoped_category_ids` if set)
-- [ ] Response: `{ id, name, product_count }`
+Two kinds of external connection, kept separate because they authenticate in opposite directions. An **API client** is an external system calling the portal (an API key). A **sales channel** is a store the portal calls out to (WooCommerce credentials).
 
----
-
-### 14.3 — Stock Level Endpoint
-
-Live stock figures from Odoo, warehouse-scoped.
-
-- [ ] `GET /api/external/v1/stock` — `{ product_id, sku, qty_available, in_stock }[]` for all products in scope
-- [ ] `GET /api/external/v1/stock/{product_id}` — single product stock
-- [ ] `qty_available` comes from `stock.quant` via `qty_available` field, scoped to the client's warehouse location (same as the existing reseller catalogue)
-
----
-
-### 14.4 — WooCommerce Product Sync (Portal → WooCommerce)
-
-The portal pushes its product catalogue into WooCommerce. The WP developer manages the storefront presentation using standard WC features — no custom code on the WP side.
-
-- [ ] WC credentials (`wc_store_url`, `wc_consumer_key`, `wc_consumer_secret`) stored on `api_clients` document
-- [ ] Sync function: for each scoped portal product, call WC REST API — `POST /wp-json/wc/v3/products` on first sync, `PUT .../products/{wc_id}` on subsequent syncs (upsert by SKU = Odoo product reference code)
-- [ ] Fields synced to WC: `name`, `description`, `sku`, `regular_price` (= `price_inc_vat` with markup), `categories`, `stock_quantity`, `manage_stock: true`, `stock_status: instock/outofstock`, `images` (R2 image URL if set)
-- [ ] `wc_product_map` stored in MongoDB: `{ client_id, portal_product_id, wc_product_id }` — allows updates to target the correct WC product on subsequent syncs without re-scanning by SKU
-- [ ] Manual trigger: Super Admin → External API → client detail → "Sync Products Now" button (`POST /api/external/v1/admin/sync-products/{client_id}`)
-- [ ] Scheduled sync: Railway cron every 15 minutes — runs the sync function for all active WC-configured clients
+- [x] `api_clients` collection: `{ id, name, description, client_type, warehouse_id, pricelist_id (null = no prices returned), stock_detail: "binary" | "quantity", scoped_category_ids (null = all), key_prefix (first 8 chars, display only), key_hash (SHA-256 of the full key, raw key never stored), sandbox, active, created_at, last_used_at }`. `client_type` is extended by 14.10 for Integration Partners.
+- [x] Generate key: `secrets.token_urlsafe(32)`, returned **once** in plaintext, stored as a SHA-256 hash only. Rotation is an atomic swap with no window where both keys are valid; revoke means `active: false` with immediate effect.
+- [x] `APIKeyAuth` FastAPI dependency: reads `X-API-Key`, hashes it, looks up the active `api_clients` doc, resolves warehouse/company via `warehouse_context.py`, and stamps `last_used_at`. Used on every `/api/external/v1/` route.
+- [x] `sales_channels` collection: `{ id, name, channel_type: "woocommerce", company_id, warehouse_id, pricelist_id, store_url, consumer_key, consumer_secret (encrypted at rest: it is a write credential to someone else's store), webhook_secret, payment_journal_id (web-payments clearing journal), safety_buffer_qty, sync_enabled, order_intake_enabled, sandbox, active, created_at, last_sync_at, last_order_poll_at }`
+- [x] New permission `channels.manage` (Web Store settings, listings, retail pricing, sync actions). Added to `auth.py` and to the three places in `Users.js`.
+- [x] Rate limiting per API key (`slowapi` keyed on key hash, not IP), so a runaway integration can't degrade the single Odoo connection for staff.
+- [x] Global kill switch `portal_settings._id: "external_api_enabled"` (super admin only): pauses **all** external API traffic (every `/api/external/v1/` request returns 503, reads included, since reads also load Odoo), inbound order intake, and outbound sync, in one action.
+- [x] Portal-side admin endpoints live under `/api/integrations/` (normal staff login), kept separate from `/api/external/v1/` (API-key only), so an API key can never reach an admin endpoint and a staff session never authenticates the external API.
+- [x] WooCommerce secrets are encrypted at rest with Fernet, keyed from a new `CREDENTIALS_ENCRYPTION_KEY` Railway variable. If the variable is unset, saving a secret is refused with a clear error rather than storing it in plain text. Secrets are write-only: the API returns only whether each is set, plus the last 4 characters of the consumer key.
+- [x] Sentry tags `api_client_id` / `sales_channel_id` on every external route and sync job.
+- [x] Settings → **External API** tab: API clients table (name, warehouse, last used, active) with create/rotate/revoke, following the confirmation-modal pattern.
 
 ---
 
-### 14.5 — Stock Sync (Portal → WooCommerce)
+### 14.1 — Product Catalogue Endpoint — Built 2026-10-06
 
-Keeps WooCommerce's stock counts current so products flip to out-of-stock when Odoo has no qty.
+- [x] `GET /api/external/v1/products`: paginated, filterable by `category_id`, scoped to the client's warehouse and `scoped_category_ids`
+- [x] Per product: `{ id, sku, name, description, category_id, category_name, price_ex_vat, price_inc_vat, in_stock, qty_available?, image_url }`. Prices come from the client's Odoo pricelist, never a portal-side markup; with no `pricelist_id`, price fields are omitted.
+- [x] Pricelist resolution reads `product.pricelist.item` directly, because Odoo's own price computation is a private method that XML-RPC refuses to call remotely (the same wall `fetch_report_pdf()` hit). Supported: **fixed-price** items applied to a product variant (takes precedence) or a product template, minimum quantity ≤ 1, within their date window. This is exactly what 14.4 writes. Anything else (no item, or a percentage/formula/category/global rule created directly in Odoo) falls back to the Odoo sales price, and each price carries `source: "pricelist" | "list_price"` so a consumer can tell. Whether the price includes VAT follows the company's sales tax (`price_include`). Schema live-verified on Odoo 19, 2026-10-06. `image_url` is served from Odoo's product image (`image_1024`) via `GET /api/external/v1/products/{id}/image`, which needs the same `X-API-Key` header, not R2. It is `null` when the product has no image (checked cheaply with Odoo's `bin_size` context, without transferring the image). The WooCommerce sync (14.5) will need a publicly fetchable image URL instead, since WooCommerce downloads images itself; decide that when building 14.5.
+- [x] `qty_available` is only included when `stock_detail: "quantity"`. The default is `"binary"` (`in_stock` only), which matches the 2026-08-21 rule that resellers and customers never see exact stock figures. `"quantity"` is reserved for system-to-system channels Bassani controls.
+- [x] `GET /api/external/v1/products/{product_id}`: same shape and scoping
+- [x] `GET /api/external/v1/ping`: credential/connectivity check for integrators. Every response uses a `{data, meta}` envelope, with `meta.sandbox` on all of them. Products are filtered to `sale_ok`, and the `[SKU] ` prefix Odoo adds to display names is stripped since `sku` is its own field. Errors never name the ERP ("The catalogue service is temporarily unavailable").
+- [x] Verified 2026-10-06 against live Odoo (read-only, Mongo faked): auth (missing/bad/revoked key → 401), kill switch → 503, per-key rate limit (120/min then 429, a second key unaffected), catalogue/category/stock reads scoped to La Farmacia as a stand-in warehouse, binary vs quantity stock modes, and pricelist precedence/date-window/VAT-inclusive maths unit-tested.
 
-- [ ] On the 15-minute scheduled tick (same cron as 14.4): `PUT /wp-json/wc/v3/products/{wc_id}` with `{ stock_quantity, stock_status }` only — not a full product sync
-- [ ] Immediate stock push: whenever the portal processes a confirmed delivery or Odoo stock change for a product, trigger an immediate background stock push to all active WC clients whose scope includes that product
-- [ ] Stock push always fires as a `BackgroundTask` — never blocks the order confirmation or ticket response
+### 14.2 — Category Endpoint — Built 2026-10-06
 
----
+- [x] `GET /api/external/v1/categories`: `{ id, name, product_count }`, filtered by `scoped_category_ids`. Uses `complete_name` as the label (the 2026-09-14 duplicate-leaf-name lesson).
 
-### 14.6 — WooCommerce Order Webhook Receiver (WooCommerce → Portal)
+### 14.3 — Stock Level Endpoint — Built 2026-10-06
 
-WooCommerce POSTs a `order.created` webhook when a customer completes checkout. The portal intakes the order, creates a `sale.order` in Odoo, and kicks off the standard sales ticket pipeline.
-
-- [ ] `POST /api/external/v1/webhooks/woocommerce/{client_id}` — validates `X-WC-Webhook-Signature` header (HMAC-SHA256 of raw payload body using the WC webhook secret); reject with 401 on mismatch
-- [ ] Idempotency: store `wc_order_id` in `external_orders` collection on first receipt; return 200 without reprocessing if the same `wc_order_id` arrives again
-- [ ] Customer resolution: match WC billing email to a customer token via 14.8; create Odoo partner if none exists
-- [ ] Line item mapping: WC product SKU → portal product ID → Odoo product ID (via `wc_product_map`)
-- [ ] Create Odoo `sale.order` in the client's warehouse-scoped company (same XML-RPC path as a reseller-placed order)
-- [ ] Create a Sales ticket for the order — it enters the standard Sales → Orders → QA/RP → Finance pipeline
-- [ ] Email internal sales: "New order received via Green Clouds Pharmacy website" with order summary and ticket link
-- [ ] Return HTTP 200 immediately; all processing is `BackgroundTask`
-- [ ] ⚠️ **Blocked on compliance scoping** — do not build until named patient vs licensed dispensary question is answered (see Context)
+- [x] `GET /api/external/v1/stock` and `/stock/{product_id}`: `{ product_id, sku, in_stock, qty_available? }`, using the same `stock_detail` rule as 14.1
+- [x] Sellable quantity = Odoo `free_qty` (on hand minus reserved), scoped to the client's warehouse via the existing warehouse context, not raw `qty_available`. Live-verify `free_qty` on Odoo 19 before relying on it (the 2026-08-11 field-drift lesson).
 
 ---
 
-### 14.7 — Direct REST Order Creation (Non-WooCommerce)
+### 14.4 — Web Store Catalogue & Retail Pricing (Portal UI)
 
-For integrations where the consuming system calls the portal API directly rather than via WooCommerce webhooks.
+The screen where Bassani or Green Clouds staff decide what is on the website and what it costs. Lives at `/channels/{channel_id}` ("Web Store" nav item, `channels.manage`).
 
-- [ ] `POST /api/external/v1/orders` — body: `{ customer_token, line_items[{ product_id, qty }], external_reference, notes }`
-- [ ] Same Odoo sale.order creation and Sales ticket pipeline as 14.6
-- [ ] Returns `{ order_id, reference, status: "received" }`
-- [ ] `GET /api/external/v1/orders/{order_id}` — check intake status
-- [ ] ⚠️ **Blocked on compliance scoping** — same constraint as 14.6
+- [ ] `channel_listings` collection: `{ channel_id, odoo_product_id, listed: bool, web_title?, web_short_description?, wc_category?, sort_order, wc_product_id, last_synced_at, sync_status: ok/error/pending, sync_error, updated_by, updated_at }`. Presentation and mapping only; no prices stored here.
+- [ ] Listings table: product (thumbnail, SKU), Odoo list price, **retail price** (inline-editable, VAT-inclusive per D5), margin vs cost (shows "Cost price not set" when `standard_price` is 0, never a fake 100%, same as 8.63), sellable stock, Listed toggle, sync status. Filters: listed/unlisted, category, sync errors only.
+- [ ] Editing a retail price writes a `product.pricelist.item` (fixed price, applied to that product variant) on the channel's pricelist in Odoo. Audit-logged with before/after, and marks the listing `pending` so the next sync pushes it.
+- [ ] Bulk edit: an Excel export/re-import of listed + retail price, reusing the preview-diff-confirm shape of `ResellerCatalogImportModal.js` (match on Odoo Product ID only, changed rows only, per-row checkboxes)
+- [ ] Optional rule-based pricing helper ("set selected products to list price + X%, round to .99"), which writes individual pricelist items. It is a convenience for filling prices, not a stored rule.
+- [ ] Only products already in the Green Clouds company/warehouse can be listed (per D2)
 
----
+### 14.5 — Product & Stock Sync (Portal → WooCommerce)
 
-### 14.8 — Customer Token Management
+- [ ] Upsert by SKU (Odoo `default_code`) through the WooCommerce REST API (`/wp-json/wc/v3/products`, batch endpoint for volume), storing `wc_product_id` on the listing. Requires every listed product to have a `default_code`; the listing UI blocks listing one without it and says why.
+- [ ] Fields pushed: name/web title, descriptions, SKU, `regular_price` (from the pricelist), categories, `manage_stock: true`, `stock_quantity` (= `free_qty` − `safety_buffer_qty`, floored at 0), `stock_status`, images
+- [ ] Unlisting sets the WooCommerce product to `status: draft`. The portal never deletes a WooCommerce product, so order history and URLs survive a temporary delisting.
+- [ ] Full sync runs on `services/scheduler.py`'s `_interval_loop` (every 15 min, not a separate cron service), plus a stock-only push, as a `BackgroundTask`, whenever the portal confirms an order, validates a delivery, or a retail price changes
+- [ ] Per-listing `sync_status`/`sync_error` surfaced in the listings table, with **Sync Now** (whole channel) and **Retry** (one product) actions
+- [ ] WooCommerce admin should be set to hide the remaining-stock count from shoppers ("Never show quantity remaining"). The number is pushed for WooCommerce's own oversell protection, not for display.
 
-WP purchasers must map to Odoo partners. The portal manages this mapping; no internal Odoo IDs are exposed externally.
+### 14.6 — Web Order Intake (WooCommerce → Portal → Odoo)
 
-- [ ] `customer_tokens` collection: `{ token (UUID v4), client_id, odoo_partner_id, email, name, created_at }`
-- [ ] `POST /api/external/v1/customers` — body: `{ email, name }`. If a token exists for this `client_id` + `email`, return it. Otherwise create an Odoo partner (warehouse-scoped company), store the token, return it
-- [ ] `GET /api/external/v1/customers/{token}` — returns `{ token, name, email }` — Odoo partner ID is never returned in the response
-- [ ] For the WooCommerce path (14.6): customer token resolution and creation happens automatically inside the webhook receiver — the WP developer does not call this endpoint
+⚠️ **Blocked on the compliance flag and D1–D3.**
 
----
+- [ ] `POST /api/external/v1/webhooks/woocommerce/{channel_id}`: verifies `X-WC-Webhook-Signature` (HMAC-SHA256 of the raw body with `webhook_secret`), returns 401 on mismatch, and acks 200 immediately; processing is a `BackgroundTask`. Subscribed topics: `order.created`, `order.updated`.
+- [ ] Reconciliation poll on `_interval_loop` (`GET /wc/v3/orders?modified_after={last_order_poll_at}&status=processing`), so a dropped webhook is picked up within one cycle
+- [ ] Only `processing` (paid) orders are imported. Anything else is recorded and waits for a later status change.
+- [ ] Idempotent: `external_orders` collection `{ channel_id, wc_order_id (unique per channel), wc_order_number, status, odoo_order_id, ticket_id, payment_registered, error, raw_payload, received_at }`. A repeat delivery never creates a second SO.
+- [ ] Customer resolution: find or create the buyer as a `res.partner` (individual) under the Green Clouds company, matched on email, carrying name, phone and billing/shipping address. It is a real partner per buyer, not one shared "web customer" record, because the tax invoice needs the recipient and (per D1) a named patient must be identifiable.
+- [ ] Line mapping via `channel_listings` (`wc_product_id` → `odoo_product_id`). Lines are written at the **price the customer actually paid** (the invoice must equal the payment). If that differs from the current pricelist price (sync lag, a WooCommerce coupon), the order still imports, but the difference is flagged on the ticket for review. WooCommerce coupons become line discounts; shipping (per D4) becomes a delivery product line.
+- [ ] Creates the `sale.order` in the channel's company and warehouse with the channel pricelist and `client_order_ref` = WooCommerce order number. Creates the Sales ticket (`source: "web"`), then confirms via `_confirm_order_core()` with a synthetic system actor (the same pattern as recurring-order accept, 8.46).
+- [ ] Registers the payment (per D3): `register_deposit`'s Odoo logic is first extracted into a reusable `_register_deposit_core()` (same refactor shape as `_confirm_order_core`), then called with `invoice_type: "fixed"`, the full order total, and the channel's clearing journal. That queues the packing board through the existing `_queue_packing_board()`.
+- [ ] Any failure (unmapped SKU, Odoo fault) leaves the `external_orders` doc in `error` with the reason, visible in a **Web Orders** tab on the channel page with **Retry**. Internal sales are emailed (new routing key `web_order_error_to`). Nothing is silently dropped.
+- [ ] Email internal sales on each new web order (routing key `web_order_received_to`)
 
-### 14.9 — Order Status Pushback (Portal → WooCommerce)
+### 14.7 — Fulfilment & Status Pushback (Portal → WooCommerce)
 
-Closes the loop: when the portal ticket status changes, push the update back to WooCommerce so the customer's order history on the WP site reflects current fulfilment status.
+- [ ] No new fulfilment logic. A web order runs the standard packing board, QA/RP sign-off, and `mark_complete`. `mark_complete` validates the delivery (**this is where stock physically decreases**) and creates the final invoice, which nets to zero against the down payment.
+- [ ] Status pushback (`PUT /wc/v3/orders/{id}`, `BackgroundTask`, logged to `webhook_deliveries` per 14.16), mapped from the real pipeline: order imported → `processing` (already); packing entry `complete` (ready for collection) or dispatched → `completed`, with a customer note; ticket cancelled → `cancelled`
+- [ ] The final tax invoice PDF is emailed by the portal (existing `send_invoice_email`), per D6
 
-- [ ] When a Sales ticket linked to a WC order transitions to a key state, call `PUT /wp-json/wc/v3/orders/{wc_order_id}` with updated `status`
-- [ ] State mapping: portal `packing` → WC `processing`; portal `dispatched` → WC `completed`; portal `cancelled` → WC `cancelled`
-- [ ] `wc_order_id` stored on the `external_orders` document during 14.6 intake, retrieved here via `external_orders.wc_order_id`
-- [ ] Always fires as a `BackgroundTask`
+### 14.8 — Refunds, Cancellations & Payout Reconciliation
+
+- [ ] A WooCommerce refund (`order.updated` with refunds, or a cancelled paid order) creates a credit note against the posted invoice in Odoo via the existing credit-note flow (8.25), full or partial. If the order has not been packed yet, the SO is also cancelled through `_cancel_order_core()`, which cancels the packing board entry (the 2026-09-07 sync).
+- [ ] Refunds raised in the portal are **not** pushed to WooCommerce automatically. Money movement on the gateway stays a deliberate action in WooCommerce/the gateway, and the portal flags the ticket to remind staff.
+- [ ] Gateway payouts arrive in the bank net of fees. They are matched in Bank Reconciliation (Phase 22) against the clearing journal, with the fee booked to an expense account. Confirm with Finance which gateway (PayFast/Yoco/Peach) and how its settlement report looks before building a parser.
+
+### 14.9 — Direct REST Order Mode (Deferred)
+
+Only built if a non-WooCommerce consumer appears. It would reuse 14.6's intake core with a `POST /api/external/v1/orders` endpoint and a `customer_tokens` mapping (`{ token, client_id, odoo_partner_id, email, name }`, never exposing Odoo ids). Same compliance gate as 14.6.
+
+### Definition of Done — Web Store channel (14.0–14.8)
+
+- [ ] A staff member with `channels.manage` lists 10 products, sets their retail prices in the portal, and sees exactly those 10 appear on the WooCommerce site at those prices (VAT-inclusive) within one sync cycle, with no WordPress-side code
+- [ ] Changing a retail price in the portal changes the Odoo pricelist item (audit-logged) and the WooCommerce price on the next sync. Unlisting a product sets it to draft in WooCommerce, not deleted.
+- [ ] WooCommerce stock equals Odoo `free_qty` minus the buffer. Confirming an unrelated portal order for the same product lowers the WooCommerce stock without anyone touching WooCommerce.
+- [ ] A paid WooCommerce order appears as a confirmed `sale.order` in the Green Clouds company, with a `web` Sales ticket, a posted and paid down-payment invoice, and a packing board card. An unpaid (on-hold) order does not appear until it is paid.
+- [ ] The same webhook delivered twice creates one SO. A webhook that never arrives is picked up by the reconciliation poll.
+- [ ] After QA/RP and `mark_complete`, Odoo on-hand stock has decreased, the final invoice shows a zero balance, the customer has the tax invoice, and the WooCommerce order shows `completed`
+- [ ] A WooCommerce refund produces a credit note in Odoo. A failed import shows on the Web Orders tab with a reason and a working Retry.
+- [ ] The kill switch stops intake and sync immediately. A revoked API key is rejected on the next request.
 
 ---
 
@@ -4296,14 +4302,14 @@ Lets a new Integration Partner build and test against the API without ever touch
 
 ### 14.15 — Partner-Scoped Order Endpoint
 
-Distinct from 14.7: orders placed here flow through the **real** reseller order path — `order_routes.py`'s existing create/confirm logic, `customer_ownership` (7.13), commission crediting, and the standard Sales → Orders → QA/RP → Finance ticket pipeline — not a bespoke intake shim. A `partner_store` key (from 14.13) identifies its `reseller_id`/`odoo_partner_id` directly, so there is no per-request customer token to resolve.
+Distinct from 14.6/14.9: orders placed here flow through the **real** reseller order path — `order_routes.py`'s existing create/confirm logic, `customer_ownership` (7.13), commission crediting, and the standard Sales → Orders → QA/RP → Finance ticket pipeline — not a bespoke intake shim. A `partner_store` key (from 14.13) identifies its `reseller_id`/`odoo_partner_id` directly, so there is no per-request customer token to resolve.
 
 - [ ] `GET /api/external/v1/products`, `/categories`, `/stock` (14.1–14.3) reused unchanged — already warehouse-scoped, no compliance dependency
 - [ ] `POST /api/external/v1/partner-orders` — body: `{ line_items[{ product_id, qty }], external_reference, notes }`. Calls the same order-creation path a reseller placing an order through the portal UI hits, with `current_user` synthesized from the key's pinned `reseller_id` (same synthetic-actor pattern already used by `public_routes.py`'s recurring-order accept endpoint, 8.46)
 - [ ] Enforces the existing server-side rule that a reseller may only order for customers linked to their own profile — no new authorization logic, just the existing check applied to an API-originated request
-- [ ] `GET /api/external/v1/partner-orders/{order_id}` — status, mapped from the linked ticket's stage (reuses 14.9's state-mapping table)
+- [ ] `GET /api/external/v1/partner-orders/{order_id}` — status, mapped from the linked ticket's stage (same pipeline-stage mapping as 14.7: imported → received, packing entry `complete`/collected → completed, ticket cancelled → cancelled; never a portal `dispatched` state, which does not exist)
 - [ ] Ticket stage changes push to the partner via the signed webhook mechanism (14.13/14.16), `BackgroundTask`-only, never blocking the portal-side transition
-- [ ] Not gated on the Green Clouds compliance flag (see Context) — built and shipped independently of 14.6/14.7. Billing stays exactly as it is for any reseller's customer today: **the store is invoiced and pays Bassani directly** (confirmed 2026-08-19) — the Integration Partner earns commission on the volume but is never a billing counterparty, so no new invoicing/collections logic is needed anywhere in this phase
+- [ ] Not gated on the Green Clouds compliance flag (see Context) — built and shipped independently of 14.6/14.9. Billing stays exactly as it is for any reseller's customer today: **the store is invoiced and pays Bassani directly** (confirmed 2026-08-19) — the Integration Partner earns commission on the volume but is never a billing counterparty, so no new invoicing/collections logic is needed anywhere in this phase
 
 ---
 
@@ -4311,11 +4317,11 @@ Distinct from 14.7: orders placed here flow through the **real** reseller order 
 
 The pieces that turn 14.10–14.15 from three working endpoints into something Bassani can safely run as a real multi-tenant platform, protecting the single Odoo XML-RPC connection every request ultimately goes through.
 
-- [ ] Per-partner and per-store rate limiting (`slowapi`, keyed by API key rather than IP) on catalog reads and order creation — a runaway or buggy integration must not be able to degrade Odoo for the portal's own staff
-- [ ] `webhook_deliveries` collection — every outbound webhook (14.13 link-status, 14.15 order-status, 14.9 WC pushback) logs payload, signature, attempt count, last status, next retry time. Retried with backoff (e.g. 3 attempts); a permanently-failed delivery is surfaced in the partner's admin detail page with a manual **Resend** action — 14.6/14.9/14.13 as scoped are fire-and-forget `BackgroundTask`s with no record, which silently drops order-status updates on any transient outage at the receiving end
-- [ ] Sentry error tagging by `integration_partner_id` on every `/api/external/v1/` route, so a broken integration's errors are visibly attributable rather than lost in general noise
+- [ ] Per-partner and per-store rate limits on top of 14.0's per-key `slowapi` limiting (a partner's combined store traffic capped as one budget), so a runaway or buggy integration must not be able to degrade Odoo for the portal's own staff
+- [ ] `webhook_deliveries` collection — every outbound webhook (14.13 link-status, 14.15 order-status, 14.7 WooCommerce status pushback) logs payload, signature, attempt count, last status, next retry time. Retried with backoff (e.g. 3 attempts); a permanently-failed delivery is surfaced in the partner's admin detail page with a manual **Resend** action — 14.6/14.9/14.13 as scoped are fire-and-forget `BackgroundTask`s with no record, which silently drops order-status updates on any transient outage at the receiving end
+- [ ] Sentry error tagging by `integration_partner_id` (in addition to 14.0's `api_client_id` tag) on every `/api/external/v1/` route, so a broken integration's errors are visibly attributable rather than lost in general noise
 - [ ] Integration Partners admin page (14.13) surfaces basic health per partner: `last_used_at` (already in 14.0), request volume, error rate over the last 24h — extends the existing `last_used_at` field rather than a parallel metrics system
-- [ ] Global kill switch (`portal_settings._id: "external_api_enabled"`, super-admin only) — pauses **all** external order intake across every partner in one action, standard incident-response tooling for anything writing into Odoo on Bassani's behalf
+- [ ] Per-partner pause (`active: false` on the partner's platform key cascades to its store keys), alongside 14.0's global `external_api_enabled` kill switch, which already pauses **all** external intake and sync in one action
 
 ---
 
@@ -4330,6 +4336,8 @@ A platform must accept Bassani's terms before it can even request a `partner_pla
 ---
 
 ### Notes
+
+> **2026-10-06 — Web Store track (14.0–14.9) redesigned before any build started.** Prompted by Nick's direction for the Green Clouds WooCommerce site: the portal needs a place to choose which products go on the site and to set their retail price, so a sync always pushes the right details; paid orders must flow into Odoo with stock decreasing and invoices generated. Changes from the 2026-07-06 scope: (1) **Retail pricing moved from a flat `markup_pct` on the API client to an Odoo pricelist per channel, edited from a new portal Web Store screen (14.4).** A flat markup can't express per-product retail prices, and keeping prices portal-side would make Mongo a second price ledger (Architecture Principles #1 and #5). (2) **WooCommerce credentials moved off `api_clients` onto a separate `sales_channels` collection**, since an inbound API key and an outbound store credential are opposite trust directions. (3) **Order intake only accepts paid orders** (`processing`) and is backed by a reconciliation poll, not webhooks alone (the 11.D Graph-lapse lesson). (4) **Invoicing reuses the existing "paid in full via deposit" mechanism**: a gateway-confirmed payment is registered as a full-amount deposit to a clearing journal (issuing the tax invoice at payment time), and the final invoice at `mark_complete` nets to zero. It needs no new invoicing logic, and the deposit gate is satisfied rather than bypassed (D3 asks for sign-off on doing this automatically). (5) **Stock pushed to WooCommerce is Odoo `free_qty` minus a safety buffer, not on-hand**, so web shoppers can't buy stock already reserved by portal orders; physical stock still only decreases at delivery validation (`mark_complete`). (6) Stale items fixed: exact stock figures are now opt-in per client (`stock_detail`), defaulting to in/out-of-stock only, which matches the 2026-08-21 stock-secrecy rule; sync runs on `scheduler.py`'s `_interval_loop`, not a separate Railway cron; images come from Odoo, not R2; the status mapping uses real pipeline states (there is no portal `dispatched` state); rate limiting, the kill switch and Sentry tagging moved into the foundation (14.0) so they protect Odoo from day one; refunds/credit notes and gateway payout reconciliation (14.8) were added, as they were missing entirely; direct REST order mode deferred (14.9). Added a Definition of Done for the Web Store track. Open decisions D1–D6 are listed in Context.
 
 > **2026-08-19 — Reframed from a Cannaverse-specific "Reseller Link API" to a general Integration Partner model, following a deeper planning conversation with Nick.** Original scoping (single session) treated each connecting store as linking to its own independent Bassani account. Corrected model: an Integration Partner (a POS platform — Cannaverse first, but the architecture is explicitly not Cannaverse-specific, since Bassani intends to onboard other POS platforms later) holds **one** Sales Agent/reseller account, and every store that connects through it becomes one of that reseller's owned customers via the existing `customer_ownership` model — the same mechanism a human sales agent's customer portfolio already uses. This means commission, tier-band statements, and ownership needed zero new logic; only the API access layer (14.10, 14.13, 14.16) is genuinely new. Also discovered the new-account path (14.12) needs no new onboarding endpoint at all — Phase 16.2's existing reseller referral link (`/apply?ref={user.id}`) already does exactly this; the only addition is an `external_store_ref` correlation param so a platform can match an approved application back to its own store record. Three decisions locked in: (1) every connecting store still individually signs Bassani's own NDA + Store Onboarding Agreement regardless of how the partner vetted them — Bassani keeps an independent compliance record on every store, not just on the partner; (2) the store is billed and pays Bassani directly — the Integration Partner earns commission but is never a billing/collections counterparty, so 14.15 needed no new invoicing logic; (3) OTP verification alone is not sufficient trust for the existing-account path — every link, OTP-verified or onboarding-approved, still passes through an explicit admin approval step (14.13) before a credential is issued. Field/endpoint naming was deliberately genericized (`integration_partner_id`, `external_store_ref`, `/partner/...`) rather than `cannaverse_*` — Cannaverse is the first row of data in `resellers`/`api_clients`, not a special code path; being first to integrate is a contractual/sequencing lever with Bassani, not something the platform architecture itself should encode. On the Cannaverse side: the partner-store API key must be held server-side (a Cloud Function proxy, never the Flutter client, since it's a long-lived secret in a distributable app binary) — that function is the natural receiver for the 14.13/14.15/14.16 webhooks, fanned out to store staff via Cannaverse's existing FCM/notification infrastructure. Cannaverse-side entities for this (a supplier-connection record, a supplier-order record) are deliberately separate from the unrelated existing `WholesalerEntity` (an in-app seller with a manually-curated catalog) and `StockRequestEntity` (internal store-to-manager stock requests) — neither models an external supply link.
 

@@ -54,6 +54,7 @@ Before the first user logs in, the following must be set in Railway's environmen
 | `R2_BUCKET` | Name of the R2 bucket that stores all uploaded documents | Must match the bucket you created in the Cloudflare R2 dashboard (e.g. `bassani-health-docs`) |
 | `R2_ENDPOINT` | Full S3-compatible endpoint URL for your R2 bucket | Format: `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
 | `SENTRY_DSN` | Error monitoring | From your Sentry.io project settings (optional but recommended) |
+| `CREDENTIALS_ENCRYPTION_KEY` | Encrypts online store keys (e.g. WooCommerce) saved under Settings → External API | Run `openssl rand -base64 48`. Set it once and keep it: changing it makes every saved store key unreadable, and they must be re-entered |
 
 > **Security note:** The system will refuse to start if `JWT_SECRET` is still set to its default placeholder. This is intentional — a weak JWT secret is a serious security risk.
 
@@ -407,6 +408,46 @@ The Signature Status badge on the My Profile sidebar shows:
 #### Granting or revoking signing authority
 
 Go to **Users**, open the user's permissions panel, and toggle **signing_authority → sign** on or off. The change takes effect immediately — the user's profile page will show or hide the Signing Authority card on their next page load.
+
+---
+
+## Step 8c — External API and Online Stores (Super Admin)
+
+**Settings → External API** controls every outside system that connects to the portal. Super admins see all three sections. Staff with the **Web Store & Sales Channels** permission see only Online stores.
+
+### External API status (kill switch)
+
+Shows whether the external API is running. **Pause API** immediately refuses every API client and stops online store syncing. Use it if an integration starts misbehaving. You must give a reason, which is recorded in the audit trail. **Resume API** turns everything back on. Nothing already in the portal is affected either way.
+
+### API clients
+
+An API client is an outside system, such as a website or a partner's point-of-sale app, that reads our product catalogue and stock using an API key.
+
+1. Click **New API client** and enter a name and description.
+2. Choose the **Warehouse**. Stock figures, and which company sells, come from this warehouse.
+3. Choose a **Pricelist** if the client should see prices. Without one, no prices are shared.
+4. Choose **Product categories** to limit what the client sees. **Always set this.** Left empty, the client sees every product, including internal and bulk items.
+5. Choose **Stock detail**: *In stock / out of stock only* (the default, and right for almost everyone) or *Exact quantities* (only for systems we control).
+6. Tick **Sandbox** while the integrator is building and testing.
+7. Click **Create & show key**. **The key is shown once only.** Copy it and send it to the integrator securely. It can't be shown again.
+
+Actions on each client:
+- **Edit** changes its settings. The key stays the same.
+- **Rotate** issues a new key. The old key stops working immediately, so the integrator must update their system.
+- **Revoke** blocks the client from its very next request. **Restore** lets it back in with its existing key.
+
+The **Last used** column shows when each client last connected. The integrator can check their key works by calling `GET /api/external/v1/ping` with the key in an `X-API-Key` header.
+
+### Online stores
+
+An online store is a website the portal connects to, for example the Green Clouds Pharmacy WooCommerce site. Click **Connect a store** and enter:
+- the store address (must start with `https://`)
+- the warehouse and pricelist for the store's products and retail prices
+- the WooCommerce consumer key and secret, and the webhook secret (created in WooCommerce → Settings → Advanced)
+- the **Web payments journal**, where paid online orders are recorded until the payment provider pays out to the bank
+- a **Safety buffer**, the number of units held back from the website on every product to avoid overselling
+
+Saved store keys are encrypted and never shown again. When editing, leave a key field blank to keep the saved value. Product syncing and online order intake are not switched on yet; they arrive in a later release.
 
 ---
 

@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # intended Odoo payload, not sent) until GACP Odoo access is confirmed.
     gacp_odoo_writes:  str = "off"   # "on" enables live Odoo writes + staged-queue sync
     gacp_warehouse_id: int = 0       # Odoo stock.warehouse id of the GACP facility (0 = not configured)
+    # Phase 14 — encrypts stored third-party credentials (e.g. WooCommerce
+    # consumer secrets) at rest. Any long random string; see secret_box.py.
+    # Unset = saving a secret is refused rather than stored in plain text.
+    credentials_encryption_key: str = ""
 
     class Config:
         env_file = ".env"

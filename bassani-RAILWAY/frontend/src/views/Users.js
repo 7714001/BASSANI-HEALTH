@@ -181,6 +181,13 @@ const PERMISSION_GROUPS = [
     ],
   },
   {
+    domain: "channels",
+    label: "Web Store & Sales Channels",
+    actions: [
+      { key: "manage", label: "Set up online store connections, choose listed products and set retail prices" },
+    ],
+  },
+  {
     domain: "support",
     label: "Customer Support Desk",
     actions: [
@@ -259,6 +266,7 @@ const DEFAULT_ADMIN_PERMS = {
   finance:           { bank_reconciliation: false },
   production:        { batch_generate: false, vault: false, manage: false, rp_release: false },
   discounts:         { approve: false },
+  channels:          { manage: false },
   support:           { view: true, respond: false, manage: false, quality_review: false },
 };
 
@@ -287,6 +295,7 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
     discounts:         { approve: false },
+    channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
   },
   orders_clerk: {
@@ -308,6 +317,7 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: false },
     finance:           { bank_reconciliation: false },
     discounts:         { approve: false },
+    channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
   },
   finance: {
@@ -330,6 +340,7 @@ const ROLE_DEFAULT_PERMS = {
     finance:           { bank_reconciliation: true },
     // Finance is the default approver for staff discount requests (8.61).
     discounts:         { approve: true },
+    channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
   },
   qa_manager: {
@@ -351,6 +362,7 @@ const ROLE_DEFAULT_PERMS = {
     signing_authority: { sign: true },
     finance:           { bank_reconciliation: false },
     discounts:         { approve: false },
+    channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: true },
   },
   responsible_pharmacist: {
@@ -373,6 +385,7 @@ const ROLE_DEFAULT_PERMS = {
     finance:           { bank_reconciliation: false },
     production:        { batch_generate: false, vault: false, manage: false, rp_release: true },
     discounts:         { approve: false },
+    channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: true },
   },
   vault_custodian: {
@@ -395,6 +408,7 @@ const ROLE_DEFAULT_PERMS = {
     finance:           { bank_reconciliation: false },
     production:        { batch_generate: true, vault: true, manage: false, rp_release: false },
     discounts:         { approve: false },
+    channels:          { manage: false },
     support:           { view: false, respond: false, manage: false, quality_review: false },
   },
 };

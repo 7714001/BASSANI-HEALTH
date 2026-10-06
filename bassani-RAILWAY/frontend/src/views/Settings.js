@@ -7,6 +7,8 @@ import DocumentTemplates from "./DocumentTemplates";
 import LabelPrinters from "./LabelPrinters";
 import GTINPool from "./GTINPool";
 import MonitorDisplaysSettings from "./MonitorDisplaysSettings";
+import ExternalApiSettings from "./ExternalApiSettings";
+import { useAuth } from "../AuthContext";
 
 const TABS = [
   { key: "warehouses",       label: "Warehouses" },
@@ -16,10 +18,15 @@ const TABS = [
   { key: "label-printers",   label: "Label Printers" },
   { key: "gtin-pool",        label: "GTIN Pool" },
   { key: "monitor-displays", label: "Monitor Displays" },
+  // Phase 14 — API keys + kill switch are super-admin only; online stores need
+  // channels.manage. The tab shows for anyone who can use at least one part.
+  { key: "external-api",     label: "External API", visible: (user, can) => user?.is_super_admin || can("channels.manage") },
 ];
 
 export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user, can } = useAuth();
+  const tabs = TABS.filter(t => !t.visible || t.visible(user, can));
   const rawTab = searchParams.get("tab") || "warehouses";
   // Old per-monitor tab keys (pre-2026-08-22 consolidation) still redirect
   // correctly rather than landing on a blank pane, in case a bookmark or a
@@ -36,7 +43,7 @@ export default function Settings() {
 
       <div className="border-b border-gray-200 bg-white px-6 shrink-0">
         <div className="flex gap-1">
-          {TABS.map(t => (
+          {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => switchTab(t.key)}
@@ -59,6 +66,7 @@ export default function Settings() {
       {active === "label-printers"   && <LabelPrinters embedded />}
       {active === "gtin-pool"        && <GTINPool embedded />}
       {active === "monitor-displays" && <MonitorDisplaysSettings embedded />}
+      {active === "external-api"     && tabs.some(t => t.key === "external-api") && <ExternalApiSettings />}
     </div>
   );
 }

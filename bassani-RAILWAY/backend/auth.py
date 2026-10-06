@@ -62,6 +62,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     "finance":            {"bank_reconciliation": False},
     "production":         {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
     "discounts":          {"approve": False},  # 8.61 — approve/reject/counter a staff discount request
+    "channels":           {"manage": False},  # Phase 14 — Web Store / sales channel settings, listings, retail pricing, sync
     # Phase 28 — customer support desk. view: see the queue; respond: reply,
     # change status, self-assign; manage: assign to anyone, close; quality_review:
     # investigate and sign off product quality complaints (QA/RP).
@@ -92,6 +93,7 @@ FULL_PERMISSIONS: dict = {
     "finance":            {"bank_reconciliation": True},
     "production":         {"batch_generate": True, "vault": True, "manage": True, "rp_release": True},
     "discounts":          {"approve": True},
+    "channels":           {"manage": True},
     "support":            {"view": True, "respond": True, "manage": True, "quality_review": True},
 }
 
@@ -124,6 +126,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
         "discounts":         {"approve": False},
+        "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
     },
     "orders_clerk": {
@@ -149,6 +152,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
         "discounts":         {"approve": False},
+        "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
     },
     "finance": {
@@ -175,6 +179,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
         # Finance is the default approver for staff discount requests (8.61).
         "discounts":         {"approve": True},
+        "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
     },
     "qa_manager": {
@@ -200,6 +205,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": False},
         "discounts":         {"approve": False},
+        "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": True},
     },
     "responsible_pharmacist": {
@@ -227,6 +233,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         # vs received, PO link) and releases the batch from quarantine.
         "production":        {"batch_generate": False, "vault": False, "manage": False, "rp_release": True},
         "discounts":         {"approve": False},
+        "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": True},
     },
     # Phase 13 — vault custodian (Patricia). Production-side only: generates
@@ -255,6 +262,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "finance":           {"bank_reconciliation": False},
         "production":        {"batch_generate": True, "vault": True, "manage": False, "rp_release": False},
         "discounts":         {"approve": False},
+        "channels":          {"manage": False},
         "support":           {"view": False, "respond": False, "manage": False, "quality_review": False},
     },
 }

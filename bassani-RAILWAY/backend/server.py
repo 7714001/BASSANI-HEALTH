@@ -221,6 +221,25 @@ async def initialise_users():
         {"$set": {"permissions.support": DEFAULT_ADMIN_PERMISSIONS["support"]}},
     )
 
+    # Phase 14 — external API clients and outbound sales channels. key_hash is
+    # the lookup on every external API request, so it must be indexed (and
+    # unique, so one key can never resolve to two clients).
+    await col("api_clients").create_index([("key_hash", 1)], unique=True)
+    await col("api_clients").create_index([("created_at", -1)])
+    await col("sales_channels").create_index([("created_at", -1)])
+
+    # Phase 14 — backfill the new `channels` permission domain (off for every
+    # role and admin; super admins bypass permissions).
+    for _role, _perms in ROLE_DEFAULT_PERMISSIONS.items():
+        await col("users").update_many(
+            {"role": _role, "permissions.channels": {"$exists": False}},
+            {"$set": {"permissions.channels": _perms["channels"]}},
+        )
+    await col("users").update_many(
+        {"role": "admin", "permissions.channels": {"$exists": False}},
+        {"$set": {"permissions.channels": DEFAULT_ADMIN_PERMISSIONS["channels"]}},
+    )
+
     await col("monthly_commission_statements").create_index(
         [("reseller_id", 1), ("year", 1), ("month", 1)],
         unique=True,
@@ -775,6 +794,8 @@ from routes.production_routes         import router as production_router
 from routes.recurring_order_routes    import router as recurring_order_router
 from routes.discount_routes           import router as discount_router
 from routes.support_routes            import router as support_router, public_router as support_public_router
+from routes.integration_routes        import router as integration_router
+from routes.external_routes           import router as external_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, order_router,
@@ -791,6 +812,7 @@ for router in [
     onboarding_monitor_router, manufacturing_monitor_router,
     places_router, production_router, recurring_order_router, discount_router,
     support_router, support_public_router,
+    integration_router, external_router,
 ]:
     app.include_router(router)
 
