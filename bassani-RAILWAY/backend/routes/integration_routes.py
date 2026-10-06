@@ -29,6 +29,7 @@ from database import col
 from external_auth import KILL_SWITCH_ID, external_api_enabled, generate_api_key
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
+from parent_categories import UNCATEGORISED
 from warehouse_context import get_company_id
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,25 @@ def _validate_pricelist(odoo, pricelist_id: Optional[int], company_id: Optional[
     return rows[0]["name"]
 
 
+async def _validate_parent_categories(ids: Optional[list[str]]) -> Optional[list[str]]:
+    """Every id must be an active Parent Category, or the Uncategorised
+    bucket. Empty/None = no restriction (the whole reseller catalogue)."""
+    if not ids:
+        return None
+    ids = list(dict.fromkeys(ids))
+    real = [i for i in ids if i != UNCATEGORISED]
+    oids = []
+    for i in real:
+        try:
+            oids.append(ObjectId(i))
+        except Exception:
+            raise HTTPException(status_code=400, detail="One of the selected categories no longer exists.")
+    found = {str(d["_id"]) for d in await col("parent_categories").find({"_id": {"$in": oids}, "active": True}, {"_id": 1}).to_list(None)}
+    if len(found) != len(real):
+        raise HTTPException(status_code=400, detail="One of the selected categories no longer exists or is inactive.")
+    return ids
+
+
 # ── API clients ───────────────────────────────────────────────────────────────
 
 class ApiClientIn(BaseModel):
@@ -88,7 +108,10 @@ class ApiClientIn(BaseModel):
     warehouse_id: int
     pricelist_id: Optional[int] = None
     stock_detail: Literal["binary", "quantity"] = "binary"
-    scoped_category_ids: Optional[list[int]] = None   # None = every category
+    # Portal Parent Category ids (7.12) — the same grouping the reseller/
+    # customer cart uses — or "uncategorised". None = the whole reseller
+    # catalogue. A top-level id includes its sub-categories.
+    scoped_parent_category_ids: Optional[list[str]] = None
     sandbox: bool = False
 
 
@@ -99,14 +122,14 @@ class ApiClientUpdate(BaseModel):
     pricelist_id: Optional[int] = None
     clear_pricelist: bool = False                     # None can't mean "remove it"
     stock_detail: Optional[Literal["binary", "quantity"]] = None
-    scoped_category_ids: Optional[list[int]] = None
+    scoped_parent_category_ids: Optional[list[str]] = None
     clear_category_scope: bool = False
     sandbox: Optional[bool] = None
 
 
 _CLIENT_PUBLIC_FIELDS = (
     "name", "description", "client_type", "warehouse_id", "warehouse_name", "company_id",
-    "company_name", "pricelist_id", "pricelist_name", "stock_detail", "scoped_category_ids",
+    "company_name", "pricelist_id", "pricelist_name", "stock_detail", "scoped_parent_category_ids",
     "key_prefix", "sandbox", "active", "created_at", "created_by", "updated_at",
     "last_used_at", "key_rotated_at",
 )
@@ -142,7 +165,7 @@ async def create_api_client(body: ApiClientIn, request: Request, current_user: d
         "pricelist_id": body.pricelist_id,
         "pricelist_name": pricelist_name,
         "stock_detail": body.stock_detail,
-        "scoped_category_ids": body.scoped_category_ids or None,
+        "scoped_parent_category_ids": await _validate_parent_categories(body.scoped_parent_category_ids),
         "key_hash": key_hash,
         "key_prefix": key_prefix,
         "sandbox": body.sandbox,
@@ -181,9 +204,9 @@ async def update_api_client(client_id: str, body: ApiClientUpdate, request: Requ
     if body.sandbox is not None:
         updates["sandbox"] = body.sandbox
     if body.clear_category_scope:
-        updates["scoped_category_ids"] = None
-    elif body.scoped_category_ids is not None:
-        updates["scoped_category_ids"] = body.scoped_category_ids or None
+        updates["scoped_parent_category_ids"] = None
+    elif body.scoped_parent_category_ids is not None:
+        updates["scoped_parent_category_ids"] = await _validate_parent_categories(body.scoped_parent_category_ids)
 
     company_id = existing.get("company_id")
     if body.warehouse_id is not None and body.warehouse_id != existing.get("warehouse_id"):

@@ -1,6 +1,14 @@
 """Phase 14.1–14.3 — the external (API-key) read API: catalogue, categories
 and stock, scoped to the calling API client's warehouse/company.
 
+Product universe and categories (2026-10-06): exactly what resellers and
+customers see in their cart — products in the curated reseller catalogue
+(`reseller_catalog`), grouped by the portal's own Parent Categories (7.12)
+with the same "Uncategorised" bucket, never raw Odoo categories. A client
+can be narrowed to some parent categories (`scoped_parent_category_ids`;
+choosing a top-level one includes its sub-categories). Built from one
+index per request (parent_categories.build_catalog_category_index).
+
 Every route depends on `require_api_client` (external_auth.py) and is rate
 limited per API key. Responses use a stable `{data, meta}` envelope and never
 mention internal system names — integrators see "the catalogue service", not
@@ -28,6 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from config import get_settings
 from external_auth import api_key_rate_key, require_api_client
 from odoo_client import get_odoo_client
+from parent_categories import UNCATEGORISED, build_catalog_category_index, index_family_ids
 from rate_limit import limiter
 from warehouse_context import odoo_context
 
@@ -40,17 +49,50 @@ READ_LIMIT = "120/minute"
 MAX_PER_PAGE = 100
 
 _PRODUCT_FIELDS = [
-    "id", "name", "display_name", "default_code", "barcode", "categ_id", "uom_id",
+    "id", "name", "display_name", "default_code", "barcode", "uom_id",
     "lst_price", "taxes_id", "description_sale", "product_tmpl_id", "free_qty", "image_128",
 ]
 _UNAVAILABLE = "The catalogue service is temporarily unavailable. Please retry shortly."
 
 
-def _scope_domain(client: dict) -> list:
-    domain = [("type", "=", "consu"), ("active", "=", True), ("sale_ok", "=", True)]
-    if client.get("scoped_category_ids"):
-        domain.append(("categ_id", "in", client["scoped_category_ids"]))
-    return domain
+async def _scope(odoo, client: dict) -> tuple[dict, set]:
+    """(category index, product ids this client may see): the reseller
+    catalogue, narrowed to the client's parent categories when it has any."""
+    index = await build_catalog_category_index(odoo)
+    universe = set(index["catalog_ids"])
+    scoped = client.get("scoped_parent_category_ids")
+    if scoped:
+        universe &= set().union(*(index_family_ids(index, c) for c in scoped))
+    return index, universe
+
+
+def _domain(universe: set) -> list:
+    return [("type", "=", "consu"), ("active", "=", True), ("id", "in", sorted(universe))]
+
+
+def _categories_for(index: dict, product_id: int) -> list:
+    """The parent categories a product sits in, most specific first: a
+    sub-category (with its parent) rather than the top-level one it rolls up
+    into. A hand-picked product can legitimately sit in several (e.g. a
+    "Specials" bucket as well as its usual home)."""
+    if product_id in index["uncategorised"]:
+        return [{"id": UNCATEGORISED, "name": "Uncategorised", "parent": None}]
+    hits = {did for did, m in index["members"].items() if product_id in m}
+    out = []
+    for d in index["docs"]:
+        did = str(d["_id"])
+        if did not in hits:
+            continue
+        parent_id = d.get("parent_id")
+        if parent_id:
+            parent = index["docs_by_id"].get(parent_id)
+            out.append({
+                "id": did, "name": d.get("name", ""),
+                "parent": {"id": parent_id, "name": parent.get("name", "")} if parent else None,
+            })
+        elif not any(index["docs_by_id"][h].get("parent_id") == did for h in hits):
+            out.append({"id": did, "name": d.get("name", ""), "parent": None})
+    return out
 
 
 def _ctx(client: dict, **extra) -> dict:
@@ -163,14 +205,14 @@ def _display_name(p: dict) -> str:
     return name
 
 
-def _product_out(client: dict, p: dict) -> dict:
+def _product_out(client: dict, index: dict, p: dict) -> dict:
     return {
         "id": p["id"],
         "sku": p.get("default_code") or None,
         "barcode": p.get("barcode") or None,
         "name": _display_name(p),
         "description": p.get("description_sale") or None,
-        "category": {"id": p["categ_id"][0], "name": p["categ_id"][1]} if p.get("categ_id") else None,
+        "categories": _categories_for(index, p["id"]),
         "unit": p["uom_id"][1] if p.get("uom_id") else None,
         "price": p.get("_price"),
         **_stock_out(client, p),
@@ -180,10 +222,12 @@ def _product_out(client: dict, p: dict) -> dict:
     }
 
 
-def _read_scoped(odoo, client: dict, product_id: int, fields: list) -> dict:
+def _read_scoped(odoo, client: dict, universe: set, product_id: int, fields: list) -> dict:
+    if product_id not in universe:
+        raise HTTPException(status_code=404, detail="Product not found")
     rows = odoo.search_read(
         "product.product",
-        domain=_scope_domain(client) + [("id", "=", product_id)],
+        domain=_domain({product_id}),
         fields=fields, limit=1, context=_ctx(client, bin_size=True),
     )
     if not rows:
@@ -211,24 +255,35 @@ async def ping(request: Request, client: dict = Depends(require_api_client)):
 @router.get("/categories")
 @limiter.limit(READ_LIMIT, key_func=api_key_rate_key)
 async def list_categories(request: Request, client: dict = Depends(require_api_client)):
+    """The parent-category tree as the cart shows it: top-level categories
+    with their sub-categories, product counts limited to this client's
+    scope, empty ones left out, and Uncategorised last when it has any."""
     odoo = get_odoo_client()
     try:
-        rows = odoo.search_read(
-            "product.product", domain=_scope_domain(client), fields=["categ_id"],
-            limit=10000, context=_ctx(client),
-        )
-        counts: dict = {}
-        for r in rows:
-            if r.get("categ_id"):
-                counts[r["categ_id"][0]] = counts.get(r["categ_id"][0], 0) + 1
-        cats = odoo.read("product.category", list(counts), fields=["complete_name"]) if counts else []
+        index, universe = await _scope(odoo, client)
     except Exception as e:
         logger.error("external_categories_failed client_id=%s error=%s", client["id"], e)
         raise HTTPException(status_code=502, detail=_UNAVAILABLE)
-    data = sorted(
-        ({"id": c["id"], "name": c["complete_name"], "product_count": counts.get(c["id"], 0)} for c in cats),
-        key=lambda c: c["name"],
-    )
+
+    data = []
+    for d in index["docs"]:
+        if d.get("parent_id"):
+            continue
+        did = str(d["_id"])
+        count = len(index_family_ids(index, did) & universe)
+        if not count:
+            continue
+        children = []
+        for c in index["docs"]:
+            if c.get("parent_id") != did:
+                continue
+            c_count = len(index_family_ids(index, str(c["_id"])) & universe)
+            if c_count:
+                children.append({"id": str(c["_id"]), "name": c.get("name", ""), "product_count": c_count})
+        data.append({"id": did, "name": d.get("name", ""), "product_count": count, "children": children})
+    unc = len(index["uncategorised"] & universe)
+    if unc:
+        data.append({"id": UNCATEGORISED, "name": "Uncategorised", "product_count": unc, "children": []})
     return {"data": data, "meta": _meta(client, total=len(data))}
 
 
@@ -238,14 +293,24 @@ async def list_products(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=MAX_PER_PAGE),
-    category_id: Optional[int] = None,
+    category_id: Optional[str] = Query(
+        None, max_length=64,
+        description='A category id from /categories (includes its sub-categories), or "uncategorised"',
+    ),
     search: Optional[str] = Query(None, max_length=100),
     client: dict = Depends(require_api_client),
 ):
     odoo = get_odoo_client()
-    domain = _scope_domain(client)
+    try:
+        index, universe = await _scope(odoo, client)
+    except Exception as e:
+        logger.error("external_products_scope_failed client_id=%s error=%s", client["id"], e)
+        raise HTTPException(status_code=502, detail=_UNAVAILABLE)
     if category_id:
-        domain.append(("categ_id", "=", category_id))
+        if category_id != UNCATEGORISED and category_id not in index["docs_by_id"]:
+            raise HTTPException(status_code=404, detail="Unknown category")
+        universe &= index_family_ids(index, category_id)
+    domain = _domain(universe)
     if search:
         domain += ["|", ("name", "ilike", search), ("default_code", "ilike", search)]
     try:
@@ -260,7 +325,7 @@ async def list_products(
         logger.error("external_products_failed client_id=%s error=%s", client["id"], e)
         raise HTTPException(status_code=502, detail=_UNAVAILABLE)
     return {
-        "data": [_product_out(client, p) for p in products],
+        "data": [_product_out(client, index, p) for p in products],
         "meta": _meta(client, page=page, per_page=per_page, total=total),
     }
 
@@ -270,14 +335,15 @@ async def list_products(
 async def get_product(request: Request, product_id: int, client: dict = Depends(require_api_client)):
     odoo = get_odoo_client()
     try:
-        p = _read_scoped(odoo, client, product_id, _PRODUCT_FIELDS)
+        index, universe = await _scope(odoo, client)
+        p = _read_scoped(odoo, client, universe, product_id, _PRODUCT_FIELDS)
         _attach_prices(odoo, client, [p])
     except HTTPException:
         raise
     except Exception as e:
         logger.error("external_product_failed client_id=%s product_id=%s error=%s", client["id"], product_id, e)
         raise HTTPException(status_code=502, detail=_UNAVAILABLE)
-    return {"data": _product_out(client, p), "meta": _meta(client)}
+    return {"data": _product_out(client, index, p), "meta": _meta(client)}
 
 
 _IMAGE_SIGNATURES = [
@@ -294,7 +360,8 @@ async def get_product_image(request: Request, product_id: int, client: dict = De
     """The product's 1024px image as raw bytes, for the `image_url` above."""
     odoo = get_odoo_client()
     try:
-        _read_scoped(odoo, client, product_id, ["id"])   # 404s if outside this client's scope
+        _, universe = await _scope(odoo, client)
+        _read_scoped(odoo, client, universe, product_id, ["id"])   # 404s if outside this client's scope
         rows = odoo.read("product.product", [product_id], fields=["image_1024"])
     except HTTPException:
         raise
@@ -319,8 +386,9 @@ async def list_stock(
     """Lightweight stock-only feed for frequent polling — no prices, images
     or descriptions. Larger page size than /products since rows are tiny."""
     odoo = get_odoo_client()
-    domain = _scope_domain(client)
     try:
+        _, universe = await _scope(odoo, client)
+        domain = _domain(universe)
         total = odoo.count("product.product", domain, context=_ctx(client))
         rows = odoo.search_read(
             "product.product", domain=domain, fields=["id", "default_code", "free_qty"],
@@ -338,7 +406,8 @@ async def list_stock(
 async def get_stock(request: Request, product_id: int, client: dict = Depends(require_api_client)):
     odoo = get_odoo_client()
     try:
-        r = _read_scoped(odoo, client, product_id, ["id", "default_code", "free_qty"])
+        _, universe = await _scope(odoo, client)
+        r = _read_scoped(odoo, client, universe, product_id, ["id", "default_code", "free_qty"])
     except HTTPException:
         raise
     except Exception as e:

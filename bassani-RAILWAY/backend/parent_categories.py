@@ -102,6 +102,67 @@ async def resolve_parent_category_product_ids(odoo, parent_category_id: str) -> 
     return list(category_ids | handpicked_ids)
 
 
+async def build_catalog_category_index(odoo) -> dict:
+    """One-pass index of the reseller-facing catalogue grouped by Parent
+    Category — the same product universe (reseller_catalog) and the same
+    grouping the reseller/customer cart shows, computed with ONE Odoo call
+    instead of one per category. Built for the external API (Phase 14), which
+    needs it on every request and can't afford product-groups' N calls.
+
+    Membership semantics match resolve_parent_category_product_ids, applied
+    to catalogue products only (the cart never shows anything else anyway):
+    a doc's direct members are catalogue products whose Odoo category is in
+    its odoo_category_ids, plus its hand-picked product_ids. Uncategorised =
+    catalogue products no active doc covers.
+
+    Returns {"catalog_ids": set, "docs": [active docs, sorted],
+             "docs_by_id": {str id: doc}, "members": {str id: set},
+             "uncategorised": set}."""
+    catalog_doc = await col("reseller_catalog").find_one({"_id": "global"})
+    raw_catalog = list(catalog_doc.get("product_ids", [])) if catalog_doc else []
+    docs = await col("parent_categories").find({"active": True}).sort([("sort_order", 1), ("name", 1)]).to_list(None)
+    docs_by_id = {str(d["_id"]): d for d in docs}
+
+    categ_of: dict = {}
+    if raw_catalog:
+        rows = odoo.search_read(
+            "product.product",
+            # Same base domain as the cart's product list (product_routes.list_products).
+            domain=[("id", "in", raw_catalog), ("type", "=", "consu"), ("active", "=", True)],
+            fields=["categ_id"],
+            limit=20000,
+        )
+        categ_of = {r["id"]: (r["categ_id"][0] if r.get("categ_id") else None) for r in rows}
+    catalog_ids = set(categ_of)
+
+    members: dict = {}
+    for did, d in docs_by_id.items():
+        cats = set(d.get("odoo_category_ids", []))
+        direct = {pid for pid, c in categ_of.items() if c in cats}
+        members[did] = direct | (set(d.get("product_ids", [])) & catalog_ids)
+    covered = set().union(*members.values()) if members else set()
+
+    return {
+        "catalog_ids": catalog_ids,
+        "docs": docs,
+        "docs_by_id": docs_by_id,
+        "members": members,
+        "uncategorised": catalog_ids - covered,
+    }
+
+
+def index_family_ids(index: dict, parent_category_id: str) -> set:
+    """Catalogue products in a parent category plus all its descendants (or
+    the Uncategorised bucket), from a build_catalog_category_index() result.
+    Unknown/inactive id = empty set."""
+    if parent_category_id == UNCATEGORISED:
+        return set(index["uncategorised"])
+    if parent_category_id not in index["docs_by_id"]:
+        return set()
+    family = _collect_family_ids(index["docs_by_id"], parent_category_id)
+    return set().union(*(index["members"].get(did, set()) for did in family))
+
+
 async def has_uncategorised_products(odoo) -> bool:
     ids = await resolve_parent_category_product_ids(odoo, UNCATEGORISED)
     return len(ids) > 0

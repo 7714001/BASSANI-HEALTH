@@ -150,7 +150,7 @@ function KillSwitchSection() {
 
 // ── API clients ───────────────────────────────────────────────────────────────
 
-const BLANK_CLIENT = { name: "", description: "", warehouse_id: null, pricelist_id: null, stock_detail: "binary", scoped_category_ids: [], sandbox: false };
+const BLANK_CLIENT = { name: "", description: "", warehouse_id: null, pricelist_id: null, stock_detail: "binary", scoped_parent_category_ids: [], sandbox: false };
 
 function KeyRevealModal({ apiKey, clientName, onClose }) {
   const [copied, setCopied] = useState(false);
@@ -178,7 +178,7 @@ function KeyRevealModal({ apiKey, clientName, onClose }) {
 function ApiClientFormModal({ client, categories, onClose, onSaved }) {
   const editing = Boolean(client);
   const [form, setForm] = useState(editing
-    ? { ...BLANK_CLIENT, ...client, scoped_category_ids: client.scoped_category_ids || [] }
+    ? { ...BLANK_CLIENT, ...client, scoped_parent_category_ids: client.scoped_parent_category_ids || [] }
     : BLANK_CLIENT);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm(f => ({ ...f, ...patch }));
@@ -193,14 +193,14 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
       if (editing) {
         payload.pricelist_id = form.pricelist_id || undefined;
         payload.clear_pricelist = !form.pricelist_id;
-        payload.scoped_category_ids = form.scoped_category_ids.length ? form.scoped_category_ids : undefined;
-        payload.clear_category_scope = form.scoped_category_ids.length === 0;
+        payload.scoped_parent_category_ids = form.scoped_parent_category_ids.length ? form.scoped_parent_category_ids : undefined;
+        payload.clear_category_scope = form.scoped_parent_category_ids.length === 0;
         const { data } = await api.put(`/api/integrations/api-clients/${client.id}`, payload);
         toast.success("API client updated");
         onSaved(data, null);
       } else {
         payload.pricelist_id = form.pricelist_id || null;
-        payload.scoped_category_ids = form.scoped_category_ids.length ? form.scoped_category_ids : null;
+        payload.scoped_parent_category_ids = form.scoped_parent_category_ids.length ? form.scoped_parent_category_ids : null;
         const { data } = await api.post("/api/integrations/api-clients", payload);
         onSaved(data, data.api_key);
       }
@@ -219,14 +219,14 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
       <WarehousePricelistFields form={form} set={set} />
       <FormGroup label="Product categories">
         <MultiSearchableSelect
-          values={form.scoped_category_ids}
-          onChange={v => set({ scoped_category_ids: v })}
+          values={form.scoped_parent_category_ids}
+          onChange={v => set({ scoped_parent_category_ids: v })}
           options={categories}
-          placeholder="All categories"
+          placeholder="Whole catalogue"
           searchPlaceholder="Search categories…"
           width="w-full"
         />
-        <p className="text-[11px] text-gray-400 mt-1">Limit this client to the categories it should sell. Leaving it empty shares every product, including internal and bulk items.</p>
+        <p className="text-[11px] text-gray-400 mt-1">The same categories resellers and customers see when ordering. Clients only ever see products in the reseller catalogue. Leave empty to share the whole catalogue, or pick categories to narrow it (a top-level category includes its sub-categories).</p>
       </FormGroup>
       <FormGroup label="Stock detail">
         <Select value={form.stock_detail} onChange={e => set({ stock_detail: e.target.value })}>
@@ -267,9 +267,20 @@ function ApiClientsSection() {
 
   useEffect(() => {
     load();
-    api.get("/api/products/categories").then(r => setCategories(
-      (r.data.categories || []).filter(c => c.product_count > 0).map(c => ({ value: c.id, label: c.complete_name || c.name }))
-    )).catch(() => {});
+    // Portal Parent Categories (the cart's grouping), labelled "Parent / Child"
+    // and ordered so each sub-category sits under its parent.
+    api.get("/api/parent-categories/").then(r => {
+      const active = (r.data.categories || []).filter(c => c.active !== false);
+      const byId = Object.fromEntries(active.map(c => [c.id, c]));
+      const options = [];
+      active.filter(c => !c.parent_id).forEach(top => {
+        options.push({ value: top.id, label: top.name });
+        active.filter(c => c.parent_id === top.id).forEach(child => options.push({ value: child.id, label: `${top.name} / ${child.name}` }));
+      });
+      active.filter(c => c.parent_id && !byId[c.parent_id]).forEach(c => options.push({ value: c.id, label: c.name }));
+      options.push({ value: "uncategorised", label: "Uncategorised" });
+      setCategories(options);
+    }).catch(() => {});
   }, [load]);
 
   const doConfirm = async () => {
@@ -314,7 +325,7 @@ function ApiClientsSection() {
                     <div className="font-medium text-gray-900">{c.name}</div>
                     <div className="text-xs text-gray-500">
                       {c.pricelist_name ? `Prices: ${c.pricelist_name}` : "No prices"} · {c.stock_detail === "quantity" ? "Exact stock" : "In/out of stock"}
-                      {!c.scoped_category_ids?.length && <span className="text-amber-600"> · All categories</span>}
+                      {" · "}{c.scoped_parent_category_ids?.length ? `${c.scoped_parent_category_ids.length} ${c.scoped_parent_category_ids.length === 1 ? "category" : "categories"}` : "Whole catalogue"}
                     </div>
                   </td>
                   <td className="py-2.5 pr-3 hidden md:table-cell text-gray-600">{c.warehouse_name}</td>

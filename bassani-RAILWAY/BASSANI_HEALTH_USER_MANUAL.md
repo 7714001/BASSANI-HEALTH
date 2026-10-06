@@ -426,7 +426,7 @@ An API client is an outside system, such as a website or a partner's point-of-sa
 1. Click **New API client** and enter a name and description.
 2. Choose the **Warehouse**. Stock figures, and which company sells, come from this warehouse.
 3. Choose a **Pricelist** if the client should see prices. Without one, no prices are shared.
-4. Choose **Product categories** to limit what the client sees. **Always set this.** Left empty, the client sees every product, including internal and bulk items.
+4. Choose **Product categories** to limit what the client sees. These are the same categories resellers and customers see when ordering, and a client only ever sees products in the reseller catalogue. Leave it empty to share the whole catalogue. Picking a top-level category (e.g. Flower) includes all its sub-categories.
 5. Choose **Stock detail**: *In stock / out of stock only* (the default, and right for almost everyone) or *Exact quantities* (only for systems we control).
 6. Tick **Sandbox** while the integrator is building and testing.
 7. Click **Create & show key**. **The key is shown once only.** Copy it and send it to the integrator securely. It can't be shown again.
