@@ -666,6 +666,32 @@ If the customer wants changes before confirming:
 3. Make your changes and click **Update Quote in Odoo**
 4. The ticket timeline records who edited it and when
 
+### Requesting a Discount
+
+Discounts are never typed straight into a quote. You request one, and someone with Discount Approvals access approves it, approves a different rate (a counter-offer), or rejects it.
+
+1. Build the quote first, then click **Request Discount** in the Actions card
+2. Choose how you want to enter it:
+   - **Rand Amount (per unit)**: the amount off **each single unit**, not off the whole line. R10 off a line of 5 units takes R50 off that line.
+   - **Percent**: taken off the unit price
+3. For each line you'll see the discount as both a percentage and a Rand amount, how much comes off that line, and the new line total. Under the table, a **Current quote / If approved** comparison shows the subtotal, VAT and order total before and after, and how much less the customer would pay
+4. Enter a reason and click **Submit for Approval**
+
+**To remove a discount** that's already on the quote, open **Request Discount**, clear that line's field and submit with a reason. The line shows **Discount will be removed**, and the approver sees it as **Remove discount**. Once approved, the line goes back to full price. Lines you don't touch keep the discount they already have.
+
+The quote stores discounts as a percentage, rounded to a fixed number of decimals. A Rand amount you type can therefore land a few cents off. When that happens the line shows **Actual: R… off each unit** in amber, so you see exactly what will apply before you submit.
+
+**While the request is pending**, the quote can't be sent or confirmed. The ticket shows a **Requested discount** panel under the amber banner, with each line's requested discount and the before/after totals. The **Order Lines** table further down still shows the quote as it is now (any earlier discount, or none) until the request is approved. Once a discount is applied, the Order Lines table shows each discounted line's percentage and its Rand amount, and the totals show the price before discount and the discount taken off.
+
+### Approving a Discount
+
+Open **Orders → Discount Approvals** (needs Discount Approvals access). Each request shows how many lines are discounted, the average percentage, and the total Rand off. Expand a request to see:
+
+- A **Quote before / If approved** comparison: price before discount, discount, subtotal, VAT and order total
+- Every line on the order. Requested lines show the percentage, the Rand off each unit and off the line, and the new line total. Lines not in the request keep whatever discount they already had
+
+**Approve** shows the same before/after totals so you confirm the real Rand impact. **Counter** lets you enter your own rate per line, in percent or Rand per unit, and updates the totals as you type. You can't decide a request you raised yourself.
+
 ### Confirming an Order
 
 Once the customer confirms their order:

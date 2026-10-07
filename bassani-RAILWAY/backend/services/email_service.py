@@ -608,6 +608,8 @@ def send_discount_request_notification(
     reason: str,
     lines: "list[dict]",
     request_id: str,
+    total_now: "float | None" = None,
+    total_after: "float | None" = None,
 ) -> None:
     """Sent to whoever holds discounts.approve (8.61) the moment a staff
     member requests a discount on a quote. Approval never happens from this
@@ -617,17 +619,49 @@ def send_discount_request_notification(
     non-actionable-by-email shape as send_pop_uploaded_notification above."""
     if not to_emails:
         return
-    rows = "".join(
-        f'<tr><td style="padding:7px 0;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{l.get("product_name","")}</td>'
-        f'<td style="padding:7px 0 7px 12px;font-size:13px;color:#0f172a;font-weight:600;text-align:right;border-bottom:1px solid #e2e8f030;">{l.get("requested_pct",0):.2f}%</td></tr>'
-        for l in lines
-    )
+    # Percent AND Rand per line (2026-10-07): approvers judge a discount by
+    # its money impact, not only its rate. per_unit_off/line_off are optional
+    # so older callers (and the Send Test preview) still render.
+    _cell = "padding:7px 0 7px 12px;font-size:13px;color:#0f172a;font-weight:600;text-align:right;border-bottom:1px solid #e2e8f030;"
+    _head = "padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;text-align:right;"
+
+    def _row(l: dict) -> str:
+        if l.get("is_removal"):
+            cur = l.get("current_pct")
+            return (
+                f'<tr><td style="padding:7px 0;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{l.get("product_name","")}</td>'
+                f'<td style="{_cell}">Remove</td>'
+                f'<td style="{_cell}">Remove the {cur:g}% discount already on this line</td></tr>'
+                if cur else
+                f'<tr><td style="padding:7px 0;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{l.get("product_name","")}</td>'
+                f'<td style="{_cell}">Remove</td><td style="{_cell}">Remove the existing discount</td></tr>'
+            )
+        if l.get("line_off") is not None:
+            off = (
+                f'R{l["per_unit_off"]:,.2f} off each unit<br>'
+                f'<span style="color:#64748b;font-weight:400;">R{l["line_off"]:,.2f} off this line</span>'
+            )
+        else:
+            off = "Not provided"
+        return (
+            f'<tr><td style="padding:7px 0;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f030;">{l.get("product_name","")}</td>'
+            f'<td style="{_cell}">{l.get("requested_pct",0):g}%</td>'
+            f'<td style="{_cell}">{off}</td></tr>'
+        )
+
     lines_table = (
         f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
         f'<tr><td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;">Product</td>'
-        f'<td style="padding-bottom:6px;font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;text-align:right;">Requested</td></tr>'
-        f'{rows}</table>'
+        f'<td style="{_head}">Discount</td><td style="{_head}">Amount (excl. VAT)</td></tr>'
+        f'{"".join(_row(l) for l in lines)}</table>'
     )
+    totals_box = ""
+    if total_now is not None and total_after is not None:
+        totals_box = _info_box([
+            ("Order total now", f"R{total_now:,.2f} incl. VAT"),
+            ("Order total if approved", f"<strong>R{total_after:,.2f} incl. VAT</strong>"),
+            ("Customer saves", f"R{total_now - total_after:,.2f} incl. VAT"),
+        ])
     body = (
         _h1("Discount request awaiting approval")
         + _p(f"{requested_by} has requested a discount on a quote for {customer_name}.")
@@ -638,6 +672,7 @@ def send_discount_request_notification(
             ("Reason", reason or "Not provided"),
         ], tint="#fffbeb", border="#fde68a")
         + lines_table
+        + totals_box
         + _button("Review request", f"{settings.portal_url}/tickets/discounts?request={request_id}")
         + _divider()
         + _p("The quote cannot be sent or confirmed until this request is approved, rejected or countered.", muted=True)

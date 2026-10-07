@@ -31,6 +31,8 @@ import SendRecipientsModal from "../components/SendRecipientsModal";
 import { StarRating, RATING_WORDS } from "../components/SupportKit";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
+import { DiscountAmountCell, DiscountTotalsCompare, ESTIMATE_NOTE } from "../components/DiscountBreakdown";
+import { roundPct, lineDiscount, orderTotals, liveOrderTotals, liveLineTaxRate, isInRequest } from "../utils/discountMath";
 import OrderView from "./OrderView";
 
 const fmtR = (n) =>
@@ -714,6 +716,23 @@ export default function SalesTickets() {
   // 5.00, can't backspace" — every keystroke was round-tripping through a
   // percent conversion and being re-rounded mid-type.
   const [discountMode, setDiscountMode] = useState("amount");
+  // How many decimals Odoo keeps on a discount % (2026-10-07) — read live so
+  // the modal shows exactly the % and Rand that will be applied, and follows
+  // the Odoo setting automatically if it's raised.
+  const [discountDigits, setDiscountDigits] = useState(2);
+  // The pending request itself, so the ticket can show what's being asked
+  // for. The order lines below show what's in Odoo NOW, which while a
+  // request is pending is the previous discount (or none), not the ask.
+  const [pendingDiscount, setPendingDiscount] = useState(null);
+  useEffect(() => {
+    const id = detail?.discount_status === "pending" ? detail?.discount_request_id : null;
+    if (!id) { setPendingDiscount(null); return; }
+    let cancelled = false;
+    api.get(`/api/discount-requests/${id}`)
+      .then(r => { if (!cancelled) setPendingDiscount(r.data); })
+      .catch(() => { if (!cancelled) setPendingDiscount(null); });
+    return () => { cancelled = true; };
+  }, [detail?.discount_status, detail?.discount_request_id]);
 
   const openDiscountModal = () => {
     // Prefilled from the line's live Odoo discount (2026-09-30) — a ticket
@@ -738,6 +757,9 @@ export default function SalesTickets() {
     setDiscountReason("");
     setDiscountMode("amount");
     setDiscountModal(true);
+    api.get("/api/discount-requests/precision")
+      .then(r => setDiscountDigits(r.data?.discount_digits ?? 2))
+      .catch(() => {});
   };
 
   // The Rand field is always a per-unit discount off Unit Price (unit_price
@@ -773,7 +795,10 @@ export default function SalesTickets() {
     // about in isolation.
     const lines = discountLines
       .map(l => ({ product_id: l.product_id, product_name: l.product_name, qty: l.qty, unit_price: l.unit_price, requested_pct: l.pct === "" ? 0 : Number(l.pct) }));
-    if (!lines.some(l => l.requested_pct > 0)) return toast.error("Enter a discount % on at least one line");
+    // Clearing a discount that's already on the quote counts as a request:
+    // to remove it (2026-10-07). The server flags those lines itself.
+    const removing = discountLines.some(l => l.origPct > 0 && (l.pct === "" || Number(l.pct) === 0));
+    if (!lines.some(l => l.requested_pct > 0) && !removing) return toast.error("Enter a discount on at least one line, or clear an existing discount to remove it");
     if (!discountReason.trim()) return toast.error("A reason is required");
     setDiscountSubmitting(true);
     try {
@@ -2020,6 +2045,50 @@ export default function SalesTickets() {
                             )}
                           </div>
                         )}
+                        {/* What the pending request asks for (2026-10-07). The
+                            Order Lines table below shows the quote as it is in
+                            the system NOW (the previous discount, or none),
+                            not the request, which used to be easy to misread. */}
+                        {!isReseller && detail.discount_status === "pending" && pendingDiscount && (() => {
+                          const reqLines = pendingDiscount.lines || [];
+                          const asked = reqLines.filter(isInRequest);
+                          const after = orderTotals(reqLines, l => (isInRequest(l) ? (l.requested_pct || 0) : (l.current_pct || 0)));
+                          return (
+                            <div className="mx-6 mt-2 border border-amber-200 rounded-lg overflow-hidden">
+                              <div className="bg-amber-50/60 px-4 py-2 text-xs text-amber-900">
+                                <span className="font-semibold">Requested discount</span>
+                                {pendingDiscount.requested_by?.name && <> by {pendingDiscount.requested_by.name}</>}
+                                {pendingDiscount.reason && <> · "{pendingDiscount.reason}"</>}
+                                <span className="block text-amber-800/80 mt-0.5">The Order Lines table below still shows the quote as it is now. These figures apply only once approved.</span>
+                              </div>
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="border-b border-gray-100 bg-white">
+                                    <th className="text-left p-2 pl-4 text-xs font-semibold text-gray-400 uppercase">Product</th>
+                                    <th className="text-center p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
+                                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Unit Price</th>
+                                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-40">Requested discount</th>
+                                    <th className="text-right p-2 pr-4 text-xs font-semibold text-gray-400 uppercase w-32">New line total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {asked.map(l => (
+                                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
+                                      <td className="p-2 pl-4 text-gray-800">{l.product_name}</td>
+                                      <td className="p-2 text-center text-gray-600">{l.qty}</td>
+                                      <td className="p-2 text-right text-gray-600">{fmtR(l.unit_price)}</td>
+                                      <td className="p-2"><DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" /></td>
+                                      <td className="p-2 pr-4 text-right font-semibold text-gray-900">{fmtR(lineDiscount(l, l.requested_pct).net)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <div className="p-3 border-t border-gray-100 bg-slate-50/40">
+                                <DiscountTotalsCompare now={liveOrderTotals(detailOrder)} after={after} note={ESTIMATE_NOTE} />
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {/* Discount decision banner (8.64) — persists after the
                             pending flag clears, so staff always know at a glance
@@ -2040,7 +2109,8 @@ export default function SalesTickets() {
                                   </p>
                                   {d.status !== "rejected" && d.lines_count != null && (
                                     <p className="text-xs opacity-80 mt-0.5">
-                                      {d.lines_count} line{d.lines_count !== 1 ? "s" : ""} discounted, avg {Number(d.avg_pct || 0).toFixed(1)}%, {fmtR(d.total_amount)} total
+                                      {d.lines_count} line{d.lines_count !== 1 ? "s" : ""} discounted, avg {Number(d.avg_pct || 0).toFixed(1)}%, {fmtR(d.total_amount)} off excl. VAT
+                                      {d.removed_count > 0 && `; discount removed from ${d.removed_count} line${d.removed_count !== 1 ? "s" : ""}`}
                                     </p>
                                   )}
                                   {d.note && (
@@ -2081,7 +2151,7 @@ export default function SalesTickets() {
                               <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Qty</th>
                               <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Unit Price</th>
                               {(detailOrder.lines || []).some(l => l.discount > 0) && (
-                                <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Discount</th>
+                                <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-40">Discount</th>
                               )}
                               <th className="text-right p-3 pr-6 text-xs font-semibold text-gray-400 uppercase tracking-wide w-36">Subtotal</th>
                             </tr>
@@ -2109,8 +2179,10 @@ export default function SalesTickets() {
                                 <td className="p-3 text-center text-sm text-gray-600">{line.product_uom_qty}</td>
                                 <td className="p-3 text-right text-sm text-gray-600">{fmtR(line.price_unit)}</td>
                                 {(detailOrder.lines || []).some(l => l.discount > 0) && (
-                                  <td className="p-3 text-right text-sm text-green-700">
-                                    {line.discount > 0 ? `${Number(line.discount.toFixed(2))}%` : ""}
+                                  <td className="p-3 text-sm">
+                                    {line.discount > 0
+                                      ? <DiscountAmountCell line={{ qty: line.product_uom_qty, unit_price: line.price_unit }} pct={line.discount} />
+                                      : null}
                                   </td>
                                 )}
                                 <td className="p-3 pr-6 text-right text-sm font-semibold text-gray-900">{fmtR(line.price_subtotal)}</td>
@@ -2123,12 +2195,31 @@ export default function SalesTickets() {
                         {/* Totals */}
                         <div className="p-6 border-t border-gray-100 flex justify-end">
                           <div className="w-60 space-y-2">
+                            {/* Before-discount and discount rows (2026-10-07) only
+                                when the quote carries a discount, so the Rand
+                                saving is visible next to the total it reduces. */}
+                            {(() => {
+                              const t = liveOrderTotals(detailOrder);
+                              if (!(t.discount > 0.004)) return null;
+                              return (
+                                <>
+                                  <div className="flex justify-between text-sm text-gray-500">
+                                    <span>Before discount</span>
+                                    <span>{fmtR(t.gross)}</span>
+                                  </div>
+                                  <div className="flex justify-between text-sm text-green-700">
+                                    <span>Less discount</span>
+                                    <span className="font-medium">-{fmtR(t.discount)}</span>
+                                  </div>
+                                </>
+                              );
+                            })()}
                             <div className="flex justify-between text-sm text-gray-600">
-                              <span>Subtotal</span>
+                              <span>Subtotal (excl. VAT)</span>
                               <span className="font-medium">{fmtR(detailOrder.amount_untaxed)}</span>
                             </div>
                             <div className="flex justify-between text-sm text-gray-400">
-                              <span>Tax</span>
+                              <span>VAT</span>
                               <span>{fmtR(detailOrder.amount_tax)}</span>
                             </div>
                             <div className="pt-3 border-t border-gray-100 flex justify-between">
@@ -3775,11 +3866,15 @@ export default function SalesTickets() {
           </Modal>
         )}
         {discountModal && (
-          <Modal title="Request Discount" onClose={() => setDiscountModal(false)} width="max-w-3xl">
-            <p className="text-sm text-gray-500 mb-3">
+          <Modal title="Request Discount" onClose={() => setDiscountModal(false)} width="max-w-4xl">
+            <p className="text-sm text-gray-500 mb-2">
               Enter a discount on any line you want reviewed, plus a reason. The quote stays at normal
-              pricing until a holder of Discount Approvals decides this request.
+              pricing until someone with Discount Approvals access decides this request.
             </p>
+            <div className="text-xs text-gray-600 bg-slate-50 border border-gray-100 rounded-lg px-3 py-2 mb-3 space-y-0.5">
+              <p><span className="font-semibold">Rand Amount</span> is the amount off <span className="font-semibold">each single unit</span>, not off the whole line. Example: R10 off a line of 5 units takes R50 off that line.</p>
+              <p><span className="font-semibold">Percent</span> is taken off the unit price. The quote stores the discount as a percentage rounded to {discountDigits} decimal{discountDigits !== 1 ? "s" : ""}, so a Rand amount can land a few cents off what you typed. The figures below show exactly what will apply.</p>
+            </div>
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
               <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
@@ -3789,33 +3884,38 @@ export default function SalesTickets() {
                 </button>
                 <button type="button" onClick={() => switchDiscountMode("amount")}
                   className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${discountMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-                  Rand Amount
+                  Rand Amount (per unit)
                 </button>
               </div>
             </div>
-            <div className="max-h-[28rem] overflow-y-auto border border-gray-100 rounded-lg mb-4">
+            <div className="max-h-[24rem] overflow-y-auto border border-gray-100 rounded-lg mb-3">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
                     <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-14">Qty</th>
                     <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Unit Price</th>
-                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-32">Discount / Unit</th>
-                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Line Total</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">{discountMode === "pct" ? "Discount %" : "Rand off each unit"}</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Off this line</th>
+                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">New line total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {discountLines.map((l, i) => {
-                    const pct = l.pct === "" ? 0 : Number(l.pct);
-                    const perUnitAmt = l.amt === "" ? 0 : Number(l.amt);
-                    const lineTotal = l.unit_price * (pct / 100) * l.qty;
+                    // Everything shown is computed from the % as the quote will
+                    // store it (rounded), so a typed Rand amount that can't be
+                    // hit exactly is visible before submitting.
+                    const applied = roundPct(l.pct === "" ? 0 : Number(l.pct), discountDigits);
+                    const d = lineDiscount(l, applied);
+                    const typedAmt = l.amt === "" ? null : Number(l.amt);
+                    const drift = discountMode === "amount" && typedAmt != null && Math.abs(d.perUnitOff - typedAmt) >= 0.005;
                     return (
-                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
+                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
                       <td className="p-2 pl-3 text-gray-800">
                         {l.product_name}
                         {l.origPct > 0 && (
                           <span className="block text-[10px] text-teal-600 mt-0.5">
-                            {l.origPct.toFixed(2)}% currently applied — edit to request a different rate
+                            {l.origPct.toFixed(2)}% already on the quote. Change it to ask for a different rate, or clear it to ask for the discount to be removed.
                           </span>
                         )}
                       </td>
@@ -3834,23 +3934,55 @@ export default function SalesTickets() {
                           />
                           {discountMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
                         </div>
-                        {(l.pct !== "" || l.amt !== "") && (
-                          <span className="block text-[10px] text-gray-400 text-right mt-0.5">
-                            {discountMode === "pct" ? `${fmtR(perUnitAmt)} off/unit` : `${pct.toFixed(2)}% off/unit`}
+                        {l.origPct > 0 && applied === 0 && (
+                          <span className="block text-[10px] text-red-600 text-right mt-0.5">Discount will be removed</span>
+                        )}
+                        {applied > 0 && (
+                          <span className="block text-[10px] text-gray-500 text-right mt-0.5">
+                            {discountMode === "pct"
+                              ? `= ${fmtR(d.perUnitOff)} off each unit`
+                              : `Applies as ${applied}%`}
+                          </span>
+                        )}
+                        {drift && (
+                          <span className="block text-[10px] text-amber-700 text-right">
+                            Actual: {fmtR(d.perUnitOff)} off each unit
                           </span>
                         )}
                       </td>
-                      <td className="p-2 pr-3 text-right">
-                        {pct > 0 ? (
-                          <span className="font-semibold text-amber-700">{fmtR(lineTotal)}</span>
-                        ) : <span className="text-gray-300">—</span>}
+                      <td className="p-2 text-right">
+                        {applied > 0 ? <span className="font-semibold text-amber-700">{fmtR(d.lineOff)}</span> : <span className="text-gray-300">—</span>}
                       </td>
+                      <td className="p-2 pr-3 text-right text-gray-800">{fmtR(d.net)}</td>
                     </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            {(() => {
+              // "Now" is the live quote; "if approved" applies the entered
+              // rates. A line left blank here keeps whatever discount it
+              // already has, since approval only changes the lines asked about.
+              const liveByProduct = {};
+              (detailOrder?.lines || []).forEach(ol => {
+                const pid = Array.isArray(ol.product_id) ? ol.product_id[0] : ol.product_id;
+                if (!(pid in liveByProduct)) liveByProduct[pid] = ol;
+              });
+              const after = orderTotals(
+                discountLines.map(l => ({ ...l, tax_rate: liveLineTaxRate(liveByProduct[l.product_id], detailOrder) })),
+                l => {
+                  const p = roundPct(l.pct === "" ? 0 : Number(l.pct), discountDigits);
+                  // Cleared on a line that has a discount now = removal (0%).
+                  return p > 0 || l.origPct > 0 ? p : (liveByProduct[l.product_id]?.discount || 0);
+                },
+              );
+              return (
+                <div className="mb-4">
+                  <DiscountTotalsCompare now={liveOrderTotals(detailOrder)} after={after} note={ESTIMATE_NOTE} />
+                </div>
+              );
+            })()}
             <FormGroup label="Reason (required)">
               <Textarea value={discountReason} onChange={e => setDiscountReason(e.target.value)} rows={2}
                 placeholder="e.g. Bulk order, first-time customer, matching a competitor quote…" />

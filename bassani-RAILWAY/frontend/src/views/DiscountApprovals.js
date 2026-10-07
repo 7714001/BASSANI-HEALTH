@@ -24,6 +24,48 @@ import {
   EmptyState, LoadingState, FilterPill, ChipRow, SearchBar, fmtDateTime, fmtDate,
   DISCOUNT_STATUS_LABEL as STATUS_LABEL, DISCOUNT_STATUS_COLOR as STATUS_COLOR, DiscountStatusKey,
 } from "../components/UI";
+import { DiscountAmountCell, DiscountTotalsCompare, ESTIMATE_NOTE } from "../components/DiscountBreakdown";
+import { roundPct, lineDiscount, orderTotals, isInRequest } from "../utils/discountMath";
+
+// Before/after totals for a request (2026-10-07). "Now" is the quote when the
+// request was raised (each line's discount at that moment); "after" applies
+// the requested rate, or for a countered request the rate actually granted.
+// A line not in the request keeps its existing discount, since approval only
+// ever changes the lines asked about.
+function requestTotals(req, overridePct) {
+  const lines = req.lines || [];
+  const granted = {};
+  if (req.status === "countered") (req.final_lines || []).forEach(f => { granted[f.product_id] = f.final_pct; });
+  const afterPct = (l) => {
+    if (overridePct && l.product_id in overridePct) return overridePct[l.product_id];
+    if (req.status === "countered" && l.product_id in granted) return granted[l.product_id];
+    return isInRequest(l) ? (l.requested_pct || 0) : (l.current_pct || 0);
+  };
+  return {
+    now: orderTotals(lines, l => l.current_pct || 0),
+    after: orderTotals(lines, afterPct),
+    // Requests raised before 2026-10-07 never recorded each line's existing
+    // discount, so "now" assumes none was on the quote.
+    legacy: lines.some(l => !("current_pct" in l)),
+  };
+}
+
+const AFTER_LABEL = { pending: "If approved", approved: "As approved", countered: "As countered" };
+
+function RequestTotals({ req, overridePct, afterLabel }) {
+  const { now, after, legacy } = requestTotals(req, overridePct);
+  return (
+    <DiscountTotalsCompare
+      now={now}
+      after={after}
+      nowLabel="Quote before"
+      afterLabel={afterLabel || AFTER_LABEL[req.status] || "As requested"}
+      note={legacy
+        ? "This request was raised before existing discounts were recorded, so the before figures assume the quote had none."
+        : ESTIMATE_NOTE}
+    />
+  );
+}
 
 const fmtR = (n) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
@@ -149,8 +191,10 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
   // summary and the modal actions below only ever care about the ones
   // actually asked about.
   const discountedLines = allLines.filter(l => (l.requested_pct || 0) > 0);
+  const removals = allLines.filter(l => l.is_removal).length;
   const n = discountedLines.length;
   const avgPct = n > 0 ? discountedLines.reduce((s, l) => s + (l.requested_pct || 0), 0) / n : 0;
+  const randOff = discountedLines.reduce((s, l) => s + lineDiscount(l, l.requested_pct).lineOff, 0);
   // 8.63: once financial-detail has loaded, prefer its per-line cost_price
   // (looked up fresh from Odoo); render lines from it if available so the
   // Cost Price column has data, else fall back to the plain request lines.
@@ -163,7 +207,11 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
         <td className="p-3 text-sm font-mono text-gray-900">{req.order_name}</td>
         <td className="p-3 text-sm text-gray-700">{req.customer_name || "—"}</td>
         <td className="p-3 text-sm text-gray-600">{req.requested_by?.name || "—"}</td>
-        <td className="p-3 text-sm text-gray-600 text-center">{n} of {allLines.length} line{allLines.length !== 1 ? "s" : ""}, avg {avgPct.toFixed(1)}%</td>
+        <td className="p-3 text-sm text-gray-600 text-center">
+          {n} of {allLines.length} line{allLines.length !== 1 ? "s" : ""}, avg {avgPct.toFixed(1)}%
+          <span className="block text-xs text-gray-500">{fmtR(randOff)} off excl. VAT</span>
+          {removals > 0 && <span className="block text-xs text-red-600">Remove discount on {removals} line{removals !== 1 ? "s" : ""}</span>}
+        </td>
         <td className="p-3 text-xs text-gray-400 whitespace-nowrap">{fmtDateTime(req.created_at)}</td>
         <td className="p-3"><Badge color={STATUS_COLOR[req.status] || "gray"}>{STATUS_LABEL[req.status] || req.status}</Badge></td>
         <td className="p-3 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
@@ -191,12 +239,6 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
                 <p className="text-sm text-gray-700">{req.reason || "Not provided"}</p>
               </div>
               <div className="flex items-center gap-4 shrink-0">
-                {req.order_total != null && (
-                  <div className="text-right">
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Order Total</p>
-                    <p className="text-sm font-semibold text-gray-900">{fmtR(req.order_total)}</p>
-                  </div>
-                )}
                 <button
                   onClick={() => navigate("/tickets/sales", { state: { openTicketId: req.ticket_id } })}
                   className="inline-flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 hover:underline"
@@ -212,7 +254,7 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
             ) : rollup && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                 <div className="bg-white border border-gray-100 rounded-lg p-2.5">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discount Requested</p>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discount Requested (excl. VAT)</p>
                   <p className="text-sm font-semibold text-gray-900">{fmtR(rollup.total_requested_discount)}</p>
                 </div>
                 <div className="bg-white border border-gray-100 rounded-lg p-2.5">
@@ -239,6 +281,10 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
               </div>
             )}
 
+            <div className="mb-3">
+              <RequestTotals req={req} />
+            </div>
+
             {/* Every line on the order — the discounted ones stand out so the
                 approver can judge the request against the full quote, not
                 just the lines asked about in isolation. */}
@@ -249,12 +295,14 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
                   <th className="text-right p-2 font-semibold text-gray-400 uppercase">Qty</th>
                   <th className="text-right p-2 font-semibold text-gray-400 uppercase">Unit Price</th>
                   <th className="text-right p-2 font-semibold text-gray-400 uppercase">Cost Price</th>
-                  <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Discount</th>
+                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Discount requested</th>
+                  {req.status === "countered" && <th className="text-right p-2 font-semibold text-gray-400 uppercase">Granted</th>}
+                  <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Line total {AFTER_LABEL[req.status] ? AFTER_LABEL[req.status].toLowerCase() : "as requested"}</th>
                 </tr>
               </thead>
               <tbody>
                 {linesToRender.map((l, i) => {
-                  const isRequested = (l.requested_pct || 0) > 0;
+                  const isRequested = isInRequest(l);
                   const hasCostInfo = financial != null;
                   return (
                     <tr key={i} className={`border-t border-gray-50 ${isRequested ? "bg-amber-50/60" : ""}`}>
@@ -273,10 +321,25 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
                           </button>
                         ) : <span className="text-gray-300">…</span>}
                       </td>
-                      <td className="p-2 pr-3 text-right">
+                      <td className="p-2 text-right">
                         {isRequested
-                          ? <span className="font-semibold text-amber-700">{Number(l.requested_pct).toFixed(2)}% requested</span>
-                          : <span className="text-gray-300">No discount requested</span>}
+                          ? <DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" />
+                          : <span className="text-gray-300">{l.current_pct > 0 ? `Keeps ${l.current_pct}% already on quote` : "No discount requested"}</span>}
+                      </td>
+                      {req.status === "countered" && (() => {
+                        const g = (req.final_lines || []).find(f => f.product_id === l.product_id);
+                        return (
+                          <td className="p-2 text-right">
+                            {g ? <DiscountAmountCell line={l} pct={g.final_pct} tone="text-orange-700" /> : <span className="text-gray-300">—</span>}
+                          </td>
+                        );
+                      })()}
+                      <td className="p-2 pr-3 text-right text-gray-800">
+                        {(() => {
+                          const g = req.status === "countered" ? (req.final_lines || []).find(f => f.product_id === l.product_id) : null;
+                          const pct = g ? g.final_pct : (isRequested ? l.requested_pct : (l.current_pct || 0));
+                          return fmtR(lineDiscount(l, pct).net);
+                        })()}
                       </td>
                     </tr>
                   );
@@ -462,14 +525,21 @@ export default function DiscountApprovals() {
   // every keystroke, which was breaking typing/backspacing entirely.
   // approved_pct is always the canonical value actually submitted.
   const [counterMode, setCounterMode] = useState("amount");
+  // Decimals Odoo keeps on a discount % (2026-10-07): the counter figures
+  // are shown at the rate as it will actually be stored.
+  const [counterDigits, setCounterDigits] = useState(2);
   const openCounter = (req) => {
     setCounterTarget(req);
+    setCounterDigits(req.discount_digits ?? 2);
+    api.get("/api/discount-requests/precision")
+      .then(r => setCounterDigits(r.data?.discount_digits ?? 2))
+      .catch(() => {});
     setCounterMode("amount");
     // Only the lines actually asked about (requested_pct > 0) are
     // counterable — the rest of req.lines is full-order context only. The
     // backend now requires every one of these to be resolved in the same
     // counter call, so none can be dropped from this list before submit.
-    setCounterLines((req.lines || []).filter(l => (l.requested_pct || 0) > 0)
+    setCounterLines((req.lines || []).filter(isInRequest)
       .map(l => ({
         product_id: l.product_id, product_name: l.product_name,
         approved_pct: Number(l.requested_pct).toFixed(2),
@@ -504,7 +574,7 @@ export default function DiscountApprovals() {
     setCountering(true);
     try {
       await api.post(`/api/discount-requests/${counterTarget.id}/counter`, {
-        lines: counterLines.map(l => ({ product_id: l.product_id, approved_pct: Number(l.approved_pct) })),
+        lines: counterLines.map(l => ({ product_id: l.product_id, approved_pct: roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits) })),
         note: counterNote,
       });
       toast.success("Counter-offer applied");
@@ -627,9 +697,12 @@ export default function DiscountApprovals() {
 
       {approveTarget && (
         <Modal title="Approve Discount" onClose={() => setApproveTarget(null)}>
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-gray-600 mb-3">
             Apply the requested discount to {approveTarget.order_name} exactly as requested?
           </p>
+          <div className="mb-4">
+            <RequestTotals req={approveTarget} afterLabel="If approved" />
+          </div>
           <FormGroup label="Note (optional)">
             <Textarea value={approveNote} onChange={e => setApproveNote(e.target.value)} rows={2} />
           </FormGroup>
@@ -658,11 +731,15 @@ export default function DiscountApprovals() {
       )}
 
       {counterTarget && (
-        <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)} width="max-w-3xl">
-          <p className="text-sm text-gray-600 mb-3">
+        <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)} width="max-w-4xl">
+          <p className="text-sm text-gray-600 mb-2">
             Apply a different discount than requested for {counterTarget.order_name}. This is applied
             immediately, same as an approval. Every originally requested line must be given a rate below,
             even if that rate is 0%.
+          </p>
+          <p className="text-xs text-gray-600 bg-slate-50 border border-gray-100 rounded-lg px-3 py-2 mb-3">
+            <span className="font-semibold">Rand Amount</span> is the amount off <span className="font-semibold">each single unit</span>, not off the whole line.
+            The quote stores the discount as a percentage rounded to {counterDigits} decimal{counterDigits !== 1 ? "s" : ""}, so the figures below show exactly what will apply.
           </p>
           <div className="flex items-center gap-2 mb-3">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
@@ -673,18 +750,19 @@ export default function DiscountApprovals() {
               </button>
               <button type="button" onClick={() => switchCounterMode("amount")}
                 className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${counterMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-                Rand Amount
+                Rand Amount (per unit)
               </button>
             </div>
           </div>
-          <div className="max-h-[28rem] overflow-y-auto border border-gray-100 rounded-lg mb-4">
+          <div className="max-h-[24rem] overflow-y-auto border border-gray-100 rounded-lg mb-3">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
                   <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-24">Requested / Unit</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-32">Approved / Unit</th>
-                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">Line Total</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">Requested</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">{counterMode === "pct" ? "Your discount %" : "Your Rand off each unit"}</th>
+                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Off this line</th>
+                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">New line total</th>
                 </tr>
               </thead>
               <tbody>
@@ -692,16 +770,15 @@ export default function DiscountApprovals() {
                   const original = counterTarget.lines.find(x => x.product_id === l.product_id);
                   const unitPrice = original?.unit_price || 0;
                   const qty = original?.qty || 0;
-                  const pct = l.approved_pct === "" ? 0 : Number(l.approved_pct);
-                  const perUnitAmt = l.approved_amt === "" ? 0 : Number(l.approved_amt);
-                  const lineTotal = unitPrice * (pct / 100) * qty;
-                  const requestedPerUnit = unitPrice * (original?.requested_pct || 0) / 100;
+                  const pct = roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits);
+                  const d = lineDiscount({ qty, unit_price: unitPrice }, pct);
+                  const typedAmt = l.approved_amt === "" ? null : Number(l.approved_amt);
+                  const drift = counterMode === "amount" && typedAmt != null && Math.abs(d.perUnitOff - typedAmt) >= 0.005;
                   return (
-                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0">
-                      <td className="p-2 pl-3 text-gray-800">{l.product_name}</td>
-                      <td className="p-2 text-right text-gray-500">
-                        {Number(original?.requested_pct || 0).toFixed(2)}%
-                        <span className="block text-[10px] text-gray-300">{fmtR(requestedPerUnit)}</span>
+                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
+                      <td className="p-2 pl-3 text-gray-800">{l.product_name}<span className="block text-[10px] text-gray-400">{qty} × {fmtR(unitPrice)}</span></td>
+                      <td className="p-2">
+                        <DiscountAmountCell line={{ qty, unit_price: unitPrice, is_removal: original?.is_removal, current_pct: original?.current_pct }} pct={original?.requested_pct || 0} tone="text-gray-500" />
                       </td>
                       <td className="p-2">
                         <div className="flex items-center justify-end gap-1">
@@ -715,18 +792,29 @@ export default function DiscountApprovals() {
                           />
                           {counterMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
                         </div>
-                        <span className="block text-[10px] text-gray-400 text-right mt-0.5">
-                          {counterMode === "pct" ? `${fmtR(perUnitAmt)}` : `${pct.toFixed(2)}%`}
+                        <span className="block text-[10px] text-gray-500 text-right mt-0.5">
+                          {counterMode === "pct" ? `= ${fmtR(d.perUnitOff)} off each unit` : `Applies as ${pct}%`}
                         </span>
+                        {drift && (
+                          <span className="block text-[10px] text-amber-700 text-right">Actual: {fmtR(d.perUnitOff)} off each unit</span>
+                        )}
                       </td>
-                      <td className="p-2 pr-3 text-right">
-                        {pct > 0 ? <span className="font-semibold text-teal-700">{fmtR(lineTotal)}</span> : <span className="text-gray-300">—</span>}
+                      <td className="p-2 text-right">
+                        {pct > 0 ? <span className="font-semibold text-orange-700">{fmtR(d.lineOff)}</span> : <span className="text-gray-300">—</span>}
                       </td>
+                      <td className="p-2 pr-3 text-right text-gray-800">{fmtR(d.net)}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="mb-4">
+            <RequestTotals
+              req={counterTarget}
+              afterLabel="With your counter"
+              overridePct={Object.fromEntries(counterLines.map(l => [l.product_id, roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits)]))}
+            />
           </div>
           <FormGroup label="Reason" required>
             <Textarea value={counterNote} onChange={e => setCounterNote(e.target.value)} rows={2}

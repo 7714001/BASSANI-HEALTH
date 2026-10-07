@@ -71,6 +71,124 @@ def _actor(user: dict) -> str:
     return user.get("name") or user.get("username") or "unknown"
 
 
+# Odoo stores sale.order.line.discount to the "Discount" decimal.precision
+# (2 decimals on Bassani's instance as of 2026-10-07, asked to be raised to
+# 4). Read live rather than assumed so the portal follows the setting the
+# moment it changes; cached briefly since it's read on every request create.
+_DIGITS_CACHE: dict = {"value": None, "at": 0.0}
+
+
+def _discount_digits(odoo) -> int:
+    import time
+    if _DIGITS_CACHE["value"] is not None and time.time() - _DIGITS_CACHE["at"] < 600:
+        return _DIGITS_CACHE["value"]
+    digits = 2
+    try:
+        rows = odoo.search_read("decimal.precision", [("name", "=", "Discount")], fields=["digits"], limit=1)
+        if rows and rows[0].get("digits") is not None:
+            digits = int(rows[0]["digits"])
+    except Exception as e:
+        logger.warning("discount_digits_read_failed error=%s", e)
+    _DIGITS_CACHE.update(value=digits, at=time.time())
+    return digits
+
+
+def _round_pct(pct: float, digits: int) -> float:
+    """The % Odoo will actually store. Every Rand figure the portal shows is
+    computed from this, never from the unrounded figure a Rand entry converts
+    to, so what an approver sees is exactly what the customer gets."""
+    return round(float(pct or 0), digits)
+
+
+def _in_request(line: dict) -> bool:
+    """A line is part of the request if it asks for a discount OR asks for an
+    existing discount to be removed (2026-10-07). Before this, a line whose
+    discount was cleared to 0 in a re-request was treated as "left alone",
+    so approval never wrote it and the old discount silently stayed on."""
+    return (line.get("requested_pct") or 0) > 0 or bool(line.get("is_removal"))
+
+
+def _decision_stats(doc_lines: list, pct_by_product: dict) -> tuple:
+    """(lines discounted, avg %, Rand off excl. VAT, lines with discount
+    removed) for a decision. Removals (0%) are counted separately so they
+    don't drag the average down or read as "N lines discounted"."""
+    granted = {pid: pct for pid, pct in pct_by_product.items() if pct > 0}
+    n = len(granted)
+    avg = sum(granted.values()) / n if n else 0
+    return n, avg, _discount_amount(doc_lines, granted), len(pct_by_product) - n
+
+
+def _effective_pct(line: dict, pct_by_product: dict) -> float:
+    """The discount a line ends up with after a decision: the decided % for a
+    line in the request, otherwise whatever was already on it (approve/
+    counter only ever write the lines they decide)."""
+    if line["product_id"] in pct_by_product:
+        return pct_by_product[line["product_id"]]
+    return line.get("current_pct") or 0
+
+
+def _totals_for(lines: list, pct_of) -> Optional[dict]:
+    """Excl. VAT / VAT / incl. VAT totals for the snapshot lines at the
+    discount pct_of(line) returns, rounded per line to the cent like Odoo.
+    None when any line lacks a recorded tax_rate (requests made before
+    2026-10-07), so nothing pretends to know an incl. VAT figure it doesn't."""
+    if not lines or any("tax_rate" not in l for l in lines):
+        return None
+    untaxed = tax = 0.0
+    for l in lines:
+        net = round(l["qty"] * l["unit_price"] * (1 - pct_of(l) / 100), 2)
+        untaxed += net
+        tax += net * l["tax_rate"] / 100
+    # VAT rounded on the total, not per line: matches Odoo's own totals on
+    # Bassani's live orders (checked read-only 2026-10-07).
+    untaxed, tax = round(untaxed, 2), round(tax, 2)
+    return {"untaxed": untaxed, "tax": tax, "total": round(untaxed + tax, 2)}
+
+
+def _order_line_context(odoo, order_id: int) -> dict:
+    """{product_id: {"tax_rate", "current_pct"}} from the order's live lines.
+
+    tax_rate is the sum of the line's own configured percentage taxes
+    (Bassani's sales taxes are all price-exclusive percentages, live-checked
+    2026-10-07; some lines carry more than one, e.g. VAT + Compliance Levy).
+    Falls back to Odoo's computed price_tax / price_subtotal only if the
+    tax records can't be read — that ratio comes from an already-rounded
+    figure, so it drifts slightly (e.g. 14.9996%)."""
+    out: dict = {}
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["order_line"])
+        line_ids = rows[0].get("order_line") if rows else []
+        if not line_ids:
+            return out
+        lines = odoo.read(
+            "sale.order.line", line_ids,
+            fields=["product_id", "discount", "price_subtotal", "price_tax", "tax_ids", "display_type", "is_downpayment"],
+        )
+        tax_ids_needed = {t for l in lines for t in (l.get("tax_ids") or [])}
+        tax_pct: dict = {}
+        if tax_ids_needed:
+            try:
+                for t in odoo.read("account.tax", list(tax_ids_needed), fields=["amount", "amount_type"]):
+                    tax_pct[t["id"]] = t["amount"] if t.get("amount_type") == "percent" else 0
+            except Exception as e:
+                logger.warning("discount_tax_read_failed order_id=%s error=%s", order_id, e)
+        for l in lines:
+            if l.get("display_type") or l.get("is_downpayment") or not l.get("product_id"):
+                continue
+            pid = l["product_id"][0] if isinstance(l["product_id"], (list, tuple)) else l["product_id"]
+            line_taxes = l.get("tax_ids") or []
+            if all(t in tax_pct for t in line_taxes):
+                rate = sum(tax_pct[t] for t in line_taxes)
+            elif l.get("price_subtotal"):
+                rate = (l.get("price_tax") or 0) / l["price_subtotal"] * 100
+            else:
+                rate = 0
+            out.setdefault(pid, {"tax_rate": round(rate, 4), "current_pct": l.get("discount") or 0})
+    except Exception as e:
+        logger.warning("discount_line_context_failed order_id=%s error=%s", order_id, e)
+    return out
+
+
 def _serialize(doc: dict) -> dict:
     doc["id"] = str(doc.pop("_id"))
     return doc
@@ -152,7 +270,9 @@ def _build_final_lines(doc_lines: list, pct_by_product: dict) -> list:
             "final_pct": pct_by_product[l["product_id"]],
             "final_amount": l["qty"] * l["unit_price"] * (pct_by_product[l["product_id"]] / 100),
         }
-        for l in doc_lines if l["product_id"] in pct_by_product
+        # A 0% outcome (a removal, or a counter down to nothing) grants no
+        # discount, so it isn't a "granted line" for reporting.
+        for l in doc_lines if pct_by_product.get(l["product_id"], 0) > 0
     ]
 
 
@@ -226,17 +346,40 @@ async def create_discount_request(
     for l in body.lines:
         if not (0 <= l.requested_pct <= 100):
             raise HTTPException(status_code=400, detail="Discount percentage must be between 0 and 100")
-    discounted_lines = [l for l in body.lines if l.requested_pct > 0]
-    if not discounted_lines:
-        raise HTTPException(status_code=400, detail="Enter a discount % on at least one line")
 
     odoo = get_odoo_client()
     try:
-        order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["name", "amount_total"])
+        order_rows = odoo.read("sale.order", [ticket["order_id"]], fields=["name", "amount_total", "amount_untaxed", "amount_tax"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     order_name = order_rows[0]["name"] if order_rows else str(ticket["order_id"])
     order_total = order_rows[0]["amount_total"] if order_rows else None
+
+    # 2026-10-07: round each % to what Odoo will actually store, and record
+    # each line's tax rate + the discount already on it, so every screen can
+    # show Rand figures and a true before/after total (incl. VAT) without
+    # going back to Odoo. tax_rate/current_pct come from the server's own
+    # read of the order, never from the client.
+    digits = _discount_digits(odoo)
+    line_ctx = _order_line_context(odoo, ticket["order_id"])
+    snapshot_lines = []
+    for l in body.lines:
+        d = l.model_dump()
+        d["requested_pct"] = _round_pct(l.requested_pct, digits)
+        ctx = line_ctx.get(l.product_id)
+        if ctx:
+            d["tax_rate"] = ctx["tax_rate"]
+            d["current_pct"] = ctx["current_pct"]
+            # Cleared a discount that's on the quote now: that's a request
+            # to remove it, decided like any other line (server-side, from
+            # Odoo's own current figure, never trusted from the client).
+            if d["requested_pct"] == 0 and (ctx["current_pct"] or 0) > 0:
+                d["is_removal"] = True
+        snapshot_lines.append(d)
+    if not any(_in_request(d) for d in snapshot_lines):
+        if any(l.requested_pct > 0 for l in body.lines):
+            raise HTTPException(status_code=400, detail="The discount entered rounds to 0%. Enter a larger discount.")
+        raise HTTPException(status_code=400, detail="Enter a discount on at least one line, or clear an existing discount to remove it")
 
     now = datetime.now(timezone.utc)
     doc = {
@@ -244,6 +387,9 @@ async def create_discount_request(
         "order_id": ticket["order_id"],
         "order_name": order_name,
         "order_total": order_total,
+        "order_untaxed": order_rows[0]["amount_untaxed"] if order_rows else None,
+        "order_tax": order_rows[0]["amount_tax"] if order_rows else None,
+        "discount_digits": digits,
         "customer_name": ticket.get("customer_name", ""),
         # Resolved the same way ticket_routes.py::_ticket_customer_partner_id
         # does (prefer the resolved-company id over a contact-person id) —
@@ -262,7 +408,7 @@ async def create_discount_request(
         # requested_pct is 0 for a line the requester left alone. This is what
         # lets the approval queue show the full order in context rather than
         # only the discounted lines in isolation.
-        "lines": [l.model_dump() for l in body.lines],
+        "lines": snapshot_lines,
         # Populated only on approve/counter (8.63) — the *actual* discount
         # granted, distinct from `lines[]` (the immutable original ask).
         # Reject/cancel leave this empty since nothing was ever given.
@@ -273,7 +419,7 @@ async def create_discount_request(
     }
     result = await col("discount_requests").insert_one(doc)
     request_id = str(result.inserted_id)
-    n = len(discounted_lines)
+    n = sum(1 for d in snapshot_lines if _in_request(d))
     await col("tickets").update_one(
         {"_id": oid},
         {
@@ -293,11 +439,25 @@ async def create_discount_request(
     routing = await get_email_routing()
     to = routing.get("discount_request_to") or []
     if to:
+        requested = {d["product_id"]: d["requested_pct"] for d in snapshot_lines if _in_request(d)}
+        after = _totals_for(snapshot_lines, lambda l: _effective_pct(l, requested))
         background_tasks.add_task(
             send_discount_request_notification, to, order_name, ticket.get("customer_name", ""),
             _actor(current_user), body.reason.strip(),
-            [{"product_name": l.product_name, "requested_pct": l.requested_pct} for l in discounted_lines],
+            [
+                {
+                    "product_name": d["product_name"], "requested_pct": d["requested_pct"],
+                    "per_unit_off": d["unit_price"] * d["requested_pct"] / 100,
+                    "line_off": d["qty"] * d["unit_price"] * d["requested_pct"] / 100,
+                    "qty": d["qty"],
+                    "is_removal": bool(d.get("is_removal")),
+                    "current_pct": d.get("current_pct"),
+                }
+                for d in snapshot_lines if _in_request(d)
+            ],
             request_id,
+            total_now=order_total,
+            total_after=after["total"] if after else None,
         )
     return {"success": True, "request_id": request_id}
 
@@ -361,6 +521,16 @@ def _fetch_costs(odoo, product_ids: list) -> dict:
         return {pid: None for pid in product_ids}
 
 
+@router.get("/precision")
+async def get_discount_precision(
+    current_user: dict = Depends(require_any_permission("discounts.approve", "tickets.sales")),
+):
+    """How many decimals Odoo keeps on a discount %, so the request and
+    counter modals can show exactly the % (and Rand) that will be applied.
+    Literal path: must stay registered before /{request_id}."""
+    return {"discount_digits": _discount_digits(get_odoo_client())}
+
+
 @router.get("/{request_id}/financial-detail")
 async def get_discount_financial_detail(
     request_id: str,
@@ -401,7 +571,7 @@ async def get_discount_financial_detail(
     rollup = {
         "order_total": doc.get("order_total"),
         "total_requested_discount": total_requested_discount,
-        "discounted_lines_count": sum(1 for l in doc["lines"] if l.get("requested_pct")),
+        "discounted_lines_count": sum(1 for l in doc["lines"] if (l.get("requested_pct") or 0) > 0),
         "lines_with_known_cost": sum(1 for c in costs.values() if c is not None),
         "lines_total": len(product_ids),
         "margin": None,
@@ -539,17 +709,16 @@ async def approve_discount_request(
     doc = await _load_pending_request(request_id)
     _assert_not_own_request(doc, current_user)
     # doc["lines"] is the full order snapshot (2026-09-28) — only the lines
-    # actually asked about (requested_pct > 0) get a discount applied.
-    pct_by_product = {l["product_id"]: l["requested_pct"] for l in doc["lines"] if l.get("requested_pct")}
+    # actually in the request get written: a requested discount, or 0% for a
+    # requested removal (2026-10-07).
+    pct_by_product = {l["product_id"]: l.get("requested_pct") or 0 for l in doc["lines"] if _in_request(l)}
     odoo = get_odoo_client()
     _write_line_discounts(odoo, doc["order_id"], pct_by_product)
 
     now = datetime.now(timezone.utc)
     note = (body.note or "").strip() or None
     decision = {"by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note}
-    amount = _discount_amount(doc["lines"], pct_by_product)
-    avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
-    n = len(pct_by_product)
+    n, avg_pct, amount, removed = _decision_stats(doc["lines"], pct_by_product)
     final_lines = _build_final_lines(doc["lines"], pct_by_product)
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "approved", "decision": decision, "final_lines": final_lines, "updated_at": now}},
@@ -557,9 +726,11 @@ async def approve_discount_request(
     await _clear_ticket_flag(doc["ticket_id"], last_decision={
         "request_id": request_id, "status": "approved",
         "decided_by": _actor(current_user), "decided_at": now, "note": note,
-        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount,
+        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount, "removed_count": removed,
     })
-    activity_note = f"Discount approved: {n} line{'s' if n != 1 else ''}, R{amount:,.2f} (avg {avg_pct:.1f}%)"
+    activity_note = f"Discount approved: {n} line{'s' if n != 1 else ''}, R{amount:,.2f} excl. VAT (avg {avg_pct:.1f}%)"
+    if removed:
+        activity_note += f"; discount removed from {removed} line{'s' if removed != 1 else ''}"
     if note:
         activity_note += f' (note: "{note}")'
     await _push_ticket_activity(doc["ticket_id"], current_user, activity_note)
@@ -647,29 +818,30 @@ async def counter_discount_request(
     # on it (no discount written, no record it was ever considered), which
     # isn't acceptable for an approval workflow. Reject/Approve stay whole-
     # request decisions already; Counter now is too, just at a per-line rate.
-    requested_pids = {l["product_id"] for l in doc["lines"] if l.get("requested_pct")}
+    requested_pids = {l["product_id"] for l in doc["lines"] if _in_request(l)}
     submitted_pids = {l.product_id for l in body.lines}
     if submitted_pids - requested_pids:
         raise HTTPException(status_code=400, detail="Cannot counter a product that wasn't part of the original request")
     if requested_pids - submitted_pids:
         raise HTTPException(status_code=400, detail="Every originally requested line must be included in the counter-offer")
+    odoo = get_odoo_client()
+    digits = _discount_digits(odoo)
     pct_by_product: dict = {}
     for l in body.lines:
         if not (0 <= l.approved_pct <= 100):
             raise HTTPException(status_code=400, detail="Discount percentage must be between 0 and 100")
-        pct_by_product[l.product_id] = l.approved_pct
+        # Rounded to what Odoo stores, so the recorded decision and every
+        # Rand figure derived from it match what the customer is charged.
+        pct_by_product[l.product_id] = _round_pct(l.approved_pct, digits)
 
-    odoo = get_odoo_client()
     _write_line_discounts(odoo, doc["order_id"], pct_by_product)
 
     now = datetime.now(timezone.utc)
     decision = {
         "by": {"id": current_user["id"], "name": _actor(current_user)}, "at": now, "note": note,
-        "applied_lines": [{"product_id": l.product_id, "approved_pct": l.approved_pct} for l in body.lines],
+        "applied_lines": [{"product_id": pid, "approved_pct": pct} for pid, pct in pct_by_product.items()],
     }
-    amount = _discount_amount(doc["lines"], pct_by_product)
-    avg_pct = sum(pct_by_product.values()) / len(pct_by_product) if pct_by_product else 0
-    n = len(pct_by_product)
+    n, avg_pct, amount, removed = _decision_stats(doc["lines"], pct_by_product)
     final_lines = _build_final_lines(doc["lines"], pct_by_product)
     await col("discount_requests").update_one(
         {"_id": doc["_id"]}, {"$set": {"status": "countered", "decision": decision, "final_lines": final_lines, "updated_at": now}},
@@ -677,9 +849,11 @@ async def counter_discount_request(
     await _clear_ticket_flag(doc["ticket_id"], last_decision={
         "request_id": request_id, "status": "countered",
         "decided_by": _actor(current_user), "decided_at": now, "note": note,
-        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount,
+        "lines_count": n, "avg_pct": avg_pct, "total_amount": amount, "removed_count": removed,
     })
-    activity_note = f"Discount countered: {n} line{'s' if n != 1 else ''} adjusted, R{amount:,.2f} (avg {avg_pct:.1f}%)"
+    activity_note = f"Discount countered: {n} line{'s' if n != 1 else ''} discounted, R{amount:,.2f} excl. VAT (avg {avg_pct:.1f}%)"
+    if removed:
+        activity_note += f"; no discount on {removed} line{'s' if removed != 1 else ''}"
     if note:
         activity_note += f' (note: "{note}")'
     await _push_ticket_activity(doc["ticket_id"], current_user, activity_note)
