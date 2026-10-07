@@ -8,6 +8,11 @@ the external API.
   - API clients: external systems that call the portal. Super admin only —
     a key grants machine access to catalogue and stock data, and later
     (14.6/14.15) to order intake, so minting one is a top-level decision.
+    A `partner_platform` client (14.10) is a POS platform's own key, linked to
+    the Sales Agent account Bassani created for that platform; creating one
+    flags the account `channel: "api_partner"` and issues a webhook signing
+    secret (encrypted at rest, shown once) for the partner's callback URL.
+    Store keys (`partner_store`) are issued per store in 14.13, never here.
   - Sales channels: stores the portal calls out to (WooCommerce first).
     `channels.manage`. Secrets are encrypted at rest (secret_box.py) and
     write-only — never returned by any endpoint.
@@ -15,6 +20,7 @@ the external API.
     Super admin only.
 """
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from urllib.parse import urlparse
@@ -26,7 +32,10 @@ from pydantic import BaseModel, Field
 import secret_box
 from auth import require_permission, require_super_admin
 from database import col
-from external_auth import KILL_SWITCH_ID, external_api_enabled, generate_api_key
+from external_auth import (
+    CLIENT_PARTNER_PLATFORM, CLIENT_PARTNER_STORE, CLIENT_STANDARD,
+    KILL_SWITCH_ID, external_api_enabled, generate_api_key,
+)
 from middleware.audit import audit_log
 from odoo_client import get_odoo_client
 from parent_categories import UNCATEGORISED
@@ -100,11 +109,45 @@ async def _validate_parent_categories(ids: Optional[list[str]]) -> Optional[list
     return ids
 
 
+def _normalise_callback_url(url: Optional[str]) -> Optional[str]:
+    if not url or not url.strip():
+        return None
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="The webhook address must be a full https:// address.")
+    return url
+
+
+def _new_webhook_secret() -> tuple[str, str]:
+    """(raw secret shown once, encrypted copy stored). Unlike an API key this
+    can't be a one-way hash: the portal needs the secret itself to sign every
+    outbound webhook (14.13/14.15)."""
+    raw = "whsec_" + secrets.token_urlsafe(32)
+    try:
+        return raw, secret_box.encrypt(raw)
+    except secret_box.SecretBoxNotConfigured:
+        raise HTTPException(
+            status_code=503,
+            detail="Credential storage isn't configured on the server yet (CREDENTIALS_ENCRYPTION_KEY), so a partner's webhook secret can't be stored. Set it before creating a POS partner key.",
+        )
+
+
+async def _active_partner(reseller_id: str) -> dict:
+    partner = await col("resellers").find_one({"id": reseller_id, "active": {"$ne": False}}, {"_id": 0, "id": 1, "name": 1, "warehouse_id": 1, "channel": 1})
+    if not partner:
+        raise HTTPException(status_code=400, detail="That Sales Agent account doesn't exist or is deactivated.")
+    return partner
+
+
 # ── API clients ───────────────────────────────────────────────────────────────
 
 class ApiClientIn(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     description: str = ""
+    client_type: Literal["standard", "partner_platform"] = "standard"
+    integration_partner_id: Optional[str] = None      # reseller `id`, required for partner_platform
+    callback_url: Optional[str] = None                # partner_platform only: where webhooks go
     warehouse_id: int
     pricelist_id: Optional[int] = None
     stock_detail: Literal["binary", "quantity"] = "binary"
@@ -125,6 +168,7 @@ class ApiClientUpdate(BaseModel):
     scoped_parent_category_ids: Optional[list[str]] = None
     clear_category_scope: bool = False
     sandbox: Optional[bool] = None
+    callback_url: Optional[str] = None                # partner_platform only; "" clears it
 
 
 _CLIENT_PUBLIC_FIELDS = (
@@ -132,23 +176,44 @@ _CLIENT_PUBLIC_FIELDS = (
     "company_name", "pricelist_id", "pricelist_name", "stock_detail", "scoped_parent_category_ids",
     "key_prefix", "sandbox", "active", "created_at", "created_by", "updated_at",
     "last_used_at", "key_rotated_at",
+    "integration_partner_id", "integration_partner_name", "parent_client_id", "odoo_partner_id",
+    "callback_url", "webhook_secret_rotated_at",
 )
 
 
 def _client_out(doc: dict) -> dict:
     out = {"id": str(doc["_id"])}
     out.update({k: doc.get(k) for k in _CLIENT_PUBLIC_FIELDS})
+    out["client_type"] = out.get("client_type") or CLIENT_STANDARD
+    out["has_webhook_secret"] = bool(doc.get("webhook_secret_enc"))
     return out
 
 
 @router.get("/api-clients")
-async def list_api_clients(current_user: dict = Depends(require_super_admin)):
-    docs = await col("api_clients").find({}).sort("created_at", -1).to_list(500)
+async def list_api_clients(
+    include_store_keys: bool = Query(False, description="Store keys (14.13) are listed per partner, not here, by default"),
+    current_user: dict = Depends(require_super_admin),
+):
+    query = {} if include_store_keys else {"client_type": {"$ne": CLIENT_PARTNER_STORE}}
+    docs = await col("api_clients").find(query).sort("created_at", -1).to_list(500)
     return {"clients": [_client_out(d) for d in docs]}
 
 
 @router.post("/api-clients")
 async def create_api_client(body: ApiClientIn, request: Request, current_user: dict = Depends(require_super_admin)):
+    partner = None
+    callback_url = webhook_secret = webhook_secret_enc = None
+    if body.client_type == CLIENT_PARTNER_PLATFORM:
+        if not body.integration_partner_id:
+            raise HTTPException(status_code=400, detail="Choose the Sales Agent account this POS partner belongs to.")
+        callback_url = _normalise_callback_url(body.callback_url)   # validate input before any lookups
+        partner = await _active_partner(body.integration_partner_id)
+        # One platform key per partner: a second would split its stores and
+        # webhooks across two credentials. Rotate the existing key instead.
+        if await col("api_clients").find_one({"client_type": CLIENT_PARTNER_PLATFORM, "integration_partner_id": partner["id"]}, {"_id": 1}):
+            raise HTTPException(status_code=409, detail=f"{partner['name']} already has a POS partner key. Rotate that key instead of creating another.")
+        webhook_secret, webhook_secret_enc = _new_webhook_secret()
+
     odoo = get_odoo_client()
     wh = _warehouse_summary(odoo, body.warehouse_id)
     pricelist_name = _validate_pricelist(odoo, body.pricelist_id, wh["company_id"])
@@ -158,8 +223,14 @@ async def create_api_client(body: ApiClientIn, request: Request, current_user: d
     doc = {
         "name": body.name.strip(),
         "description": body.description.strip(),
-        # 14.10 extends this with partner_platform / partner_store.
-        "client_type": "standard",
+        "client_type": body.client_type,
+        "integration_partner_id": partner["id"] if partner else None,
+        "integration_partner_name": partner["name"] if partner else None,
+        "parent_client_id": None,
+        "odoo_partner_id": None,
+        "callback_url": callback_url,
+        "webhook_secret_enc": webhook_secret_enc,
+        "webhook_secret_rotated_at": None,
         "warehouse_id": body.warehouse_id,
         **wh,
         "pricelist_id": body.pricelist_id,
@@ -182,9 +253,20 @@ async def create_api_client(body: ApiClientIn, request: Request, current_user: d
     await audit_log(
         "api_client.created", "api_client", out["id"], entity_label=doc["name"],
         user=current_user, after=out, ip=_ip(request),
+        reseller_id=partner["id"] if partner else None,
     )
-    # The only time the raw key is ever returned.
-    return {"client": out, "api_key": raw_key}
+    if partner and partner.get("channel") != "api_partner":
+        await col("resellers").update_one(
+            {"id": partner["id"]},
+            {"$set": {"channel": "api_partner", "updated_at": now}},
+        )
+        await audit_log(
+            "reseller.channel_changed", "reseller", partner["id"], entity_label=partner["name"],
+            user=current_user, before={"channel": partner.get("channel") or "portal"},
+            after={"channel": "api_partner"}, ip=_ip(request), reseller_id=partner["id"],
+        )
+    # The only time the raw key (and webhook secret) is ever returned.
+    return {"client": out, "api_key": raw_key, "webhook_secret": webhook_secret}
 
 
 @router.put("/api-clients/{client_id}")
@@ -207,6 +289,10 @@ async def update_api_client(client_id: str, body: ApiClientUpdate, request: Requ
         updates["scoped_parent_category_ids"] = None
     elif body.scoped_parent_category_ids is not None:
         updates["scoped_parent_category_ids"] = await _validate_parent_categories(body.scoped_parent_category_ids)
+    if body.callback_url is not None:
+        if existing.get("client_type") != CLIENT_PARTNER_PLATFORM:
+            raise HTTPException(status_code=400, detail="Only a POS partner key has a webhook address.")
+        updates["callback_url"] = _normalise_callback_url(body.callback_url)
 
     company_id = existing.get("company_id")
     if body.warehouse_id is not None and body.warehouse_id != existing.get("warehouse_id"):
@@ -249,10 +335,33 @@ async def rotate_api_client_key(client_id: str, request: Request, current_user: 
     await audit_log(
         "api_client.key_rotated", "api_client", client_id, entity_label=existing.get("name", ""),
         user=current_user, before={"key_prefix": existing.get("key_prefix")}, after={"key_prefix": key_prefix},
-        ip=_ip(request),
+        ip=_ip(request), reseller_id=existing.get("integration_partner_id"),
     )
     after = await col("api_clients").find_one({"_id": existing["_id"]})
     return {"client": _client_out(after), "api_key": raw_key}
+
+
+@router.post("/api-clients/{client_id}/rotate-webhook-secret")
+async def rotate_webhook_secret(client_id: str, request: Request, current_user: dict = Depends(require_super_admin)):
+    """New signing secret for a POS partner's webhooks. Takes effect for the
+    next webhook sent; the partner must switch to verifying with it."""
+    existing = await col("api_clients").find_one({"_id": _oid(client_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="API client not found")
+    if existing.get("client_type") != CLIENT_PARTNER_PLATFORM:
+        raise HTTPException(status_code=400, detail="Only a POS partner key has a webhook secret.")
+    raw, enc = _new_webhook_secret()
+    now = datetime.now(timezone.utc)
+    await col("api_clients").update_one(
+        {"_id": existing["_id"]},
+        {"$set": {"webhook_secret_enc": enc, "webhook_secret_rotated_at": now, "updated_at": now}},
+    )
+    await audit_log(
+        "api_client.webhook_secret_rotated", "api_client", client_id, entity_label=existing.get("name", ""),
+        user=current_user, ip=_ip(request), reseller_id=existing.get("integration_partner_id"),
+    )
+    after = await col("api_clients").find_one({"_id": existing["_id"]})
+    return {"client": _client_out(after), "webhook_secret": raw}
 
 
 async def _set_client_active(client_id: str, active: bool, request: Request, current_user: dict) -> dict:
@@ -267,6 +376,7 @@ async def _set_client_active(client_id: str, active: bool, request: Request, cur
         "api_client.activated" if active else "api_client.revoked", "api_client", client_id,
         entity_label=existing.get("name", ""), user=current_user,
         before={"active": existing.get("active")}, after={"active": active}, ip=_ip(request),
+        reseller_id=existing.get("integration_partner_id"),
     )
     after = await col("api_clients").find_one({"_id": existing["_id"]})
     return {"client": _client_out(after)}

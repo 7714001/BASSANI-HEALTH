@@ -2787,7 +2787,7 @@ export function Resellers() {
       <main className="flex-1 overflow-y-auto p-6">
         <DataTable
           columns={[
-            { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
+            { accessorKey:"name", header:"Name / Code", cell:({row:{original:r}})=><div><p className="font-semibold text-gray-900">{r.name}{r.channel === "api_partner" && <Badge color="indigo" className="ml-1.5 align-middle">POS partner</Badge>}</p><p className="text-[10px] font-mono text-gray-400">{r.seller_code}</p></div> },
             { accessorKey:"type", header:"Type", meta:{className:"hidden sm:table-cell"}, cell:({row:{original:r}})=><span className="text-xs text-gray-500">{r.type}</span> },
             { id:"contact", header:"Contact", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({row:{original:r}})=><div><p className="text-gray-700">{r.contact_person||"—"}</p>{r.email&&<p className="text-[10px] text-gray-400">{r.email}</p>}</div> },
             { id:"actions", header:"", enableSorting:false, cell:({row:{original:r}})=>(
@@ -2844,7 +2844,7 @@ export function Resellers() {
                   <input type="checkbox" checked={form.commission_eligible}
                     onChange={e => {
                       setForm(f => ({ ...f, commission_eligible: e.target.checked }));
-                      if (!e.target.checked) { setSelectedCustomer(null); setRSellerCustHasDocs(null); setCustDropdownOpen(false); }
+                      if (!e.target.checked) { setSelectedCustomer(null); setCustDropdownOpen(false); }
                     }}
                     className="mt-0.5 w-4 h-4 accent-bassani-600 shrink-0" />
                   <div>

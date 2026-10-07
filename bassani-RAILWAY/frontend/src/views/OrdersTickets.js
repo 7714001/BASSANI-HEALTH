@@ -127,8 +127,8 @@ export default function OrdersTickets() {
   const [tickingSkus,  setTickingSkus ] = useState(new Set());
   const [packerInput,  setPackerInput ] = useState("");
   const [savingPacker, setSavingPacker] = useState(false);
-  const [itemLots,     setItemLots    ] = useState({});   // { product_id: [{ id, name, expiry }] }
-  const [lotSaving,    setLotSaving   ] = useState(null); // product_id being saved
+  const [itemLots,     setItemLots    ] = useState({});   // { "product_id:location_id": [{ id, name, expiration_date }] }
+  const [lotSaving,    setLotSaving   ] = useState(null); // "product_id:move_line_id" being saved
   const [statusFilter, setStatusFilter] = useState(new Set());
   // Search/filter bar (2026-08-28) — matches SalesTickets.js's list view
   // look and feel: SearchBar + FilterPill/ChipRow instead of plain buttons,
@@ -416,25 +416,38 @@ export default function OrdersTickets() {
   };
 
   // ── Lot assignment per item ─────────────────────────────────────────────────
+  // Batch list is scoped to the delivery's own source location so a packer
+  // can only pick stock physically in the dispatching warehouse (2026-10-07);
+  // cached per product + location since a backorder can ship from elsewhere.
+  const lotsKey = (productId) => `${productId}:${detail?.picking_location_id ?? "any"}`;
   const fetchLotsForItem = async (productId) => {
-    if (!productId || itemLots[productId]) return;
+    const key = lotsKey(productId);
+    if (!productId || itemLots[key]) return;
     try {
-      const { data } = await api.get(`/api/products/${productId}/lots`);
-      setItemLots(prev => ({ ...prev, [productId]: data.lots || [] }));
-    } catch { setItemLots(prev => ({ ...prev, [productId]: [] })); }
+      const params = detail?.picking_location_id ? { location_id: detail.picking_location_id } : {};
+      const { data } = await api.get(`/api/products/${productId}/lots`, { params });
+      setItemLots(prev => ({ ...prev, [key]: data.lots || [] }));
+    } catch { setItemLots(prev => ({ ...prev, [key]: [] })); }
   };
-  const assignLot = async (productId, lotId) => {
+  // moveLineId targets one delivery line, required when Odoo has split a
+  // product across several batches, so choosing one never overwrites the
+  // others. The response carries the delivery's refreshed picking_lots, so
+  // the dropdown shows what Odoo now actually holds (2026-10-07: previously
+  // the dropdown was hard-wired to blank and nothing was read back).
+  const assignLot = async (productId, lotId, moveLineId) => {
     if (!lotId || !detail) return;
-    setLotSaving(productId);
+    setLotSaving(`${productId}:${moveLineId ?? ""}`);
     try {
       const { data } = await api.put("/api/packing/assign-lot", {
         order_id: detail.order_id,
         product_id: productId,
         lot_id: parseInt(lotId),
         picking_id: detail.odoo_picking_id,
+        move_line_id: moveLineId ?? null,
       });
+      if (data.picking_lots) setDetail(d => (d ? { ...d, picking_lots: data.picking_lots } : d));
       toast.success(`Batch ${data.lot_name} assigned`);
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed to assign lot"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to assign batch"); }
     finally { setLotSaving(null); }
   };
 
@@ -751,7 +764,9 @@ export default function OrdersTickets() {
                           const isBackordered = item.is_backordered;
                           const isPacking = detail.status === "packing";
                           const canTick = canOrders && isPacking && item.sku;
-                          const lots = item.product_id ? (itemLots[item.product_id] || null) : null;
+                          const lots = item.product_id ? (itemLots[lotsKey(item.product_id)] || null) : null;
+                          const lotLines = item.product_id ? (detail.picking_lots?.[String(item.product_id)] || []) : [];
+                          const assignedLotNames = [...new Set(lotLines.map(l => l.lot_name).filter(Boolean))];
                           return (
                             <tr key={i} className={`border-b border-gray-50 hover:bg-slate-50/30 ${isBackordered ? "bg-amber-50/40" : ""}`}>
                               <td className="p-3 pl-6">
@@ -808,43 +823,65 @@ export default function OrdersTickets() {
                                 <td className="p-3 text-sm min-w-[160px]">
                                   {item.product_id ? (
                                     orderLotMap[item.product_id]?.length > 0 ? (
-                                      // Confirmed batch from a done picking — always show
+                                      // Confirmed batch from a done picking: always show
                                       <span className="font-mono text-[11px] text-bassani-700 font-medium">
                                         {orderLotMap[item.product_id].join(", ")}
                                       </span>
-                                    ) : isPacking ? (
-                                      // Lot selection only available while actively packing
-                                      lots === null ? (
-                                        <button
-                                          onClick={() => fetchLotsForItem(item.product_id)}
-                                          className="text-[10px] text-bassani-600 hover:underline"
-                                        >
-                                          Load batches
-                                        </button>
-                                      ) : lots.length === 0 ? (
-                                        <span className="text-[10px] text-gray-300">No stock lots</span>
-                                      ) : (
-                                        <div className="flex items-center gap-1.5">
-                                          <Select
-                                            value=""
-                                            onChange={e => assignLot(item.product_id, e.target.value)}
-                                            className="text-xs py-0.5 pr-6"
-                                            disabled={lotSaving === item.product_id}
-                                          >
-                                            <option value="">Select batch…</option>
-                                            {lots.map(l => (
-                                              <option key={l.id} value={l.id}>
-                                                {l.name}{l.expiry ? ` · ${l.expiry.split("T")[0]}` : ""}
-                                              </option>
-                                            ))}
-                                          </Select>
-                                          {lotSaving === item.product_id && (
-                                            <span className="text-[10px] text-gray-400">Saving…</span>
-                                          )}
-                                        </div>
-                                      )
+                                    ) : isPacking && lots !== null ? (
+                                      // One dropdown per delivery line, each showing its
+                                      // current batch. A split product (several lines)
+                                      // gets one per line so picking one never overwrites
+                                      // the others.
+                                      <div className="flex flex-col gap-1">
+                                        {(lotLines.length ? lotLines : [{ move_line_id: null, lot_id: null, lot_name: null, quantity: null }]).map(line => {
+                                          const saving = lotSaving === `${item.product_id}:${line.move_line_id ?? ""}`;
+                                          const options = line.lot_id && !lots.some(l => l.id === line.lot_id)
+                                            ? [{ id: line.lot_id, name: line.lot_name, expiration_date: null }, ...lots]
+                                            : lots;
+                                          return (
+                                            <div key={line.move_line_id ?? "new"} className="flex items-center gap-1.5">
+                                              {lotLines.length > 1 && (
+                                                <span className="text-[10px] text-gray-400 shrink-0 w-10 text-right">{line.quantity} ×</span>
+                                              )}
+                                              {options.length === 0 ? (
+                                                <span className="text-[10px] text-gray-300">No batches in this warehouse</span>
+                                              ) : (
+                                                <Select
+                                                  value={line.lot_id ? String(line.lot_id) : ""}
+                                                  onChange={e => assignLot(item.product_id, e.target.value, line.move_line_id)}
+                                                  className="text-xs py-0.5 pr-6"
+                                                  disabled={saving}
+                                                >
+                                                  {!line.lot_id && <option value="">Select batch…</option>}
+                                                  {options.map(l => (
+                                                    <option key={l.id} value={l.id}>
+                                                      {l.name}{l.expiration_date ? ` · exp ${l.expiration_date}` : ""}
+                                                    </option>
+                                                  ))}
+                                                </Select>
+                                              )}
+                                              {saving && <span className="text-[10px] text-gray-400">Saving…</span>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     ) : (
-                                      <span className="text-[10px] text-gray-300">—</span>
+                                      <div className="flex flex-col items-start gap-0.5">
+                                        {assignedLotNames.length > 0 ? (
+                                          <span className="font-mono text-[11px] text-gray-700 font-medium">{assignedLotNames.join(", ")}</span>
+                                        ) : !isPacking && (
+                                          <span className="text-[10px] text-gray-300">—</span>
+                                        )}
+                                        {isPacking && (
+                                          // Lot selection only available while actively packing
+                                          <button
+                                            onClick={() => fetchLotsForItem(item.product_id)}
+                                            className="text-[10px] text-bassani-600 hover:underline"
+                                          >
+                                            {assignedLotNames.length > 0 ? "Change batch" : "Load batches"}
+                                          </button>
+                                        )}
+                                      </div>
                                     )
                                   ) : (
                                     <span className="text-[10px] text-gray-300">—</span>

@@ -142,6 +142,67 @@ async def _with_ticket_summary(entry: dict) -> dict:
     return entry
 
 
+def _entry_active_pickings(odoo, order_id, picking_id=None) -> list:
+    """The open (not done/cancelled) Odoo delivery an entry is packing against.
+
+    Scoped to the specific picking when known — a backorder and its primary
+    are separate pickings under the same sale order (2026-08-23), so falling
+    back to "every active picking for this sale order" is only for legacy
+    entries with no odoo_picking_id stamped."""
+    domain = [("id", "=", int(picking_id))] if picking_id else [("sale_id", "=", int(order_id))]
+    return odoo.search_read(
+        "stock.picking",
+        domain + [("state", "not in", ["done", "cancel"])],
+        fields=["id", "location_id", "move_line_ids"],
+    )
+
+
+def _read_picking_lots(odoo, pickings: list) -> dict:
+    """{product_id: [{move_line_id, lot_id, lot_name, quantity}]} for the given
+    pickings' move lines — the batch currently assigned on the open delivery,
+    whatever was written by assign-lot or by Odoo's own reservation. Distinct
+    from order_routes.py's lot_map, which only reads DONE pickings and so
+    can't reflect a batch picked mid-pack (2026-10-07)."""
+    ml_ids = [ml for p in pickings for ml in p.get("move_line_ids", [])]
+    if not ml_ids:
+        return {}
+    mls = odoo.read("stock.move.line", ml_ids, fields=["product_id", "lot_id", "quantity"])
+    out: dict = {}
+    for ml in mls:
+        pid = ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]
+        lot = ml.get("lot_id")
+        out.setdefault(str(pid), []).append({
+            "move_line_id": ml["id"],
+            "lot_id":       lot[0] if isinstance(lot, list) else None,
+            "lot_name":     lot[1] if isinstance(lot, list) else None,
+            "quantity":     ml.get("quantity") or 0,
+        })
+    for lines in out.values():
+        lines.sort(key=lambda l: l["move_line_id"])
+    return out
+
+
+def _with_picking_lots(entry: dict) -> dict:
+    """Attach the open delivery's current batch assignments (`picking_lots`)
+    and its source location (`picking_location_id`, used to scope the batch
+    picker to stock that's actually in this delivery's warehouse). Non-fatal:
+    an Odoo failure leaves both empty rather than failing the detail page."""
+    entry["picking_lots"] = {}
+    entry["picking_location_id"] = None
+    if entry.get("status") not in ("queued", "packing", "ready"):
+        return entry
+    try:
+        odoo = get_odoo_client()
+        pickings = _entry_active_pickings(odoo, entry["order_id"], entry.get("odoo_picking_id"))
+        if pickings:
+            loc = pickings[0].get("location_id")
+            entry["picking_location_id"] = loc[0] if isinstance(loc, list) else None
+            entry["picking_lots"] = _read_picking_lots(odoo, pickings)
+    except Exception as e:
+        logger.warning(f"picking_lots_read_failed order_id={entry.get('order_id')} error={e}")
+    return entry
+
+
 _BOARD_TERMINAL = ["collected", "incomplete", "cancelled"]
 
 
@@ -2253,7 +2314,7 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
     entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-    return await _with_ticket_summary(_with_age(entry))
+    return await _with_ticket_summary(_with_picking_lots(_with_age(entry)))
 
 
 @router.post("/adopt")
@@ -2490,6 +2551,7 @@ class AssignLotBody(BaseModel):
     product_id: int   # Odoo product.product ID
     lot_id: int       # Odoo stock.lot ID
     picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
+    move_line_id: Optional[int] = None  # specific stock.move.line; required when the product is split across several lines
 
 
 @router.put("/assign-lot")
@@ -2501,6 +2563,15 @@ async def assign_lot(
 
     Writes lot_id to the matching stock.move.line in Odoo so the lot appears
     on the validated delivery note. Must be called before mark-complete.
+
+    2026-10-07: when Odoo has split a product across several move lines
+    (reserved from more than one batch/location), the caller must name the
+    exact `move_line_id` — previously every line for the product was
+    overwritten with one batch, collapsing the whole quantity onto a batch
+    that may not hold it. The chosen batch must also have stock inside the
+    delivery's own source location (the batch picker was previously
+    unscoped, listing stock from every warehouse). Returns the delivery's
+    refreshed `picking_lots` so the page reflects what Odoo now holds.
     """
     entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
@@ -2510,63 +2581,90 @@ async def assign_lot(
 
     odoo = get_odoo_client()
     try:
-        # Scoped to the specific picking when known (body.picking_id, or the
-        # resolved entry's own odoo_picking_id — a backorder and its primary
-        # are separate Odoo pickings, so searching "all active pickings for
-        # this sale order" could otherwise match move lines belonging to the
-        # wrong delivery entirely, 2026-08-23 fix).
-        _picking_filter_id = body.picking_id or entry.get("odoo_picking_id")
-        _picking_domain = [("id", "=", _picking_filter_id)] if _picking_filter_id else [("sale_id", "=", int(body.order_id))]
-        pickings = odoo.search_read(
-            "stock.picking",
-            _picking_domain + [("state", "not in", ["done", "cancel"])],
-            fields=["id", "move_line_ids"],
-        )
+        pickings = _entry_active_pickings(odoo, body.order_id, body.picking_id or entry.get("odoo_picking_id"))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
     if not pickings:
-        raise HTTPException(status_code=404, detail="No active delivery order found in Odoo for this sale order")
-
-    all_ml_ids = [ml for p in pickings for ml in p.get("move_line_ids", [])]
-    if not all_ml_ids:
-        raise HTTPException(status_code=404, detail="No move lines found on the delivery order")
+        raise HTTPException(status_code=404, detail="No open delivery found for this order")
 
     try:
-        move_lines = odoo.read(
-            "stock.move.line", all_ml_ids,
-            fields=["product_id", "lot_id"],
-        )
+        picking_lots = _read_picking_lots(odoo, pickings)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error reading move lines: {str(e)}")
 
-    # Find the move line(s) for this product
-    target_ml_ids = [
-        ml["id"] for ml in move_lines
-        if (ml["product_id"][0] if isinstance(ml["product_id"], list) else ml["product_id"]) == body.product_id
-    ]
-    if not target_ml_ids:
-        raise HTTPException(status_code=404, detail=f"Product {body.product_id} not found on the delivery order")
+    product_lines = picking_lots.get(str(body.product_id), [])
+    if not product_lines:
+        raise HTTPException(status_code=404, detail="This product is not on the open delivery")
 
-    try:
-        odoo.write("stock.move.line", target_ml_ids, {"lot_id": body.lot_id})
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to assign lot in Odoo: {str(e)}")
+    if body.move_line_id is not None:
+        target = next((l for l in product_lines if l["move_line_id"] == body.move_line_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="That delivery line no longer exists. Refresh and try again.")
+    elif len(product_lines) == 1:
+        target = product_lines[0]
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="This product is split across several batches on the delivery. Choose the batch for each line separately.",
+        )
 
-    # Fetch lot name for audit log
+    # The batch must physically be in this delivery's source location.
+    loc = pickings[0].get("location_id")
+    location_id = loc[0] if isinstance(loc, list) else None
+    if location_id and target["lot_id"] != body.lot_id:
+        try:
+            in_location = odoo.count(
+                "stock.quant",
+                [
+                    ("product_id", "=", body.product_id),
+                    ("lot_id", "=", body.lot_id),
+                    ("location_id", "child_of", location_id),
+                    ("quantity", ">", 0),
+                ],
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error checking batch stock: {str(e)}")
+        if not in_location:
+            raise HTTPException(
+                status_code=400,
+                detail="That batch has no stock in this order's warehouse. Choose a batch held in the dispatching warehouse.",
+            )
+
+    before_lot = target.get("lot_name")
+    if target["lot_id"] != body.lot_id:
+        try:
+            odoo.write("stock.move.line", [target["move_line_id"]], {"lot_id": body.lot_id})
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to assign batch: {str(e)}")
+
+    # Re-read so the response reflects what Odoo actually holds now (Odoo can
+    # re-split a line when the new batch can only cover part of it).
     try:
-        lot_rows = odoo.read("stock.lot", [body.lot_id], fields=["name"])
-        lot_name = lot_rows[0]["name"] if lot_rows else str(body.lot_id)
+        picking_lots = _read_picking_lots(odoo, _entry_active_pickings(odoo, body.order_id, body.picking_id or entry.get("odoo_picking_id")))
     except Exception:
-        lot_name = str(body.lot_id)
+        pass
+
+    lot_name = next(
+        (l["lot_name"] for lines in picking_lots.values() for l in lines if l["lot_id"] == body.lot_id),
+        None,
+    )
+    if not lot_name:
+        try:
+            lot_rows = odoo.read("stock.lot", [body.lot_id], fields=["name"])
+            lot_name = lot_rows[0]["name"] if lot_rows else str(body.lot_id)
+        except Exception:
+            lot_name = str(body.lot_id)
 
     await audit_log(
         "packing.assign_lot", "packing_board", body.order_id,
         entity_label=body.order_id,
         user=current_user,
-        detail={"product_id": body.product_id, "lot_id": body.lot_id, "lot_name": lot_name},
+        before={"lot_name": before_lot},
+        after={"lot_name": lot_name},
+        detail={"product_id": body.product_id, "move_line_id": target["move_line_id"], "lot_id": body.lot_id, "lot_name": lot_name},
     )
-    return {"success": True, "lot_name": lot_name}
+    return {"success": True, "lot_id": body.lot_id, "lot_name": lot_name, "picking_lots": picking_lots}
 
 
 @router.get("/board")

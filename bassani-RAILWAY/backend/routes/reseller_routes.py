@@ -71,12 +71,17 @@ class ResellerUpdate(BaseModel):
 @router.get("/")
 async def list_resellers(
     search: Optional[str] = None,
+    channel: Optional[str] = Query(None, description='"portal" (human Sales Agents) or "api_partner" (POS platforms, Phase 14.10)'),
     limit: int = Query(50, le=200),
     offset: int = 0,
     current_user: dict = Depends(require_admin),
 ):
     """List all resellers. Admin only."""
     query = {"active": {"$ne": False}}
+    if channel == "api_partner":
+        query["channel"] = "api_partner"
+    elif channel == "portal":
+        query["channel"] = {"$ne": "api_partner"}   # docs predating 14.10 have no channel
     if search:
         query["$or"] = [
             {"name": {"$regex": search, "$options": "i"}},

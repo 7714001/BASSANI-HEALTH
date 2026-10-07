@@ -1136,18 +1136,26 @@ async def set_stock_level(
 
 
 @router.get("/{product_id}/lots")
-def get_product_lots(product_id: int, current_user: dict = Depends(get_current_user)):
-    """Return in-stock lots for a product variant, with on-hand qty, UOM, and expiry date."""
+def get_product_lots(product_id: int, location_id: Optional[int] = None, current_user: dict = Depends(get_current_user)):
+    """Return in-stock lots for a product variant, with on-hand qty, UOM, and expiry date.
+
+    `location_id` (optional) restricts to stock held under that location and
+    its children — the packing board passes its delivery's source location so
+    a packer can only pick a batch physically in the dispatching warehouse
+    (2026-10-07). Omitted, every internal location is included, as before."""
     odoo = get_odoo_client()
+    domain = [
+        ("product_id", "=", product_id),
+        ("location_id.usage", "=", "internal"),
+        ("lot_id", "!=", False),
+        ("quantity", ">", 0),
+    ]
+    if location_id:
+        domain.append(("location_id", "child_of", location_id))
     try:
         quants = odoo.search_read(
             "stock.quant",
-            domain=[
-                ("product_id", "=", product_id),
-                ("location_id.usage", "=", "internal"),
-                ("lot_id", "!=", False),
-                ("quantity", ">", 0),
-            ],
+            domain=domain,
             fields=["lot_id", "quantity", "product_uom_id"],
             limit=500,
         )

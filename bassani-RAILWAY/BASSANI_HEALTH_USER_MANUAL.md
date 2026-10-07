@@ -436,6 +436,14 @@ Actions on each client:
 - **Rotate** issues a new key. The old key stops working immediately, so the integrator must update their system.
 - **Revoke** blocks the client from its very next request. **Restore** lets it back in with its existing key.
 
+**POS partners.** A point-of-sale platform whose stores will order from us (for example Cannaverse) gets a special API client:
+1. First create the POS company's **Sales Agent** account (Sales Agents → Add), exactly like a human agent. The stores that connect through it become its customers, and it earns commission on their orders.
+2. In **New API client**, set **Type** to **POS partner** and pick that Sales Agent account. The warehouse is filled in from the account.
+3. Enter the POS company's **Webhook address** (where we notify them when a store is approved or an order changes). You can add it later.
+4. **Create & show key** shows two values once: the **API key** and the **webhook signing secret**. Send both to the POS company securely.
+
+Each Sales Agent account can have only one POS partner key; rotate it rather than creating another. **Webhook secret** issues a new signing secret. **Revoke** on a POS partner also stops every store connected through it, and deactivating its Sales Agent account does the same. The Sales Agents list marks these accounts with a **POS partner** badge.
+
 The **Last used** column shows when each client last connected. The integrator can check their key works by calling `GET /api/external/v1/ping` with the key in an `X-API-Key` header.
 
 ### Online stores
@@ -1266,6 +1274,18 @@ Click any order to open the full detail view. You will see:
 When the warehouse is ready to start on an order:
 1. Open the order ticket
 2. Click **Mark as Packing**
+
+**Choosing the batch for each line (while packing)**
+Once an order is in Packing, the **Batch / Lot** column on each item lets you record which batch is physically going into the box:
+1. Click **Load batches** (or **Change batch** if one is already set) on the item's row
+2. Pick the batch from the dropdown. Only batches with stock in this order's dispatching warehouse are listed, with their expiry date
+3. The dropdown then shows the batch you chose. To change it, just pick a different batch from the same dropdown
+
+If the system already split a product across more than one batch (for example, 10 units from one batch and 5 from another), it's still one item row, but you'll see one dropdown per split stacked in the Batch / Lot cell, each labelled with its quantity. This is common. The batches are usually already filled in when stock was reserved, so you only need to change one if what's physically going in the box is different. Choosing a batch for one split never changes the others. Ordered, Reserved and Qty Packed stay as one figure for the whole item.
+
+Two splits showing the same batch is normal: the stock was reserved from two spots in the warehouse. If an extra dropdown appears after you change a batch, the batch you chose didn't have enough stock to cover that split, so the remainder was split off. Set the new dropdown too.
+
+If a batch is refused with "no stock in this order's warehouse", it's held in a different warehouse and can't be shipped on this delivery. Pick a batch held where the order is dispatching from.
 
 **Packing → Ready**
 When the warehouse has finished packing:

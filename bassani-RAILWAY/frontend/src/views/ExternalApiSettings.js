@@ -150,38 +150,75 @@ function KillSwitchSection() {
 
 // ── API clients ───────────────────────────────────────────────────────────────
 
-const BLANK_CLIENT = { name: "", description: "", warehouse_id: null, pricelist_id: null, stock_detail: "binary", scoped_parent_category_ids: [], sandbox: false };
+const BLANK_CLIENT = {
+  name: "", description: "", client_type: "standard", integration_partner_id: "", callback_url: "",
+  warehouse_id: null, pricelist_id: null, stock_detail: "binary", scoped_parent_category_ids: [], sandbox: false,
+};
 
-function KeyRevealModal({ apiKey, clientName, onClose }) {
+function CopyRow({ label, value }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    await navigator.clipboard.writeText(apiKey);
+    await navigator.clipboard.writeText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <Modal title={`API key for ${clientName}`} onClose={onClose}>
-      <div className="flex items-start gap-2 bg-amber-50 text-amber-800 text-sm rounded-xl px-4 py-3 mb-4">
-        <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-        <span>Copy this key now and send it to the integrator securely. It can't be shown again. If it's lost, rotate the key to issue a new one.</span>
-      </div>
+    <div className="mb-3">
+      <div className="text-xs font-semibold text-gray-600 mb-1">{label}</div>
       <div className="flex items-center gap-2">
-        <code className="flex-1 text-xs font-mono break-all bg-slate-900 text-green-400 rounded-xl px-4 py-3">{apiKey}</code>
+        <code className="flex-1 text-xs font-mono break-all bg-slate-900 text-green-400 rounded-xl px-4 py-3">{value}</code>
         <BtnSecondary onClick={copy}>{copied ? <CheckCircle size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}</BtnSecondary>
       </div>
-      <p className="text-xs text-gray-500 mt-3">The integrator sends it in an <code>X-API-Key</code> header. <code>GET /api/external/v1/ping</code> checks that it works.</p>
-      <div className="flex justify-end mt-4"><BtnPrimary onClick={onClose}>I've copied it</BtnPrimary></div>
+    </div>
+  );
+}
+
+// Shows a freshly issued API key and/or webhook signing secret, once.
+function SecretRevealModal({ clientName, apiKey, webhookSecret, onClose }) {
+  const both = apiKey && webhookSecret;
+  return (
+    <Modal title={`${both || apiKey ? "Credentials" : "Webhook secret"} for ${clientName}`} onClose={onClose}>
+      <div className="flex items-start gap-2 bg-amber-50 text-amber-800 text-sm rounded-xl px-4 py-3 mb-4">
+        <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+        <span>Copy {both ? "these now" : "this now"} and send {both ? "them" : "it"} to the integrator securely. {both ? "They" : "It"} can't be shown again. If lost, rotate to issue a new one.</span>
+      </div>
+      {apiKey && <CopyRow label="API key" value={apiKey} />}
+      {webhookSecret && <CopyRow label="Webhook signing secret" value={webhookSecret} />}
+      <p className="text-xs text-gray-500 mt-1">
+        {apiKey && <>The integrator sends the key in an <code>X-API-Key</code> header; <code>GET /api/external/v1/ping</code> checks it works. </>}
+        {webhookSecret && <>Every webhook we send is signed with the secret, so the integrator can verify it came from us.</>}
+      </p>
+      <div className="flex justify-end mt-4"><BtnPrimary onClick={onClose}>I've copied {both ? "them" : "it"}</BtnPrimary></div>
     </Modal>
   );
+}
+
+function usePartners(enabled) {
+  const [partners, setPartners] = useState([]);
+  useEffect(() => {
+    if (!enabled) return;
+    api.get("/api/resellers/", { params: { limit: 200 } })
+      .then(r => setPartners(r.data.resellers || []))
+      .catch(() => setPartners([]));
+  }, [enabled]);
+  return partners;
 }
 
 function ApiClientFormModal({ client, categories, onClose, onSaved }) {
   const editing = Boolean(client);
   const [form, setForm] = useState(editing
-    ? { ...BLANK_CLIENT, ...client, scoped_parent_category_ids: client.scoped_parent_category_ids || [] }
+    ? { ...BLANK_CLIENT, ...client, callback_url: client.callback_url || "", scoped_parent_category_ids: client.scoped_parent_category_ids || [] }
     : BLANK_CLIENT);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm(f => ({ ...f, ...patch }));
+  const isPartner = form.client_type === "partner_platform";
+  const partners = usePartners(!editing && isPartner);
+
+  const pickPartner = (id) => {
+    const p = partners.find(x => x.id === id);
+    // A partner's stores draw stock from the partner's own warehouse by default.
+    set({ integration_partner_id: id, ...(p?.warehouse_id ? { warehouse_id: p.warehouse_id, pricelist_id: null } : {}), ...(!form.name && p ? { name: `${p.name} POS` } : {}) });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -190,19 +227,23 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
         name: form.name, description: form.description, warehouse_id: form.warehouse_id,
         stock_detail: form.stock_detail, sandbox: form.sandbox,
       };
+      if (isPartner) payload.callback_url = form.callback_url.trim();
       if (editing) {
         payload.pricelist_id = form.pricelist_id || undefined;
         payload.clear_pricelist = !form.pricelist_id;
         payload.scoped_parent_category_ids = form.scoped_parent_category_ids.length ? form.scoped_parent_category_ids : undefined;
         payload.clear_category_scope = form.scoped_parent_category_ids.length === 0;
+        if (!isPartner) delete payload.callback_url;
         const { data } = await api.put(`/api/integrations/api-clients/${client.id}`, payload);
         toast.success("API client updated");
-        onSaved(data, null);
+        onSaved(data);
       } else {
+        payload.client_type = form.client_type;
+        payload.integration_partner_id = isPartner ? form.integration_partner_id : null;
         payload.pricelist_id = form.pricelist_id || null;
         payload.scoped_parent_category_ids = form.scoped_parent_category_ids.length ? form.scoped_parent_category_ids : null;
         const { data } = await api.post("/api/integrations/api-clients", payload);
-        onSaved(data, data.api_key);
+        onSaved(data);
       }
     } catch (e) { toast.error(errMsg(e, "Failed to save")); }
     finally { setSaving(false); }
@@ -210,12 +251,38 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
 
   return (
     <Modal title={editing ? `Edit ${client.name}` : "New API client"} onClose={onClose} width="max-w-xl">
+      {!editing && (
+        <FormGroup label="Type">
+          <Select value={form.client_type} onChange={e => set({ client_type: e.target.value })}>
+            <option value="standard">Standard integration</option>
+            <option value="partner_platform">POS partner (a point-of-sale platform whose stores order from us)</option>
+          </Select>
+        </FormGroup>
+      )}
+      {isPartner && !editing && (
+        <FormGroup label="Sales Agent account" required>
+          <Select value={form.integration_partner_id} onChange={e => pickPartner(e.target.value)}>
+            <option value="">Select the POS company's Sales Agent account…</option>
+            {partners.map(p => <option key={p.id} value={p.id}>{p.name}{p.channel === "api_partner" ? " (already a POS partner)" : ""}</option>)}
+          </Select>
+          <p className="text-[11px] text-gray-400 mt-1">Create the POS company's Sales Agent account first (Sales Agents). Stores that connect through it become its customers, and it earns commission on their orders.</p>
+        </FormGroup>
+      )}
+      {isPartner && editing && (
+        <p className="text-xs text-gray-500 bg-gray-50 rounded-xl px-3 py-2 mb-4">POS partner for Sales Agent <strong>{client.integration_partner_name}</strong>.</p>
+      )}
       <FormGroup label="Name" required>
-        <Input value={form.name} onChange={e => set({ name: e.target.value })} placeholder="e.g. Green Clouds website" />
+        <Input value={form.name} onChange={e => set({ name: e.target.value })} placeholder={isPartner ? "e.g. Cannaverse POS" : "e.g. Green Clouds website"} />
       </FormGroup>
       <FormGroup label="Description">
         <Input value={form.description} onChange={e => set({ description: e.target.value })} placeholder="Who runs it and what it's for" />
       </FormGroup>
+      {isPartner && (
+        <FormGroup label="Webhook address">
+          <Input value={form.callback_url} onChange={e => set({ callback_url: e.target.value })} placeholder="https://api.example.com/bassani/webhooks" />
+          <p className="text-[11px] text-gray-400 mt-1">Where we notify the POS when a store is approved or an order changes status. Can be added later.</p>
+        </FormGroup>
+      )}
       <WarehousePricelistFields form={form} set={set} />
       <FormGroup label="Product categories">
         <MultiSearchableSelect
@@ -241,7 +308,8 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
       </label>
       <div className="flex justify-end gap-2 mt-4">
         <BtnSecondary onClick={onClose}>Cancel</BtnSecondary>
-        <BtnPrimary onClick={save} loading={saving} disabled={!form.name.trim() || !form.warehouse_id}>
+        <BtnPrimary onClick={save} loading={saving}
+          disabled={!form.name.trim() || !form.warehouse_id || (isPartner && !editing && !form.integration_partner_id)}>
           {editing ? "Save" : "Create & show key"}
         </BtnPrimary>
       </div>
@@ -249,13 +317,24 @@ function ApiClientFormModal({ client, categories, onClose, onSaved }) {
   );
 }
 
+const CONFIRM_COPY = {
+  rotate:   { title: "Rotate this API key?", button: "Rotate key", danger: true,
+              body: (c) => <>A new key is issued for <strong>{c.name}</strong> and the current key stops working immediately. The integrator must update their system before it can connect again.</> },
+  "rotate-webhook-secret": { title: "Issue a new webhook secret?", button: "Issue new secret", danger: true,
+              body: (c) => <>Webhooks to <strong>{c.name}</strong> are signed with the new secret from now on. The POS must switch to it, or it will reject our webhooks.</> },
+  revoke:   { title: "Revoke this API client?", button: "Revoke", danger: true,
+              body: (c) => <><strong>{c.name}</strong> is refused from its very next request.{c.client_type === "partner_platform" ? " Every store connected through it stops working too." : ""} You can restore it later with the same key.</> },
+  activate: { title: "Restore access?", button: "Restore", danger: false,
+              body: (c) => <><strong>{c.name}</strong> can connect again with its existing key.</> },
+};
+
 function ApiClientsSection() {
   const [clients, setClients]       = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading]       = useState(true);
   const [formTarget, setFormTarget] = useState(undefined);   // undefined = closed, null = new, obj = edit
-  const [revealed, setRevealed]     = useState(null);        // { apiKey, clientName }
-  const [confirm, setConfirm]       = useState(null);        // { kind: "rotate"|"revoke"|"activate", client }
+  const [revealed, setRevealed]     = useState(null);        // { clientName, apiKey?, webhookSecret? }
+  const [confirm, setConfirm]       = useState(null);        // { kind, client }
 
   const load = useCallback(async () => {
     try {
@@ -288,17 +367,25 @@ function ApiClientsSection() {
     setConfirm(null);
     try {
       const { data } = await api.post(`/api/integrations/api-clients/${client.id}/${kind}`);
-      if (kind === "rotate") setRevealed({ apiKey: data.api_key, clientName: client.name });
-      toast.success({ rotate: "Key rotated. The old key no longer works.", revoke: "Access revoked", activate: "Access restored" }[kind]);
+      if (data.api_key || data.webhook_secret) {
+        setRevealed({ clientName: client.name, apiKey: data.api_key, webhookSecret: data.webhook_secret });
+      }
+      toast.success({
+        rotate: "Key rotated. The old key no longer works.",
+        "rotate-webhook-secret": "New webhook secret issued",
+        revoke: "Access revoked",
+        activate: "Access restored",
+      }[kind]);
       load();
     } catch (e) { toast.error(errMsg(e, "Failed")); }
   };
 
+  const copy = confirm ? CONFIRM_COPY[confirm.kind] : null;
   return (
     <Section
       icon={KeyRound}
       title="API clients"
-      description="External systems that read our catalogue and stock with an API key."
+      description="External systems that read our catalogue and stock with an API key, including POS partners."
       action={<BtnPrimary onClick={() => setFormTarget(null)}><Plus size={14} /> New API client</BtnPrimary>}
     >
       {loading ? (
@@ -319,35 +406,48 @@ function ApiClientsSection() {
               </tr>
             </thead>
             <tbody>
-              {clients.map(c => (
-                <tr key={c.id} className="border-b border-gray-50 last:border-0">
-                  <td className="py-2.5 pr-3">
-                    <div className="font-medium text-gray-900">{c.name}</div>
-                    <div className="text-xs text-gray-500">
-                      {c.pricelist_name ? `Prices: ${c.pricelist_name}` : "No prices"} · {c.stock_detail === "quantity" ? "Exact stock" : "In/out of stock"}
-                      {" · "}{c.scoped_parent_category_ids?.length ? `${c.scoped_parent_category_ids.length} ${c.scoped_parent_category_ids.length === 1 ? "category" : "categories"}` : "Whole catalogue"}
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-3 hidden md:table-cell text-gray-600">{c.warehouse_name}</td>
-                  <td className="py-2.5 pr-3 hidden lg:table-cell"><code className="text-xs text-gray-500">{c.key_prefix}…</code></td>
-                  <td className="py-2.5 pr-3 hidden md:table-cell text-gray-600">{c.last_used_at ? fmtDateTime(c.last_used_at) : "Never"}</td>
-                  <td className="py-2.5 pr-3">
-                    <div className="flex flex-wrap gap-1">
-                      <Badge color={c.active ? "green" : "red"}>{c.active ? "Active" : "Revoked"}</Badge>
-                      {c.sandbox && <Badge color="amber">Sandbox</Badge>}
-                    </div>
-                  </td>
-                  <td className="py-2.5 text-right whitespace-nowrap">
-                    <div className="inline-flex gap-1.5">
-                      <BtnSecondary size="sm" onClick={() => setFormTarget(c)}><Pencil size={12} /></BtnSecondary>
-                      <BtnSecondary size="sm" onClick={() => setConfirm({ kind: "rotate", client: c })}><RefreshCw size={12} /> Rotate</BtnSecondary>
-                      {c.active
-                        ? <BtnDanger onClick={() => setConfirm({ kind: "revoke", client: c })}>Revoke</BtnDanger>
-                        : <BtnSecondary size="sm" onClick={() => setConfirm({ kind: "activate", client: c })}>Restore</BtnSecondary>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {clients.map(c => {
+                const isPartner = c.client_type === "partner_platform";
+                return (
+                  <tr key={c.id} className="border-b border-gray-50 last:border-0">
+                    <td className="py-2.5 pr-3">
+                      <div className="font-medium text-gray-900">{c.name}</div>
+                      {isPartner && (
+                        <div className="text-xs text-indigo-700">
+                          POS partner · Sales Agent {c.integration_partner_name}
+                          {!c.callback_url && <span className="text-amber-600"> · No webhook address</span>}
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-500">
+                        {c.pricelist_name ? `Prices: ${c.pricelist_name}` : "No prices"} · {c.stock_detail === "quantity" ? "Exact stock" : "In/out of stock"}
+                        {" · "}{c.scoped_parent_category_ids?.length ? `${c.scoped_parent_category_ids.length} ${c.scoped_parent_category_ids.length === 1 ? "category" : "categories"}` : "Whole catalogue"}
+                      </div>
+                    </td>
+                    <td className="py-2.5 pr-3 hidden md:table-cell text-gray-600">{c.warehouse_name}</td>
+                    <td className="py-2.5 pr-3 hidden lg:table-cell"><code className="text-xs text-gray-500">{c.key_prefix}…</code></td>
+                    <td className="py-2.5 pr-3 hidden md:table-cell text-gray-600">{c.last_used_at ? fmtDateTime(c.last_used_at) : "Never"}</td>
+                    <td className="py-2.5 pr-3">
+                      <div className="flex flex-wrap gap-1">
+                        <Badge color={c.active ? "green" : "red"}>{c.active ? "Active" : "Revoked"}</Badge>
+                        {isPartner && <Badge color="indigo">POS partner</Badge>}
+                        {c.sandbox && <Badge color="amber">Sandbox</Badge>}
+                      </div>
+                    </td>
+                    <td className="py-2.5 text-right whitespace-nowrap">
+                      <div className="inline-flex gap-1.5">
+                        <BtnSecondary size="sm" onClick={() => setFormTarget(c)}><Pencil size={12} /></BtnSecondary>
+                        <BtnSecondary size="sm" onClick={() => setConfirm({ kind: "rotate", client: c })}><RefreshCw size={12} /> Rotate</BtnSecondary>
+                        {isPartner && (
+                          <BtnSecondary size="sm" onClick={() => setConfirm({ kind: "rotate-webhook-secret", client: c })}>Webhook secret</BtnSecondary>
+                        )}
+                        {c.active
+                          ? <BtnDanger onClick={() => setConfirm({ kind: "revoke", client: c })}>Revoke</BtnDanger>
+                          : <BtnSecondary size="sm" onClick={() => setConfirm({ kind: "activate", client: c })}>Restore</BtnSecondary>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -358,29 +458,24 @@ function ApiClientsSection() {
           client={formTarget}
           categories={categories}
           onClose={() => setFormTarget(undefined)}
-          onSaved={(data, apiKey) => {
+          onSaved={(data) => {
             setFormTarget(undefined);
-            if (apiKey) setRevealed({ apiKey, clientName: data.client.name });
+            if (data.api_key || data.webhook_secret) {
+              setRevealed({ clientName: data.client.name, apiKey: data.api_key, webhookSecret: data.webhook_secret });
+            }
             load();
           }}
         />
       )}
-      {revealed && <KeyRevealModal apiKey={revealed.apiKey} clientName={revealed.clientName} onClose={() => setRevealed(null)} />}
+      {revealed && <SecretRevealModal {...revealed} onClose={() => setRevealed(null)} />}
       {confirm && (
-        <Modal
-          title={{ rotate: "Rotate this API key?", revoke: "Revoke this API client?", activate: "Restore access?" }[confirm.kind]}
-          onClose={() => setConfirm(null)}
-        >
-          <p className="text-sm text-gray-600">
-            {confirm.kind === "rotate" && <>A new key is issued for <strong>{confirm.client.name}</strong> and the current key stops working immediately. The integrator must update their system before it can connect again.</>}
-            {confirm.kind === "revoke" && <><strong>{confirm.client.name}</strong> is refused from its very next request. You can restore it later with the same key.</>}
-            {confirm.kind === "activate" && <><strong>{confirm.client.name}</strong> can connect again with its existing key.</>}
-          </p>
+        <Modal title={copy.title} onClose={() => setConfirm(null)}>
+          <p className="text-sm text-gray-600">{copy.body(confirm.client)}</p>
           <div className="flex justify-end gap-2 mt-4">
             <BtnSecondary onClick={() => setConfirm(null)}>Cancel</BtnSecondary>
-            {confirm.kind === "activate"
-              ? <BtnPrimary onClick={doConfirm}>Restore</BtnPrimary>
-              : <BtnDanger onClick={doConfirm}>{confirm.kind === "rotate" ? "Rotate key" : "Revoke"}</BtnDanger>}
+            {copy.danger
+              ? <BtnDanger onClick={doConfirm}>{copy.button}</BtnDanger>
+              : <BtnPrimary onClick={doConfirm}>{copy.button}</BtnPrimary>}
           </div>
         </Modal>
       )}
