@@ -15,7 +15,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   CheckCircle2, XCircle, PenLine, ChevronDown, ChevronRight, Percent, ExternalLink,
-  Download, Users, List as ListIcon, Loader2, Package,
+  Download, Users, List as ListIcon, Loader2, Package, Eye,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api";
@@ -75,7 +75,7 @@ const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
 // for every line — most products have no BOM at all (live-probe confirmed:
 // 2 of 147 recently-ordered products), so eagerly searching mrp.bom for
 // every row would mostly be wasted calls.
-function BomMarginModal({ requestId, line, onClose }) {
+export function BomMarginModal({ requestId, line, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -184,7 +184,142 @@ function BomMarginModal({ requestId, line, onClose }) {
   );
 }
 
-function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, navigate, financial, onOpenBom }) {
+// The full detail of one request (2026-10-07): before/after totals, cost
+// rollup, every line with % + Rand, and the decision. Shared by the inline
+// row expansion below and the full-page view (DiscountRequestView.js), so
+// the two can never show different things.
+export function RequestDetailBody({ req, financial, onOpenBom, navigate, showHeader = true, showDecision = true }) {
+  const allLines = req.lines || [];
+  const linesToRender = financial?.lines || allLines;
+  const rollup = financial?.rollup;
+  return (
+    <>
+      {showHeader && (
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Reason</p>
+          <p className="text-sm text-gray-700">{req.reason || "Not provided"}</p>
+        </div>
+        <div className="flex items-center gap-4 shrink-0">
+          <button
+            onClick={() => navigate("/tickets/sales", { state: { openTicketId: req.ticket_id } })}
+            className="inline-flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 hover:underline"
+          >
+            Open ticket <ExternalLink size={11} />
+          </button>
+        </div>
+      </div>
+      )}
+
+      {/* 8.63 — request-level financial rollup, fetched once on expand */}
+      {!financial ? (
+        <div className="flex items-center gap-2 text-xs text-gray-400 mb-3"><Loader2 size={12} className="animate-spin" />Loading cost detail…</div>
+      ) : rollup && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+          <div className="bg-white border border-gray-100 rounded-lg p-2.5">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discount Requested (excl. VAT)</p>
+            <p className="text-sm font-semibold text-gray-900">{fmtR(rollup.total_requested_discount)}</p>
+          </div>
+          <div className="bg-white border border-gray-100 rounded-lg p-2.5">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Cost Data Coverage</p>
+            <p className="text-sm font-semibold text-gray-900">{rollup.lines_with_known_cost} of {rollup.lines_total} lines</p>
+          </div>
+          {rollup.margin ? (
+            <>
+              <div className="bg-green-50 border border-green-100 rounded-lg p-2.5">
+                <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide">Margin Before</p>
+                <p className="text-sm font-semibold text-green-800">{fmtPct(rollup.margin.margin_before_pct)}</p>
+              </div>
+              <div className="bg-amber-50 border border-amber-100 rounded-lg p-2.5">
+                <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Margin After</p>
+                <p className="text-sm font-semibold text-amber-800">{fmtPct(rollup.margin.margin_after_pct)}</p>
+              </div>
+            </>
+          ) : (
+            <div className="bg-gray-50 border border-gray-100 rounded-lg p-2.5 col-span-2">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Margin Impact</p>
+              <p className="text-xs text-gray-400 italic">Cost price not set in Odoo for any discounted line</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mb-3">
+        <RequestTotals req={req} />
+      </div>
+
+      {/* Every line on the order — the discounted ones stand out so the
+          approver can judge the request against the full quote, not
+          just the lines asked about in isolation. */}
+      <table className="w-full text-xs bg-white border border-gray-100 rounded-lg overflow-hidden">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className="text-left p-2 pl-3 font-semibold text-gray-400 uppercase">Product</th>
+            <th className="text-right p-2 font-semibold text-gray-400 uppercase">Qty</th>
+            <th className="text-right p-2 font-semibold text-gray-400 uppercase">Unit Price</th>
+            <th className="text-right p-2 font-semibold text-gray-400 uppercase">Cost Price</th>
+            <th className="text-right p-2 font-semibold text-gray-400 uppercase">Discount requested</th>
+            {req.status === "countered" && <th className="text-right p-2 font-semibold text-gray-400 uppercase">Granted</th>}
+            <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Line total {AFTER_LABEL[req.status] ? AFTER_LABEL[req.status].toLowerCase() : "as requested"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linesToRender.map((l, i) => {
+            const isRequested = isInRequest(l);
+            const hasCostInfo = financial != null;
+            return (
+              <tr key={i} className={`border-t border-gray-50 ${isRequested ? "bg-amber-50/60" : ""}`}>
+                <td className="p-2 pl-3 text-gray-700">{l.product_name}</td>
+                <td className="p-2 text-right text-gray-500">{l.qty}</td>
+                <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
+                <td className="p-2 text-right">
+                  {hasCostInfo ? (
+                    <button
+                      onClick={() => onOpenBom(l)}
+                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                      title="View cost breakdown and Bill of Materials"
+                    >
+                      <Package size={11} />
+                      {l.cost_set ? fmtR(l.cost_price) : <span className="italic">Not set</span>}
+                    </button>
+                  ) : <span className="text-gray-300">…</span>}
+                </td>
+                <td className="p-2 text-right">
+                  {isRequested
+                    ? <DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" />
+                    : <span className="text-gray-300">{l.current_pct > 0 ? `Keeps ${l.current_pct}% already on quote` : "No discount requested"}</span>}
+                </td>
+                {req.status === "countered" && (() => {
+                  const g = (req.final_lines || []).find(f => f.product_id === l.product_id);
+                  return (
+                    <td className="p-2 text-right">
+                      {g ? <DiscountAmountCell line={l} pct={g.final_pct} tone="text-orange-700" /> : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
+                })()}
+                <td className="p-2 pr-3 text-right text-gray-800">
+                  {(() => {
+                    const g = req.status === "countered" ? (req.final_lines || []).find(f => f.product_id === l.product_id) : null;
+                    const pct = g ? g.final_pct : (isRequested ? l.requested_pct : (l.current_pct || 0));
+                    return fmtR(lineDiscount(l, pct).net);
+                  })()}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {showDecision && req.decision && (
+        <p className="text-xs text-gray-400 mt-3">
+          {STATUS_LABEL[req.status]} by {req.decision.by?.name || "—"} on {fmtDateTime(req.decision.at)}
+          {req.decision.note ? ` — "${req.decision.note}"` : ""}
+        </p>
+      )}
+    </>
+  );
+}
+
+function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, onView, navigate, financial, onOpenBom }) {
   const allLines = req.lines || [];
   // Every line on the order is stored (2026-09-28), not just the discounted
   // ones — requested_pct is 0 for a line the requester left alone. The row
@@ -195,11 +330,6 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
   const n = discountedLines.length;
   const avgPct = n > 0 ? discountedLines.reduce((s, l) => s + (l.requested_pct || 0), 0) / n : 0;
   const randOff = discountedLines.reduce((s, l) => s + lineDiscount(l, l.requested_pct).lineOff, 0);
-  // 8.63: once financial-detail has loaded, prefer its per-line cost_price
-  // (looked up fresh from Odoo); render lines from it if available so the
-  // Cost Price column has data, else fall back to the plain request lines.
-  const linesToRender = financial?.lines || allLines;
-  const rollup = financial?.rollup;
   return (
     <>
       <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => onToggle(req.id)}>
@@ -215,8 +345,12 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
         <td className="p-3 text-xs text-gray-400 whitespace-nowrap">{fmtDateTime(req.created_at)}</td>
         <td className="p-3"><Badge color={STATUS_COLOR[req.status] || "gray"}>{STATUS_LABEL[req.status] || req.status}</Badge></td>
         <td className="p-3 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-end gap-1">
+            <button onClick={() => onView(req)} className="text-bassani-600 hover:text-bassani-800 p-1.5 rounded-lg hover:bg-bassani-50 inline-flex items-center gap-1 text-xs font-medium" title="Open full view">
+              <Eye size={14} />View
+            </button>
           {req.status === "pending" && (
-            <div className="flex items-center justify-end gap-1">
+            <>
               <button onClick={() => onApprove(req)} className="text-green-600 hover:text-green-800 p-1.5 rounded-lg hover:bg-green-50" title="Approve">
                 <CheckCircle2 size={14} />
               </button>
@@ -226,137 +360,269 @@ function RequestRow({ req, expanded, onToggle, onApprove, onReject, onCounter, n
               <button onClick={() => onReject(req)} className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50" title="Reject">
                 <XCircle size={14} />
               </button>
-            </div>
+            </>
           )}
+          </div>
         </td>
       </tr>
       {expanded && (
         <tr className="bg-gray-50/60 border-b border-gray-100">
           <td colSpan={8} className="p-4">
-            <div className="flex items-start justify-between gap-4 mb-3">
-              <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Reason</p>
-                <p className="text-sm text-gray-700">{req.reason || "Not provided"}</p>
-              </div>
-              <div className="flex items-center gap-4 shrink-0">
-                <button
-                  onClick={() => navigate("/tickets/sales", { state: { openTicketId: req.ticket_id } })}
-                  className="inline-flex items-center gap-1 text-xs text-bassani-600 hover:text-bassani-800 hover:underline"
-                >
-                  Open ticket <ExternalLink size={11} />
-                </button>
-              </div>
-            </div>
-
-            {/* 8.63 — request-level financial rollup, fetched once on expand */}
-            {!financial ? (
-              <div className="flex items-center gap-2 text-xs text-gray-400 mb-3"><Loader2 size={12} className="animate-spin" />Loading cost detail…</div>
-            ) : rollup && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-                <div className="bg-white border border-gray-100 rounded-lg p-2.5">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Discount Requested (excl. VAT)</p>
-                  <p className="text-sm font-semibold text-gray-900">{fmtR(rollup.total_requested_discount)}</p>
-                </div>
-                <div className="bg-white border border-gray-100 rounded-lg p-2.5">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Cost Data Coverage</p>
-                  <p className="text-sm font-semibold text-gray-900">{rollup.lines_with_known_cost} of {rollup.lines_total} lines</p>
-                </div>
-                {rollup.margin ? (
-                  <>
-                    <div className="bg-green-50 border border-green-100 rounded-lg p-2.5">
-                      <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wide">Margin Before</p>
-                      <p className="text-sm font-semibold text-green-800">{fmtPct(rollup.margin.margin_before_pct)}</p>
-                    </div>
-                    <div className="bg-amber-50 border border-amber-100 rounded-lg p-2.5">
-                      <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Margin After</p>
-                      <p className="text-sm font-semibold text-amber-800">{fmtPct(rollup.margin.margin_after_pct)}</p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-100 rounded-lg p-2.5 col-span-2">
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Margin Impact</p>
-                    <p className="text-xs text-gray-400 italic">Cost price not set in Odoo for any discounted line</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="mb-3">
-              <RequestTotals req={req} />
-            </div>
-
-            {/* Every line on the order — the discounted ones stand out so the
-                approver can judge the request against the full quote, not
-                just the lines asked about in isolation. */}
-            <table className="w-full text-xs bg-white border border-gray-100 rounded-lg overflow-hidden">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="text-left p-2 pl-3 font-semibold text-gray-400 uppercase">Product</th>
-                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Qty</th>
-                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Unit Price</th>
-                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Cost Price</th>
-                  <th className="text-right p-2 font-semibold text-gray-400 uppercase">Discount requested</th>
-                  {req.status === "countered" && <th className="text-right p-2 font-semibold text-gray-400 uppercase">Granted</th>}
-                  <th className="text-right p-2 pr-3 font-semibold text-gray-400 uppercase">Line total {AFTER_LABEL[req.status] ? AFTER_LABEL[req.status].toLowerCase() : "as requested"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {linesToRender.map((l, i) => {
-                  const isRequested = isInRequest(l);
-                  const hasCostInfo = financial != null;
-                  return (
-                    <tr key={i} className={`border-t border-gray-50 ${isRequested ? "bg-amber-50/60" : ""}`}>
-                      <td className="p-2 pl-3 text-gray-700">{l.product_name}</td>
-                      <td className="p-2 text-right text-gray-500">{l.qty}</td>
-                      <td className="p-2 text-right text-gray-500">{fmtR(l.unit_price)}</td>
-                      <td className="p-2 text-right">
-                        {hasCostInfo ? (
-                          <button
-                            onClick={() => onOpenBom(l)}
-                            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
-                            title="View cost breakdown and Bill of Materials"
-                          >
-                            <Package size={11} />
-                            {l.cost_set ? fmtR(l.cost_price) : <span className="italic">Not set</span>}
-                          </button>
-                        ) : <span className="text-gray-300">…</span>}
-                      </td>
-                      <td className="p-2 text-right">
-                        {isRequested
-                          ? <DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" />
-                          : <span className="text-gray-300">{l.current_pct > 0 ? `Keeps ${l.current_pct}% already on quote` : "No discount requested"}</span>}
-                      </td>
-                      {req.status === "countered" && (() => {
-                        const g = (req.final_lines || []).find(f => f.product_id === l.product_id);
-                        return (
-                          <td className="p-2 text-right">
-                            {g ? <DiscountAmountCell line={l} pct={g.final_pct} tone="text-orange-700" /> : <span className="text-gray-300">—</span>}
-                          </td>
-                        );
-                      })()}
-                      <td className="p-2 pr-3 text-right text-gray-800">
-                        {(() => {
-                          const g = req.status === "countered" ? (req.final_lines || []).find(f => f.product_id === l.product_id) : null;
-                          const pct = g ? g.final_pct : (isRequested ? l.requested_pct : (l.current_pct || 0));
-                          return fmtR(lineDiscount(l, pct).net);
-                        })()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {req.decision && (
-              <p className="text-xs text-gray-400 mt-3">
-                {STATUS_LABEL[req.status]} by {req.decision.by?.name || "—"} on {fmtDateTime(req.decision.at)}
-                {req.decision.note ? ` — "${req.decision.note}"` : ""}
-              </p>
-            )}
+            <RequestDetailBody req={req} financial={financial} onOpenBom={onOpenBom} navigate={navigate} />
           </td>
         </tr>
       )}
     </>
   );
+}
+
+// Approve / Reject / Counter state, handlers and popups (2026-10-07), shared
+// by the list and the full-page view so both decide a request the same way.
+// onDone runs after any successful decision (each screen reloads its data).
+export function useDiscountDecisions(onDone) {
+  // ── Approve ──
+  const [approveTarget, setApproveTarget] = useState(null);
+  const [approveNote, setApproveNote] = useState("");
+  const [approving, setApproving] = useState(false);
+  const doApprove = async () => {
+    setApproving(true);
+    try {
+      await api.post(`/api/discount-requests/${approveTarget.id}/approve`, { note: approveNote || undefined });
+      toast.success("Discount approved");
+      setApproveTarget(null); setApproveNote("");
+      onDone();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not approve"); }
+    finally { setApproving(false); }
+  };
+
+  // ── Reject ──
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const doReject = async () => {
+    // A reason is mandatory (2026-09-30) — enforced server-side too, this
+    // is just the earlier, friendlier check. Sales staff read this reason
+    // straight off the ticket's decision banner to explain the rejection.
+    if (!rejectNote.trim()) return toast.error("A reason is required so sales staff can explain this to the customer");
+    setRejecting(true);
+    try {
+      await api.post(`/api/discount-requests/${rejectTarget.id}/reject`, { note: rejectNote });
+      toast.success("Discount request rejected");
+      setRejectTarget(null); setRejectNote("");
+      onDone();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not reject"); }
+    finally { setRejecting(false); }
+  };
+
+  // ── Counter ──
+  const [counterTarget, setCounterTarget] = useState(null);
+  const [counterLines, setCounterLines] = useState([]);
+  const [counterNote, setCounterNote] = useState("");
+  const [countering, setCountering] = useState(false);
+  // Amount (R) / Percent toggle (2026-09-29, defaulted to Rand + rewritten
+  // 2026-09-30 after live testing — see the identical fix/rationale on
+  // SalesTickets.js's Request Discount modal for the two bugs this fixes:
+  // the Rand figure now converts against unit_price alone, not qty *
+  // unit_price, so it matches what's shown in the Unit Price column; and
+  // the input no longer round-trips through a live percent conversion on
+  // every keystroke, which was breaking typing/backspacing entirely.
+  // approved_pct is always the canonical value actually submitted.
+  const [counterMode, setCounterMode] = useState("amount");
+  // Decimals Odoo keeps on a discount % (2026-10-07): the counter figures
+  // are shown at the rate as it will actually be stored.
+  const [counterDigits, setCounterDigits] = useState(2);
+  const openCounter = (req) => {
+    setCounterTarget(req);
+    setCounterDigits(req.discount_digits ?? 2);
+    api.get("/api/discount-requests/precision")
+      .then(r => setCounterDigits(r.data?.discount_digits ?? 2))
+      .catch(() => {});
+    setCounterMode("amount");
+    // Only the lines actually asked about (requested_pct > 0) are
+    // counterable — the rest of req.lines is full-order context only. The
+    // backend now requires every one of these to be resolved in the same
+    // counter call, so none can be dropped from this list before submit.
+    setCounterLines((req.lines || []).filter(isInRequest)
+      .map(l => ({
+        product_id: l.product_id, product_name: l.product_name,
+        approved_pct: Number(l.requested_pct).toFixed(2),
+        approved_amt: (l.unit_price * l.requested_pct / 100).toFixed(2),
+      })));
+    setCounterNote("");
+  };
+  const setCounterPct = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
+    const n = Number(v);
+    return { ...x, approved_pct: v, approved_amt: v === "" ? "" : (isNaN(n) ? x.approved_amt : n / 100 * (original?.unit_price || 0)) };
+  }));
+  const setCounterAmt = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
+    if (xi !== i) return x;
+    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
+    const n = Number(v);
+    const unitPrice = original?.unit_price || 0;
+    return { ...x, approved_amt: v, approved_pct: v === "" || !unitPrice ? "" : (isNaN(n) ? x.approved_pct : n / unitPrice * 100) };
+  }));
+  const switchCounterMode = (mode) => {
+    setCounterMode(mode);
+    setCounterLines(ls => ls.map(x => mode === "pct"
+      ? { ...x, approved_pct: x.approved_pct === "" ? "" : Number(x.approved_pct).toFixed(2) }
+      : { ...x, approved_amt: x.approved_amt === "" ? "" : Number(x.approved_amt).toFixed(2) }));
+  };
+  const doCounter = async () => {
+    // A reason is mandatory (2026-09-30) — a counter is exactly the case
+    // sales staff need to go back to the customer about, so there must
+    // always be something to relay. Enforced server-side too.
+    if (!counterNote.trim()) return toast.error("A reason is required so sales staff can explain the counter-offer to the customer");
+    setCountering(true);
+    try {
+      await api.post(`/api/discount-requests/${counterTarget.id}/counter`, {
+        lines: counterLines.map(l => ({ product_id: l.product_id, approved_pct: roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits) })),
+        note: counterNote,
+      });
+      toast.success("Counter-offer applied");
+      setCounterTarget(null);
+      onDone();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not apply counter-offer"); }
+    finally { setCountering(false); }
+  };
+
+  const modals = (
+    <>
+        {approveTarget && (
+          <Modal title="Approve Discount" onClose={() => setApproveTarget(null)}>
+            <p className="text-sm text-gray-600 mb-3">
+              Apply the requested discount to {approveTarget.order_name} exactly as requested?
+            </p>
+            <div className="mb-4">
+              <RequestTotals req={approveTarget} afterLabel="If approved" />
+            </div>
+            <FormGroup label="Note (optional)">
+              <Textarea value={approveNote} onChange={e => setApproveNote(e.target.value)} rows={2} />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setApproveTarget(null)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={doApprove} disabled={approving}>{approving ? "Approving…" : "Approve"}</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {rejectTarget && (
+          <Modal title="Reject Discount" onClose={() => setRejectTarget(null)}>
+            <p className="text-sm text-gray-600 mb-4">
+              The quote for {rejectTarget.order_name} will stay at normal pricing. This cannot be undone from here
+              — the requester would need to submit a new request.
+            </p>
+            <FormGroup label="Reason" required>
+              <Textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
+                placeholder="This is what sales staff will use to explain the rejection to the customer…" />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setRejectTarget(null)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={doReject} disabled={rejecting || !rejectNote.trim()}>{rejecting ? "Rejecting…" : "Reject"}</BtnDanger>
+            </div>
+          </Modal>
+        )}
+
+        {counterTarget && (
+          <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)} width="max-w-4xl">
+            <p className="text-sm text-gray-600 mb-2">
+              Apply a different discount than requested for {counterTarget.order_name}. This is applied
+              immediately, same as an approval. Every originally requested line must be given a rate below,
+              even if that rate is 0%.
+            </p>
+            <p className="text-xs text-gray-600 bg-slate-50 border border-gray-100 rounded-lg px-3 py-2 mb-3">
+              <span className="font-semibold">Rand Amount</span> is the amount off <span className="font-semibold">each single unit</span>, not off the whole line.
+              The quote stores the discount as a percentage rounded to {counterDigits} decimal{counterDigits !== 1 ? "s" : ""}, so the figures below show exactly what will apply.
+            </p>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                <button type="button" onClick={() => switchCounterMode("pct")}
+                  className={`px-3 py-1 text-xs font-medium ${counterMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                  Percent
+                </button>
+                <button type="button" onClick={() => switchCounterMode("amount")}
+                  className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${counterMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                  Rand Amount (per unit)
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[24rem] overflow-y-auto border border-gray-100 rounded-lg mb-3">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
+                    <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">Requested</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">{counterMode === "pct" ? "Your discount %" : "Your Rand off each unit"}</th>
+                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Off this line</th>
+                    <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">New line total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {counterLines.map((l, i) => {
+                    const original = counterTarget.lines.find(x => x.product_id === l.product_id);
+                    const unitPrice = original?.unit_price || 0;
+                    const qty = original?.qty || 0;
+                    const pct = roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits);
+                    const d = lineDiscount({ qty, unit_price: unitPrice }, pct);
+                    const typedAmt = l.approved_amt === "" ? null : Number(l.approved_amt);
+                    const drift = counterMode === "amount" && typedAmt != null && Math.abs(d.perUnitOff - typedAmt) >= 0.005;
+                    return (
+                      <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
+                        <td className="p-2 pl-3 text-gray-800">{l.product_name}<span className="block text-[10px] text-gray-400">{qty} × {fmtR(unitPrice)}</span></td>
+                        <td className="p-2">
+                          <DiscountAmountCell line={{ qty, unit_price: unitPrice, is_removal: original?.is_removal, current_pct: original?.current_pct }} pct={original?.requested_pct || 0} tone="text-gray-500" />
+                        </td>
+                        <td className="p-2">
+                          <div className="flex items-center justify-end gap-1">
+                            {counterMode === "amount" && <span className="text-gray-400 text-xs">R</span>}
+                            <input
+                              type="number" min="0" step="0.01"
+                              max={counterMode === "pct" ? 100 : undefined}
+                              value={counterMode === "pct" ? l.approved_pct : l.approved_amt}
+                              onChange={e => counterMode === "pct" ? setCounterPct(i, e.target.value) : setCounterAmt(i, e.target.value)}
+                              className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
+                            />
+                            {counterMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
+                          </div>
+                          <span className="block text-[10px] text-gray-500 text-right mt-0.5">
+                            {counterMode === "pct" ? `= ${fmtR(d.perUnitOff)} off each unit` : `Applies as ${pct}%`}
+                          </span>
+                          {drift && (
+                            <span className="block text-[10px] text-amber-700 text-right">Actual: {fmtR(d.perUnitOff)} off each unit</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right">
+                          {pct > 0 ? <span className="font-semibold text-orange-700">{fmtR(d.lineOff)}</span> : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="p-2 pr-3 text-right text-gray-800">{fmtR(d.net)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="mb-4">
+              <RequestTotals
+                req={counterTarget}
+                afterLabel="With your counter"
+                overridePct={Object.fromEntries(counterLines.map(l => [l.product_id, roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits)]))}
+              />
+            </div>
+            <FormGroup label="Reason" required>
+              <Textarea value={counterNote} onChange={e => setCounterNote(e.target.value)} rows={2}
+                placeholder="e.g. Approved at a lower rate given order size — this is what sales staff will tell the customer" />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setCounterTarget(null)}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={doCounter} disabled={countering || !counterNote.trim()}>{countering ? "Applying…" : "Apply Counter-Offer"}</BtnPrimary>
+            </div>
+          </Modal>
+        )}
+    </>
+  );
+  return { openApprove: setApproveTarget, openReject: setRejectTarget, openCounter, modals };
 }
 
 export default function DiscountApprovals() {
@@ -477,112 +743,7 @@ export default function DiscountApprovals() {
     XLSX.writeFile(wb, `Bassani Discount Requests ${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  // ── Approve ──
-  const [approveTarget, setApproveTarget] = useState(null);
-  const [approveNote, setApproveNote] = useState("");
-  const [approving, setApproving] = useState(false);
-  const doApprove = async () => {
-    setApproving(true);
-    try {
-      await api.post(`/api/discount-requests/${approveTarget.id}/approve`, { note: approveNote || undefined });
-      toast.success("Discount approved");
-      setApproveTarget(null); setApproveNote("");
-      load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not approve"); }
-    finally { setApproving(false); }
-  };
-
-  // ── Reject ──
-  const [rejectTarget, setRejectTarget] = useState(null);
-  const [rejectNote, setRejectNote] = useState("");
-  const [rejecting, setRejecting] = useState(false);
-  const doReject = async () => {
-    // A reason is mandatory (2026-09-30) — enforced server-side too, this
-    // is just the earlier, friendlier check. Sales staff read this reason
-    // straight off the ticket's decision banner to explain the rejection.
-    if (!rejectNote.trim()) return toast.error("A reason is required so sales staff can explain this to the customer");
-    setRejecting(true);
-    try {
-      await api.post(`/api/discount-requests/${rejectTarget.id}/reject`, { note: rejectNote });
-      toast.success("Discount request rejected");
-      setRejectTarget(null); setRejectNote("");
-      load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not reject"); }
-    finally { setRejecting(false); }
-  };
-
-  // ── Counter ──
-  const [counterTarget, setCounterTarget] = useState(null);
-  const [counterLines, setCounterLines] = useState([]);
-  const [counterNote, setCounterNote] = useState("");
-  const [countering, setCountering] = useState(false);
-  // Amount (R) / Percent toggle (2026-09-29, defaulted to Rand + rewritten
-  // 2026-09-30 after live testing — see the identical fix/rationale on
-  // SalesTickets.js's Request Discount modal for the two bugs this fixes:
-  // the Rand figure now converts against unit_price alone, not qty *
-  // unit_price, so it matches what's shown in the Unit Price column; and
-  // the input no longer round-trips through a live percent conversion on
-  // every keystroke, which was breaking typing/backspacing entirely.
-  // approved_pct is always the canonical value actually submitted.
-  const [counterMode, setCounterMode] = useState("amount");
-  // Decimals Odoo keeps on a discount % (2026-10-07): the counter figures
-  // are shown at the rate as it will actually be stored.
-  const [counterDigits, setCounterDigits] = useState(2);
-  const openCounter = (req) => {
-    setCounterTarget(req);
-    setCounterDigits(req.discount_digits ?? 2);
-    api.get("/api/discount-requests/precision")
-      .then(r => setCounterDigits(r.data?.discount_digits ?? 2))
-      .catch(() => {});
-    setCounterMode("amount");
-    // Only the lines actually asked about (requested_pct > 0) are
-    // counterable — the rest of req.lines is full-order context only. The
-    // backend now requires every one of these to be resolved in the same
-    // counter call, so none can be dropped from this list before submit.
-    setCounterLines((req.lines || []).filter(isInRequest)
-      .map(l => ({
-        product_id: l.product_id, product_name: l.product_name,
-        approved_pct: Number(l.requested_pct).toFixed(2),
-        approved_amt: (l.unit_price * l.requested_pct / 100).toFixed(2),
-      })));
-    setCounterNote("");
-  };
-  const setCounterPct = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
-    if (xi !== i) return x;
-    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
-    const n = Number(v);
-    return { ...x, approved_pct: v, approved_amt: v === "" ? "" : (isNaN(n) ? x.approved_amt : n / 100 * (original?.unit_price || 0)) };
-  }));
-  const setCounterAmt = (i, v) => setCounterLines(ls => ls.map((x, xi) => {
-    if (xi !== i) return x;
-    const original = counterTarget.lines.find(l => l.product_id === x.product_id);
-    const n = Number(v);
-    const unitPrice = original?.unit_price || 0;
-    return { ...x, approved_amt: v, approved_pct: v === "" || !unitPrice ? "" : (isNaN(n) ? x.approved_pct : n / unitPrice * 100) };
-  }));
-  const switchCounterMode = (mode) => {
-    setCounterMode(mode);
-    setCounterLines(ls => ls.map(x => mode === "pct"
-      ? { ...x, approved_pct: x.approved_pct === "" ? "" : Number(x.approved_pct).toFixed(2) }
-      : { ...x, approved_amt: x.approved_amt === "" ? "" : Number(x.approved_amt).toFixed(2) }));
-  };
-  const doCounter = async () => {
-    // A reason is mandatory (2026-09-30) — a counter is exactly the case
-    // sales staff need to go back to the customer about, so there must
-    // always be something to relay. Enforced server-side too.
-    if (!counterNote.trim()) return toast.error("A reason is required so sales staff can explain the counter-offer to the customer");
-    setCountering(true);
-    try {
-      await api.post(`/api/discount-requests/${counterTarget.id}/counter`, {
-        lines: counterLines.map(l => ({ product_id: l.product_id, approved_pct: roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits) })),
-        note: counterNote,
-      });
-      toast.success("Counter-offer applied");
-      setCounterTarget(null);
-      load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not apply counter-offer"); }
-    finally { setCountering(false); }
-  };
+  const { openApprove, openReject, openCounter, modals: decisionModals } = useDiscountDecisions(load);
 
   const renderTable = (rows) => (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -594,7 +755,7 @@ export default function DiscountApprovals() {
             <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Customer</th>
             <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested By</th>
             <th className="text-center p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Lines</th>
-            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested</th>
+            <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Requested On</th>
             <th className="text-left p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</th>
             <th className="text-right p-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Actions</th>
           </tr>
@@ -603,7 +764,8 @@ export default function DiscountApprovals() {
           {rows.map(req => (
             <RequestRow
               key={req.id} req={req} expanded={expandedId === req.id} onToggle={toggle}
-              onApprove={setApproveTarget} onReject={setRejectTarget} onCounter={openCounter}
+              onApprove={openApprove} onReject={openReject} onCounter={openCounter}
+              onView={(r) => navigate(`/tickets/discounts/${r.id}`)}
               navigate={navigate} financial={financialByRequest[req.id]}
               onOpenBom={(line) => setBomLine({ requestId: req.id, line })}
             />
@@ -695,137 +857,7 @@ export default function DiscountApprovals() {
         ) : renderTable(filteredRequests)}
       </main>
 
-      {approveTarget && (
-        <Modal title="Approve Discount" onClose={() => setApproveTarget(null)}>
-          <p className="text-sm text-gray-600 mb-3">
-            Apply the requested discount to {approveTarget.order_name} exactly as requested?
-          </p>
-          <div className="mb-4">
-            <RequestTotals req={approveTarget} afterLabel="If approved" />
-          </div>
-          <FormGroup label="Note (optional)">
-            <Textarea value={approveNote} onChange={e => setApproveNote(e.target.value)} rows={2} />
-          </FormGroup>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setApproveTarget(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={doApprove} disabled={approving}>{approving ? "Approving…" : "Approve"}</BtnPrimary>
-          </div>
-        </Modal>
-      )}
-
-      {rejectTarget && (
-        <Modal title="Reject Discount" onClose={() => setRejectTarget(null)}>
-          <p className="text-sm text-gray-600 mb-4">
-            The quote for {rejectTarget.order_name} will stay at normal pricing. This cannot be undone from here
-            — the requester would need to submit a new request.
-          </p>
-          <FormGroup label="Reason" required>
-            <Textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
-              placeholder="This is what sales staff will use to explain the rejection to the customer…" />
-          </FormGroup>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setRejectTarget(null)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={doReject} disabled={rejecting || !rejectNote.trim()}>{rejecting ? "Rejecting…" : "Reject"}</BtnDanger>
-          </div>
-        </Modal>
-      )}
-
-      {counterTarget && (
-        <Modal title="Counter-Offer" onClose={() => setCounterTarget(null)} width="max-w-4xl">
-          <p className="text-sm text-gray-600 mb-2">
-            Apply a different discount than requested for {counterTarget.order_name}. This is applied
-            immediately, same as an approval. Every originally requested line must be given a rate below,
-            even if that rate is 0%.
-          </p>
-          <p className="text-xs text-gray-600 bg-slate-50 border border-gray-100 rounded-lg px-3 py-2 mb-3">
-            <span className="font-semibold">Rand Amount</span> is the amount off <span className="font-semibold">each single unit</span>, not off the whole line.
-            The quote stores the discount as a percentage rounded to {counterDigits} decimal{counterDigits !== 1 ? "s" : ""}, so the figures below show exactly what will apply.
-          </p>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Enter as</span>
-            <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
-              <button type="button" onClick={() => switchCounterMode("pct")}
-                className={`px-3 py-1 text-xs font-medium ${counterMode === "pct" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-                Percent
-              </button>
-              <button type="button" onClick={() => switchCounterMode("amount")}
-                className={`px-3 py-1 text-xs font-medium border-l border-gray-200 ${counterMode === "amount" ? "bg-bassani-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
-                Rand Amount (per unit)
-              </button>
-            </div>
-          </div>
-          <div className="max-h-[24rem] overflow-y-auto border border-gray-100 rounded-lg mb-3">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 sticky top-0">
-                  <th className="text-left p-2 pl-3 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">Requested</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-36">{counterMode === "pct" ? "Your discount %" : "Your Rand off each unit"}</th>
-                  <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Off this line</th>
-                  <th className="text-right p-2 pr-3 text-xs font-semibold text-gray-400 uppercase w-28">New line total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {counterLines.map((l, i) => {
-                  const original = counterTarget.lines.find(x => x.product_id === l.product_id);
-                  const unitPrice = original?.unit_price || 0;
-                  const qty = original?.qty || 0;
-                  const pct = roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits);
-                  const d = lineDiscount({ qty, unit_price: unitPrice }, pct);
-                  const typedAmt = l.approved_amt === "" ? null : Number(l.approved_amt);
-                  const drift = counterMode === "amount" && typedAmt != null && Math.abs(d.perUnitOff - typedAmt) >= 0.005;
-                  return (
-                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
-                      <td className="p-2 pl-3 text-gray-800">{l.product_name}<span className="block text-[10px] text-gray-400">{qty} × {fmtR(unitPrice)}</span></td>
-                      <td className="p-2">
-                        <DiscountAmountCell line={{ qty, unit_price: unitPrice, is_removal: original?.is_removal, current_pct: original?.current_pct }} pct={original?.requested_pct || 0} tone="text-gray-500" />
-                      </td>
-                      <td className="p-2">
-                        <div className="flex items-center justify-end gap-1">
-                          {counterMode === "amount" && <span className="text-gray-400 text-xs">R</span>}
-                          <input
-                            type="number" min="0" step="0.01"
-                            max={counterMode === "pct" ? 100 : undefined}
-                            value={counterMode === "pct" ? l.approved_pct : l.approved_amt}
-                            onChange={e => counterMode === "pct" ? setCounterPct(i, e.target.value) : setCounterAmt(i, e.target.value)}
-                            className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bassani-400"
-                          />
-                          {counterMode === "pct" && <span className="text-gray-400 text-xs">%</span>}
-                        </div>
-                        <span className="block text-[10px] text-gray-500 text-right mt-0.5">
-                          {counterMode === "pct" ? `= ${fmtR(d.perUnitOff)} off each unit` : `Applies as ${pct}%`}
-                        </span>
-                        {drift && (
-                          <span className="block text-[10px] text-amber-700 text-right">Actual: {fmtR(d.perUnitOff)} off each unit</span>
-                        )}
-                      </td>
-                      <td className="p-2 text-right">
-                        {pct > 0 ? <span className="font-semibold text-orange-700">{fmtR(d.lineOff)}</span> : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="p-2 pr-3 text-right text-gray-800">{fmtR(d.net)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="mb-4">
-            <RequestTotals
-              req={counterTarget}
-              afterLabel="With your counter"
-              overridePct={Object.fromEntries(counterLines.map(l => [l.product_id, roundPct(l.approved_pct === "" ? 0 : Number(l.approved_pct), counterDigits)]))}
-            />
-          </div>
-          <FormGroup label="Reason" required>
-            <Textarea value={counterNote} onChange={e => setCounterNote(e.target.value)} rows={2}
-              placeholder="e.g. Approved at a lower rate given order size — this is what sales staff will tell the customer" />
-          </FormGroup>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setCounterTarget(null)}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={doCounter} disabled={countering || !counterNote.trim()}>{countering ? "Applying…" : "Apply Counter-Offer"}</BtnPrimary>
-          </div>
-        </Modal>
-      )}
+      {decisionModals}
 
       {bomLine && (
         <BomMarginModal requestId={bomLine.requestId} line={bomLine.line} onClose={() => setBomLine(null)} />

@@ -681,11 +681,11 @@ Discounts are never typed straight into a quote. You request one, and someone wi
 
 The quote stores discounts as a percentage, rounded to a fixed number of decimals. A Rand amount you type can therefore land a few cents off. When that happens the line shows **Actual: R… off each unit** in amber, so you see exactly what will apply before you submit.
 
-**While the request is pending**, the quote can't be sent or confirmed. The ticket shows a **Requested discount** panel under the amber banner, with each line's requested discount and the before/after totals. The **Order Lines** table further down still shows the quote as it is now (any earlier discount, or none) until the request is approved. Once a discount is applied, the Order Lines table shows each discounted line's percentage and its Rand amount, and the totals show the price before discount and the discount taken off.
+**While the request is pending**, the quote can't be sent or confirmed. The ticket shows a **Requested discount** bar under the amber banner, summarising the request on one line (how many lines, the discount change, and the order total now and if approved). Click **Show details** to see each line's requested discount and the full before/after totals. The **Order Lines** table further down still shows the quote as it is now (any earlier discount, or none) until the request is approved. Once a discount is applied, the Order Lines table shows each discounted line's percentage and its Rand amount, and the totals show the price before discount and the discount taken off.
 
 ### Approving a Discount
 
-Open **Orders → Discount Approvals** (needs Discount Approvals access). Each request shows how many lines are discounted, the average percentage, and the total Rand off. Expand a request to see:
+Open **Orders → Discount Approvals** (needs Discount Approvals access). Each request shows how many lines are discounted, the average percentage, and the total Rand off. Click a row to expand it in place, or click **View** to open the request on its own page with the same details and the Approve, Counter and Reject buttons at the top. Either way you'll see:
 
 - A **Quote before / If approved** comparison: price before discount, discount, subtotal, VAT and order total
 - Every line on the order. Requested lines show the percentage, the Rand off each unit and off the line, and the new line total. Lines not in the request keep whatever discount they already had

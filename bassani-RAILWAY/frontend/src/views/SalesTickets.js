@@ -724,6 +724,11 @@ export default function SalesTickets() {
   // for. The order lines below show what's in Odoo NOW, which while a
   // request is pending is the previous discount (or none), not the ask.
   const [pendingDiscount, setPendingDiscount] = useState(null);
+  // Collapsed by default (2026-10-07): a request can cover dozens of lines,
+  // so only a one-line summary shows until it's opened. Re-collapses when a
+  // different request loads.
+  const [pendingDiscountOpen, setPendingDiscountOpen] = useState(false);
+  useEffect(() => { setPendingDiscountOpen(false); }, [detail?.discount_request_id]);
   useEffect(() => {
     const id = detail?.discount_status === "pending" ? detail?.discount_request_id : null;
     if (!id) { setPendingDiscount(null); return; }
@@ -2053,39 +2058,66 @@ export default function SalesTickets() {
                           const reqLines = pendingDiscount.lines || [];
                           const asked = reqLines.filter(isInRequest);
                           const after = orderTotals(reqLines, l => (isInRequest(l) ? (l.requested_pct || 0) : (l.current_pct || 0)));
+                          const now = liveOrderTotals(detailOrder);
                           return (
                             <div className="mx-6 mt-2 border border-amber-200 rounded-lg overflow-hidden">
-                              <div className="bg-amber-50/60 px-4 py-2 text-xs text-amber-900">
-                                <span className="font-semibold">Requested discount</span>
-                                {pendingDiscount.requested_by?.name && <> by {pendingDiscount.requested_by.name}</>}
-                                {pendingDiscount.reason && <> · "{pendingDiscount.reason}"</>}
-                                <span className="block text-amber-800/80 mt-0.5">The Order Lines table below still shows the quote as it is now. These figures apply only once approved.</span>
-                              </div>
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="border-b border-gray-100 bg-white">
-                                    <th className="text-left p-2 pl-4 text-xs font-semibold text-gray-400 uppercase">Product</th>
-                                    <th className="text-center p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
-                                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Unit Price</th>
-                                    <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-40">Requested discount</th>
-                                    <th className="text-right p-2 pr-4 text-xs font-semibold text-gray-400 uppercase w-32">New line total</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {asked.map(l => (
-                                    <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
-                                      <td className="p-2 pl-4 text-gray-800">{l.product_name}</td>
-                                      <td className="p-2 text-center text-gray-600">{l.qty}</td>
-                                      <td className="p-2 text-right text-gray-600">{fmtR(l.unit_price)}</td>
-                                      <td className="p-2"><DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" /></td>
-                                      <td className="p-2 pr-4 text-right font-semibold text-gray-900">{fmtR(lineDiscount(l, l.requested_pct).net)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                              <div className="p-3 border-t border-gray-100 bg-slate-50/40">
-                                <DiscountTotalsCompare now={liveOrderTotals(detailOrder)} after={after} note={ESTIMATE_NOTE} />
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setPendingDiscountOpen(o => !o)}
+                                aria-expanded={pendingDiscountOpen}
+                                className="w-full flex items-center gap-3 bg-amber-50/60 hover:bg-amber-50 px-4 py-2.5 text-left text-xs text-amber-900 transition-colors"
+                              >
+                                {pendingDiscountOpen ? <ChevronUp size={14} className="shrink-0" /> : <ChevronDown size={14} className="shrink-0" />}
+                                <span className="flex-1 min-w-0">
+                                  <span className="font-semibold">Requested discount</span>
+                                  {" · "}{asked.length} line{asked.length !== 1 ? "s" : ""}
+                                  {(() => {
+                                    const delta = (after.discount || 0) - (now.discount || 0);
+                                    if (Math.abs(delta) < 0.005) return null;
+                                    return <>{" · "}{fmtR(Math.abs(delta))} {delta > 0 ? "more discount" : "less discount"} excl. VAT</>;
+                                  })()}
+                                  {now.total != null && after.total != null && (
+                                    <>{" · "}total {fmtR(now.total)} → <span className="font-semibold">{fmtR(after.total)}</span> incl. VAT</>
+                                  )}
+                                  {pendingDiscount.requested_by?.name && <span className="text-amber-800/70">{" · "}by {pendingDiscount.requested_by.name}</span>}
+                                </span>
+                                <span className="shrink-0 text-amber-700 font-medium">{pendingDiscountOpen ? "Hide details" : "Show details"}</span>
+                              </button>
+                              {pendingDiscountOpen && (
+                                <>
+                                  <div className="bg-amber-50/30 px-4 py-2 text-xs text-amber-900 border-t border-amber-100">
+                                    {pendingDiscount.reason && <p>Reason: "{pendingDiscount.reason}"</p>}
+                                    <p className="text-amber-800/80 mt-0.5">The Order Lines table below still shows the quote as it is now. These figures apply only once approved.</p>
+                                  </div>
+                                  <div className="max-h-[22rem] overflow-y-auto border-t border-gray-100">
+                                    <table className="w-full text-sm">
+                                      <thead>
+                                        <tr className="border-b border-gray-100 bg-white sticky top-0">
+                                          <th className="text-left p-2 pl-4 text-xs font-semibold text-gray-400 uppercase">Product</th>
+                                          <th className="text-center p-2 text-xs font-semibold text-gray-400 uppercase w-16">Qty</th>
+                                          <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-28">Unit Price</th>
+                                          <th className="text-right p-2 text-xs font-semibold text-gray-400 uppercase w-40">Requested discount</th>
+                                          <th className="text-right p-2 pr-4 text-xs font-semibold text-gray-400 uppercase w-32">New line total</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {asked.map(l => (
+                                          <tr key={l.product_id} className="border-b border-gray-50 last:border-0 align-top">
+                                            <td className="p-2 pl-4 text-gray-800">{l.product_name}</td>
+                                            <td className="p-2 text-center text-gray-600">{l.qty}</td>
+                                            <td className="p-2 text-right text-gray-600">{fmtR(l.unit_price)}</td>
+                                            <td className="p-2"><DiscountAmountCell line={l} pct={l.requested_pct} tone="text-amber-700" /></td>
+                                            <td className="p-2 pr-4 text-right font-semibold text-gray-900">{fmtR(lineDiscount(l, l.requested_pct).net)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="p-3 border-t border-gray-100 bg-slate-50/40">
+                                    <DiscountTotalsCompare now={now} after={after} note={ESTIMATE_NOTE} />
+                                  </div>
+                                </>
+                              )}
                             </div>
                           );
                         })()}
