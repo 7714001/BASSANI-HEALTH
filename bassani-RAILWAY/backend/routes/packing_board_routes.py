@@ -149,7 +149,8 @@ def _entry_active_pickings(odoo, order_id, picking_id=None) -> list:
     are separate pickings under the same sale order (2026-08-23), so falling
     back to "every active picking for this sale order" is only for legacy
     entries with no odoo_picking_id stamped."""
-    domain = [("id", "=", int(picking_id))] if picking_id else [("sale_id", "=", int(order_id))]
+    domain = ([("id", "=", int(picking_id))] if picking_id
+              else [("sale_id", "=", int(order_id)), ("picking_type_code", "=", "outgoing")])
     return odoo.search_read(
         "stock.picking",
         domain + [("state", "not in", ["done", "cancel"])],
@@ -873,10 +874,18 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
     """
     _odoo = get_odoo_client()
     _no_backorder = {"backorder_picking_id": None, "backorder_picking_name": None}
+    # Only outgoing transfers (deliveries) count (2026-10-10, found live on
+    # S01181): Odoo also links receipts to a sale order (e.g. a buy/resupply
+    # route triggered at confirm), and a cancelled transfer stays linked
+    # forever. Without this filter an assigned receipt would be validated
+    # here as if it were the delivery, and the reconcile fallback below could
+    # never succeed for an order carrying a cancelled transfer. Odoo has 139
+    # non-delivery transfers linked to sale orders, so this isn't rare.
+    _outgoing = [("sale_id", "=", odoo_order_id), ("picking_type_code", "=", "outgoing")]
     try:
         pickings = _odoo.search_read(
             "stock.picking",
-            [("sale_id", "=", odoo_order_id), ("state", "=", "assigned")],
+            _outgoing + [("state", "=", "assigned")],
             ["id", "name"],
         )
     except Exception as e:
@@ -900,7 +909,7 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
         try:
             all_pickings = _odoo.search_read(
                 "stock.picking",
-                [("sale_id", "=", odoo_order_id)],
+                _outgoing + [("state", "!=", "cancel")],
                 ["id", "name", "state"],
             )
         except Exception as e:

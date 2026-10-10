@@ -705,7 +705,7 @@ async def get_order(order_id: int, current_user: dict = Depends(get_current_user
         try:
             pick_rows = odoo.search_read(
                 "stock.picking",
-                domain=[("sale_id", "=", order_id), ("state", "=", "done")],
+                domain=[("sale_id", "=", order_id), ("state", "=", "done"), ("picking_type_code", "=", "outgoing")],
                 fields=["move_line_ids"],
                 limit=10,
             )
@@ -880,9 +880,13 @@ async def get_order_deliveries(
         pickings = odoo_call("stock.picking", "read", [picking_ids], {"fields": [
             "id", "name", "origin", "state", "scheduled_date", "date_done",
             "carrier_id", "carrier_tracking_ref", "backorder_id", "partner_id", "move_ids",
+            "picking_type_code",
         ]})
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo picking error: {str(e)}")
+    # Deliveries only — receipts can be linked to a sale order too (see
+    # _order_delivery_picking_ids below).
+    pickings = [p for p in pickings if p.get("picking_type_code") == "outgoing"]
 
     all_move_ids = [mid for p in pickings for mid in p.get("move_ids", [])]
     move_by_picking: dict = {}
@@ -1495,7 +1499,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
     try:
         lot_pick_rows = odoo.search_read(
             "stock.picking",
-            domain=[("sale_id", "=", resolved_id), ("state", "=", "done")],
+            domain=[("sale_id", "=", resolved_id), ("state", "=", "done"), ("picking_type_code", "=", "outgoing")],
             fields=["move_line_ids"],
             limit=20,
         )
@@ -1622,7 +1626,10 @@ async def stock_check(order_id: int, current_user: dict = Depends(_require_confi
     if order["state"] not in ("draft", "sent", "sale"):
         raise HTTPException(status_code=400, detail="Order is not in a quotable state")
 
-    picking_ids = order.get("picking_ids") or []
+    try:
+        picking_ids = _order_delivery_picking_ids(odoo, order_id) if order.get("picking_ids") else []
+    except Exception:
+        picking_ids = []
     lines = []
     is_partial = False
 
@@ -2310,6 +2317,24 @@ async def _confirm_order_core(
     }
 
 
+def _order_delivery_picking_ids(odoo, order_id: int) -> list:
+    """The order's real delivery transfers: outgoing and not cancelled, open
+    ones first. sale.order.picking_ids lists EVERY transfer Odoo links to the
+    order — receipts from a buy/resupply route included, and cancelled ones
+    forever — so taking picking_ids[0] as "the delivery" is wrong (2026-10-10,
+    found live on S01181: confirming it generated a receipt, LAF/IN/00379,
+    before any delivery existed, and that receipt was the first id)."""
+    rows = odoo.search_read(
+        "stock.picking",
+        domain=[("sale_id", "=", order_id), ("picking_type_code", "=", "outgoing"), ("state", "!=", "cancel")],
+        fields=["id", "state"],
+        limit=50,
+    )
+    open_ids = sorted(r["id"] for r in rows if r.get("state") != "done")
+    done_ids = sorted(r["id"] for r in rows if r.get("state") == "done")
+    return open_ids + done_ids
+
+
 async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks) -> None:
     """
     Create the packing board entry ("order ticket") for a confirmed sale order
@@ -2342,7 +2367,11 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     order_data = rows[0] if rows else None
     if not order_data:
         raise RuntimeError("Order not found in Odoo")
-    if not order_data.get("picking_ids"):
+    try:
+        _delivery_ids = _order_delivery_picking_ids(odoo, order_id)
+    except Exception as e:
+        raise RuntimeError(f"Could not read the order's deliveries from Odoo: {e}")
+    if not _delivery_ids:
         raise RuntimeError("Odoo has not generated a delivery for this order yet")
 
     sales_ticket = await col("tickets").find_one(
@@ -2355,7 +2384,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     is_partial = False
     shortfalls: List[dict] = []
     try:
-        _pick_for_check = order_data["picking_ids"][0]
+        _pick_for_check = _delivery_ids[0]
         _pick_rows = odoo.read("stock.picking", [_pick_for_check], fields=["move_ids"])
         if _pick_rows and _pick_rows[0].get("move_ids"):
             # 'quantity' — see the items-loop below for the verified field
@@ -2379,7 +2408,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
         logger.warning("queue_packing_board_shortfall_check_failed",
                        extra={"order_id": order_id, "error": str(_se)})
 
-    picking_id = order_data["picking_ids"][0]
+    picking_id = _delivery_ids[0]
     pickings = odoo.read("stock.picking", [picking_id], fields=["name", "origin", "move_ids"])
     picking = pickings[0] if pickings else None
     if not picking:

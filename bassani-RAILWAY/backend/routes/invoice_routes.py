@@ -397,7 +397,7 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
                     so_id = so_rows[0]["id"]
                     pick_rows = odoo.search_read(
                         "stock.picking",
-                        domain=[("sale_id", "=", so_id), ("state", "=", "done")],
+                        domain=[("sale_id", "=", so_id), ("state", "=", "done"), ("picking_type_code", "=", "outgoing")],
                         fields=["move_line_ids"],
                         limit=10,
                     )

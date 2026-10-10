@@ -1582,7 +1582,7 @@ export default function SalesTickets() {
     })();
   };
 
-  const useExistingInvoice = async (invoiceId) => {
+  const linkExistingInvoice = async (invoiceId) => {
     setUsingExistingInvoiceId(invoiceId);
     try {
       const { data } = await api.post(`/api/tickets/${detail.id}/use-existing-invoice`, { invoice_id: invoiceId });
@@ -2814,6 +2814,19 @@ export default function SalesTickets() {
                     // — like a final invoice awaiting confirmation — never
                     // showed anywhere on this page at all.
                     const otherInvoices = detailInvoices.filter(inv => inv.invoice_id !== detail.invoice_id);
+                    // The invoice this ticket tracks, as Odoo sees it now —
+                    // shown by its document number (detail.invoice_id is the
+                    // Odoo record id, which reads like an invoice number but
+                    // isn't one), and flagged if it was cancelled in Odoo after
+                    // the portal recorded it (found live 2026-10-10: a R1 test
+                    // deposit cancelled in Odoo still read "Payment confirmed").
+                    const trackedInv = detailInvoices.find(inv => inv.invoice_id === detail.invoice_id);
+                    // "Link" calls use-existing-invoice, which only ever means
+                    // "use this paid invoice as the deposit" — the server
+                    // refuses it once the deposit stage has passed, so the
+                    // button only shows while the ticket is genuinely there.
+                    const depositStageOpen = canFinance && detail.status === "awaiting_deposit"
+                      && !detail.payment_confirmed_at && !detail.released_on_account_at && !detail.is_sample;
                     return (
                       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
                         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -2824,10 +2837,10 @@ export default function SalesTickets() {
                           <div className="space-y-1">
                             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Quotation</p>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs text-gray-600">{isReseller ? "Order" : "Odoo SO"} #{detail.order_id}</span>
+                              <span className="text-xs text-gray-600">{isReseller ? "Order" : "Odoo SO"} {detailOrder?.name || `#${detail.order_id}`}</span>
                               {!isReseller && (
                                 <button
-                                  onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `SO #${detail.order_id} — Odoo original` })}
+                                  onClick={() => setPdfView({ url: `/api/orders/${detail.order_id}/quote-pdf`, title: `${detailOrder?.name || `SO #${detail.order_id}`} — Odoo original` })}
                                   className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
                                 >
                                   <FileSearch size={10} />View
@@ -2848,9 +2861,9 @@ export default function SalesTickets() {
                             {detail.invoice_id && (
                               <>
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs text-gray-600">Invoice #{detail.invoice_id}</span>
+                                  <span className="text-xs text-gray-600">Invoice {trackedInv?.name || `#${detail.invoice_id}`}</span>
                                   <button
-                                    onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `Invoice #${detail.invoice_id} — Odoo original` })}
+                                    onClick={() => setPdfView({ url: `/api/invoices/${detail.invoice_id}/pdf`, title: `${trackedInv?.name || `Invoice #${detail.invoice_id}`} — Odoo original` })}
                                     className="flex items-center gap-0.5 text-xs text-bassani-600 hover:text-bassani-700 font-medium shrink-0"
                                   >
                                     <FileSearch size={10} />View
@@ -2861,7 +2874,13 @@ export default function SalesTickets() {
                                     <ReceiptText size={10} />Sent {fmtDate(detail.invoice_sent_at)}
                                   </p>
                                 )}
-                                {detail.payment_confirmed_at && (
+                                {trackedInv?.state === "cancel" && (
+                                  <p className="text-[11px] text-red-600 flex items-start gap-1.5">
+                                    <AlertTriangle size={10} className="shrink-0 mt-0.5" />
+                                    Cancelled in Odoo. The payment recorded against it no longer counts towards this order.
+                                  </p>
+                                )}
+                                {detail.payment_confirmed_at && trackedInv?.state !== "cancel" && (
                                   <p className="text-[11px] text-green-600 flex items-center gap-1.5">
                                     <CheckCircle2 size={10} />
                                     {detail.payment_confirmed_by === "auto"
@@ -2906,16 +2925,28 @@ export default function SalesTickets() {
                                   // just error. Deliberately still a click,
                                   // never automatic — see the comment on
                                   // hasInvoiceSection above for why.
-                                  const canLink = inv.move_type === "out_invoice" && inv.state === "posted"
+                                  const canLink = depositStageOpen && inv.move_type === "out_invoice" && inv.state === "posted"
                                     && ["paid", "partial", "in_payment"].includes(inv.payment_state);
+                                  // Past the deposit stage, a posted invoice
+                                  // here is taken as the final invoice when
+                                  // the order is marked complete
+                                  // (_create_final_invoice reuses it instead
+                                  // of creating a duplicate), so nothing needs
+                                  // linking by hand.
+                                  const usedAtComplete = !depositStageOpen && !packingEntry?.invoice_id
+                                    && inv.move_type === "out_invoice" && inv.state === "posted";
                                   return (
                                   <div key={inv.invoice_id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-2 py-1.5">
                                     <div className="min-w-0">
                                       <p className="text-xs font-medium text-gray-800 truncate">{inv.name}</p>
                                       <p className="text-[10px] text-gray-400">
-                                        {inv.payment_state === "paid" ? "Paid" : inv.payment_state === "partial" ? "Partially paid" : "Outstanding"}
-                                        {inv.amount_residual > 0 && ` · ${fmtR(inv.amount_residual)} due`}
+                                        {inv.state === "cancel" ? "Cancelled" : inv.payment_state === "paid" ? "Paid" : inv.payment_state === "partial" ? "Partially paid" : "Outstanding"}
+                                        {inv.state !== "cancel" && inv.amount_residual > 0 && ` · ${fmtR(inv.amount_residual)} due`}
+                                        {` · ${fmtR(inv.amount_total || 0)}`}
                                       </p>
+                                      {usedAtComplete && (
+                                        <p className="text-[10px] text-gray-400">Used as the final invoice when the order is marked complete</p>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                       <button
@@ -2926,7 +2957,7 @@ export default function SalesTickets() {
                                       </button>
                                       {canLink && (
                                         <button
-                                          onClick={() => useExistingInvoice(inv.invoice_id)}
+                                          onClick={() => linkExistingInvoice(inv.invoice_id)}
                                           disabled={usingExistingInvoiceId === inv.invoice_id}
                                           className="flex items-center gap-0.5 text-xs text-green-700 hover:text-green-800 font-medium disabled:opacity-50"
                                         >
@@ -3877,7 +3908,7 @@ export default function SalesTickets() {
                         </p>
                       </div>
                       <button
-                        onClick={() => useExistingInvoice(inv.invoice_id)}
+                        onClick={() => linkExistingInvoice(inv.invoice_id)}
                         disabled={usingExistingInvoiceId === inv.invoice_id}
                         className="shrink-0 text-xs font-medium text-blue-700 hover:underline disabled:opacity-50"
                       >
