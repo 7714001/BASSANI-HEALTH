@@ -7,6 +7,7 @@ import { useAuth } from "../AuthContext";
 import { Badge, BtnPrimary, BtnSecondary, BtnDanger, Input, Select, Modal, FormGroup, LoadingState, PaginationBar, fmtR, fmtDate } from "../components/UI";
 import AddressAutocomplete from "../components/AddressAutocomplete";
 import PortalLoginManageModal from "../components/PortalLoginManageModal";
+import AccountTermsSection from "../components/AccountTermsSection";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -973,6 +974,15 @@ export default function CustomerProfile() {
                     {samplesAccount && (
                       <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-medium">Samples Account</span>
                     )}
+                    {/* 8.68 — staff-only, the API omits account_terms for reseller/customer */}
+                    {data?.account_terms?.status === "approved" && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${data.account_terms.review_overdue ? "bg-amber-50 text-amber-700" : "bg-teal-50 text-teal-700"}`}>
+                        {data.account_terms.review_overdue ? "Account (review overdue)" : "Account"}
+                      </span>
+                    )}
+                    {data?.account_terms?.status === "suspended" && (
+                      <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-medium">Account suspended</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1163,6 +1173,19 @@ export default function CustomerProfile() {
                 </div>
               )}
             </Section>
+          )}
+
+          {/* 8.68 — Account Terms (release on account, no deposit). Read-only for
+              staff who release orders or handle payments; editable with
+              customers.account_terms. */}
+          {user?.role !== "reseller" && user?.role !== "customer" &&
+            (can("customers.account_terms") || can("tickets.release_on_account") || can("tickets.finance_confirm")) && (
+            <AccountTermsSection
+              customerId={id}
+              customerName={data?.customer?.name}
+              canManage={can("customers.account_terms")}
+              onChanged={() => api.get(`/api/customers/${id}/profile`).then(r => setData(r.data)).catch(() => {})}
+            />
           )}
 
           {/* Samples Account — admin only */}

@@ -60,11 +60,13 @@ Every order — whether placed by a reseller or initiated by a direct customer i
 1. **Open** — a customer inquiry arrives (by email or directly in the system)
 2. **Quote** — the sales rep builds a formal quotation in the system, which is automatically sent to the customer via the company email address
 3. **Sale Confirmed** — the customer accepts; the order is formally created in the financial system and the customer is automatically emailed a pro-forma invoice for the 50% deposit due
-4. **Awaiting Deposit** — the order sits here, not yet visible to the warehouse, until Finance registers the deposit against the real financial record. This is a hard rule with no exceptions for any customer or order type — it is the only way an order reaches the packing board.
+4. **Awaiting Deposit** — the order sits here, not yet visible to the warehouse, until Finance registers the deposit against the real financial record. The only alternative is for a customer with an approved payment agreement: an authorised staff member can release the order "on account" with no deposit, within the customer's credit limit, and the customer is invoiced when the order is ready, payable within their agreed terms (see below).
 5. **In Fulfilment** — once the deposit is registered, the order moves to the warehouse
 6. **Ready for Collection** — after QA and RP sign-off, the (remaining balance) invoice is automatically created and the customer is notified
 
 The sales team can see every ticket in their queue, claim unassigned orders, and see the full history of every action taken on every order.
+
+**Account customers.** Customers with a payment agreement can be approved for account terms on their profile, with agreed payment terms (for example 30 days), a credit limit and a review date. Their orders can then skip the deposit, but only when someone with specific permission releases them, and never beyond the customer's credit limit. Each release is recorded with who approved it and why, and approvals can be suspended at any time. The invoice is raised when the order is ready and shows the payment due date.
 
 **Recurring orders.** For customers who order the same thing on a regular schedule, the sales team (or the reseller) can set the ticket to repeat weekly, every two weeks, or monthly. Two days ahead of each occurrence, the system automatically prepares the next order and emails the customer directly, asking them to confirm or decline — no phone call or portal login needed on their end. Confirming places the order automatically; it still goes through the same deposit step as any other order before Bassani starts fulfilling it. If the customer doesn't respond in time, that one occurrence is simply skipped and the schedule quietly continues from the next date — nobody needs to chase it or restart anything.
 

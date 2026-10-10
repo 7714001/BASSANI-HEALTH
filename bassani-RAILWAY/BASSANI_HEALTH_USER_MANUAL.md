@@ -714,7 +714,7 @@ If the customer is not interested:
 
 ### What Happens After Confirmation
 
-Once an order is confirmed, it sits at `Awaiting Deposit` until Finance registers the 50% deposit — this is the same for every order, no exceptions. Once that's done, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
+Once an order is confirmed, it sits at `Awaiting Deposit` until Finance registers the 50% deposit, or, for a customer approved for account terms, until someone authorised releases it on account (see **Account Terms** under the Finance Team section). Once that's done, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
 
 ### Recurring Orders
 
@@ -1041,7 +1041,7 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 
 Finance is involved at **two** points in the order pipeline:
 
-1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit — this applies to every order, no exceptions.
+1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit, or the order is released on account for an approved account customer (see **Account Terms and Release on Account** below).
 2. **Ready for Collection** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo, and you register the balance payment once the customer pays.
 
 ### Proof of Payment Alerts (2026-08-21)
@@ -1064,6 +1064,35 @@ A customer or reseller can optionally upload a photo or PDF of their payment con
 This creates the down payment invoice and records the payment against it in Odoo in one step, and immediately queues the order onto the packing board — this is the only way an order reaches packing. Until this is done, the order simply sits at Awaiting Deposit no matter how long it takes.
 
 **If the order was already invoiced and paid in Odoo before this ticket existed** — most often a historical order attached via **Link Existing Order** — the Register Deposit screen shows a blue panel listing the existing invoice(s) and their payment status, with a **Use This Invoice** button next to each. Clicking it links that invoice as the deposit and queues the order onto the packing board, without creating a second, redundant invoice in Odoo. This only appears when Odoo shows real payment already registered against an invoice on that order — the normal Fixed Amount / Percentage deposit flow is still there and works exactly as before if you'd rather register a fresh deposit.
+
+### Account Terms and Release on Account (2026-10-10)
+
+Some customers have a payment agreement with us: they don't pay a deposit, and pay the full invoice within their agreed terms (for example 30 days). For these customers there is a second option at the deposit stage.
+
+**Step 1: approve the customer for account terms** *(requires the "Approve & suspend customer account terms" permission)*
+
+1. Open the customer's profile and find the **Account Terms** card
+2. Click **Approve Account Terms**
+3. Choose the **payment terms** (only terms with a payment period are offered, not "Immediate Payment"), enter the **credit limit**, tick the **companies** the terms apply to, enter the **agreement reference**, and choose a **review date** (defaults to a year from today)
+4. Click **Approve**. Upload the signed agreement under **Documents** on the same page
+
+The payment terms and credit limit are saved on the customer's account in Odoo for each company you ticked. The card also shows the customer's live terms, credit limit, balance and overdue amount for every company. An "Account" badge appears in the profile header.
+
+To stop new releases (for example because invoices are badly overdue), click **Suspend** and give a reason. Orders already released keep their terms. Click **Edit / Re-approve** to restore them. Once the review date passes, orders can't be released until the terms are re-approved.
+
+**What the customer is told:** when an approved account customer's order is confirmed, they receive an order confirmation stating their payment terms instead of the "50% deposit due" email.
+
+**Step 2: release the order** *(requires the "Release orders on account (no deposit)" permission)*
+
+1. Open the Sales Ticket at **Awaiting Deposit** and click **Register Deposit / Release on Account**
+2. Choose **Release on Account**. The window shows the customer's payment terms, credit limit, current balance, orders already released but not yet invoiced, available credit and this order's total, plus any reason the order can't be released
+3. Enter a **reason** (e.g. the agreement reference) and click **Release on Account**
+
+The order goes straight onto the packing board with no deposit. When it's marked complete, the full invoice is created unpaid and emailed to the customer with its due date. When the customer pays, use **Register Payment** on the ticket.
+
+An order can't be released if the customer isn't approved for the order's company, the terms are suspended or past their review date, Odoo has no credit terms or credit limit for them, or this order would take them over their credit limit. Over the limit is always a hard stop: register a deposit instead, or have the credit limit reviewed first. Overdue invoices show as a warning but don't block.
+
+**If an account customer should pay a deposit on this order after all,** choose **Register Deposit** as normal. Because they were told no deposit was needed, the window offers **Send Deposit Pro-Forma** so they receive the deposit-due email first.
 
 ### Registering the Balance Payment
 
@@ -2515,6 +2544,8 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Grant or revoke a customer's portal login | Admin with `customers.manage_portal_access` |
 | Send quote to customer | Merveille (sales) or any reseller |
 | Register a 50% deposit | Kashi or Ragini (finance) |
+| Approve or suspend a customer's account terms | Anyone granted "Approve & suspend customer account terms" (no role has it by default) |
+| Release an order on account (no deposit) | Anyone granted "Release orders on account" (no role has it by default) |
 | Register balance (final) payment | Kashi or Ragini (finance) |
 | Confirm payment received | Kashi or Ragini (finance) |
 | Confirm an order | Merveille or anyone with `orders.confirm` |

@@ -6,11 +6,17 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import get_current_user, require_admin, require_permission, hash_password
+from auth import get_current_user, require_admin, require_permission, require_any_permission, hash_password
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
 from contacts import resolve_company_contacts
+from account_terms import (
+    commercial_partner_id, trading_companies, payment_terms_catalog,
+    read_company_credit, review_overdue,
+)
+from warehouse_context import company_context
+from odoo_client import odoo as odoo_call
 from services.r2_client import r2_put, r2_delete, r2_presign
 from middleware.audit import audit_log
 from routes.ticket_routes import ticket_manager
@@ -363,6 +369,12 @@ async def customer_profile(
         "ownership":            ownership,
         "samples_account":      samples_account,
         "warehouse_id":         warehouse_id,
+        # 8.68 — staff-only summary for the "Account" badge; the full card
+        # loads GET /{id}/account-terms separately.
+        "account_terms":        ({
+            "status": (meta or {}).get("account_terms", {}).get("status"),
+            "review_overdue": review_overdue((meta or {}).get("account_terms")),
+        } if (meta or {}).get("account_terms") and current_user.get("role") not in ("reseller", "customer") else None),
     }
 
 
@@ -971,6 +983,194 @@ async def update_samples_account(
         after={"samples_account": body.samples_account},
     )
     return {"success": True, "samples_account": body.samples_account}
+
+
+# ── 8.68 — Account terms (release on account, no deposit) ─────────────────────
+
+class AccountTermsApproveBody(BaseModel):
+    payment_term_id: int
+    credit_limit: float
+    company_ids: list[int]
+    reference: str
+    review_date: str               # ISO date, must be in the future
+    note: Optional[str] = None
+
+
+class AccountTermsSuspendBody(BaseModel):
+    reason: str
+
+
+def _account_terms_out(terms: Optional[dict]) -> Optional[dict]:
+    if not terms:
+        return None
+    out = {k: v for k, v in terms.items()}
+    for k in ("approved_at", "suspended_at"):
+        if isinstance(out.get(k), datetime):
+            out[k] = out[k].isoformat()
+    out["review_overdue"] = review_overdue(terms)
+    return out
+
+
+@router.get("/{customer_id}/account-terms")
+async def get_account_terms_detail(
+    customer_id: int,
+    current_user: dict = Depends(require_any_permission(
+        "customers.view", "customers.account_terms", "tickets.release_on_account", "tickets.finance_confirm",
+    )),
+):
+    """Account terms card on the customer profile: the portal approval, plus
+    the live Odoo credit position in every trading company (payment terms,
+    credit limit, balance, overdue) — Odoo holds those per company."""
+    odoo = get_odoo_client()
+    partner_id = commercial_partner_id(odoo, customer_id)
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": partner_id}, {"account_terms": 1, "_id": 0})
+    terms = (meta or {}).get("account_terms")
+    try:
+        companies = trading_companies(odoo)
+        catalog = payment_terms_catalog(odoo)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not load payment terms: {e}")
+    credit_by_company = []
+    for co in companies:
+        try:
+            c = read_company_credit(odoo, partner_id, co["id"])
+        except Exception:
+            c = {"payment_term": None, "credit_limit": 0.0, "credit": 0.0, "total_overdue": 0.0}
+        credit_by_company.append({"company_id": co["id"], "company_name": co["name"], **c})
+    return {
+        "partner_id": partner_id,
+        "account_terms": _account_terms_out(terms),
+        "trading_companies": companies,
+        "payment_terms": catalog,
+        "credit_by_company": credit_by_company,
+    }
+
+
+@router.put("/{customer_id}/account-terms")
+async def approve_account_terms(
+    customer_id: int,
+    body: AccountTermsApproveBody,
+    current_user: dict = Depends(require_permission("customers.account_terms")),
+):
+    """Approve (or re-approve) a customer for account terms. Writes the payment
+    terms and credit limit into Odoo for each selected trading company — Odoo
+    stores both per company — then records the approval in customer_metadata."""
+    odoo = get_odoo_client()
+    partner_id = commercial_partner_id(odoo, customer_id)
+    try:
+        partner = odoo.read("res.partner", [partner_id], fields=["name"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    if not partner:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    reference = (body.reference or "").strip()
+    if not reference:
+        raise HTTPException(status_code=400, detail="An agreement reference is required")
+    if body.credit_limit <= 0:
+        raise HTTPException(status_code=400, detail="Credit limit must be greater than zero")
+    try:
+        review = datetime.fromisoformat(body.review_date[:10]).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Review date must be a valid date")
+    if review <= datetime.now(timezone.utc).date():
+        raise HTTPException(status_code=400, detail="Review date must be in the future")
+
+    companies = {c["id"]: c["name"] for c in trading_companies(odoo)}
+    company_ids = sorted(set(body.company_ids))
+    if not company_ids:
+        raise HTTPException(status_code=400, detail="Select at least one company these terms apply to")
+    unknown = [c for c in company_ids if c not in companies]
+    if unknown:
+        raise HTTPException(status_code=400, detail="One or more selected companies can't take orders")
+
+    term = next((t for t in payment_terms_catalog(odoo) if t["id"] == body.payment_term_id), None)
+    if not term:
+        raise HTTPException(status_code=400, detail="Payment terms not found")
+    if not term["is_credit"]:
+        raise HTTPException(status_code=400, detail=f"\"{term['name']}\" isn't a credit term. Choose terms with a payment period, e.g. 30 Days.")
+
+    before_meta = await col("customer_metadata").find_one({"odoo_partner_id": partner_id}, {"account_terms": 1, "_id": 0})
+    before = (before_meta or {}).get("account_terms")
+
+    # Odoo first — if a company write fails, nothing is recorded as approved.
+    for cid in company_ids:
+        try:
+            odoo_call(
+                "res.partner", "write",
+                [[partner_id], {"property_payment_term_id": term["id"], "credit_limit": float(body.credit_limit)}],
+                {"context": company_context(cid)},
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not save terms for {companies[cid]}: {e}",
+            )
+
+    now = datetime.now(timezone.utc)
+    terms = {
+        "status": "approved",
+        "company_ids": company_ids,
+        "company_names": [companies[c] for c in company_ids],
+        "payment_term_id": term["id"],
+        "payment_term_name": term["name"],
+        "credit_limit": float(body.credit_limit),
+        "reference": reference,
+        "review_date": review.isoformat(),
+        "note": (body.note or "").strip() or None,
+        "approved_by_id": current_user["id"],
+        "approved_by_name": current_user.get("name") or current_user.get("username"),
+        "approved_at": now,
+        "suspended_reason": None,
+        "suspended_at": None,
+        "suspended_by_name": None,
+    }
+    await col("customer_metadata").update_one(
+        {"odoo_partner_id": partner_id}, {"$set": {"account_terms": terms}}, upsert=True,
+    )
+    await audit_log(
+        "customer.account_terms_approved", "customer", partner_id,
+        entity_label=partner[0]["name"], user=current_user,
+        before=before, after=terms,
+    )
+    return {"success": True, "account_terms": _account_terms_out(terms)}
+
+
+@router.post("/{customer_id}/account-terms/suspend")
+async def suspend_account_terms(
+    customer_id: int,
+    body: AccountTermsSuspendBody,
+    current_user: dict = Depends(require_permission("customers.account_terms")),
+):
+    """Stop any new order being released on account. Odoo's payment terms and
+    credit limit are left as they are — orders already released keep their
+    terms; re-approving restores release."""
+    odoo = get_odoo_client()
+    partner_id = commercial_partner_id(odoo, customer_id)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required")
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": partner_id}, {"account_terms": 1, "_id": 0})
+    terms = (meta or {}).get("account_terms")
+    if not terms or terms.get("status") != "approved":
+        raise HTTPException(status_code=400, detail="This customer has no active account terms to suspend")
+    now = datetime.now(timezone.utc)
+    after = {
+        **terms, "status": "suspended", "suspended_reason": reason, "suspended_at": now,
+        "suspended_by_name": current_user.get("name") or current_user.get("username"),
+    }
+    await col("customer_metadata").update_one({"odoo_partner_id": partner_id}, {"$set": {"account_terms": after}})
+    try:
+        label = odoo.read("res.partner", [partner_id], fields=["name"])[0]["name"]
+    except Exception:
+        label = str(partner_id)
+    await audit_log(
+        "customer.account_terms_suspended", "customer", partner_id,
+        entity_label=label, user=current_user,
+        before={"status": terms.get("status")}, after={"status": "suspended"},
+        detail={"reason": reason},
+    )
+    return {"success": True, "account_terms": _account_terms_out(after)}
 
 
 @router.patch("/{customer_id}/type")

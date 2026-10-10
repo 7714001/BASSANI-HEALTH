@@ -15,11 +15,12 @@ from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
 from support_links import order_help_url
+from account_terms import get_account_terms, is_approved_for_company
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
     send_backorder_alert_internal,
-    send_deposit_due_proforma,
+    send_deposit_due_proforma, send_order_confirmed_account_terms,
 )
 from services.age_tier import board_entry_age_fields, ticket_age_fields
 from config import get_settings
@@ -1272,7 +1273,9 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "reseller_id": 1, "reseller_name": 1, "customer_name": 1, "notes": 1,
          "recurring_order_id": 1, "pop_uploads": 1, "pop_awaiting_review": 1,
          "stage_history": 1, "scheduled_for": 1, "customer_accepted_at": 1,
-         "customer_declined_at": 1, "needs_manual_confirm": 1, "manual_confirm_reason": 1},
+         "customer_declined_at": 1, "needs_manual_confirm": 1, "manual_confirm_reason": 1,
+         "payment_arrangement": 1, "released_on_account_at": 1, "released_on_account_by_name": 1,
+         "on_account_payment_term": 1},
     )
     ticket_out = None
     if ticket:
@@ -1324,6 +1327,13 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             ],
             "pop_awaiting_review": bool(ticket.get("pop_awaiting_review")),
             "stage_history": ticket.get("stage_history") or [],
+            # 8.68 — released on account (no deposit). Drives the timeline's
+            # "Released on Account" / "Payment Due" wording; the release
+            # reason itself stays internal (it's in stage_history/audit).
+            "payment_arrangement": ticket.get("payment_arrangement") or "deposit",
+            "released_on_account_at": ticket.get("released_on_account_at"),
+            "released_on_account_by_name": ticket.get("released_on_account_by_name"),
+            "on_account_payment_term": ticket.get("on_account_payment_term"),
             # Recurring occurrence review (2026-08-27) — lets OrderPassport.js
             # show a dedicated Accept/Decline card in place of the generic
             # Confirm/Cancel buttons when this order is a still-pending
@@ -1985,6 +1995,77 @@ async def confirm_order(
     return await _confirm_order_core(order_id, current_user, background_tasks, override_credit)
 
 
+async def _send_order_confirmation_email(
+    order_id: int,
+    partner,
+    order_ref: str,
+    order_total: float,
+    company_id: Optional[int],
+    owning_reseller_id: Optional[str],
+    background_tasks: BackgroundTasks,
+    force_deposit: bool = False,
+) -> Optional[str]:
+    """The customer's order-confirmed email, with Odoo's pro-forma attached.
+    Returns a warning string on failure, never raises — the order is already
+    confirmed in Odoo whatever happens here.
+
+    8.68: a customer approved for account terms with the order's company gets
+    send_order_confirmed_account_terms (no deposit asked for) instead of
+    send_deposit_due_proforma. force_deposit=True always sends the deposit
+    version — used by the manual "Send deposit pro-forma" action, for when
+    staff decide an account customer should pay a deposit on this order after
+    all. Only the portal-side approval is checked here (cheap, no credit
+    read); the full credit check happens at release time.
+
+    The owning reseller (customer_ownership, the same lookup commission uses)
+    is CC'd, whoever placed the order (2026-08-21)."""
+    try:
+        odoo = get_odoo_client()
+        _p_rows = odoo.read("res.partner", [partner[0]], fields=["email", "commercial_partner_id"])
+        _customer_email = _p_rows[0].get("email") if _p_rows else None
+        if not _customer_email:
+            return "Customer has no email on file — the order confirmation was not sent"
+        _cp = _p_rows[0].get("commercial_partner_id") if _p_rows else None
+        _commercial_id = _cp[0] if _cp else partner[0]
+
+        _terms = None if force_deposit else await get_account_terms(_commercial_id)
+        _account_terms_email = bool(_terms) and is_approved_for_company(_terms, company_id)
+
+        # 'sale.report_saleorder_pro_forma' — NOT '..._pro_forma_invoice'
+        # (2026-08-14, live-verified: the report's own technical name
+        # changed on this Odoo version). Fetched via fetch_report_pdf's
+        # session-based HTTP path, not XML-RPC — Odoo now rejects
+        # calling ir.actions.report._render_qweb_pdf (a private method)
+        # remotely; see odoo_client.py for the full writeup.
+        _pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [order_id])
+        _reseller_email_cc = None
+        if owning_reseller_id:
+            _res_email_doc = await col("resellers").find_one({"id": owning_reseller_id}, {"email": 1, "_id": 0})
+            _reseller_email_cc = _res_email_doc.get("email") if _res_email_doc else None
+        common = dict(
+            customer_email=_customer_email,
+            customer_name=partner[1],
+            order_ref=order_ref,
+            order_total=order_total,
+            pdf_bytes=bytes(_pdf_bytes),
+            cc=[_reseller_email_cc] if _reseller_email_cc else None,
+            support_url=order_help_url(order_id),
+        )
+        if _account_terms_email:
+            background_tasks.add_task(
+                send_order_confirmed_account_terms,
+                payment_term_name=_terms.get("payment_term_name") or "your account terms",
+                **common,
+            )
+        else:
+            background_tasks.add_task(send_deposit_due_proforma, **common)
+        return None
+    except Exception as e:
+        logger.warning("proforma_invoice_failed", extra={"order_id": order_id, "error": str(e)})
+        return f"Could not send the order confirmation email: {str(e)}"
+
+
+
 async def _confirm_order_core(
     order_id: int,
     current_user: dict,
@@ -2210,39 +2291,18 @@ async def _confirm_order_core(
     # confirm — the order is already confirmed in Odoo at this point regardless.
     # Skipped for sample orders — every line is priced at R0.00, so there is no
     # deposit due and no invoice for the customer to act on.
-    try:
-        if not _is_sample_ticket:
-            _customer_email = None
-            if partner:
-                _p_rows = odoo.read("res.partner", [partner[0]], fields=["email"])
-                _customer_email = _p_rows[0].get("email") if _p_rows else None
-            if not _customer_email:
-                warnings.append("Customer has no email on file — proforma invoice was not sent")
-            else:
-                # 'sale.report_saleorder_pro_forma' — NOT '..._pro_forma_invoice'
-                # (2026-08-14, live-verified: the report's own technical name
-                # changed on this Odoo version). Fetched via fetch_report_pdf's
-                # session-based HTTP path, not XML-RPC — Odoo now rejects
-                # calling ir.actions.report._render_qweb_pdf (a private method)
-                # remotely; see odoo_client.py for the full writeup.
-                _pdf_bytes = fetch_report_pdf("sale.report_saleorder_pro_forma", [order_id])
-                _reseller_email_cc = None
-                if _owning_reseller_id:
-                    _res_email_doc = await col("resellers").find_one({"id": _owning_reseller_id}, {"email": 1, "_id": 0})
-                    _reseller_email_cc = _res_email_doc.get("email") if _res_email_doc else None
-                background_tasks.add_task(
-                    send_deposit_due_proforma,
-                    customer_email=_customer_email,
-                    customer_name=partner[1] if partner else "",
-                    order_ref=_order_ref_str,
-                    order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
-                    pdf_bytes=bytes(_pdf_bytes),
-                    cc=[_reseller_email_cc] if _reseller_email_cc else None,
-                    support_url=order_help_url(order_id),
-                )
-    except Exception as e:
-        logger.warning("proforma_invoice_failed", extra={"order_id": order_id, "error": str(e)})
-        warnings.append(f"Could not send proforma invoice: {str(e)}")
+    if not _is_sample_ticket and partner:
+        _w = await _send_order_confirmation_email(
+            order_id=order_id,
+            partner=partner,
+            order_ref=_order_ref_str,
+            order_total=float(pre_rows[0].get("amount_total", 0)) if pre_rows else 0,
+            company_id=order_company_id,
+            owning_reseller_id=_owning_reseller_id,
+            background_tasks=background_tasks,
+        )
+        if _w:
+            warnings.append(_w)
 
     return {
         "success": True,

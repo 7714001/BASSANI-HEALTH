@@ -54,7 +54,14 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
   // deposit not yet registered.
   const AWAITING_DEPOSIT_STATUSES = ["sale_order", "awaiting_deposit"];
   const depositDone = !!packing || !["open", "quote", ...AWAITING_DEPOSIT_STATUSES].includes(ticket.status);
-  steps.push({
+  // 8.68 — an order released on account (approved account customer, no
+  // deposit) clears this same gate a different way.
+  const onAccount = ticket.payment_arrangement === "on_account" || !!ticket.released_on_account_at;
+  steps.push(onAccount ? {
+    key: "deposit", label: "Released on Account", icon: FileText, state: "done",
+    at: ticket.released_on_account_at, by: ticket.released_on_account_by_name,
+    sub: ticket.on_account_payment_term?.name ? `${ticket.on_account_payment_term.name} terms, no deposit` : "No deposit",
+  } : {
     key: "deposit", label: "Deposit Registered", icon: FileText,
     state: depositDone ? "done" : (AWAITING_DEPOSIT_STATUSES.includes(ticket.status) ? "current" : "pending"),
     sub: !depositDone && AWAITING_DEPOSIT_STATUSES.includes(ticket.status) ? "Awaiting Finance" : null,
@@ -150,20 +157,25 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
     ? invoices?.find(i => i.invoice_id === packing.invoice_id)
     : null;
 
+  // On account there's no deposit, so the final invoice is the whole amount:
+  // "Payment", not "Balance Payment", and the due date matters most.
+  const payNoun = onAccount ? "Payment" : "Balance Payment";
+  const finalPaid = finalInv && ["paid", "in_payment"].includes(finalInv.payment_state);
   if (finalInv) {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name });
     steps.push({
-      key: "paid", label: finalInv.payment_state === "paid" ? "Balance Payment Received" : "Balance Payment Pending",
-      icon: Check, state: finalInv.payment_state === "paid" ? "done" : "current",
+      key: "paid", label: finalPaid ? `${payNoun} Received` : `${payNoun} Pending`,
+      icon: Check, state: finalPaid ? "done" : "current",
+      sub: !finalPaid && onAccount && finalInv.due_date ? `Due ${fmtDate(finalInv.due_date)}` : null,
     });
   } else {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "pending" });
-    steps.push({ key: "paid", label: "Balance Payment Received", icon: Check, state: "pending" });
+    steps.push({ key: "paid", label: `${payNoun} Received`, icon: Check, state: "pending" });
   }
 
   steps.push({
     key: "collected", label: "Collected", icon: CheckCircle2,
-    state: packing?.collected_at ? "done" : (finalInv?.payment_state === "paid" || packing?.status === "complete" ? "current" : "pending"),
+    state: packing?.collected_at ? "done" : (finalPaid || packing?.status === "complete" ? "current" : "pending"),
     at: packing?.collected_at, by: packing?.collected_by,
   });
 

@@ -1152,7 +1152,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
             # invoice was newly created above or an existing not-yet-linked
             # one was just found and reused.
             try:
-                _inv_rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id", "amount_total", "payment_state", "payment_reference"])
+                _inv_rows = odoo.read("account.move", [invoice_id], fields=["name", "partner_id", "amount_total", "payment_state", "payment_reference", "invoice_date_due"])
                 _inv = _inv_rows[0] if _inv_rows else {}
                 _inv_partner = _inv.get("partner_id")
                 _customer_email = None
@@ -1176,6 +1176,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                         payment_state=_inv.get("payment_state"),
                         payment_reference=_inv.get("payment_reference"),
                         support_url=order_help_url(sale_order_id),
+                        due_date=_inv.get("invoice_date_due") or None,
                     )
                     invoice_sent = True
                     # Chatter note (2026-08-28) — see the matching note in

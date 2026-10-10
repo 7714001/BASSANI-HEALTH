@@ -149,6 +149,7 @@ export default function SalesTickets() {
   const isReseller      = user?.role === "reseller";
   const canDrive        = can("tickets.sales") || isReseller;
   const canFinance      = can("tickets.finance_confirm");
+  const canRelease      = can("tickets.release_on_account");   // 8.68
   const canManage       = can("tickets.manage");
   const canConfirmOrder = can("orders.confirm") || isReseller;
   // Reconciliation wizard (2026-08-28) — each retroactive step requires its
@@ -1519,6 +1520,14 @@ export default function SalesTickets() {
   // historical order linked in via Link Existing Order).
   const [existingInvoices, setExistingInvoices] = useState([]);
   const [usingExistingInvoiceId, setUsingExistingInvoiceId] = useState(null);
+  // 8.68 — second option at the deposit gate: release on account (approved
+  // account customer, no deposit, invoiced unpaid at Mark Complete).
+  const [depositMode, setDepositMode]       = useState("deposit"); // "deposit" | "release"
+  const [releaseCheck, setReleaseCheck]     = useState(null);
+  const [releaseCheckLoading, setReleaseCheckLoading] = useState(false);
+  const [releaseReason, setReleaseReason]   = useState("");
+  const [releaseSaving, setReleaseSaving]   = useState(false);
+  const [sendingDepositProforma, setSendingDepositProforma] = useState(false);
 
   // Opens the modal immediately (2026-08-26, found live — the three parallel
   // fetches below, especially the Odoo payment-journals call, took long
@@ -1532,7 +1541,18 @@ export default function SalesTickets() {
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     setExistingInvoices([]);
     setDepositJournals([]);
+    setDepositMode(canFinance ? "deposit" : "release");
+    setReleaseCheck(null);
+    setReleaseReason("");
     setDepositModal(true);
+    // Release eligibility loads independently of the deposit details, so a
+    // slow Odoo journal fetch never holds up the release option or vice versa.
+    setReleaseCheckLoading(true);
+    api.get(`/api/tickets/${detail.id}/release-on-account/check`)
+      .then(r => setReleaseCheck(r.data))
+      .catch(e => setReleaseCheck({ eligible: false, blocks: [e.response?.data?.detail || "Could not check account terms"], warnings: [] }))
+      .finally(() => setReleaseCheckLoading(false));
+    if (!canFinance) return;  // deposit details need finance permission
     setDepositDetailsLoading(true);
     (async () => {
       try {
@@ -1602,6 +1622,30 @@ export default function SalesTickets() {
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
     finally { setDepositSaving(false); }
+  };
+
+  const releaseOnAccount = async () => {
+    if (!releaseReason.trim()) return toast.error("A reason is required");
+    setReleaseSaving(true);
+    const tid = detail.id;
+    try {
+      const { data } = await api.post(`/api/tickets/${tid}/release-on-account`, { reason: releaseReason.trim() });
+      if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+      else toast.success("Released on account — order queued for packing");
+      setDepositModal(false);
+      refreshDetail(tid);
+    } catch (e) { toast.error(e.response?.data?.detail || "Release on account failed"); }
+    finally { setReleaseSaving(false); }
+  };
+
+  const sendDepositProforma = async () => {
+    setSendingDepositProforma(true);
+    try {
+      await api.post(`/api/tickets/${detail.id}/send-deposit-proforma`);
+      toast.success("Deposit pro-forma emailed to the customer");
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send the pro-forma"); }
+    finally { setSendingDepositProforma(false); }
   };
 
   // ── Balance Payment Registration ─────────────────────────────────────────
@@ -1677,6 +1721,17 @@ export default function SalesTickets() {
   const detailInvoices    = detailOrder?.invoices || [];
   const detailTotalPaid   = detailInvoices.reduce((s, i) => s + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
   const detailOutstanding = Math.max(0, (detailOrder?.amount_total || 0) - detailTotalPaid);
+  // 8.68 — an order released on account has no deposit; the only invoice is
+  // the final one raised at Mark Complete, so a payment can only be recorded
+  // once that exists.
+  const isOnAccount       = !!detail?.released_on_account_at;
+  const hasPayableInvoice = detailInvoices.some(i => i.move_type === "out_invoice" && i.state === "posted" && (i.amount_residual || 0) > 0);
+  const balanceReady      = !detail?.is_sample && detail?.order_id && detailOutstanding > 0
+    && (detail?.payment_confirmed_at || (isOnAccount && hasPayableInvoice));
+  const awaitingDepositGate = !detail?.is_sample && detail?.status === "awaiting_deposit"
+    && !detail?.payment_confirmed_at && !isOnAccount;
+  const depositGateLabel = canFinance && canRelease ? "Register Deposit / Release on Account"
+    : canRelease ? "Release on Account" : "Register Deposit";
 
   // ── Next Step (2026-08-26) ───────────────────────────────────────────────────
   // Enterprise-pattern single "what do I do now" indicator (Salesforce Path /
@@ -1709,22 +1764,24 @@ export default function SalesTickets() {
       desc: "Confirm this order to move it toward a deposit and packing.",
       onClick: () => confirmOrder(), disabled: confirming,
     };
-  } else if (!detail?.is_sample && detail?.status === "awaiting_deposit" && !detail?.payment_confirmed_at && canFinance) {
+  } else if (awaitingDepositGate && (canFinance || canRelease)) {
     nextAction = {
-      key: "registerDeposit", icon: DollarSign, label: "Register Deposit",
-      desc: "A deposit is required before this order can be queued for packing.",
+      key: "registerDeposit", icon: DollarSign, label: depositGateLabel,
+      desc: canRelease
+        ? "A deposit is required before this order can be queued for packing, unless the customer is approved for account terms and you release it on account."
+        : "A deposit is required before this order can be queued for packing.",
       onClick: openDepositModal,
     };
-  } else if (!detail?.is_sample && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
+  } else if (!detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
       key: "confirmPayment", icon: CreditCard, label: saving ? "Confirming…" : "Confirm Payment",
       desc: "Confirm the payment already registered against this order's invoice.",
       onClick: confirmPayment, disabled: saving,
     };
-  } else if (!detail?.is_sample && detail?.payment_confirmed_at && detail?.order_id && canFinance && detailOutstanding > 0) {
+  } else if (balanceReady && canFinance) {
     nextAction = {
-      key: "registerBalance", icon: CreditCard, label: "Register Balance Payment",
-      desc: "A balance remains outstanding on this order.",
+      key: "registerBalance", icon: CreditCard, label: isOnAccount ? "Register Payment" : "Register Balance Payment",
+      desc: isOnAccount ? "This order was released on account. Record the customer's payment when it arrives." : "A balance remains outstanding on this order.",
       onClick: openBalanceModal,
     };
   } else if (orderIsComplete && canRequestFeedback && detail?.order_id && !detail?.feedback_requested_at && !orderFeedback?.feedback) {
@@ -1755,6 +1812,8 @@ export default function SalesTickets() {
       waitingText = "Order packed and invoiced — awaiting customer collection.";
     } else if (detail.status === "awaiting_deposit" && detail.payment_confirmed_at) {
       waitingText = "Deposit registered — waiting for the order to reach the packing board.";
+    } else if (detail.status === "awaiting_deposit" && isOnAccount) {
+      waitingText = "Released on account — waiting for the order to reach the packing board.";
     } else {
       waitingText = "No action needed right now.";
     }
@@ -1773,18 +1832,18 @@ export default function SalesTickets() {
   const showEditQuote         = detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive;
   const showSendQuote         = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
   const showConfirmOrderBtn   = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
-  const showRegisterDeposit   = !detail?.is_sample && detail?.status === "awaiting_deposit" && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "registerDeposit";
-  const showConfirmPaymentBtn = !detail?.is_sample && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
+  const showRegisterDeposit   = awaitingDepositGate && (canFinance || canRelease) && nextAction?.key !== "registerDeposit";
+  const showConfirmPaymentBtn = !detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
   // detailOutstanding > 0 is the direct fix for the bug this round started
   // from: this button used to show for any ticket with payment_confirmed_at
   // set, even one where the full amount was already registered as the
   // "deposit" (the Fixed Amount option supports that), leaving nothing
   // actually outstanding to register.
-  const showRegisterBalance   = !detail?.is_sample && detail?.payment_confirmed_at && detail?.order_id && canFinance && detailOutstanding > 0 && nextAction?.key !== "registerBalance";
+  const showRegisterBalance   = balanceReady && canFinance && nextAction?.key !== "registerBalance";
   const showMarkPopReviewed   = detail?.pop_awaiting_review && canFinance;
   const showMakeRecurring     = detail?.order_id && !detail?.recurring_order_id && canDrive;
   const showInvoiceActions    = !detail?.is_sample && detail?.invoice_id && !isReseller && canFinance;
-  const showResetInvoice      = showInvoiceActions && !detail?.payment_confirmed_at;
+  const showResetInvoice      = showInvoiceActions && !detail?.payment_confirmed_at && !isOnAccount;
   const showCancelQuote       = detail?.order_id && PRE_CONFIRM.has(detail?.status) && canDrive;
   const showLinkOrder         = !detail?.order_id && canDrive;
   const showNotInterested     = !detail?.order_id && canDrive;
@@ -2511,6 +2570,21 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
+                    {/* 8.68 — released on account: who released it and why */}
+                    {detail.released_on_account_at && (
+                      <div className="text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5">
+                        <p>
+                          <span className="font-semibold">On account</span>
+                          {detail.on_account_payment_term?.name && <span className="text-teal-700"> · {detail.on_account_payment_term.name}, no deposit</span>}
+                        </p>
+                        {!isReseller && (
+                          <p className="text-teal-600 mt-0.5">
+                            Released by {detail.released_on_account_by_name || "staff"} on {fmtDate(detail.released_on_account_at)}
+                            {detail.released_on_account_reason && <>: {detail.released_on_account_reason}</>}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {detail.is_sample && (
                       <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                         <span className="font-semibold">Sample order</span>
@@ -3047,10 +3121,11 @@ export default function SalesTickets() {
                         {showPaymentGroup && (
                           <p className={`px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-300 uppercase tracking-wide ${showOrderGroup ? "mt-1 border-t border-gray-50" : ""}`}>Payment</p>
                         )}
-                        {/* 8.47 — the only path onto the packing board: a registered 50% deposit */}
+                        {/* 8.47 — the path onto the packing board: a registered 50% deposit,
+                            or (8.68) an authorised release on account */}
                         {showRegisterDeposit && (
                           <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
-                            <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
+                            <DollarSign size={14} className="text-amber-500 shrink-0" />{depositGateLabel}
                           </button>
                         )}
 
@@ -3063,7 +3138,7 @@ export default function SalesTickets() {
 
                         {showRegisterBalance && (
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
-                            <CreditCard size={14} className="text-blue-500 shrink-0" />Register Balance Payment
+                            <CreditCard size={14} className="text-blue-500 shrink-0" />{isOnAccount ? "Register Payment" : "Register Balance Payment"}
                           </button>
                         )}
 
@@ -3653,10 +3728,117 @@ export default function SalesTickets() {
 
         {/* 8.47 — Deposit registration modal */}
         {depositModal && (
-          <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
+          <Modal title={depositGateLabel} onClose={() => setDepositModal(false)}>
+            {/* 8.68 — two ways through the deposit gate */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {[
+                { value: "deposit", label: "Register Deposit", desc: "Customer pays a deposit before packing", allowed: canFinance },
+                { value: "release", label: "Release on Account", desc: "Approved account customer, no deposit", allowed: canFinance || canRelease },
+              ].map(opt => (
+                <button key={opt.value} type="button" disabled={!opt.allowed}
+                  onClick={() => setDepositMode(opt.value)}
+                  className={`text-left px-3 py-2.5 rounded-xl border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${depositMode === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-gray-900">{opt.label}</span>
+                    {opt.value === "release" && !releaseCheckLoading && releaseCheck && (
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${releaseCheck.eligible ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {releaseCheck.eligible ? "Eligible" : "Not eligible"}
+                      </span>
+                    )}
+                  </span>
+                  <span className="block text-xs text-gray-400 mt-0.5">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            {depositMode === "release" && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  The order goes onto the packing board now with no deposit. The full invoice is raised at Mark Complete,
+                  unpaid, and is due according to the customer's payment terms.
+                </p>
+                {releaseCheckLoading || !releaseCheck ? (
+                  <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 flex items-center gap-2">
+                    <Loader2 size={13} className="animate-spin text-gray-400 shrink-0" />
+                    <p className="text-xs text-gray-500">Checking account terms and credit limit…</p>
+                  </div>
+                ) : (
+                  <>
+                    {releaseCheck.terms && (
+                      <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                        {[
+                          ["Company", releaseCheck.company_name || "Not known"],
+                          ["Payment terms", releaseCheck.payment_term?.name || "None set"],
+                          ["Credit limit", fmtR(releaseCheck.credit_limit || 0)],
+                          ["Current balance", fmtR(releaseCheck.balance || 0)],
+                          ["Released, not yet invoiced", fmtR(releaseCheck.pending_on_account || 0)],
+                          ["Available credit", fmtR(Math.max(releaseCheck.available_credit || 0, 0))],
+                          ["This order", fmtR(releaseCheck.order_total || 0)],
+                          ["Agreement", releaseCheck.terms.reference || "Not recorded"],
+                        ].map(([k, v]) => (
+                          <div key={k}>
+                            <p className="text-gray-400">{k}</p>
+                            <p className="font-medium text-gray-800">{v}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(releaseCheck.blocks || []).length > 0 && (
+                      <div className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
+                        <p className="text-xs font-semibold text-red-800 mb-1">This order can't be released on account</p>
+                        <ul className="list-disc pl-4 space-y-0.5">
+                          {releaseCheck.blocks.map((b, i) => <li key={i} className="text-xs text-red-700">{b}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {(releaseCheck.warnings || []).length > 0 && (
+                      <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
+                        {releaseCheck.warnings.map((w, i) => <p key={i} className="text-xs text-amber-800">{w}</p>)}
+                      </div>
+                    )}
+                    {releaseCheck.eligible && !canRelease && (
+                      <p className="mb-3 text-xs text-gray-500">
+                        You don't have permission to release orders on account. Ask someone who does, or register a deposit instead.
+                      </p>
+                    )}
+                    {releaseCheck.eligible && canRelease && (
+                      <FormGroup label="Reason" required>
+                        <Input value={releaseReason} onChange={e => setReleaseReason(e.target.value)}
+                          placeholder="e.g. 30-day account per agreement ACC-0042" autoFocus />
+                      </FormGroup>
+                    )}
+                  </>
+                )}
+                <div className="flex justify-end gap-2 mt-4">
+                  <BtnSecondary onClick={() => setDepositModal(false)} disabled={releaseSaving}>Cancel</BtnSecondary>
+                  <BtnPrimary onClick={releaseOnAccount}
+                    disabled={releaseSaving || releaseCheckLoading || !releaseCheck?.eligible || !canRelease || !releaseReason.trim()}>
+                    {releaseSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                    Release on Account
+                  </BtnPrimary>
+                </div>
+              </div>
+            )}
+
+            {depositMode === "deposit" && (<>
             <p className="text-xs text-gray-500 mb-4">
               Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds.
             </p>
+            {/* An approved account customer was sent the no-deposit
+                confirmation at confirm time — if this order needs a deposit
+                after all, they need the deposit pro-forma first. */}
+            {releaseCheck?.terms?.status === "approved" && (
+              <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 flex items-start justify-between gap-3">
+                <p className="text-xs text-blue-800">
+                  This customer has account terms, so they were told no deposit is needed.
+                  {detail?.deposit_proforma_sent_at ? ` Deposit pro-forma sent ${fmtDate(detail.deposit_proforma_sent_at)}.` : " If this order needs a deposit, send them the deposit pro-forma first."}
+                </p>
+                <button onClick={sendDepositProforma} disabled={sendingDepositProforma}
+                  className="shrink-0 text-xs font-medium text-blue-700 hover:underline disabled:opacity-50">
+                  {sendingDepositProforma ? "Sending…" : detail?.deposit_proforma_sent_at ? "Resend" : "Send Deposit Pro-Forma"}
+                </button>
+              </div>
+            )}
             {/* Explicit loading banner (2026-08-26) — the submit button was
                 already disabled for this entire window (depositDetailsLoading
                 covers all three parallel fetches, including the existing-
@@ -3771,6 +3953,7 @@ export default function SalesTickets() {
                 Register in Odoo
               </BtnPrimary>
             </div>
+            </>)}
           </Modal>
         )}
 
@@ -4577,7 +4760,9 @@ export default function SalesTickets() {
                 <div className="flex items-center gap-1.5">
                   {t.payment_confirmed_at
                     ? <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 size={12} />Confirmed</span>
-                    : <span className="text-xs text-gray-400">—</span>
+                    : t.released_on_account_at
+                      ? <Badge color="teal">On Account</Badge>
+                      : <span className="text-xs text-gray-400">—</span>
                   }
                   {/* POP badge (2026-08-21) — independent of the Confirmed
                       badge above: a deposit can already be confirmed while a

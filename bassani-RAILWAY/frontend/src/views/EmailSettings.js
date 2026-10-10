@@ -186,6 +186,12 @@ const ROUTING_KEYS = [
     note: "This one always goes straight to the customer resolved from Odoo, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
   },
   {
+    key: "order_confirmed_account_terms", group: "orders", icon: Mail, previewOnly: true,
+    title: "Order Confirmed, Account Terms (Customer Notice)",
+    description: "Sent instead of the 50% deposit pro-forma when a customer approved for account terms confirms an order. Attaches the pro-forma and states their payment terms, with no deposit asked for.",
+    note: "This one always goes straight to the ordering customer, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
+  },
+  {
     key: "order_cc", group: "orders", icon: Mail,
     title: "Order CC",
     description: "CC'd on order placed and order confirmed emails sent to resellers.",

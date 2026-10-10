@@ -13,6 +13,7 @@ FastAPI's BackgroundTasks so they never block an API response:
 
 import html as _html
 import os
+from datetime import datetime
 import resend
 from config import get_settings
 
@@ -390,6 +391,50 @@ def send_deposit_due_proforma(
     )
 
 
+def send_order_confirmed_account_terms(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    order_total: float,
+    payment_term_name: str,
+    pdf_bytes: bytes,
+    cc: "list[str] | None" = None,
+    support_url: str = None,
+) -> None:
+    """Phase 8.68 — the account-terms counterpart to send_deposit_due_proforma,
+    sent at confirm time instead of it when the customer is approved for
+    account terms with the order's company. Same attached pro-forma (it is
+    the order document); no deposit is asked for, since the order is expected
+    to be released on account and invoiced on collection per the terms."""
+    if not customer_email:
+        return
+    body = (
+        _h1("Your order is confirmed")
+        + _p(f"Hi {customer_name},")
+        + _p("Thank you for your order. Please find your pro-forma invoice attached, "
+             "confirming the items and total.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Order total", f"R{order_total:,.2f}"),
+            ("Payment terms", f"<strong>{payment_term_name}</strong>"),
+        ], tint="#f0fdf9", border="#bbf7d0")
+        + _p("As you have an account with us, no deposit is needed. We will invoice "
+             "you once your order is ready, and payment is due according to your "
+             "account terms.")
+        + _divider()
+        + _p("We will let you know as soon as your order is ready for collection.", muted=True)
+        + _support_line(support_url)
+    )
+    _send(
+        customer_email, f"Order Confirmed: {order_ref}",
+        _wrap(body), attachments=[{
+            "filename": f"{order_ref} Pro-Forma Invoice.pdf",
+            "content": list(pdf_bytes),
+        }],
+        cc=cc or None,
+    )
+
+
 def send_quote_email(
     customer_email: str,
     customer_name: str,
@@ -436,6 +481,7 @@ def send_invoice_email(
     payment_state: str = None,
     payment_reference: str = None,
     support_url: str = None,
+    due_date: str = None,
 ) -> None:
     """Sent when the final delivery invoice is created and posted (after
     QA + RP sign-off, or a deliberate manual/resend send) — replaces the
@@ -447,10 +493,20 @@ def send_invoice_email(
     invoice is already settled, and if not, how to pay it — found missing
     2026-08-28 comparing this against Odoo's native 'Invoice: Sending'
     template wording. Both optional so a caller that hasn't fetched them
-    still gets the unpaid/pay-by-EFT wording, matching the common case."""
+    still gets the unpaid/pay-by-EFT wording, matching the common case.
+    due_date (8.68, ISO date string, account.move.invoice_date_due) adds a
+    Payment due row and wording when the invoice is still unpaid, which is
+    what an account-terms customer needs to know most."""
     if not customer_email:
         return
-    if payment_state in ("paid", "in_payment"):
+    is_paid = payment_state in ("paid", "in_payment")
+    due_display = None
+    if due_date and not is_paid:
+        try:
+            due_display = datetime.strptime(str(due_date)[:10], "%Y-%m-%d").strftime("%d %B %Y").lstrip("0")
+        except ValueError:
+            due_display = str(due_date)
+    if is_paid:
         payment_line = _p(
             "This invoice has been paid in full. No further action is needed.",
             muted=True,
@@ -458,7 +514,8 @@ def send_invoice_email(
     else:
         ref = payment_reference or invoice_ref
         payment_line = _p(
-            f"Please make payment to {settings.bank_name}, account number "
+            (f"Payment is due by {due_display}. " if due_display else "")
+            + f"Please make payment to {settings.bank_name}, account number "
             f"{settings.bank_account}, branch code {settings.bank_branch}, using "
             f"{ref} as your payment reference. Banking details are also included "
             "on the attached invoice."
@@ -471,7 +528,7 @@ def send_invoice_email(
             ("Order reference", f"<strong>{order_ref}</strong>"),
             ("Invoice number", f"<strong>{invoice_ref}</strong>"),
             ("Invoice total", f"R{amount_total:,.2f}"),
-        ])
+        ] + ([("Payment due", f"<strong>{due_display}</strong>")] if due_display else []))
         + payment_line
         + _divider()
         + (_support_line(support_url, "Have a question about this invoice?") if support_url

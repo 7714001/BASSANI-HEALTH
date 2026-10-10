@@ -707,7 +707,7 @@ async def send_invoice_standalone(
     odoo = get_odoo_client()
     records = odoo.read(
         "account.move", [invoice_id],
-        fields=["name", "state", "partner_id", "amount_total", "invoice_origin", "payment_state", "payment_reference"],
+        fields=["name", "state", "partner_id", "amount_total", "invoice_origin", "payment_state", "payment_reference", "invoice_date_due"],
     )
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -739,6 +739,7 @@ async def send_invoice_standalone(
             pdf_bytes=bytes(pdf_bytes),
             payment_state=inv.get("payment_state"),
             payment_reference=inv.get("payment_reference"),
+            due_date=inv.get("invoice_date_due") or None,
         )
     except HTTPException:
         raise

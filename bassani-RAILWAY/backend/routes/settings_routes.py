@@ -20,7 +20,7 @@ from services.email_service import (
     send_recurring_order_accepted_internal, send_recurring_order_declined_internal,
     send_recurring_order_skipped_internal, send_recurring_order_needs_confirm_internal,
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
-    send_order_confirmed_partial_customer,
+    send_order_confirmed_partial_customer, send_order_confirmed_account_terms,
     send_pop_uploaded_notification,
     send_discount_request_notification,
     send_support_case_new_internal, send_support_case_received, send_support_sla_escalation,
@@ -118,6 +118,14 @@ TEST_EMAIL_SENDERS: dict = {
         order_total=12500.00, order_id="999",
         shipped_lines=[{"name": "Test Product A", "qty": 10}],
         backorder_lines=[{"name": "Test Product B", "qty_short": 5}],
+    ),
+    # 8.68 — preview-only, sent to the ordering customer at confirm time when
+    # they're approved for account terms. A one-line placeholder stands in for
+    # the real pro-forma PDF, which only exists for a real order.
+    "order_confirmed_account_terms": lambda to: send_order_confirmed_account_terms(
+        customer_email=to, customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        order_total=12500.00, payment_term_name="30 Days",
+        pdf_bytes=b"%PDF-1.4\n%%EOF\n",
     ),
     "order_cc": lambda to: send_order_confirmed(
         order_ref="S00999", customer_name="Test Pharmacy (Pty) Ltd", order_total=12500.00,

@@ -26,7 +26,7 @@ from auth import (
     get_current_user, get_user_by_username, require_super_admin, ADMIN_ROLES, TICKET_ROLES,
 )
 from routes.monitor_routes import broadcast_monitor_refresh
-from routes.order_routes import _queue_packing_board
+from routes.order_routes import _queue_packing_board, _send_order_confirmation_email
 from routes.packing_board_routes import push_update as _push_packing_board_update
 from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from warehouse_context import company_context
@@ -39,7 +39,8 @@ from services.email_service import (
 )
 from support_links import order_help_url
 from services.r2_client import r2_put, r2_presign
-from ownership import get_owned_partner_ids, is_partner_owned_by
+from ownership import get_owned_partner_ids, is_partner_owned_by, get_owning_reseller_id
+from account_terms import evaluate_release, commercial_partner_id
 from portal_sales_agent import sync_portal_sales_agent
 from discount_requests import cancel_pending_request
 from services.age_tier import ticket_age_fields
@@ -328,6 +329,20 @@ async def _cancel_linked_packing_board(order_id, reason: Optional[str] = None, a
             await broadcast_monitor_refresh()
     except Exception as e:
         logger.warning("packing_board_cancel_sync_failed order_id=%s error=%s", order_id, e)
+
+
+def _deposit_gate_cleared(ticket: dict) -> bool:
+    """Has this ticket cleared the deposit gate (8.47)? True once a deposit is
+    confirmed, the order was released on account by an authorised user (8.68),
+    or it's a sample order (nothing to deposit). The single definition every
+    "may this order reach the packing board" check uses — payment_confirmed_at
+    alone means money received, which an on-account order deliberately
+    doesn't have at this point."""
+    return bool(
+        ticket.get("payment_confirmed_at")
+        or ticket.get("released_on_account_at")
+        or ticket.get("is_sample")
+    )
 
 
 async def _compute_override_gaps(ticket: dict) -> list:
@@ -1031,11 +1046,11 @@ async def update_ticket_stage(
             # this override may only ever RETRY queueing after a deposit (or the
             # sample-order exemption) already genuinely happened; it must never
             # become a second way to reach the packing board without one.
-            if not ticket.get("payment_confirmed_at") and not ticket.get("is_sample"):
+            if not _deposit_gate_cleared(ticket):
                 raise HTTPException(
                     status_code=400,
-                    detail="A 50% deposit must be registered before this order can reach the packing board. "
-                           "Use Register Deposit — Admin Override cannot skip this gate.",
+                    detail="A 50% deposit must be registered (or the order released on account) before it can "
+                           "reach the packing board. Admin Override cannot skip this gate.",
                 )
             try:
                 await _queue_packing_board(_target_order_id, background_tasks)
@@ -1889,6 +1904,8 @@ async def use_existing_invoice(
         )
     if ticket.get("payment_confirmed_at"):
         raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+    if ticket.get("released_on_account_at"):
+        raise HTTPException(status_code=400, detail="This order was already released on account — no deposit is needed")
 
     order_id = ticket["order_id"]
     odoo = get_odoo_client()
@@ -2159,6 +2176,8 @@ async def register_deposit(
         )
     if ticket.get("payment_confirmed_at"):
         raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+    if ticket.get("released_on_account_at"):
+        raise HTTPException(status_code=400, detail="This order was already released on account — no deposit is needed")
 
     invoice_type = body.invoice_type or "fixed"
     if invoice_type not in ("fixed", "percentage"):
@@ -2387,6 +2406,247 @@ async def register_deposit(
             f"{packing_board_warning}. Use Admin Override once resolved to retry."
         )
     return resp
+
+
+# ── 8.68 — Release on account (no deposit) ───────────────────────────────────
+
+class ReleaseOnAccountBody(BaseModel):
+    reason: str
+
+
+async def _load_release_context(ticket_id: str):
+    """Shared by the check and the release itself: the ticket, its order's
+    company/total/state/terms, and the customer's commercial partner id."""
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order — build the quote first")
+    odoo = get_odoo_client()
+    try:
+        rows = odoo.read(
+            "sale.order", [ticket["order_id"]],
+            fields=["name", "state", "company_id", "amount_total", "partner_id", "payment_term_id"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    order = rows[0]
+    _co = order.get("company_id")
+    company_id = _co[0] if _co else None
+    raw_partner = _ticket_customer_partner_id(ticket) or ((order.get("partner_id") or [None])[0])
+    partner_id = commercial_partner_id(odoo, raw_partner) if raw_partner else None
+    return oid, ticket, odoo, order, company_id, partner_id
+
+
+def _release_stage_blocks(ticket: dict, order: dict) -> list:
+    """Pipeline-state reasons release can't happen, separate from the credit
+    decision (which evaluate_release() owns)."""
+    blocks = []
+    if ticket.get("exit_status"):
+        blocks.append(f"Ticket is already closed as '{ticket['exit_status']}'.")
+    if ticket.get("status") != "awaiting_deposit":
+        blocks.append(f"The order must be confirmed and awaiting a deposit (current stage: {ticket.get('status')}).")
+    if ticket.get("payment_confirmed_at"):
+        blocks.append("A deposit is already registered on this order.")
+    if ticket.get("released_on_account_at"):
+        blocks.append("This order was already released on account.")
+    if ticket.get("is_sample"):
+        blocks.append("Sample orders don't need a deposit or a release.")
+    if order.get("state") != "sale":
+        blocks.append(f"Order {order.get('name')} must be confirmed first (current state: {order.get('state')}).")
+    return blocks
+
+
+@router.get("/{ticket_id}/release-on-account/check")
+async def check_release_on_account(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.release_on_account", "tickets.finance_confirm")),
+):
+    """Read-only: can this order be released on account, and why not. Powers
+    the Register Deposit window's second option. Reads Odoo live."""
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    if not partner_id:
+        raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
+    result = await evaluate_release(odoo, partner_id, company_id, float(order.get("amount_total") or 0),
+                                    exclude_ticket_id=oid)
+    stage_blocks = _release_stage_blocks(ticket, order)
+    result["blocks"] = stage_blocks + result["blocks"]
+    result["eligible"] = not result["blocks"]
+    result["order_ref"] = order.get("name")
+    result["partner_id"] = partner_id
+    return result
+
+
+@router.post("/{ticket_id}/release-on-account")
+async def release_on_account(
+    ticket_id: str,
+    body: ReleaseOnAccountBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.release_on_account")),
+):
+    """Phase 8.68 — the second way through the deposit gate. For a customer
+    approved for account terms with the order's company, within their credit
+    limit, an authorised user releases the confirmed order to the packing
+    board without a deposit. No invoice is created here: the full invoice is
+    raised at Mark Complete as for every order (_create_final_invoice), left
+    unpaid, due per the customer's payment terms. Finance records payment
+    later with Register Balance Payment.
+
+    Nothing is written to Odoo except, if needed, the order's payment terms,
+    so the invoice's due date is right."""
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required (e.g. the account agreement reference)")
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    stage_blocks = _release_stage_blocks(ticket, order)
+    if stage_blocks:
+        raise HTTPException(status_code=400, detail=" ".join(stage_blocks))
+    if not partner_id:
+        raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
+
+    order_total = float(order.get("amount_total") or 0)
+    check = await evaluate_release(odoo, partner_id, company_id, order_total, exclude_ticket_id=oid)
+    if not check["eligible"]:
+        await audit_log(
+            "ticket.release_on_account_blocked", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"blocks": check["blocks"], "order_id": ticket["order_id"]},
+        )
+        raise HTTPException(status_code=400, detail=" ".join(check["blocks"]))
+
+    # The invoice's due date comes from the sale order's own payment terms. If
+    # the order has none, or only immediate terms, set the customer's approved
+    # terms for this company onto it now — before any invoice exists.
+    term = check["payment_term"]
+    order_term = order.get("payment_term_id")
+    term_note = None
+    if term and (not order_term or order_term[0] != term["id"]):
+        from account_terms import is_credit_term
+        if not order_term or not is_credit_term(odoo, order_term[0]):
+            try:
+                odoo_call(
+                    "sale.order", "write",
+                    [[ticket["order_id"]], {"payment_term_id": term["id"]}],
+                    {"context": company_context(company_id)},
+                )
+                term_note = f"Order payment terms set to {term['name']}"
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not set payment terms on the order: {str(e)}")
+    effective_term = term if (term_note or not order_term) else {"id": order_term[0], "name": order_term[1]}
+
+    now = datetime.now(timezone.utc)
+    actor_name = _actor(current_user)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_arrangement": "on_account",
+                "released_on_account_at": now,
+                "released_on_account_by": current_user["id"],
+                "released_on_account_by_name": actor_name,
+                "released_on_account_reason": reason,
+                "on_account_company_id": company_id,
+                "on_account_amount": order_total,
+                "on_account_payment_term": effective_term,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": actor_name,
+                "at": now,
+                "note": f"Released on account ({(effective_term or {}).get('name', 'account terms')}), no deposit: {reason}",
+            }},
+        },
+    )
+    await audit_log(
+        "ticket.release_on_account", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""), user=current_user,
+        before={"status": ticket["status"], "payment_arrangement": ticket.get("payment_arrangement")},
+        after={"payment_arrangement": "on_account"},
+        detail={
+            "reason": reason, "order_id": ticket["order_id"], "order_total": order_total,
+            "company_id": company_id, "payment_term": effective_term, "term_note": term_note,
+            "credit_limit": check["credit_limit"], "balance": check["balance"],
+            "pending_on_account": check["pending_on_account"], "total_overdue": check["total_overdue"],
+            "warnings": check["warnings"],
+        },
+    )
+
+    # Same queue + non-blocking failure handling as register_deposit: the
+    # release is committed; a queue failure stays flagged on the ticket until
+    # retried via Admin Override (which accepts a released order, see
+    # _deposit_gate_cleared).
+    packing_board_warning = None
+    try:
+        await _queue_packing_board(ticket["order_id"], background_tasks)
+    except Exception as e:
+        packing_board_warning = str(e)
+        logger.warning("queue_packing_board_after_release_failed",
+                       extra={"ticket_id": ticket_id, "order_id": ticket["order_id"], "error": packing_board_warning})
+        await col("tickets").update_one(
+            {"_id": oid},
+            {"$set": {"packing_board_queue_error": packing_board_warning, "packing_board_queue_failed_at": now}},
+        )
+        await audit_log(
+            "ticket.packing_board_queue_failed", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"order_id": ticket["order_id"], "error": packing_board_warning},
+        )
+
+    await broadcast_monitor_refresh()
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    resp = {"success": True, "warnings": check["warnings"]}
+    if packing_board_warning:
+        resp["warning"] = (
+            f"Released on account, but the order could not be queued for packing: "
+            f"{packing_board_warning}. Use Admin Override once resolved to retry."
+        )
+    return resp
+
+
+@router.post("/{ticket_id}/send-deposit-proforma")
+async def send_deposit_proforma(
+    ticket_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm", "tickets.release_on_account")),
+):
+    """8.68 — manually email the customer the 50% deposit-due pro-forma. An
+    account-terms customer is sent the no-deposit confirmation at confirm
+    time; if staff decide this particular order needs a deposit after all,
+    this sends the deposit version instead."""
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    if ticket.get("status") != "awaiting_deposit" or ticket.get("payment_confirmed_at") or ticket.get("released_on_account_at"):
+        raise HTTPException(status_code=400, detail="This order isn't waiting on a deposit")
+    partner = order.get("partner_id")
+    if not partner:
+        raise HTTPException(status_code=400, detail="Order has no customer")
+    owning = await get_owning_reseller_id(partner_id) if partner_id else None
+    warning = await _send_order_confirmation_email(
+        order_id=ticket["order_id"], partner=partner, order_ref=order.get("name") or f"#{ticket['order_id']}",
+        order_total=float(order.get("amount_total") or 0), company_id=company_id,
+        owning_reseller_id=owning, background_tasks=background_tasks, force_deposit=True,
+    )
+    if warning:
+        raise HTTPException(status_code=400, detail=warning)
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"deposit_proforma_sent_at": now, "updated_at": now},
+         "$push": {"stage_history": {
+             "status": ticket["status"], "exit_status": None,
+             "actor_id": current_user["id"], "actor_name": _actor(current_user),
+             "at": now, "note": "Deposit pro-forma emailed to the customer",
+         }}},
+    )
+    await audit_log("ticket.send_deposit_proforma", "ticket", ticket_id,
+                    entity_label=ticket.get("customer_name", ""), user=current_user)
+    return {"success": True}
 
 
 @router.get("/{ticket_id}/invoice-balance")
@@ -2989,7 +3249,7 @@ async def send_invoice(
     odoo = get_odoo_client()
 
     # Verify invoice exists and is posted
-    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id", "amount_total", "payment_state", "payment_reference"])
+    records = odoo.read("account.move", [invoice_id], fields=["name", "state", "partner_id", "amount_total", "payment_state", "payment_reference", "invoice_date_due"])
     if not records:
         raise HTTPException(status_code=404, detail="Invoice not found in Odoo")
     inv = records[0]
@@ -3031,6 +3291,7 @@ async def send_invoice(
                 payment_state=inv.get("payment_state"),
                 payment_reference=inv.get("payment_reference"),
                 support_url=order_help_url(ticket.get("order_id")) if ticket.get("order_id") else None,
+                due_date=inv.get("invoice_date_due") or None,
             )
             invoice_email_sent = True
     except Exception as e:
