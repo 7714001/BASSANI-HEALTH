@@ -302,18 +302,23 @@ export default function OrdersTickets() {
     finally { setBusyId(null); }
   };
 
+  // The list's "Check backorder stock" button opens an explanation first and
+  // only runs the check from inside it (2026-10-11).
+  const [checkStockOpen, setCheckStockOpen] = useState(false);
+
   const handleCheckStock = async () => {
+    setCheckStockOpen(false);
     setBusyId("check-stock");
     try {
       const r = await api.get("/api/packing/backorders/check-stock");
       const parts = [];
       if (r.data.ready > 0) parts.push(`${r.data.ready} backorder${r.data.ready !== 1 ? "s" : ""} now have stock — notifications sent`);
-      if (r.data.items_updated > 0) parts.push(`${r.data.items_updated} order${r.data.items_updated !== 1 ? "s" : ""} had stale "Backorder" labels corrected`);
+      if (r.data.items_updated > 0) parts.push(`${r.data.items_updated} order${r.data.items_updated !== 1 ? "s" : ""} had their line stock status updated`);
       if (parts.length > 0) {
         toast.success(parts.join(". "));
         load();
       } else {
-        toast("No changes — stock availability hasn't changed", { icon: "ℹ️" });
+        toast("No changes. Odoo hasn't reserved any new stock for these orders. If stock is on the shelf, open the order and use Check Availability.", { icon: "ℹ️", duration: 8000 });
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Stock check failed"); }
     finally { setBusyId(null); }
@@ -819,7 +824,7 @@ export default function OrdersTickets() {
                             <tr key={i} className={`border-b border-gray-50 hover:bg-slate-50/30 ${isBackordered ? "bg-amber-50/40" : ""}`}>
                               <td className="p-3 pl-6">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium text-gray-900">{item.name || item.description || item.sku}</p>
+                                  <p className="text-sm font-medium text-gray-900">{(item.name || item.description || "").replace(/^\[[^\]]*\]\s*/, "") || item.sku}</p>
                                   {isBackordered && (() => {
                                     const lbl = LINE_STOCK[item.stock_status] || UNKNOWN_LINE;
                                     return <span title={lbl.title} className={`text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0 ${lbl.cls}`}>{lbl.text}</span>;
@@ -1418,12 +1423,42 @@ export default function OrdersTickets() {
             </BtnSecondary>
             {(hasWaitingStock || hasStaleItemFlags) && canOrders && (
               <BtnSecondary
-                onClick={handleCheckStock}
+                onClick={() => setCheckStockOpen(true)}
                 loading={busyId === "check-stock"}
                 className="text-amber-700 border-amber-200 hover:bg-amber-50"
               >
                 <RefreshCw size={13} />Check backorder stock
               </BtnSecondary>
+            )}
+            {checkStockOpen && (
+              <Modal title="Check backorder stock" onClose={() => setCheckStockOpen(false)}>
+                <div className="space-y-3 text-sm text-gray-700">
+                  <p>Checks Odoo for orders that are waiting on stock and updates the Order Tickets to match. It changes nothing in Odoo.</p>
+                  <div>
+                    <p className="font-semibold text-gray-900">Backorders waiting on stock</p>
+                    <p className="text-gray-600">
+                      If Odoo now has stock reserved for a backorder, it goes back to <strong>Queued</strong> on the packing board. The orders team
+                      (and the reseller, if there is one) is emailed that the items are in stock, and the Sales ticket owner is notified.
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">Orders being packed or queued</p>
+                    <p className="text-gray-600">
+                      Lines not yet reserved are re-checked, so each one correctly shows <strong>In stock, not reserved</strong> or
+                      <strong> Short: waiting on stock</strong>.
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                    This only reads what Odoo has already reserved. If stock is on the shelf but an order still shows it as not reserved,
+                    open that order and click <strong>Check Availability</strong>. Stock dispatched or received through GMP Supply is
+                    reserved for waiting orders automatically.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                  <BtnSecondary onClick={() => setCheckStockOpen(false)}>Cancel</BtnSecondary>
+                  <BtnPrimary onClick={handleCheckStock}><RefreshCw size={13} />Check Now</BtnPrimary>
+                </div>
+              </Modal>
             )}
             {canManage && (
               <BtnSecondary

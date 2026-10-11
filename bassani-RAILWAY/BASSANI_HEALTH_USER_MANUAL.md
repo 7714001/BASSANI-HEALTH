@@ -1411,7 +1411,9 @@ For orders where the invoice is created on collection (partial orders), an addit
 **Checking backorder stock availability**
 When backorder entries are on the board:
 - A **Check backorder stock** button appears in the top bar
-- Click it to poll Odoo for stock changes — if stock has been reserved for any waiting backorder, the system notifies the reseller and internal team automatically
+- Clicking it opens a short explanation first; nothing runs until you click **Check Now** in that popup
+- It checks Odoo for stock changes: any waiting backorder that now has stock reserved goes back to **Queued**, and the orders team, the reseller (if any) and the Sales ticket owner are notified. Lines on queued or packing orders also get their stock status refreshed
+- It only reads what Odoo has already reserved and changes nothing in Odoo. If stock is on the shelf but an order still shows it as not reserved, open that order and click **Check Availability**
 
 **Reconciling cancelled tickets (admin only)**
 A **Reconcile Cancelled** button appears in the top bar for anyone with Admin Override permission. Click it if an order ticket is still showing active (and still appearing on the Operations Monitor) even though its Sales ticket was already cancelled or marked Not Interested. Clicking it never cancels anything by itself — it first shows you a preview listing exactly which order tickets would be cancelled and why (their reference, customer, current status, and the Sales ticket's exit status). Nothing is changed until you review that list and click Confirm inside it; if there is nothing to fix, it simply tells you so and closes. This is safe to run at any time — clicking it again once everything is already reconciled just shows an empty result. You will only normally need this after an ERP-side order cancellation that happened before the automatic sync existed, or if you are ever told by support that a specific batch of records needs reconciling.
