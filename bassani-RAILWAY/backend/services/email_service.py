@@ -544,6 +544,61 @@ def send_invoice_email(
     )
 
 
+def send_customer_statement(
+    customer_email: str,
+    customer_name: str,
+    company_name: str,
+    period_label: str,
+    total_due: float,
+    overdue: float,
+    payment_reference: str,
+    bank_details: str,
+    attachments: list,
+    cc: "list[str] | None" = None,
+    is_open_items: bool = False,
+    reply_to: str = None,
+) -> None:
+    """Customer statement of account (7.17), sent from the customer profile.
+    `attachments` is a list of {"filename", "content": bytes} built by
+    services/statement_export.py (PDF and/or Excel). Always describes the
+    balance as at today, whatever period the attached statement covers."""
+    if not customer_email:
+        return
+    doc_name = "statement of open items" if is_open_items else "statement of account"
+    if total_due > 0.005:
+        balance_rows = [("Amount due", f"<strong>R{total_due:,.2f}</strong>")]
+        if overdue > 0.005:
+            balance_rows.append(("Of which overdue", f"<strong style=\"color:#b91c1c\">R{overdue:,.2f}</strong>"))
+        balance_line = _p(
+            f"Please make payment to {bank_details}, using {payment_reference} as your "
+            "payment reference. If you have already paid, thank you, and please "
+            "disregard this reminder."
+        )
+    elif total_due < -0.005:
+        balance_rows = [("Account in credit", f"<strong>R{-total_due:,.2f}</strong>")]
+        balance_line = _p("Your account is in credit, so there is nothing to pay.", muted=True)
+    else:
+        balance_rows = [("Amount due", "<strong>R0.00</strong>")]
+        balance_line = _p("Your account is fully paid. Thank you.", muted=True)
+    body = (
+        _h1("Your statement is ready")
+        + _p(f"Hi {customer_name},")
+        + _p(f"Please find your {doc_name} from {company_name} attached.")
+        + _info_box([("Period", period_label)] + balance_rows)
+        + balance_line
+        + _divider()
+        + _p("If anything on your statement does not match your records, please reply "
+             "to this email and we will look into it.", muted=True)
+    )
+    _send(
+        customer_email, f"Statement of Account: {company_name}",
+        _wrap(body),
+        attachments=[{"filename": a["filename"], "content": list(a["content"])} for a in attachments],
+        cc=cc or None,
+        reply_to=reply_to or settings.support_email,
+    )
+
+
 # Ticket emails
 
 _STAGE_LABELS = {

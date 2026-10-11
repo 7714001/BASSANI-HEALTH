@@ -18,7 +18,7 @@
 | 4 | Commission Engine Hardening | 🟢 Complete | All 5 items (4.1–4.5) complete — 2026-06-23 |
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
-| 7 | Missing Commercial Workflows | 🟢 Complete | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 |
+| 7 | Missing Commercial Workflows | 🟡 In Progress | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 · 7.17a/b Customer Finance Workspace (statements PDF/Excel/email, invoice actions from the profile) built 2026-10-11, awaiting live testing; 7.17c/d planned |
 | 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX and 8.63 Discount Financial Insight & Reporting, both 2026-09-29, 8.64 Discount Decision Visibility for Sales Staff and 8.65 Discount Integrity on Edit + Resubmission + Filter Bar Alignment, both 2026-09-30, 8.66 Discount Readability: Rand, Percent and Before/After Totals, 2026-10-07, 8.67 Discount Request Full-Page View (trial), 2026-10-07, 8.68 Account Terms and Release on Account, built 2026-10-10, 8.69 Balance Payment Before Collection, planned) |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
@@ -781,6 +781,7 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Returns: invoices/CNs table + summary (total_invoiced, total_credits, total_outstanding, net_balance)
 - [x] Admin and reseller (ownership-checked) can view; date_from / date_to filter
 - [x] Displayed as inline statement table in CustomerProfile.js with summary row
+- **Superseded by 7.17 (2026-10-11).** This was an invoice list, not a statement: no payments, no opening/running balance, exact-partner matching (missed contact-person invoices), a silent 200-row cap, a misleading "Net Balance" that ignored payments, no customer-role access check, and companies mixed together. The 7.3 endpoint was removed and rebuilt in 7.17.
 
 #### 7.4 KYC Document Collection (Customer Onboarding — Step 4)
 - [x] Provision Cloudflare R2 bucket (`bassani-health-docs`) — 5 Railway env vars set (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`)
@@ -1024,6 +1025,50 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] Direct/internal or customer-self-service ticket → whoever the ticket is currently assigned to; unassigned → no write at all (never blanks an existing value, never writes a placeholder)
 - [x] Last write wins — a new ticket's own determination overwrites whatever was already on the contact; deliberately not a per-invoice history (confirmed accepted with the product owner — the underlying Odoo field can't be one either, since it's a live, unstored related field)
 - [x] Wired into five trigger points: `ticket_routes.py`'s `create_ticket`, `create_ticket_from_order`, `reassign_ticket`, `update_ticket_stage`'s "Assign to me" path, and `order_routes.py`'s `create_order` (reseller orders + staff-placed orders; a customer's own self-placed order correctly leaves it untouched)
+
+#### 7.17 — Customer Finance Workspace — Added 2026-10-11
+
+> Finance asked for statements they can download and email, and to act on an invoice straight from the customer profile. Planned in four sub-deploys; 7.17a and 7.17b built together 2026-10-11, awaiting live testing. Product-owner decisions: one statement per trading company; PDF and Excel; Activity mode by default; emailing gated by a new permission, on for Finance.
+
+**7.17a — Statement of account, download and email (built)**
+- [x] `services/customer_statement.py` builds the statement from receivable journal items (`account.move.line`, `account_type = asset_receivable`, posted, `partner_id child_of` the company), so payments, unallocated payments and adjustments are included and the balance agrees with Odoo. Field names live-checked on Odoo 19.
+- [x] Activity mode (opening balance, every transaction with running balance, closing balance) and Open items mode (everything still unmatched as at today); ageing Current / 1-30 / 31-60 / 61-90 / 91-120 / 120+ plus unallocated credits, always as at today
+- [x] One Odoo company per statement (`company_id`), with a picker when the customer trades with more than one; letterhead and banking from the company's own Odoo record and bank account, falling back to the portal banking settings only when Odoo has none
+- [x] One row per journal entry (instalment invoices collapse to one row, due on the earliest instalment); paged reads up to 5,000 items with an explicit `truncated` flag instead of a silent cap
+- [x] `services/statement_export.py` generates branded PDF (reportlab, new dependency) and Excel (openpyxl) from the same data, so download and email are identical
+- [x] `routes/customer_statement_routes.py`: `GET /{id}/statement`, `GET /{id}/statement/export?format=pdf|xlsx`, `POST /{id}/statement/email`, `GET /{id}/statement/sends`; access check covers staff (customers.view or invoices.view), reseller ownership and the customer role (the old endpoint never checked customers)
+- [x] Email via `send_customer_statement()` (Email Standards, reply-to the issuing company's email), recipients from the shared `SendRecipientsModal` (first To, rest CC, custom address allowed), PDF and/or Excel attached; sent as a background task, audit-logged, chatter note on the customer in Odoo, recorded in `statement_sends` and shown on the card as "Last sent ... " with history
+- [x] New permission `customers.send_statement` (auth.py, Users.js, startup backfill: on for Finance, off elsewhere)
+- [x] `components/CustomerStatement.js` replaces the profile's Account Statement section: mode toggle, company picker, period presets (this month, last month, last 3 months, this financial year, all time) plus custom dates, summary tiles, coloured ageing strip, transactions table, PDF / Excel / Email Statement buttons
+- [x] Profile Outstanding Invoices list now includes invoices raised against the company's contact people (`child_of`)
+
+**7.17b — Act on an invoice from the profile (built)**
+- [x] Invoice and credit note numbers on the statement and on Outstanding Invoices open `components/InvoiceDetailModal.js`: key figures, lines, and View PDF, Register Payment, Send (recipient picker), Credit Note, Reset to Draft, Open in Invoices, each with the same permission gate as the Invoices page
+- [x] "Mark as paid" is Register Payment (part payments and overpayments explained inline); there is no status toggle, Odoo sets Paid when the payment is matched
+- [x] Allocate an existing payment or credit note to an invoice: `GET /api/invoices/{id}/outstanding-credits`, `POST /api/invoices/{id}/allocate-credit` (`invoices.record_payment`, Odoo's public `js_assign_outstanding_line`, live-checked; success confirmed by the invoice balance actually dropping if the reply fails to serialize); audit-logged with before/after
+- [x] Register Payment and Credit Note extracted into shared `RegisterPaymentModal.js` / `CreditNoteModal.js`, used by both Invoices.js and the profile
+- [x] `GET /api/invoices/payment-journals` and `/credit-note-journals` take `invoice_id` and only offer that invoice's company; `PUT /{id}/pay` rejects a journal from another company
+- [x] Fixed: `GET /api/invoices/{invoice_id}` was registered before the literal `/credit-note-journals` and `/credit-note-requests` routes and swallowed them, so the credit note journal picker had always been silently empty; the detail route is now `/{invoice_id:int}`
+
+**7.17c — Finance summary panel (planned)**
+- [ ] Ageing strip and credit position (limit, used, overdue) at the top of the profile, folded into the 8.68 Account Terms card
+- [ ] Unallocated payments and credits list on the profile with Allocate
+- [ ] Payment behaviour: last payment date and amount, average days to pay, lifetime invoiced
+- [ ] Collections log: call notes and promise-to-pay with follow-up date (Mongo, audit-logged)
+- [ ] Default statement recipient: pre-tick the company's Odoo "Invoice address" contact
+
+**7.17d — Automation (planned, needs Bassani's collection policy)**
+- [ ] Monthly statements emailed automatically on the 1st to customers with a balance, opt-in per customer
+- [ ] Overdue reminders at configurable levels with a per-customer pause
+- [ ] Customers and resellers download their own statement from their portal Invoices page
+
+**Definition of Done (7.17a + 7.17b)**
+- [ ] A customer's statement for a period shows opening balance, invoices, payments, credit notes and closing balance that match Odoo's receivable balance for that company
+- [ ] PDF and Excel downloads match the on-screen statement; the emailed attachments match the downloads
+- [ ] Emailing goes to the chosen contacts plus any custom address, appears in the send history and audit log, and is refused without `customers.send_statement`
+- [ ] A customer login cannot read another company's statement
+- [ ] Clicking an invoice number lets Finance register a payment, apply an unallocated credit, send it or raise a credit note without leaving the profile
+- [ ] The payment and credit note pickers only offer the invoice's own company
 
 ### Definition of Done
 - [x] `GET /api/suppliers/` returns all active Odoo partners with `supplier_rank > 0`, searchable by name/email

@@ -42,7 +42,7 @@ PRODUCTION_ROLES = {"vault_custodian"}
 DEFAULT_ADMIN_PERMISSIONS: dict = {
     "products":    {"manage": False},
     "orders":      {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-    "customers":   {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+    "customers":   {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
     "commission":  {"view": True,  "generate_statements": False, "mark_paid": False, "configure_tiers": False},
     "resellers":   {"view": True,  "manage": False},
     "invoices":    {"view": True,  "record_payment": False},
@@ -73,7 +73,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
 FULL_PERMISSIONS: dict = {
     "products":    {"manage": True},
     "orders":      {"view": True,  "confirm": True,  "cancel": True,  "recurring_manage": True,  "manufacturing_manage": True},
-    "customers":   {"view": True,  "manage": True,   "approve_onboarding": True,  "reject_onboarding": True,  "manage_portal_access": True, "account_terms": True},
+    "customers":   {"view": True,  "manage": True,   "approve_onboarding": True,  "reject_onboarding": True,  "manage_portal_access": True, "account_terms": True, "send_statement": True},
     "commission":  {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": True},
     "resellers":   {"view": True,  "manage": True},
     "invoices":    {"view": True,  "record_payment": True},
@@ -106,7 +106,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "sales": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": True,  "manage": True,   "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": True,  "manage": True,   "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -132,7 +132,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "orders_clerk": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -158,7 +158,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "finance": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": True,  "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": True},
         "commission": {"view": True,  "generate_statements": True,  "mark_paid": True,  "configure_tiers": False},
         "resellers":  {"view": True,  "manage": False},
         "invoices":   {"view": True,  "record_payment": True},
@@ -185,7 +185,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "qa_manager": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -211,7 +211,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "responsible_pharmacist": {
         "products":   {"manage": False},
         "orders":     {"view": True,  "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},
@@ -242,7 +242,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
     "vault_custodian": {
         "products":   {"manage": False},
         "orders":     {"view": False, "confirm": False, "cancel": False, "recurring_manage": False, "manufacturing_manage": False},
-        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False},
+        "customers":  {"view": False, "manage": False,  "approve_onboarding": False, "reject_onboarding": False, "manage_portal_access": False, "account_terms": False, "send_statement": False},
         "commission": {"view": False, "generate_statements": False, "mark_paid": False, "configure_tiers": False},
         "resellers":  {"view": False, "manage": False},
         "invoices":   {"view": False, "record_payment": False},

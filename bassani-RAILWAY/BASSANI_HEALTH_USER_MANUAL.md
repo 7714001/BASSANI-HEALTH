@@ -1044,6 +1044,10 @@ Finance is involved at **two** points in the order pipeline:
 1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit, or the order is released on account for an approved account customer (see **Account Terms and Release on Account** below).
 2. **Ready for Collection** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo, and you register the balance payment once the customer pays.
 
+### Statements and Customer Accounts
+
+Open any customer from **Customers** to see their **Account Statement**. You can download it as PDF or Excel, email it to the contacts you choose, and click any invoice number to register a payment, apply an unallocated payment or credit note, send it or credit it, all without leaving the page. See **Viewing a customer profile** under Customers for the full steps.
+
 ### Proof of Payment Alerts (2026-08-21)
 
 A customer or reseller can optionally upload a photo or PDF of their payment confirmation from the order's own page. When they do, you'll get:
@@ -1623,7 +1627,30 @@ Click any customer to open their full profile. You will see:
 - Their contact persons (for company accounts)
 - Their delivery addresses
 - Their onboarding and compliance documents
-- Their full account statement (all invoices and credit notes)
+- Their account statement (see below)
+
+**Account Statement**
+
+The Account Statement card at the bottom of the profile is the customer's real statement of account: invoices, payments received, credit notes and a running balance, exactly as the accounts show them.
+
+- **Activity** shows the opening balance at the start of the period, every transaction in the period with a running balance, and the closing balance. Choose a period with the quick buttons (This month, Last month, Last 3 months, This financial year, All time) or pick your own From and To dates.
+- **Open items** shows only what is still outstanding today: unpaid invoices (oldest due first, with days overdue) and any payments or credit notes not yet matched to an invoice.
+- The **ageing** strip shows how much is current, 1-30, 31-60, 61-90, 91-120 and over 120 days overdue, as at today. If the customer has paid money that is not yet matched to an invoice, a note under the strip says how much.
+- Bassani trades through more than one company. A statement always covers one company, with that company's letterhead and banking details. If the customer has an account with more than one, pick the company from the dropdown next to the mode buttons.
+
+**Downloading and emailing a statement**
+
+- Click **PDF** or **Excel** to download exactly what is on screen.
+- Click **Email Statement** *(requires `customers.send_statement`, on for Finance by default)* to send it to the customer. Tick the contacts who should receive it, or type another address. The first address is the main recipient and the rest are copied in. Choose whether to attach the PDF, the Excel file, or both, then click **Send**. The email states the amount due (or that the account is in credit) and how to pay.
+- The card shows when the statement was last sent, to whom and by whom. Click that line to see the full send history.
+
+**Working on an invoice from the profile**
+
+Click any invoice or credit note number, on the statement or in the Outstanding Invoices list, to open it without leaving the profile. From there you can view the PDF, **Register Payment**, **Send** it, raise a **Credit Note**, **Reset to Draft** (admins, unpaid invoices only) or open it on the Invoices page. Each action needs the same permission as on the Invoices page.
+
+> There is no button to change an invoice's status to Paid. Register the payment you received instead: the invoice changes to Paid automatically once the full amount is matched, or to Partially paid if it was a part payment. This keeps the accounts correct.
+
+If the customer has a payment or credit note on their account that is not yet matched to any invoice (for example, they paid without a reference), an amber box lists it on the unpaid invoice. Click **Apply** to match it to that invoice instead of registering the payment a second time. Any amount left over stays on the account to use later.
 
 **Customer type badge:** Every customer profile shows a "Company" or "Individual" badge directly under their name. This reflects the Odoo contact type.
 

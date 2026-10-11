@@ -12,7 +12,9 @@ import { Modal, BtnPrimary, BtnSecondary, Input } from "./UI";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function SendRecipientsModal({ partnerId, title = "Send Email", onClose, onSend }) {
+// `children` (optional, 7.17) renders above the contact list, for a caller
+// that needs extra send options (e.g. the statement email's PDF/Excel choice).
+export default function SendRecipientsModal({ partnerId, title = "Send Email", onClose, onSend, children }) {
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(() => new Set());
@@ -77,6 +79,7 @@ export default function SendRecipientsModal({ partnerId, title = "Send Email", o
         </div>
       ) : (
         <>
+          {children}
           <p className="text-xs text-gray-500 mb-3">Choose who at the customer should receive this email.</p>
           <div className="space-y-1 max-h-64 overflow-y-auto border border-gray-100 rounded-lg p-1.5">
             {contacts.length === 0 ? (

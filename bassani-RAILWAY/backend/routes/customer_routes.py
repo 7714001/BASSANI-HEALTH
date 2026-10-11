@@ -319,11 +319,13 @@ async def customer_profile(
         "revenue_this_month":  sum(o["amount_total"] for o in orders_this_month),
     }
 
-    # Outstanding invoices
+    # Outstanding invoices — child_of so an invoice raised against one of the
+    # company's contact people is included too (7.17; previously exact match,
+    # the same gap fixed on the Invoices list 2026-09-07).
     invoices = odoo.search_read(
         "account.move",
         domain=[
-            ("partner_id", "=", customer_id),
+            ("partner_id", "child_of", customer_id),
             ("move_type", "=", "out_invoice"),
             ("state", "=", "posted"),
             ("payment_state", "in", ["not_paid", "partial"]),
@@ -378,68 +380,9 @@ async def customer_profile(
     }
 
 
-@router.get("/{customer_id}/statement")
-async def customer_account_statement(
-    customer_id: int,
-    date_from: Optional[str] = None,
-    date_to:   Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Full account statement for a customer: all posted invoices and credit notes
-    with running balance summary. Resellers can view statements for their own customers.
-    """
-    # Access control — resellers may only view their own customers' statements
-    if current_user.get("role") == "reseller":
-        reseller = await col("resellers").find_one({"user_id": current_user["id"]}, NO_ID)
-        if not reseller:
-            raise HTTPException(status_code=403, detail="Access denied")
-        ownership = await col("customer_ownership").find_one({
-            "reseller_id": reseller["id"],
-            "odoo_partner_id": customer_id,
-        })
-        if not ownership:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-    odoo = get_odoo_client()
-    domain = [
-        ("partner_id", "=", customer_id),
-        ("move_type", "in", ["out_invoice", "out_refund"]),
-        ("state", "=", "posted"),
-    ]
-    if date_from:
-        domain.append(("invoice_date", ">=", date_from))
-    if date_to:
-        domain.append(("invoice_date", "<=", date_to))
-
-    try:
-        invoices = odoo.search_read(
-            "account.move",
-            domain=domain,
-            fields=["id", "name", "move_type", "invoice_date", "invoice_date_due",
-                    "amount_total", "amount_residual", "payment_state"],
-            order="invoice_date desc",
-            limit=200,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
-
-    total_invoiced    = round(sum(i["amount_total"] for i in invoices if i["move_type"] == "out_invoice"), 2)
-    total_credits     = round(sum(i["amount_total"] for i in invoices if i["move_type"] == "out_refund"), 2)
-    total_outstanding = round(sum(i["amount_residual"] for i in invoices), 2)
-
-    return {
-        "customer_id": customer_id,
-        "invoices":    invoices,
-        "summary": {
-            "total_invoiced":    total_invoiced,
-            "total_credits":     total_credits,
-            "total_outstanding": total_outstanding,
-            "net_balance":       round(total_invoiced - total_credits, 2),
-        },
-        "date_from": date_from,
-        "date_to":   date_to,
-    }
+# GET /{customer_id}/statement moved to customer_statement_routes.py (7.17),
+# rebuilt on receivable journal items so it carries payments and a running
+# balance, scoped per company, with PDF/Excel download and email.
 
 
 @router.get("/check-duplicate")

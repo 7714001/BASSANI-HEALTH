@@ -8,6 +8,8 @@ import { Badge, BtnPrimary, BtnSecondary, BtnDanger, Input, Select, Modal, FormG
 import AddressAutocomplete from "../components/AddressAutocomplete";
 import PortalLoginManageModal from "../components/PortalLoginManageModal";
 import AccountTermsSection from "../components/AccountTermsSection";
+import CustomerStatement from "../components/CustomerStatement";
+import InvoiceDetailModal from "../components/InvoiceDetailModal";
 
 function KpiCard({ label, value, sub, icon: Icon, accent }) {
   return (
@@ -434,16 +436,11 @@ export default function CustomerProfile() {
   const canManageAddresses = user?.permissions?.customers?.manage;
 
   const INV_PAGE_SIZE  = 10;
-  const STMT_PAGE_SIZE = 15;
 
   const [data,         setData        ] = useState(null);
   const [loading,      setLoading     ] = useState(true);
-  const [stmt,         setStmt        ] = useState(null);
-  const [stmtLoading,  setStmtLoading ] = useState(false);
-  const [stmtFrom,     setStmtFrom    ] = useState("");
-  const [stmtTo,       setStmtTo      ] = useState("");
   const [invPage,      setInvPage     ] = useState(0);
-  const [stmtPage,     setStmtPage    ] = useState(0);
+  const [openInvoiceId, setOpenInvoiceId] = useState(null); // 7.17 — invoice detail modal
 
   // ── Addresses ─────────────────────────────────────────────────────────────
   const [addresses,  setAddresses ] = useState([]);
@@ -702,23 +699,10 @@ export default function CustomerProfile() {
     }
   };
 
-  const loadStatement = async () => {
-    setStmtLoading(true);
-    try {
-      const params = {};
-      if (stmtFrom) params.date_from = stmtFrom;
-      if (stmtTo)   params.date_to   = stmtTo;
-      const r = await api.get(`/api/customers/${id}/statement`, { params });
-      setStmt(r.data);
-      setStmtPage(0);
-    } catch {
-      toast.error("Failed to load account statement");
-    } finally {
-      setStmtLoading(false);
-    }
-  };
-
-  useEffect(() => { loadStatement(); }, [id]); // eslint-disable-line
+  // 7.17 — refresh the profile's finance figures after a payment, credit
+  // note or allocation made from the statement/invoice modals.
+  const reloadProfile = () =>
+    api.get(`/api/customers/${id}/profile`).then(r => setData(r.data)).catch(() => {});
 
   const applyTypeChange = async (newIsCompany) => {
     setTypeChanging(true);
@@ -1507,7 +1491,12 @@ export default function CustomerProfile() {
                       const overdue = inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date();
                       return (
                         <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                          <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
+                          <td className="px-5 py-3 font-mono text-xs">
+                            <button type="button" onClick={() => setOpenInvoiceId(inv.id)}
+                              className="text-bassani-700 hover:text-bassani-800 hover:underline font-semibold">
+                              {inv.name}
+                            </button>
+                          </td>
                           <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
                           <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
                             {fmtDate(inv.invoice_date_due)}{overdue ? " ⚠" : ""}
@@ -1531,104 +1520,15 @@ export default function CustomerProfile() {
             )}
           </Section>
 
-          {/* Account Statement — 7.3 */}
-          <Section title="Account Statement">
-            <div className="px-5 py-4 border-b border-gray-50 flex flex-wrap items-end gap-3">
-              <div>
-                <p className="text-xs text-gray-400 mb-1">From</p>
-                <Input type="date" value={stmtFrom} onChange={e => setStmtFrom(e.target.value)} className="w-36" />
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 mb-1">To</p>
-                <Input type="date" value={stmtTo} onChange={e => setStmtTo(e.target.value)} className="w-36" />
-              </div>
-              <BtnSecondary size="sm" onClick={loadStatement} disabled={stmtLoading}>
-                {stmtLoading ? "Loading…" : "Load Statement"}
-              </BtnSecondary>
-            </div>
-
-            {stmtLoading ? (
-              <p className="px-5 py-6 text-xs text-gray-400">Loading statement…</p>
-            ) : stmt ? (
-              <>
-                {/* Summary row */}
-                <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-50 border-b border-gray-50">
-                  {[
-                    { label: "Total Invoiced",   value: fmtR(stmt.summary.total_invoiced),   color: "text-gray-800" },
-                    { label: "Total Credits",     value: fmtR(stmt.summary.total_credits),    color: "text-purple-700" },
-                    { label: "Total Outstanding", value: fmtR(stmt.summary.total_outstanding), color: "text-red-600"   },
-                    { label: "Net Balance",       value: fmtR(stmt.summary.net_balance),      color: stmt.summary.net_balance > 0 ? "text-red-600" : "text-green-700" },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="px-5 py-3">
-                      <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                      <p className={`text-sm font-bold ${color}`}>{value}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Transaction table */}
-                {stmt.invoices.length === 0 ? (
-                  <p className="px-5 py-4 text-sm text-gray-400">No transactions in this period.</p>
-                ) : (() => {
-                  const stmtSlice = stmt.invoices.slice(stmtPage * STMT_PAGE_SIZE, (stmtPage + 1) * STMT_PAGE_SIZE);
-                  return (
-                    <>
-                      <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-gray-50 text-xs text-gray-500">
-                            <th className="text-left px-5 py-2.5 font-medium">Ref</th>
-                            <th className="text-left px-5 py-2.5 font-medium">Type</th>
-                            <th className="text-left px-5 py-2.5 font-medium">Date</th>
-                            <th className="text-left px-5 py-2.5 font-medium">Due</th>
-                            <th className="text-right px-5 py-2.5 font-medium">Total</th>
-                            <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
-                            <th className="text-left px-5 py-2.5 font-medium">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {stmtSlice.map(inv => {
-                            const isCN = inv.move_type === "out_refund";
-                            const overdue = !isCN && inv.invoice_date_due && new Date(inv.invoice_date_due) < new Date() && inv.payment_state !== "paid";
-                            return (
-                              <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                                <td className="px-5 py-3 font-mono text-xs text-bassani-700">{inv.name}</td>
-                                <td className="px-5 py-3">
-                                  {isCN
-                                    ? <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded-full font-semibold">Credit Note</span>
-                                    : <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-semibold">Invoice</span>
-                                  }
-                                </td>
-                                <td className="px-5 py-3 text-gray-500">{fmtDate(inv.invoice_date)}</td>
-                                <td className={`px-5 py-3 font-medium ${overdue ? "text-red-600" : "text-gray-500"}`}>
-                                  {inv.invoice_date_due ? fmtDate(inv.invoice_date_due) : "—"}{overdue ? " ⚠" : ""}
-                                </td>
-                                <td className={`px-5 py-3 text-right font-semibold ${isCN ? "text-purple-700" : ""}`}>
-                                  {isCN ? `(${fmtR(inv.amount_total)})` : fmtR(inv.amount_total)}
-                                </td>
-                                <td className={`px-5 py-3 text-right font-semibold ${inv.amount_residual > 0 ? "text-red-600" : "text-gray-400"}`}>
-                                  {inv.amount_residual > 0 ? fmtR(inv.amount_residual) : "—"}
-                                </td>
-                                <td className="px-5 py-3">
-                                  <span className="text-xs font-medium">{PAYMENT_LABEL[inv.payment_state] || inv.payment_state}</span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      </div>
-                      <PaginationBar page={stmtPage} pageSize={STMT_PAGE_SIZE} total={stmt.invoices.length}
-                        onChange={p => setStmtPage(p)} />
-                    </>
-                  );
-                })()}
-              </>
-            ) : null}
-          </Section>
+          {/* Account Statement — 7.17 (replaces 7.3) */}
+          <CustomerStatement customerId={id} onFinanceChanged={reloadProfile} />
 
         </div>
       </main>
+
+      {openInvoiceId && (
+        <InvoiceDetailModal invoiceId={openInvoiceId} onClose={() => setOpenInvoiceId(null)} onChanged={reloadProfile} />
+      )}
 
       {reqModalOpen && (() => {
         // Build list of available email options: company email + contact emails

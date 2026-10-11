@@ -97,6 +97,8 @@ The finance team confirms payments through the portal. Critically, the system re
 
 **Bank reconciliation is now built into the portal.** Finance uploads a bank statement CSV (FNB Business or Nedbank Business format) and the portal auto-matches credits to open invoices by amount and reference. Finance reviews the matches, confirms them with a single click, and the payment is registered in the accounting system immediately — without anyone opening Odoo. The portal also runs a background check every 15 minutes and automatically advances any ticket where the payment has already been registered, eliminating the daily manual "confirm payment" step entirely for invoices processed outside the portal.
 
+**Customer statements and collections from one screen.** Each customer's profile now carries a proper statement of account: opening balance, invoices, payments received, credit notes, a running balance and an ageing breakdown showing how overdue the account is. It is drawn per trading company with that company's own letterhead and banking details. Finance can download it as PDF or Excel, or email it straight to whichever of the customer's contacts they choose, and every send is recorded. Clicking any invoice on the statement lets Finance register a payment, apply money the customer has already paid but that was never matched to an invoice, resend the invoice or raise a credit note, without leaving the customer's page or opening the accounting system.
+
 Commission statements for resellers are generated through the portal, and each payment produces a corresponding vendor bill in the financial system automatically — there is no manual ledger entry.
 
 ### For Management
@@ -310,6 +312,7 @@ Bassani Health operates under SAHPRA licensing for medicinal cannabis. SAHPRA al
 | Email inbox integration — sales@ and orders@ mailboxes connected to the portal; documents saveable directly to onboarding applications from inbox | Live |
 | Packing board — real-time warehouse floor with QA/RP approval | Live |
 | Finance — invoice management, payment confirmation, credit limit enforcement | Live |
+| Customer statements of account — per company, PDF/Excel download, email to chosen contacts, ageing, invoice actions from the customer profile | Built, awaiting testing |
 | Stock management — per-warehouse, real-time, with reservation visibility | Live |
 | Stock Report — per-product lot/batch breakdown with movement history (traceability), warehouse-scoped | Live |
 | Self-service customer registration — public /apply page with referral link support; applications land in existing admin review queue. The registration form now captures Business Category (what the business does), Legal Entity Type (legal structure — drives Sole Proprietor form adaptation), and a Section 22C Licensed Facility checkbox — three separate, independently meaningful fields replacing a single confusing combined dropdown. | Live |

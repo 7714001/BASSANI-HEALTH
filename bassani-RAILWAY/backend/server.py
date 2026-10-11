@@ -221,6 +221,16 @@ async def initialise_users():
         {"$set": {"permissions.support": DEFAULT_ADMIN_PERMISSIONS["support"]}},
     )
 
+    # 7.17 — customer statement email history, and backfill the new
+    # customers.send_statement permission onto existing staff (on for Finance
+    # by default; off for everyone else, admins included).
+    await col("statement_sends").create_index([("customer_partner_id", 1), ("sent_at", -1)])
+    for _role, _perms in ROLE_DEFAULT_PERMISSIONS.items():
+        await col("users").update_many(
+            {"role": _role, "permissions.customers.send_statement": {"$exists": False}},
+            {"$set": {"permissions.customers.send_statement": _perms["customers"].get("send_statement", False)}},
+        )
+
     # Phase 14 — external API clients and outbound sales channels. key_hash is
     # the lookup on every external API request, so it must be indexed (and
     # unique, so one key can never resolve to two clients).
@@ -746,6 +756,7 @@ from routes.auth_routes          import router as auth_router
 from routes.user_routes          import router as user_router
 from routes.product_routes       import router as product_router
 from routes.customer_routes      import router as customer_router
+from routes.customer_statement_routes import router as customer_statement_router
 from routes.order_routes         import router as order_router
 from routes.stock_routes         import router as stock_router
 from routes.invoice_routes       import router as invoice_router
@@ -798,7 +809,7 @@ from routes.integration_routes        import router as integration_router
 from routes.external_routes           import router as external_router
 
 for router in [
-    auth_router, user_router, product_router, customer_router, order_router,
+    auth_router, user_router, product_router, customer_router, customer_statement_router, order_router,
     stock_router, invoice_router, reseller_router, commission_router,
     report_router, healthcare_router, notification_router,
     aged_debtors_router, payment_router, audit_router, batch_router,

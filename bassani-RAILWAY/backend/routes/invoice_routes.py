@@ -34,7 +34,7 @@ class InvoiceCreate(BaseModel):
 INVOICE_FIELDS = [
     "id", "name", "partner_id", "invoice_date", "invoice_date_due",
     "amount_total", "amount_tax", "amount_residual",
-    "state", "move_type", "payment_state", "invoice_origin",
+    "state", "move_type", "payment_state", "invoice_origin", "company_id",
 ]
 # x_studio_bassani_portal_sales_agent (portal_sales_agent.py) — who at
 # Bassani, or which reseller, is responsible for this account — is NOT in
@@ -251,18 +251,36 @@ def invoice_summary(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
+def _invoice_company_id(odoo, invoice_id: int) -> Optional[int]:
+    rows = odoo.read("account.move", [invoice_id], fields=["company_id"])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return rows[0]["company_id"][0] if rows[0].get("company_id") else None
+
+
 @router.get("/payment-journals")
-def list_payment_journals(current_user: dict = Depends(require_admin)):
+def list_payment_journals(
+    invoice_id: Optional[int] = None,
+    current_user: dict = Depends(require_admin),
+):
     """
     Return bank and cash journals with enough detail to distinguish between them.
     Fetches code + bank_account_id so the frontend can show account numbers
     instead of the generic 'Bank' label that all bank journals share.
+    With invoice_id, only journals of that invoice's own company are returned
+    (7.17) — a journal from another company is a hard Odoo error deep in the
+    payment wizard, same fix ticket_routes.py's own payment-journals got.
     """
     odoo = get_odoo_client()
+    domain = [("type", "in", ["bank", "cash"]), ("active", "=", True)]
+    if invoice_id:
+        company_id = _invoice_company_id(odoo, invoice_id)
+        if company_id:
+            domain.append(("company_id", "=", company_id))
     try:
         journals = odoo.search_read(
             "account.journal",
-            domain=[("type", "in", ["bank", "cash"]), ("active", "=", True)],
+            domain=domain,
             fields=["id", "name", "type", "code", "bank_account_id", "company_id"],
             limit=50,
             order="company_id asc, type asc, name asc",
@@ -313,7 +331,11 @@ async def _assert_invoice_owned_by_external_role(odoo, current_user: dict, partn
             raise HTTPException(status_code=403, detail="Access denied")
 
 
-@router.get("/{invoice_id}")
+# ":int" so this only matches numeric ids. Without it, the literal GET routes
+# registered further down this file (/credit-note-journals,
+# /credit-note-requests) were swallowed by this route and failed validation,
+# which left the credit note journal picker silently empty (found 2026-10-11).
+@router.get("/{invoice_id:int}")
 async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
     """Get a single invoice with line items, partner details, and tax breakdown."""
     odoo = get_odoo_client()
@@ -533,6 +555,18 @@ async def register_payment(
     odoo = get_odoo_client()
     payment_date = body.payment_date or date_type.today().isoformat()
 
+    # The journal must belong to the invoice's own company (7.17).
+    inv_company = _invoice_company_id(odoo, invoice_id)
+    j_rows = odoo.read("account.journal", [body.journal_id], fields=["company_id", "name"])
+    if not j_rows:
+        raise HTTPException(status_code=400, detail="Payment method not found")
+    j_company = j_rows[0]["company_id"][0] if j_rows[0].get("company_id") else None
+    if inv_company and j_company and inv_company != j_company:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{j_rows[0]['name']} ({j_rows[0]['company_id'][1]}) belongs to a different company from this invoice. Choose a payment method for the invoice's own company.",
+        )
+
     # Resolve outstanding amount if not provided
     amount = body.amount
     if amount is None:
@@ -565,6 +599,91 @@ async def register_payment(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
+
+
+# ── 7.17 — Allocate an existing payment or credit note to an invoice ─────────
+# A customer payment received without a usable reference, or a credit note
+# raised separately, sits on the account unallocated: the customer's balance
+# is right, but the invoice still shows unpaid. Odoo lists what can be
+# matched to an invoice in invoice_outstanding_credits_debits_widget and
+# matches it with js_assign_outstanding_line (public, live-checked on Odoo 19).
+
+def _outstanding_credits(odoo, invoice_id: int) -> tuple:
+    rows = odoo.read(
+        "account.move", [invoice_id],
+        fields=["name", "state", "move_type", "amount_residual", "partner_id",
+                "invoice_has_outstanding", "invoice_outstanding_credits_debits_widget"],
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = rows[0]
+    widget = inv.get("invoice_outstanding_credits_debits_widget") or {}
+    items = []
+    if isinstance(widget, dict) and widget.get("outstanding"):
+        for c in widget.get("content") or []:
+            items.append({
+                "line_id": c.get("id"),
+                "reference": c.get("journal_name") or c.get("move_ref") or "",
+                "amount": c.get("amount") or 0.0,
+                "date": c.get("date"),
+                "is_payment": bool(c.get("account_payment_id")),
+            })
+    return inv, items
+
+
+@router.get("/{invoice_id}/outstanding-credits")
+async def list_outstanding_credits(invoice_id: int, current_user: dict = Depends(require_admin)):
+    """Payments and credit notes on this customer's account that are not yet
+    matched to any invoice and could be applied to this one."""
+    odoo = get_odoo_client()
+    try:
+        inv, items = _outstanding_credits(odoo, invoice_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    return {"invoice_id": invoice_id, "amount_residual": inv.get("amount_residual"), "credits": items}
+
+
+class AllocateCreditBody(BaseModel):
+    line_id: int
+
+
+@router.post("/{invoice_id}/allocate-credit")
+async def allocate_credit(
+    invoice_id: int,
+    body: AllocateCreditBody,
+    current_user: dict = Depends(require_permission("invoices.record_payment")),
+):
+    odoo = get_odoo_client()
+    inv, items = _outstanding_credits(odoo, invoice_id)
+    if inv.get("state") != "posted":
+        raise HTTPException(status_code=400, detail="Only posted invoices can have a payment allocated")
+    match = next((i for i in items if i["line_id"] == body.line_id), None)
+    if not match:
+        raise HTTPException(status_code=400, detail="That payment or credit is no longer available for this invoice")
+    before = inv.get("amount_residual") or 0.0
+    try:
+        odoo_call("account.move", "js_assign_outstanding_line", [[invoice_id], body.line_id])
+    except Exception as e:
+        # Same response-serialisation quirk register_deposit hit: the match
+        # can succeed even though the reply fails to marshal. Only treat it as
+        # success if the invoice balance genuinely went down.
+        after_rows = odoo.read("account.move", [invoice_id], fields=["amount_residual"])
+        after = after_rows[0].get("amount_residual") if after_rows else before
+        if not (after < before - 0.005):
+            raise HTTPException(status_code=502, detail=f"Could not allocate: {e}")
+    after_rows = odoo.read("account.move", [invoice_id], fields=["amount_residual", "payment_state"])
+    after = after_rows[0] if after_rows else {}
+    await audit_log(
+        "invoice.credit_allocated", "invoice", invoice_id,
+        entity_label=inv.get("name") or "", user=current_user,
+        before={"amount_residual": before},
+        after={"amount_residual": after.get("amount_residual"), "payment_state": after.get("payment_state")},
+        detail={"line_id": body.line_id, "reference": match["reference"], "amount": match["amount"]},
+    )
+    return {"success": True, "amount_residual": after.get("amount_residual"),
+            "payment_state": after.get("payment_state")}
 
 
 # ── Credit Note Requests (7.2) ────────────────────────────────────────────────
@@ -768,13 +887,21 @@ async def send_invoice_standalone(
 # ── 8.26 — Credit notes ───────────────────────────────────────────────────────
 
 @router.get("/credit-note-journals")
-def list_credit_note_journals(current_user: dict = Depends(require_permission("tickets.finance_confirm"))):
-    """Journals suitable for raising a credit note (sale or general type)."""
+def list_credit_note_journals(
+    invoice_id: Optional[int] = None,
+    current_user: dict = Depends(require_permission("tickets.finance_confirm")),
+):
+    """Journals suitable for raising a credit note (sale or general type).
+    With invoice_id, scoped to that invoice's company (7.17)."""
     odoo = get_odoo_client()
+    domain = [("type", "in", ["sale", "general"])]
+    if invoice_id:
+        company_id = _invoice_company_id(odoo, invoice_id)
+        if company_id:
+            domain.append(("company_id", "=", company_id))
     journals = odoo.search_read(
-        "account.journal",
-        [("type", "in", ["sale", "general"])],
-        fields=["id", "name", "type"],
+        "account.journal", domain,
+        fields=["id", "name", "type", "company_id"],
         limit=50,
     )
     return {"journals": journals}

@@ -44,6 +44,7 @@ const PERMISSION_GROUPS = [
       { key: "reject_onboarding",   label: "Reject onboarding applications" },
       { key: "manage_portal_access", label: "Grant & revoke customer portal logins" },
       { key: "account_terms",       label: "Approve & suspend customer account terms" },
+      { key: "send_statement",      label: "Email statements of account to customers" },
     ],
   },
   {
@@ -250,7 +251,7 @@ const EMPTY_PERMISSIONS = Object.fromEntries(
 const DEFAULT_ADMIN_PERMS = {
   products:   { manage: false },
   orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-  customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+  customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
   commission: { view: true,  generate_statements: false, mark_paid: false, configure_tiers: false },
   resellers:  { view: true,  manage: false },
   invoices:   { view: true,  record_payment: false },
@@ -281,7 +282,7 @@ const ROLE_DEFAULT_PERMS = {
   sales: {
     products:   { manage: false },
     orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: true,  manage: true,   approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: true,  manage: true,   approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
     invoices:   { view: false, record_payment: false },
@@ -303,7 +304,7 @@ const ROLE_DEFAULT_PERMS = {
   orders_clerk: {
     products:   { manage: false },
     orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
     invoices:   { view: false, record_payment: false },
@@ -325,7 +326,7 @@ const ROLE_DEFAULT_PERMS = {
   finance: {
     products:   { manage: false },
     orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: true,  manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: true },
     commission: { view: true,  generate_statements: true,  mark_paid: true,  configure_tiers: false },
     resellers:  { view: true,  manage: false },
     invoices:   { view: true,  record_payment: true },
@@ -348,7 +349,7 @@ const ROLE_DEFAULT_PERMS = {
   qa_manager: {
     products:   { manage: false },
     orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
     invoices:   { view: false, record_payment: false },
@@ -370,7 +371,7 @@ const ROLE_DEFAULT_PERMS = {
   responsible_pharmacist: {
     products:   { manage: false },
     orders:     { view: true,  confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
     invoices:   { view: false, record_payment: false },
@@ -393,7 +394,7 @@ const ROLE_DEFAULT_PERMS = {
   vault_custodian: {
     products:   { manage: false },
     orders:     { view: false, confirm: false, cancel: false, recurring_manage: false, manufacturing_manage: false },
-    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false },
+    customers:  { view: false, manage: false,  approve_onboarding: false, reject_onboarding: false, manage_portal_access: false, account_terms: false, send_statement: false },
     commission: { view: false, generate_statements: false, mark_paid: false, configure_tiers: false },
     resellers:  { view: false, manage: false },
     invoices:   { view: false, record_payment: false },

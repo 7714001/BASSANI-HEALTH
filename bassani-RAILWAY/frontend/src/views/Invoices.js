@@ -7,12 +7,14 @@ import toast from "react-hot-toast";
 import { Printer, X, ExternalLink, Send, RotateCcw, FileX, Plus, Loader2, FileSearch, ChevronDown, ChevronRight, Eye, CreditCard, LifeBuoy } from "lucide-react";
 import {
   TopBar, DataTable, SearchBar, FilterPill, ChipRow, Pager,
-  Modal, FormGroup, Input, Select, Textarea,
+  Modal,
   BtnPrimary, BtnSecondary, BtnDanger,
   OdooPdfViewerModal,
   fmtR, fmtDate,
 } from "../components/UI";
 import SendRecipientsModal from "../components/SendRecipientsModal";
+import RegisterPaymentModal from "../components/RegisterPaymentModal";
+import CreditNoteModal from "../components/CreditNoteModal";
 import NewSupportCaseModal from "../components/NewSupportCaseModal";
 
 // ── Static Bassani details ─────────────────────────────────────────────────────
@@ -422,17 +424,9 @@ export default function Invoices() {
   const [resetConfirm,  setResetConfirm ] = useState(null); // null | invoice
   const [resetting,     setResetting    ] = useState(false);
 
-  // Register payment modal
-  const [payModal,    setPayModal   ] = useState(null); // null | invoice
-  const [payJournals, setPayJournals] = useState([]);
-  const [payForm,     setPayForm    ] = useState({ amount: "", date: "", journal_id: "" });
-  const [paySaving,   setPaySaving  ] = useState(false);
-
-  // Credit note modal
-  const [cnModal,      setCnModal    ] = useState(null); // null | invoice
-  const [cnJournals,   setCnJournals ] = useState([]);
-  const [cnForm,       setCnForm     ] = useState({ reason: "", date: "", journal_id: "" });
-  const [cnSaving,     setCnSaving   ] = useState(false);
+  // Register payment / credit note — shared modals (7.17)
+  const [payModal, setPayModal] = useState(null); // null | invoice
+  const [cnModal,  setCnModal ] = useState(null); // null | invoice
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -520,70 +514,8 @@ export default function Invoices() {
     }
   };
 
-  const openPayModal = async (inv) => {
-    setPayForm({
-      amount:     String(inv.amount_residual || inv.amount_total || ""),
-      date:       new Date().toISOString().split("T")[0],
-      journal_id: "",
-    });
-    setPayModal(inv);
-    try {
-      const r = await api.get("/api/invoices/payment-journals");
-      const journals = r.data.journals || [];
-      setPayJournals(journals);
-      if (journals.length > 0) setPayForm(f => ({ ...f, journal_id: String(journals[0].id) }));
-    } catch { setPayJournals([]); }
-  };
-
-  const registerPayment = async () => {
-    if (!payForm.journal_id) return toast.error("Select a payment journal");
-    if (!payForm.amount || Number(payForm.amount) <= 0) return toast.error("Enter a valid amount");
-    setPaySaving(true);
-    try {
-      await api.put(`/api/invoices/${payModal.id}/pay`, {
-        journal_id:   parseInt(payForm.journal_id),
-        payment_date: payForm.date || undefined,
-        amount:       parseFloat(payForm.amount),
-      });
-      toast.success(`Payment registered against ${payModal.name}`);
-      setPayModal(null);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Payment registration failed");
-    } finally {
-      setPaySaving(false);
-    }
-  };
-
-  const openCreditNote = async (inv) => {
-    setCnForm({ reason: "", date: new Date().toISOString().split("T")[0], journal_id: "" });
-    setCnModal(inv);
-    try {
-      const r = await api.get("/api/invoices/credit-note-journals");
-      const journals = r.data.journals || [];
-      setCnJournals(journals);
-      if (journals.length > 0) setCnForm(f => ({ ...f, journal_id: String(journals[0].id) }));
-    } catch { setCnJournals([]); }
-  };
-
-  const createCreditNote = async () => {
-    if (!cnForm.reason.trim()) return toast.error("Reason is required");
-    setCnSaving(true);
-    try {
-      const r = await api.post(`/api/invoices/${cnModal.id}/credit-note`, {
-        reason:     cnForm.reason,
-        date:       cnForm.date || undefined,
-        journal_id: cnForm.journal_id ? parseInt(cnForm.journal_id) : undefined,
-      });
-      toast.success(`Credit note ${r.data.credit_note_name} created`);
-      setCnModal(null);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to create credit note");
-    } finally {
-      setCnSaving(false);
-    }
-  };
+  const openPayModal   = (inv) => setPayModal(inv);
+  const openCreditNote = (inv) => setCnModal(inv);
 
   const createTicket = async (inv) => {
     if (!inv.sale_order_id) return;
@@ -913,40 +845,7 @@ export default function Invoices() {
       )}
 
       {/* Register payment modal */}
-      {payModal && (
-        <Modal title={`Register Payment — ${payModal.name}`} onClose={() => setPayModal(null)}>
-          <div className="space-y-3">
-            <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-2 gap-2 text-sm">
-              <span className="text-gray-500">Customer</span>
-              <span className="font-medium text-right">{payModal.partner_id?.[1]}</span>
-              <span className="text-gray-500">Outstanding</span>
-              <span className="font-semibold text-right text-red-600">{fmtR(payModal.amount_residual)}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormGroup label="Amount" required>
-                <Input
-                  type="number" step="0.01" min="0.01"
-                  value={payForm.amount}
-                  onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
-                />
-              </FormGroup>
-              <FormGroup label="Payment date">
-                <Input type="date" value={payForm.date} onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))} />
-              </FormGroup>
-            </div>
-            <FormGroup label="Journal" required>
-              <Select value={payForm.journal_id} onChange={e => setPayForm(f => ({ ...f, journal_id: e.target.value }))}>
-                <option value="">Select journal…</option>
-                {payJournals.map(j => <option key={j.id} value={j.id}>{j.display_label || j.name}</option>)}
-              </Select>
-            </FormGroup>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setPayModal(null)} disabled={paySaving}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={registerPayment} loading={paySaving}>Register Payment</BtnPrimary>
-          </div>
-        </Modal>
-      )}
+      {payModal && <RegisterPaymentModal invoice={payModal} onClose={() => setPayModal(null)} onPaid={load} />}
 
       {/* Reset to draft confirm */}
       {resetConfirm && (
@@ -965,41 +864,7 @@ export default function Invoices() {
       )}
 
       {/* Credit note modal */}
-      {cnModal && (
-        <Modal title={`Raise Credit Note — ${cnModal.name}`} onClose={() => setCnModal(null)}>
-          <div className="space-y-3">
-            <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-2 gap-2 text-sm">
-              <span className="text-gray-500">Customer</span>
-              <span className="font-medium text-right">{cnModal.partner_id?.[1]}</span>
-              <span className="text-gray-500">Invoice Total</span>
-              <span className="font-semibold text-right">{fmtR(cnModal.amount_total)}</span>
-            </div>
-            <FormGroup label="Reason" required>
-              <Textarea
-                rows={3}
-                placeholder="Damaged goods, short delivery, pricing correction…"
-                value={cnForm.reason}
-                onChange={e => setCnForm(f => ({ ...f, reason: e.target.value }))}
-              />
-            </FormGroup>
-            <div className="grid grid-cols-2 gap-3">
-              <FormGroup label="Credit note date">
-                <Input type="date" value={cnForm.date} onChange={e => setCnForm(f => ({ ...f, date: e.target.value }))} />
-              </FormGroup>
-              <FormGroup label="Journal">
-                <Select value={cnForm.journal_id} onChange={e => setCnForm(f => ({ ...f, journal_id: e.target.value }))}>
-                  <option value="">Default</option>
-                  {cnJournals.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
-                </Select>
-              </FormGroup>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <BtnSecondary onClick={() => setCnModal(null)} disabled={cnSaving}>Cancel</BtnSecondary>
-            <BtnPrimary onClick={createCreditNote} loading={cnSaving}>Create Credit Note</BtnPrimary>
-          </div>
-        </Modal>
-      )}
+      {cnModal && <CreditNoteModal invoice={cnModal} onClose={() => setCnModal(null)} onCreated={load} />}
 
       {/* Ticket preflight modal */}
       {ticketPreflightModal && (
