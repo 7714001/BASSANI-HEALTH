@@ -2045,7 +2045,7 @@ Go to **Commission** → **Tier Settings** to add, remove, or reconfigure tier b
 
 *Requires `reports.view` permission. Export requires `reports.export` permission.*
 
-The Reports page provides six analytics reports sourced from Odoo's confirmed sale orders and MongoDB commission records.
+The Reports page provides analytics reports sourced from Odoo's confirmed sale orders and MongoDB commission records.
 
 **Period selector:** A selector bar at the top of the report area lets you choose which period to view. Select the SA financial year (current year or up to 2 previous years) from the dropdown, then choose a specific month (displayed in SA FY order: Mar through Feb) or **Full Year** to see the entire FY aggregated. Changing the period immediately reloads the active report.
 
@@ -2058,6 +2058,7 @@ The Reports page provides six analytics reports sourced from Odoo's confirmed sa
 - **Best Resellers** — reseller FY leaderboard; always shows full FY data regardless of month selection (commission, revenue, orders, customers onboarded)
 - **Dead Stock** — products with no sales in the last 60 days that still hold stock; always reflects current position, not the selected period
 - **Category Performance** — revenue share by product category for the selected period
+- **Discounts by Product** and **Discounts by Customer** — every discount on confirmed orders in the period (by order date, excluding VAT), whether it was entered in Odoo or approved through the portal. Columns show orders, the value before discount, the discount, and the average discount %. **Approved in Portal** is the part backed by an approved discount request; **Not via Approval** (in amber) is discount with no approval on record, worth reviewing
 
 **Exporting to Excel:** Click **Export Excel** (top right of the period bar) to generate a multi-tab `.xlsx` file. All six reports are fetched for the current period simultaneously and bundled into one file, with each report as a separate tab. The filename includes the selected period (e.g. `Bassani Health Analytics FY2025-26.xlsx` or `Bassani Health Analytics Jul 2026.xlsx`). This button only appears if you have the `reports.export` permission.
 

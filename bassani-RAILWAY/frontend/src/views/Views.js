@@ -4062,16 +4062,18 @@ export function Reports() {
       if (t6.status==='fulfilled') {
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
           (t6.value.data.products||[]).map(p=>({
-            Rank: p.rank, Product: p.product_name, 'Discounted Lines': p.line_count,
-            'Total Discount (R)': p.total_discount?.toFixed(2), 'Avg %': p.avg_pct?.toFixed(1),
+            Rank: p.rank, Product: p.product_name, Orders: p.order_count, 'Order Lines': p.line_count,
+            'Before Discount (R)': p.gross_before_discount, 'Discount (R)': p.total_discount, 'Avg %': p.avg_pct,
+            'Approved in Portal (R)': p.approved_in_portal ?? '', 'Not via Approval (R)': p.not_via_approval ?? '',
           }))
         ), 'Discounts by Product');
       }
       if (t7.status==='fulfilled') {
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
           (t7.value.data.customers||[]).map(c=>({
-            Rank: c.rank, Customer: c.customer_name, Requests: c.request_count,
-            'Total Discount (R)': c.total_discount?.toFixed(2), 'Avg %': c.avg_pct?.toFixed(1),
+            Rank: c.rank, Customer: c.customer_name, Orders: c.order_count, 'Order Lines': c.line_count,
+            'Before Discount (R)': c.gross_before_discount, 'Discount (R)': c.total_discount, 'Avg %': c.avg_pct,
+            'Approved in Portal (R)': c.approved_in_portal ?? '', 'Not via Approval (R)': c.not_via_approval ?? '',
           }))
         ), 'Discounts by Customer');
       }
@@ -4216,59 +4218,52 @@ function ReportContent({ type, data }) {
     </div>
   );
 
-  if (type === "discounts-by-product") return (
-    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-50">
-        <h3 className="text-sm font-semibold">Products with the most discount given</h3>
-        <p className="text-xs text-gray-400 mt-0.5">Only approved/countered requests count — a rejected request never actually discounted anything.</p>
+  if (type === "discounts-by-product" || type === "discounts-by-customer") {
+    const byProduct = type === "discounts-by-product";
+    const rows = (byProduct ? data.products : data.customers) || [];
+    const totals = rows.reduce((t, r) => ({
+      disc: t.disc + (r.total_discount || 0),
+      notVia: t.notVia + (r.not_via_approval || 0),
+    }), { disc: 0, notVia: 0 });
+    return (
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-50">
+          <h3 className="text-sm font-semibold">{byProduct ? "Products with the most discount given" : "Customers given the most discount"}</h3>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Every discount on confirmed orders in the period, by order date, wherever it was entered. Amounts exclude VAT.
+            "Not via approval" is discount with no approved discount request in the portal behind it.
+          </p>
+          {rows.length > 0 && (
+            <p className="text-xs mt-1.5">
+              <span className="font-semibold text-red-600">{fmtR(totals.disc)}</span> <span className="text-gray-500">discount across these {rows.length} {byProduct ? "products" : "customers"}</span>
+              {totals.notVia > 0 && <> · <span className="font-semibold text-amber-600">{fmtR(totals.notVia)}</span> <span className="text-gray-500">not via approval</span></>}
+            </p>
+          )}
+        </div>
+        {rows.length === 0 ? (
+          <p className="text-sm text-gray-400 px-5 py-6">No discounts on confirmed orders in this period.</p>
+        ) : (
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[760px]">
+          <thead><tr className="bg-gray-50">{["#", byProduct ? "Product" : "Customer", "Orders", "Before Discount", "Discount", "Avg %", "Approved in Portal", "Not via Approval"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((r,i)=>(
+              <tr key={r.id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
+                <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":i===2?"bg-bassani-50 text-bassani-700":"bg-gray-50 text-gray-400"}`}>{r.rank}</span></Td>
+                <Td className="font-medium">{r.name}</Td>
+                <Td>{r.order_count}<span className="text-gray-400 text-xs"> ({r.line_count} lines)</span></Td>
+                <Td className="text-gray-500">{fmtR(r.gross_before_discount)}</Td>
+                <Td className="font-semibold text-red-600">{fmtR(r.total_discount)}</Td>
+                <Td className="text-gray-500">{r.avg_pct?.toFixed(1)}%</Td>
+                <Td className="text-gray-600">{r.approved_in_portal == null ? <span className="text-gray-300">n/a</span> : fmtR(r.approved_in_portal)}</Td>
+                <Td className={r.not_via_approval > 0 ? "font-semibold text-amber-600" : "text-gray-400"}>{r.not_via_approval == null ? <span className="text-gray-300">n/a</span> : fmtR(r.not_via_approval)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+        )}
       </div>
-      {(data.products || []).length === 0 ? (
-        <p className="text-sm text-gray-400 px-5 py-6">No discounts granted in this period.</p>
-      ) : (
-      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
-        <thead><tr className="bg-gray-50">{["#","Product","Discounted Lines","Total Discount","Avg %"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
-        <tbody>
-          {data.products?.map((p,i)=>(
-            <tr key={p.product_id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
-              <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":i===2?"bg-bassani-50 text-bassani-700":"bg-gray-50 text-gray-400"}`}>{p.rank}</span></Td>
-              <Td className="font-medium">{p.product_name}</Td>
-              <Td>{p.line_count}</Td>
-              <Td className="font-semibold text-red-600">{fmtR(p.total_discount)}</Td>
-              <Td className="text-gray-500">{p.avg_pct?.toFixed(1)}%</Td>
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-      )}
-    </div>
-  );
-
-  if (type === "discounts-by-customer") return (
-    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-50">
-        <h3 className="text-sm font-semibold">Customers given the most discount</h3>
-        <p className="text-xs text-gray-400 mt-0.5">Only approved/countered requests count — a rejected request never actually discounted anything.</p>
-      </div>
-      {(data.customers || []).length === 0 ? (
-        <p className="text-sm text-gray-400 px-5 py-6">No discounts granted in this period.</p>
-      ) : (
-      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[400px]">
-        <thead><tr className="bg-gray-50">{["#","Customer","Requests","Total Discount","Avg %"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
-        <tbody>
-          {data.customers?.map((c,i)=>(
-            <tr key={c.customer_partner_id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
-              <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":"bg-gray-50 text-gray-400"}`}>{c.rank}</span></Td>
-              <Td className="font-medium">{c.customer_name}</Td>
-              <Td>{c.request_count}</Td>
-              <Td className="font-semibold text-red-600">{fmtR(c.total_discount)}</Td>
-              <Td className="text-gray-500">{c.avg_pct?.toFixed(1)}%</Td>
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-      )}
-    </div>
-  );
+    );
+  }
 
   if (type === "best-resellers") {
     const rs = data.resellers || [];

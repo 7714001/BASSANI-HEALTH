@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime, timezone, date, timedelta
 import calendar as _cal
 from auth import get_current_user, require_admin
-from odoo_client import get_odoo_client
+from odoo_client import get_odoo_client, odoo_execute_kw
 from database import col, NO_ID
 from warehouse_context import odoo_context
 
@@ -694,6 +694,110 @@ def _discount_period_bounds(year: Optional[int], month: Optional[int], from_date
     return first_day_of_month(year, month), last_day_of_month(year, month)
 
 
+# Discount reports (rebuilt 2026-10-11) read Odoo's Sales Analysis model
+# (sale.report), which already stores a Discount Amount per order line, and
+# let Odoo aggregate server-side (read_group): the portal receives one row per
+# product/customer however many order lines exist, and nothing is copied into
+# Mongo. Previously these read only the portal's own approved discount
+# requests, which missed every discount entered directly in Odoo (live: R198k
+# across 124 order lines, almost none via a portal request). Period basis is
+# the order date (when the price was agreed); confirmed orders only; sales
+# orders only (sale.report also carries Point of Sale orders). The portal's
+# approvals are layered on as an "approved in the portal" portion.
+
+def _sale_report_domain(_from, _to, warehouse_id) -> list:
+    dom = [
+        ("state", "in", ["sale", "done"]),
+        ("discount", ">", 0),
+        ("order_reference", "like", "sale.order,"),
+        ("date", ">=", _from.strftime("%Y-%m-%d %H:%M:%S")),
+        ("date", "<=", _to.strftime("%Y-%m-%d %H:%M:%S")),
+    ]
+    if warehouse_id:
+        dom.append(("warehouse_id", "=", warehouse_id))
+    return dom
+
+
+async def _approved_pairs_domain() -> list:
+    """Odoo domain matching the order lines a portal discount request approved
+    (approved or countered, a line granted > 0%): an OR of (order, products)
+    pairs. Empty list if there are none."""
+    docs = await col("discount_requests").find(
+        {"status": {"$in": ["approved", "countered"]}, "order_id": {"$ne": None}},
+        {"order_id": 1, "final_lines": 1, "lines": 1, "_id": 0},
+    ).to_list(length=3000)
+    pairs = {}
+    for d in docs:
+        lines = d.get("final_lines") or [
+            {"product_id": l.get("product_id"), "final_pct": l.get("requested_pct")} for l in (d.get("lines") or [])
+        ]
+        pids = {l.get("product_id") for l in lines if l.get("product_id") and (l.get("final_pct") or 0) > 0}
+        if pids:
+            pairs.setdefault(int(d["order_id"]), set()).update(pids)
+    if not pairs:
+        return []
+    clauses = [["&", ("order_reference", "=", f"sale.order,{oid}"), ("product_id", "in", sorted(pids))]
+               for oid, pids in pairs.items()]
+    dom = []
+    for i, c in enumerate(clauses):
+        if i < len(clauses) - 1:
+            dom.append("|")
+        dom.extend(c)
+    return dom
+
+
+def _discount_rows(odoo, domain: list, groupby: str, limit: Optional[int] = 50) -> list:
+    kw = {"lazy": False, "orderby": "discount_amount desc"}
+    if limit:
+        kw["limit"] = limit
+    return odoo_execute_kw(
+        "sale.report", "read_group",
+        [domain, ["discount_amount:sum", "price_subtotal:sum", "nbr:sum", "order_reference:count_distinct"], [groupby]],
+        kw,
+    )
+
+
+async def _discount_report(current_user: dict, groupby: str, year, month, from_date, to_date) -> list:
+    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
+    warehouse_id = current_user.get("active_warehouse_id")
+    odoo = get_odoo_client()
+    domain = _sale_report_domain(_from, _to, warehouse_id)
+    try:
+        rows = _discount_rows(odoo, domain, groupby)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not read discounts from Odoo: {e}")
+    approved = {}
+    pairs = await _approved_pairs_domain()
+    if pairs and rows:
+        try:
+            for r in _discount_rows(odoo, domain + pairs, groupby, limit=None):
+                if r.get(groupby):
+                    approved[r[groupby][0]] = r.get("discount_amount") or 0
+        except Exception:
+            approved = None  # degrade: the column shows as unavailable
+    out = []
+    for i, r in enumerate(rows):
+        key = r.get(groupby)
+        disc = round(r.get("discount_amount") or 0, 2)
+        net = r.get("price_subtotal") or 0
+        gross = disc + net
+        appr = None if approved is None else round(approved.get(key[0] if key else None, 0), 2)
+        out.append({
+            "rank": i + 1,
+            "id": key[0] if key else None,
+            "name": key[1] if key else "Unknown",
+            "total_discount": disc,
+            "gross_before_discount": round(gross, 2),
+            "net_after_discount": round(net, 2),
+            "avg_pct": round(disc / gross * 100, 1) if gross else 0,
+            "line_count": int(r.get("nbr") or r.get("__count") or 0),
+            "order_count": r.get("order_reference") or 0,
+            "approved_in_portal": appr,
+            "not_via_approval": None if appr is None else round(max(disc - appr, 0), 2),
+        })
+    return out
+
+
 @router.get("/discounts-by-product")
 async def discounts_by_product(
     year: int = Query(default=None),
@@ -702,28 +806,10 @@ async def discounts_by_product(
     to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
-    """Reports page leaderboard: which products carry the most granted
-    discount value in the selected period."""
-    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
-    pipeline = [
-        {"$match": {"status": {"$in": ["approved", "countered"]}, "decision.at": {"$gte": _from, "$lte": _to}}},
-        {"$unwind": "$final_lines"},
-        {"$group": {
-            "_id": "$final_lines.product_id",
-            "product_name": {"$first": "$final_lines.product_name"},
-            "total_discount": {"$sum": "$final_lines.final_amount"},
-            "line_count": {"$sum": 1},
-            "avg_pct": {"$avg": "$final_lines.final_pct"},
-        }},
-        {"$sort": {"total_discount": -1}},
-        {"$limit": 50},
-    ]
-    rows = await col("discount_requests").aggregate(pipeline).to_list(length=50)
-    return {"products": [
-        {"rank": i + 1, "product_id": r["_id"], "product_name": r["product_name"],
-         "total_discount": r["total_discount"], "line_count": r["line_count"], "avg_pct": r["avg_pct"]}
-        for i, r in enumerate(rows)
-    ]}
+    """Products carrying the most discount on confirmed orders in the period,
+    from Odoo. See the section comment above."""
+    rows = await _discount_report(current_user, "product_id", year, month, from_date, to_date)
+    return {"products": [{**r, "product_id": r["id"], "product_name": r["name"]} for r in rows]}
 
 
 @router.get("/discounts-by-customer")
@@ -734,43 +820,10 @@ async def discounts_by_customer(
     to_date: Optional[str] = Query(default=None),
     current_user: dict = Depends(require_admin),
 ):
-    """Reports page leaderboard: which customers have been given the most
-    discount value in the selected period. Grouped on (customer_partner_id,
-    customer_name) rather than partner_id alone, since a pre-8.63 request may
-    have no partner_id at all — grouping strictly on a possibly-null id would
-    otherwise merge unrelated legacy customers into one bucket."""
-    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
-    pipeline = [
-        {"$match": {"status": {"$in": ["approved", "countered"]}, "decision.at": {"$gte": _from, "$lte": _to}}},
-        {"$addFields": {
-            "_request_total": {"$sum": "$final_lines.final_amount"},
-            "_request_avg_pct": {"$avg": "$final_lines.final_pct"},
-        }},
-        {"$group": {
-            "_id": {"partner_id": "$customer_partner_id", "name": "$customer_name"},
-            "total_discount": {"$sum": "$_request_total"},
-            "request_count": {"$sum": 1},
-            "avg_pct": {"$avg": "$_request_avg_pct"},
-        }},
-        {"$sort": {"total_discount": -1}},
-        {"$limit": 50},
-    ]
-    rows = await col("discount_requests").aggregate(pipeline).to_list(length=50)
-    # r["_id"] uses .get(), not [...] (found live, Sentry #150266293): Mongo
-    # omits a $group _id subfield ENTIRELY (not null) when the source field
-    # is completely absent from a document, not just unset — every
-    # discount_requests doc created before 8.63 shipped (2026-09-29) has no
-    # customer_partner_id key at all, so "partner_id" was missing from the
-    # _id dict outright and a plain [...] lookup raised KeyError. avg_pct is
-    # similarly None for a legacy doc with no final_lines array at all (the
-    # $addFields $avg/$sum above run per-document, outside $group, where a
-    # missing array evaluates to null/0 rather than being skipped the way
-    # $unwind drops it in discounts_by_product's pipeline).
-    return {"customers": [
-        {"rank": i + 1, "customer_partner_id": r["_id"].get("partner_id"), "customer_name": r["_id"].get("name") or "Unknown",
-         "total_discount": r.get("total_discount") or 0, "request_count": r["request_count"], "avg_pct": r.get("avg_pct") or 0}
-        for i, r in enumerate(rows)
-    ]}
+    """Customers (the company, not the individual contact) given the most
+    discount on confirmed orders in the period, from Odoo."""
+    rows = await _discount_report(current_user, "commercial_partner_id", year, month, from_date, to_date)
+    return {"customers": [{**r, "customer_partner_id": r["id"], "customer_name": r["name"]} for r in rows]}
 
 
 # ── Dead Stock ────────────────────────────────────────────────────────────────
