@@ -99,7 +99,7 @@ export default function CustomerStatement({ customerId, onFinanceChanged }) {
     } finally {
       setLoading(false);
     }
-  }, [customerId, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [customerId, params]); // eslint-disable-line
 
   const loadSends = useCallback(() => {
     if (!isStaff) return;

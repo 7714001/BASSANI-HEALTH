@@ -81,7 +81,7 @@ export default function InvoiceDetailModal({ invoiceId, onClose, onChanged }) {
     } finally {
       setLoading(false);
     }
-  }, [invoiceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [invoiceId]); // eslint-disable-line
 
   useEffect(() => { load(); }, [load]);
 
