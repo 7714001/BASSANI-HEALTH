@@ -168,7 +168,7 @@ export default function SupplyGMP() {
     <div className="flex flex-col h-full">
       <TopBar title="GMP Supply" subtitle={cfg ? `${supplierName} → ${receivingName}` : "Stock from GMP for customer orders"} onRefresh={load} actions={actions} />
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="max-w-6xl mx-auto w-full space-y-4">
+        <div className="w-full space-y-4">
           {loading && !wl && !notConfigured ? (
             <div className="py-16 flex items-center justify-center text-sm text-gray-400 gap-2"><Loader2 size={16} className="animate-spin" />Reading Odoo…</div>
           ) : notConfigured ? (

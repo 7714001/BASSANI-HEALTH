@@ -49,7 +49,7 @@ export default function ReleaseRequests() {
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="max-w-6xl mx-auto w-full space-y-4">
+        <div className="w-full space-y-4">
           <p className="text-sm text-gray-500">
             Orders a sales clerk has asked to release without a deposit because the customer has a payment agreement.
             Open one to approve account terms and release it, release that order only, or decline.
