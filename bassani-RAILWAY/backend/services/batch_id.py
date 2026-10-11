@@ -142,3 +142,34 @@ def derive_stage_id(parent_batch_id: str, suffix: str) -> str:
         raise ValueError(f"Unknown stage suffix '{suffix}'")
     base, _current = split_stage(parent_batch_id)
     return f"{base}-{suffix}"
+
+
+# ── Classifying batch names found in Odoo (2026-10-11) ────────────────────────
+# Used by the Odoo batch-name check: which existing stock.lot names follow the
+# standard, which are older Bassani-style names, and which don't follow it.
+import re as _re
+
+_V6_NAME = _re.compile(r"^(BHAPI|BHB|BHG|BH)[A-Z0-9]{2,4}-\d{3}-\d{6}(-[A-Z0-9]+)?$")
+_BI_NAME = _re.compile(r"^BI[A-Z]{2}-[A-Z0-9]{2,4}[1-9]\d{2}[LPS]?-\d{6}(-[A-Z0-9]+)?$")
+
+
+def classify_batch_name(name: str) -> str:
+    """'standard' (V6 Bassani batch), 'import' (BI import batch), 'legacy'
+    (starts like a Bassani/import batch but not in the current format, e.g.
+    BHADIF-210526-M with no sequence), or 'other' (not in the V6 standard at
+    all; may still be a valid supplier or packing reference)."""
+    n = (name or "").strip().upper()
+    if _V6_NAME.match(n):
+        return "standard"
+    if _BI_NAME.match(n):
+        return "import"
+    if n.startswith("BH") or n.startswith("BI"):
+        return "legacy"
+    return "other"
+
+
+def normalise_batch_name(name: str) -> str:
+    """Letters and digits only, upper case. Near-duplicates are names for the
+    same product whose normalised forms are one edit apart (e.g. the live pair
+    BHADSD-280826-M / BHADSD0280826-M)."""
+    return _re.sub(r"[^A-Z0-9]", "", (name or "").upper())

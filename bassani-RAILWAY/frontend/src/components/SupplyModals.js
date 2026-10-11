@@ -197,25 +197,45 @@ function BatchField({ productId, locationId, value, onChange, allowNew = true })
 }
 
 // ── Book stock in at GMP ──────────────────────────────────────────────────────
-export function BookInModal({ initialProduct = null, supplierName, supplierLocationId, onClose, onDone }) {
+// Batch rule (2026-10-11): stock is booked in on a batch registered in the
+// Batch Registry / S6 Receiving, or on a batch already in Odoo. New batch
+// names are never typed here; they come from the Batch Registry generator.
+// Imports still awaiting Responsible Pharmacist release can't be used.
+export function BookInModal({ initialProduct = null, supplierName, onClose, onDone }) {
   const [product, setProduct] = useState(initialProduct);
+  const [opts, setOpts] = useState(null);
+  const [choice, setChoice] = useState({ kind: null, value: "" }); // kind: registered | existing
   const [qty, setQty] = useState("");
-  const [batch, setBatch] = useState({ mode: "new", lot_name: "" });
   const [expiry, setExpiry] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    setOpts(null); setChoice({ kind: null, value: "" });
+    if (!product) return;
+    api.get("/api/supply/book-in/batches", { params: { product_id: product.id } })
+      .then(r => setOpts(r.data))
+      .catch(e => { toast.error(e.response?.data?.detail || "Could not load batches"); setOpts({ tracking: "lot", registered: [], existing: [] }); });
+  }, [product]);
+
+  const tracked = opts && opts.tracking !== "none";
+  const existingNames = new Set((opts?.existing || []).map(l => l.name));
+  // A registered batch that's already an Odoo batch is listed once, under registered.
+  const existingOnly = (opts?.existing || []).filter(l => !(opts?.registered || []).some(r => r.batch_id === l.name));
+  const chosenRegistered = choice.kind === "registered" ? (opts?.registered || []).find(r => r.batch_id === choice.value) : null;
+
   const submit = async () => {
     if (!product) return toast.error("Choose the product");
     if (!(parseFloat(qty) > 0)) return toast.error("Enter a quantity above zero");
+    if (tracked && !choice.value) return toast.error("Choose the batch");
     if (!reason.trim()) return toast.error("Give a reason");
     setSaving(true);
     try {
       const { data } = await api.post("/api/supply/book-in", {
-        product_id: product.id, qty: parseFloat(qty),
-        lot_name: batch.lot_name?.trim() || undefined,
-        expiration_date: batch.mode === "new" && expiry ? expiry : undefined,
-        reason: reason.trim(),
+        product_id: product.id, qty: parseFloat(qty), reason: reason.trim(),
+        registry_batch_id: choice.kind === "registered" ? choice.value : undefined,
+        odoo_lot_id: choice.kind === "existing" ? parseInt(choice.value) : undefined,
+        expiration_date: choice.kind === "registered" && expiry ? expiry : undefined,
       });
       toast.success(`Booked in ${qtyFmt(qty)} of ${data.product_name}${data.lot_name ? ` (batch ${data.lot_name})` : ""}. On hand now ${qtyFmt(data.after)}.`);
       onDone?.();
@@ -225,31 +245,71 @@ export function BookInModal({ initialProduct = null, supplierName, supplierLocat
   };
 
   return (
-    <Modal title={`Book stock in at ${supplierName}`} onClose={onClose}>
+    <Modal title={`Book stock in at ${supplierName}`} onClose={onClose} width="max-w-2xl">
       <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2">
         <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
         <p className="text-xs text-amber-800">
-          Adds stock at {supplierName} in Odoo (a stock adjustment). Use it for finished product that's physically at GMP but
-          not yet in Odoo, for example a completed production batch. It's recorded with your name and reason.
+          Adds stock at {supplierName} in Odoo (a stock adjustment) for finished product that's physically there but not yet in Odoo.
+          It's recorded with your name and reason.
         </p>
       </div>
       <FormGroup label="Product" required>
-        <ProductSearchPicker value={product} onChange={p => { setProduct(p); setBatch({ mode: "new", lot_name: "" }); }} autoFocus={!initialProduct} />
+        <ProductSearchPicker value={product} onChange={setProduct} autoFocus={!initialProduct} />
       </FormGroup>
-      {product && (
-        <FormGroup label="Batch">
-          <BatchField productId={product.id} locationId={supplierLocationId} value={batch} onChange={setBatch} />
-          <p className="text-[11px] text-gray-400 mt-1">Required for batch-tracked products. Leave blank only for untracked items.</p>
+
+      {product && !opts && <p className="text-xs text-gray-400 flex items-center gap-2 mb-3"><Loader2 size={12} className="animate-spin" />Loading batches…</p>}
+      {product && opts && tracked && (
+        <FormGroup label="Batch" required>
+          <div className="space-y-2">
+            <div className={`rounded-lg border px-3 py-2 ${choice.kind === "registered" ? "border-bassani-300 bg-bassani-50" : "border-gray-200"}`}>
+              <p className="text-xs font-semibold text-gray-700 mb-1">Registered batch (Batch Registry or S6 Receiving)</p>
+              {opts.registered.length === 0 ? (
+                <p className="text-xs text-gray-500">
+                  {opts.product_linked
+                    ? "No batches registered for this product yet. Generate one in Production, Batch Registry (or receive it in S6 Receiving if it's imported)."
+                    : "This product isn't linked to a Batch Registry product yet. Link it under Production, Batch Registry, Manage Products, then generate its batch."}
+                </p>
+              ) : (
+                <Select value={choice.kind === "registered" ? choice.value : ""} onChange={e => setChoice({ kind: e.target.value ? "registered" : null, value: e.target.value })}>
+                  <option value="">— Select a registered batch —</option>
+                  {opts.registered.map(r => (
+                    <option key={r.batch_id} value={r.batch_id} disabled={!!r.quarantine_block}>
+                      {r.batch_id}{r.family === "import" ? " (import)" : ""}{existingNames.has(r.batch_id) ? " · in Odoo" : ""}{r.quarantine_block ? " · awaiting RP release" : ""}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
+            <div className={`rounded-lg border px-3 py-2 ${choice.kind === "existing" ? "border-bassani-300 bg-bassani-50" : "border-gray-200"}`}>
+              <p className="text-xs font-semibold text-gray-700 mb-1">Batch already in Odoo</p>
+              {existingOnly.length === 0 ? (
+                <p className="text-xs text-gray-500">No other batches for this product in Odoo.</p>
+              ) : (
+                <Select value={choice.kind === "existing" ? choice.value : ""} onChange={e => setChoice({ kind: e.target.value ? "existing" : null, value: e.target.value })}>
+                  <option value="">— Select an existing batch —</option>
+                  {existingOnly.map(l => (
+                    <option key={l.lot_id} value={l.lot_id}>{l.name} ({qtyFmt(l.qty_here)} at {supplierName}{l.expiration_date ? `, exp ${fmtDate(l.expiration_date)}` : ""})</option>
+                  ))}
+                </Select>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400">New batch numbers are only created by the Batch Registry generator, so every batch follows the standard.</p>
+          </div>
         </FormGroup>
       )}
-      {batch.mode === "new" && batch.lot_name && (
-        <FormGroup label="Expiry date (new batch)"><Input type="date" value={expiry} onChange={e => setExpiry(e.target.value)} /></FormGroup>
+      {chosenRegistered && !existingNames.has(chosenRegistered.batch_id) && (
+        <FormGroup label="Expiry date (optional)">
+          <Input type="date" value={expiry} onChange={e => setExpiry(e.target.value)} />
+          <p className="text-[11px] text-gray-400 mt-1">This batch will be created in Odoo now; set its expiry if it has one.</p>
+        </FormGroup>
       )}
+      {product && opts && !tracked && <p className="text-xs text-gray-500 mb-3">This product isn't batch-tracked, so no batch is needed.</p>}
+
       <FormGroup label="Quantity to add" required><Input type="number" min="0" step="any" value={qty} onChange={e => setQty(e.target.value)} /></FormGroup>
       <FormGroup label="Reason" required><Input value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Production batch completed, packed 10 Oct" /></FormGroup>
       <div className="flex justify-end gap-2 mt-4">
         <BtnSecondary onClick={onClose} disabled={saving}>Cancel</BtnSecondary>
-        <BtnPrimary onClick={submit} loading={saving}>Book In</BtnPrimary>
+        <BtnPrimary onClick={submit} loading={saving} disabled={!product || !opts || (tracked && !choice.value)}>Book In</BtnPrimary>
       </div>
     </Modal>
   );

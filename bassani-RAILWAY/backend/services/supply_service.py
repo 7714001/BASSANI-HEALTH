@@ -31,6 +31,18 @@ from typing import Optional
 from odoo_client import odoo as odoo_call
 
 
+# The GMP Vault is the one physical vault: GMP Supply ships from it and the
+# Phase 13 vault module (services/vault_odoo.py) records movements in it.
+# resolve_config() keeps this up to date so both use the same warehouse
+# (confirmed with the product owner 2026-10-11; previously Phase 13 read a
+# separate GACP_WAREHOUSE_ID variable).
+_VAULT = {"warehouse_id": None, "warehouse_name": None, "company_id": None}
+
+
+def vault_warehouse() -> dict:
+    return dict(_VAULT)
+
+
 class SupplyNotConfigured(Exception):
     pass
 
@@ -124,6 +136,7 @@ def resolve_config(odoo, settings: dict) -> dict:
 
     internal_partner_ids = sorted({_id(c["partner_id"]) for c in odoo.search_read("res.company", [], fields=["partner_id"])
                                    if c.get("partner_id")})
+    _VAULT.update(warehouse_id=supplier_warehouse_id, warehouse_name=sw["name"], company_id=supplier_company_id)
     return {
         "supplier_company_id": supplier_company_id,
         "supplier_company_name": sc["name"],
@@ -501,7 +514,10 @@ def _ensure_lot(odoo, product_id: int, lot_name: str, company_id: int, expiratio
                             fields=["id"], limit=1)
     if rows:
         return rows[0]["id"]
-    vals = {"name": lot_name, "product_id": product_id, "company_id": company_id}
+    # Shared across companies (company_id False), like almost every batch
+    # already in Odoo (2,996 of 3,000, live 2026-10-11): the batch has to stay
+    # visible to La Farmacia after it's dispatched from GMP.
+    vals = {"name": lot_name, "product_id": product_id, "company_id": False}
     if expiration_date:
         vals["expiration_date"] = f"{expiration_date[:10]} 00:00:00"
     return odoo_call("stock.lot", "create", [vals], {"context": _ctx(company_id)})
@@ -700,6 +716,47 @@ def receive_transit(odoo, cfg: dict, picking_id: int) -> dict:
         raise SupplyError(err)
     moves = odoo.read("stock.move", rows[0]["move_ids"], fields=["product_id"]) if rows[0].get("move_ids") else []
     return {"picking": rows[0]["name"], "product_ids": sorted({_id(m["product_id"]) for m in moves})}
+
+
+def picking_lot_names(odoo, picking_id: int, lines: Optional[list] = None) -> set:
+    """Batch names a dispatch/receipt would move. With `lines` (dispatch
+    overrides), a changed batch counts instead of the reserved one and lines
+    set to 0 don't count."""
+    p = odoo.read("stock.picking", [picking_id], fields=["move_line_ids"])
+    ml_ids = (p[0].get("move_line_ids") or []) if p else []
+    if not ml_ids:
+        return set()
+    mls = {ml["id"]: ml for ml in odoo.read("stock.move.line", ml_ids, fields=["lot_id", "lot_name"])}
+    wanted = {int(l["move_line_id"]): l for l in (lines or []) if l.get("move_line_id") is not None}
+    lot_ids, names = set(), set()
+    for ml_id, ml in mls.items():
+        w = wanted.get(ml_id)
+        if wanted and (not w or _f(w.get("quantity")) <= 0):
+            continue
+        if w and w.get("lot_id"):
+            lot_ids.add(int(w["lot_id"]))
+        elif ml.get("lot_id"):
+            names.add(_name(ml["lot_id"]))
+        elif ml.get("lot_name"):
+            names.add(ml["lot_name"])
+    if lot_ids:
+        names.update(r["name"] for r in odoo.read("stock.lot", sorted(lot_ids), fields=["name"]))
+    return {n for n in names if n}
+
+
+def product_lots(odoo, product_id: int, location_id: int) -> list:
+    """Existing Odoo batches for a product, with quantity at a location."""
+    lots = odoo.search_read("stock.lot", [("product_id", "=", product_id)],
+                            fields=["name", "expiration_date", "create_date"], limit=200, order="create_date desc")
+    if not lots:
+        return []
+    qty: dict = defaultdict(float)
+    for q in odoo.search_read("stock.quant", [("product_id", "=", product_id), ("location_id", "child_of", location_id),
+                                              ("lot_id", "in", [l["id"] for l in lots])],
+                              fields=["lot_id", "quantity"], limit=1000):
+        qty[_id(q["lot_id"])] += _f(q["quantity"])
+    return [{"lot_id": l["id"], "name": l["name"], "qty_here": round(qty.get(l["id"], 0.0), 3),
+             "expiration_date": (l.get("expiration_date") or "")[:10] or None} for l in lots]
 
 
 def reserve_waiting_deliveries(odoo, cfg: dict, product_ids: list) -> int:

@@ -1668,6 +1668,72 @@ async def s6_register(
     return {"items": [_clean(d) for d in docs], "total": total}
 
 
+# ── Odoo batch-name check (2026-10-11) ────────────────────────────────────────
+
+def _one_edit_apart(a: str, b: str) -> bool:
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) == 1
+    if len(a) > len(b):
+        a, b = b, a
+    i = j = diff = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+        else:
+            diff += 1
+            if diff > 1:
+                return False
+        j += 1
+    return True
+
+
+@router.get("/odoo-batch-check")
+async def odoo_batch_check(_: dict = Depends(require_permission("production.manage"))):
+    """Read-only report on batch (stock.lot) names already in Odoo, for
+    Bassani to tidy: how many follow the V6 / import standard, older
+    Bassani-style names, names outside the standard, and near-duplicates (two
+    names for the same product one character apart, e.g. BHADSD-280826-M vs
+    BHADSD0280826-M). Names outside the standard aren't necessarily wrong:
+    some may be supplier or packing references still to be confirmed."""
+    from services.batch_id import classify_batch_name, normalise_batch_name
+    odoo = get_odoo_client()
+    lots, offset = [], 0
+    try:
+        while True:
+            batch = odoo.search_read("stock.lot", domain=[], fields=["name", "product_id", "create_date"],
+                                     limit=2000, offset=offset, order="id asc")
+            lots.extend(batch)
+            if len(batch) < 2000 or offset >= 40000:
+                break
+            offset += 2000
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    counts = {"standard": 0, "import": 0, "legacy": 0, "other": 0}
+    by_product: dict = {}
+    non_standard = []
+    for l in lots:
+        kind = classify_batch_name(l["name"])
+        counts[kind] += 1
+        prod = l.get("product_id")
+        pid, pname = (prod[0], prod[1]) if isinstance(prod, list) else (None, None)
+        by_product.setdefault(pid, {"name": pname, "lots": []})["lots"].append(l["name"])
+        if kind in ("legacy", "other"):
+            non_standard.append({"name": l["name"], "product": pname, "kind": kind, "created": (l.get("create_date") or "")[:10]})
+    near = []
+    for pid, g in by_product.items():
+        names = sorted(set(g["lots"]))[:400]
+        normed = [(n, normalise_batch_name(n)) for n in names]
+        for i in range(len(normed)):
+            for k in range(i + 1, len(normed)):
+                if normed[i][1] == normed[k][1] or _one_edit_apart(normed[i][1], normed[k][1]):
+                    near.append({"product": g["name"], "names": [normed[i][0], normed[k][0]]})
+    non_standard.sort(key=lambda r: r["created"], reverse=True)
+    return {"total": len(lots), "counts": counts, "near_duplicates": near[:500], "near_duplicate_count": len(near),
+            "non_standard": non_standard[:1000], "non_standard_count": len(non_standard)}
+
+
 # ── GACP readiness probe (13.0.1) ─────────────────────────────────────────────
 
 @router.get("/odoo-probe")
@@ -1676,9 +1742,13 @@ async def odoo_probe(_: dict = Depends(require_permission("production.manage")))
     Answers "do we have GACP access yet?" empirically — companies, warehouses,
     location trees, and whether manufacturing is installed."""
     odoo = get_odoo_client()
+    _w = get_vault_writer()
     out: dict = {"companies": [], "mrp_installed": None,
-                 "gacp_warehouse_id": get_settings().gacp_warehouse_id or None,
-                 "odoo_writes_live": get_vault_writer().live}
+                 # The GMP Vault (shared with GMP Supply settings since
+                 # 2026-10-11); key name kept for the existing frontend.
+                 "gacp_warehouse_id": _w.warehouse_id or None,
+                 "vault_source": _w.warehouse_source,
+                 "odoo_writes_live": _w.live}
     try:
         companies = odoo.search_read("res.company", domain=[], fields=["id", "name"], limit=20)
     except Exception as e:

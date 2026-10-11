@@ -697,11 +697,11 @@ export default function VaultLogbook() {
         </div>
       </div>
 
-      {/* GACP readiness probe results */}
+      {/* Stock system access probe results (vault = GMP Vault, 2026-10-11) */}
       {probeOpen && (
         <Modal title="Stock System Access" onClose={() => setProbeOpen(false)} width="max-w-2xl">
           <p className="text-sm text-gray-600 mb-4">
-            What the portal's stock system connection can currently see. Use this to check whether the GACP production facility's company and warehouse are visible yet — Odoo hides companies and their warehouses from the connection entirely until access is granted, rather than showing an error.
+            What the portal's stock system connection can currently see, and which warehouse the vault logbook records into (the GMP Vault, set in GMP Supply settings). Odoo hides companies and their warehouses from the connection entirely until access is granted, rather than showing an error.
           </p>
 
           {probeLoading ? (
@@ -722,9 +722,9 @@ export default function VaultLogbook() {
                   </span>
                 </span>
                 <span className="text-gray-500">
-                  GACP warehouse configured:{" "}
+                  Vault warehouse:{" "}
                   <span className={`font-semibold ${probeData.gacp_warehouse_id ? "text-green-600" : "text-amber-600"}`}>
-                    {probeData.gacp_warehouse_id || "No"}
+                    {probeData.gacp_warehouse_id ? `Set (${probeData.vault_source || "configured"})` : "Not set: choose GMP Vault in GMP Supply settings"}
                   </span>
                 </span>
                 <span className="text-gray-500">
@@ -758,7 +758,7 @@ export default function VaultLogbook() {
                                   <Warehouse size={12} className="text-gray-400" />
                                   {w.name} {w.code && <span className="font-mono text-gray-400">({w.code})</span>}
                                   {probeData.gacp_warehouse_id === w.id && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-100 text-bassani-700">GACP</span>
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bassani-100 text-bassani-700">Vault</span>
                                   )}
                                 </p>
                                 {w.locations.length > 0 && (
@@ -778,7 +778,7 @@ export default function VaultLogbook() {
               </div>
 
               <p className="text-xs text-gray-400">
-                Looking for the GACP company or warehouse and not seeing it? It needs to be added to the connection's allowed companies in the stock system first — this is a one-time setup step, not something the portal can grant itself.
+                Looking for a company or warehouse and not seeing it? It needs to be added to the connection's allowed companies in the stock system first — this is a one-time setup step, not something the portal can grant itself.
               </p>
             </div>
           )}

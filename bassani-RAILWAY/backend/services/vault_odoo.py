@@ -64,7 +64,18 @@ class VaultOdooWriter:
 
     @property
     def warehouse_id(self) -> int:
-        return get_settings().gacp_warehouse_id or 0
+        """The GMP Vault: the warehouse GMP Supply settings resolve
+        (services/supply_service.vault_warehouse), falling back to the older
+        GACP_WAREHOUSE_ID variable only until those settings are saved."""
+        from services.supply_service import vault_warehouse
+        return vault_warehouse().get("warehouse_id") or get_settings().gacp_warehouse_id or 0
+
+    @property
+    def warehouse_source(self) -> str:
+        from services.supply_service import vault_warehouse
+        if vault_warehouse().get("warehouse_id"):
+            return "GMP Supply settings"
+        return "GACP_WAREHOUSE_ID variable" if get_settings().gacp_warehouse_id else "not configured"
 
     # ── Op builders (pure — used in both modes) ───────────────────────────────
 
@@ -114,9 +125,9 @@ class VaultOdooWriter:
         first failure — callers mark the movement odoo_sync="error" with the
         message so it can be fixed and re-synced."""
         if not self.live:
-            raise RuntimeError("Odoo writes for the GACP vault are not enabled (GACP_ODOO_WRITES=off)")
+            raise RuntimeError("Odoo writes for the vault are not enabled yet (GACP_ODOO_WRITES=off)")
         if not self.warehouse_id:
-            raise RuntimeError("GACP_WAREHOUSE_ID is not configured")
+            raise RuntimeError("The vault warehouse isn't set. Choose GMP Vault in GMP Supply settings.")
         results = []
         for op in ops:
             kind = op.get("op")

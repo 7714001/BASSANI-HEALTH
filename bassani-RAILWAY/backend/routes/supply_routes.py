@@ -68,6 +68,34 @@ async def _ticket_ids_by_order(order_ids: list) -> dict:
     return out
 
 
+async def quarantine_blocks(lot_names) -> list:
+    """Schedule 6 control shared with the Vault Logbook: an imported batch
+    (registered by S6 Receiving) can't be booked in, dispatched or received
+    until the Responsible Pharmacist has released it. Deny by default when the
+    registry knows it's an import but no receipt is found. Batches the
+    registry doesn't know (legacy names created before the portal) can't be
+    checked and are allowed, as agreed 2026-10-11."""
+    blocks = []
+    for name in sorted({n for n in lot_names if n}):
+        batch = await col("batch_registry").find_one({"batch_id": name}, {"family": 1, "base_batch_id": 1, "batch_id": 1})
+        if not batch or batch.get("family") != "import":
+            continue
+        lineage = batch.get("base_batch_id") or batch["batch_id"]
+        receipt = await col("s6_receipts").find_one({"$or": [{"base_batch_id": lineage}, {"batch_id": lineage}]},
+                                                     sort=[("created_at", -1)])
+        if not receipt:
+            blocks.append(f"{name} has no S6 receiving record on file.")
+        elif receipt.get("status") != "released":
+            blocks.append(f"{name} is awaiting Responsible Pharmacist release (S6 Releases).")
+    return blocks
+
+
+async def _require_released(lot_names) -> None:
+    blocks = await quarantine_blocks(lot_names)
+    if blocks:
+        raise HTTPException(status_code=409, detail="Schedule 6 quarantine: " + " ".join(blocks))
+
+
 async def after_stock_arrival(odoo, cfg: dict, product_ids: list, background_tasks: BackgroundTasks,
                               actor: Optional[dict]) -> dict:
     """Stock just landed at the receiving warehouse: reserve it on waiting
@@ -200,10 +228,55 @@ async def request_stock(body: RequestBody, current_user: dict = Depends(require_
 
 # ── Book in at GMP ────────────────────────────────────────────────────────────
 
+async def _registry_batches_for(product_id: int) -> list:
+    """Batch Registry batches whose product is linked to this Odoo product."""
+    codes = [d["code"] async for d in col("product_shortcodes").find({"odoo_product_id": product_id}, {"code": 1})]
+    if not codes:
+        return []
+    rows = await col("batch_registry").find(
+        {"product_code": {"$in": codes}},
+        {"_id": 0, "batch_id": 1, "family": 1, "stage_suffix": 1, "base_batch_id": 1, "created_at": 1, "product_name": 1},
+    ).sort("created_at", -1).to_list(200)
+    for r in rows:
+        r["quarantine_block"] = None
+        if r.get("family") == "import":
+            b = await quarantine_blocks([r["batch_id"]])
+            r["quarantine_block"] = b[0] if b else None
+        if hasattr(r.get("created_at"), "isoformat"):
+            r["created_at"] = r["created_at"].isoformat()
+    return rows
+
+
+def _read_product(odoo, product_id: int, fields: list):
+    return odoo.read("product.product", [product_id], fields=fields)
+
+
+def _read_lot(odoo, lot_id: int):
+    return odoo.read("stock.lot", [lot_id], fields=["name", "product_id"])
+
+
+@router.get("/book-in/batches")
+async def book_in_batch_options(product_id: int, current_user: dict = Depends(require_permission("supply.book_in"))):
+    """The batches stock can be booked in on: one registered in the Batch
+    Registry / S6 Receiving for this product, or one already in Odoo. Typing a
+    new batch name isn't allowed (batch standard, 2026-10-11)."""
+    odoo = get_odoo_client()
+    cfg = await _config(odoo)
+    prod = await _run(_read_product, odoo, product_id, ["display_name", "tracking"])
+    if not prod:
+        raise HTTPException(status_code=404, detail="Product not found")
+    existing = await _run(svc.product_lots, odoo, product_id, cfg["supplier_stock_location_id"])
+    registered = await _registry_batches_for(product_id)
+    linked = await col("product_shortcodes").find_one({"odoo_product_id": product_id}, {"code": 1})
+    return {"tracking": prod[0].get("tracking") or "none", "registered": registered, "existing": existing,
+            "product_linked": bool(linked)}
+
+
 class BookInBody(BaseModel):
     product_id: int
     qty: float
-    lot_name: Optional[str] = None
+    registry_batch_id: Optional[str] = None   # a Batch Registry / S6 Receiving batch
+    odoo_lot_id: Optional[int] = None         # a batch already in Odoo
     expiration_date: Optional[str] = None
     reason: str
 
@@ -214,7 +287,28 @@ async def book_in_stock(body: BookInBody, current_user: dict = Depends(require_p
         raise HTTPException(status_code=400, detail="Give a reason (e.g. production batch completed)")
     odoo = get_odoo_client()
     cfg = await _config(odoo)
-    res = await _run(svc.book_in, odoo, cfg, body.product_id, body.qty, body.lot_name, body.expiration_date)
+    prod = await _run(_read_product, odoo, body.product_id, ["tracking"])
+    if not prod:
+        raise HTTPException(status_code=404, detail="Product not found")
+    lot_name = None
+    if (prod[0].get("tracking") or "none") != "none":
+        if bool(body.registry_batch_id) == bool(body.odoo_lot_id):
+            raise HTTPException(status_code=400, detail="Choose one batch: a registered batch or an existing Odoo batch.")
+        if body.registry_batch_id:
+            reg = await col("batch_registry").find_one({"batch_id": body.registry_batch_id.strip()}, {"product_code": 1, "batch_id": 1})
+            if not reg:
+                raise HTTPException(status_code=400, detail="That batch isn't in the Batch Registry.")
+            link = await col("product_shortcodes").find_one({"code": reg.get("product_code")}, {"odoo_product_id": 1})
+            if not link or link.get("odoo_product_id") != body.product_id:
+                raise HTTPException(status_code=400, detail="That batch belongs to a different product. If it's the same item, link the product under Batch Registry, Manage Products.")
+            lot_name = reg["batch_id"]
+        else:
+            lot = await _run(_read_lot, odoo, body.odoo_lot_id)
+            if not lot or (lot[0].get("product_id") or [None])[0] != body.product_id:
+                raise HTTPException(status_code=400, detail="That batch belongs to a different product.")
+            lot_name = lot[0]["name"]
+        await _require_released([lot_name])
+    res = await _run(svc.book_in, odoo, cfg, body.product_id, body.qty, lot_name, body.expiration_date)
     await audit_log("supply.booked_in", "product", body.product_id, entity_label=res["product_name"], user=current_user,
                     before={"qty": res["before"]}, after={"qty": res["after"]},
                     detail={"warehouse": cfg["supplier_warehouse_name"], "lot": res["lot_name"], "added": body.qty,
@@ -241,6 +335,7 @@ async def dispatch_delivery(body: DispatchBody, background_tasks: BackgroundTask
     odoo = get_odoo_client()
     cfg = await _config(odoo)
     lines = [l.model_dump() for l in body.lines] if body.lines else None
+    await _require_released(await _run(svc.picking_lot_names, odoo, body.picking_id, lines))
     res = await _run(svc.dispatch, odoo, cfg, body.picking_id, lines)
     follow = await after_stock_arrival(odoo, cfg, res["product_ids"], background_tasks, current_user)
     await audit_log("supply.dispatched", "supply", res["picking"], entity_label=res["picking"], user=current_user,
@@ -262,6 +357,7 @@ async def receive_in_transit(body: ReceiveBody, background_tasks: BackgroundTask
                              current_user: dict = Depends(require_permission("supply.dispatch"))):
     odoo = get_odoo_client()
     cfg = await _config(odoo)
+    await _require_released(await _run(svc.picking_lot_names, odoo, body.picking_id))
     res = await _run(svc.receive_transit, odoo, cfg, body.picking_id)
     follow = await after_stock_arrival(odoo, cfg, res["product_ids"], background_tasks, current_user)
     await audit_log("supply.received", "supply", res["picking"], entity_label=res["picking"], user=current_user, detail=follow)
@@ -311,6 +407,9 @@ async def reconcile(body: ReconcileBody, background_tasks: BackgroundTasks,
     results, product_ids = [], set()
     for pid in body.receive_picking_ids:
         try:
+            blocks = await quarantine_blocks(await run_in_threadpool(svc.picking_lot_names, odoo, pid))
+            if blocks:
+                raise svc.SupplyError("Schedule 6 quarantine: " + " ".join(blocks))
             r = await run_in_threadpool(svc.receive_transit, odoo, cfg, pid)
             product_ids.update(r["product_ids"])
             results.append({"picking_id": pid, "name": r["picking"], "action": "received", "ok": True})
@@ -318,6 +417,9 @@ async def reconcile(body: ReconcileBody, background_tasks: BackgroundTasks,
             results.append({"picking_id": pid, "action": "receive", "ok": False, "error": str(e)})
     for pid in body.dispatch_picking_ids:
         try:
+            blocks = await quarantine_blocks(await run_in_threadpool(svc.picking_lot_names, odoo, pid))
+            if blocks:
+                raise svc.SupplyError("Schedule 6 quarantine: " + " ".join(blocks))
             r = await run_in_threadpool(svc.dispatch, odoo, cfg, pid, None)
             product_ids.update(r["product_ids"])
             results.append({"picking_id": pid, "name": r["picking"], "action": "dispatched", "ok": True,

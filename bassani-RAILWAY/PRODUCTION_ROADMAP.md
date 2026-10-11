@@ -3845,6 +3845,7 @@ These facts are confirmed from conversation with the product owner and must not 
 
 **Legal entity structure:**
 - GACP (cultivation/manufacturing facility) and La Farmacia (finished goods distribution) are **separate legal entities** registered in Odoo as separate companies.
+- **Correction (2026-10-11, product owner):** the vault is the **GMP Vault** (Odoo warehouse "GMP Vault", company Bassani Health (Pty) Ltd), not a GACP-company warehouse. "GACP vault" below means the GMP Vault. The Phase 13 vault module and GMP Supply (8.70) now share that one warehouse setting.
 - The intercompany transfer mechanism is correct as currently configured: La Farmacia raises a **Purchase Order** against the GACP vault. Odoo's intercompany rules auto-generate a corresponding Sales Order on the GACP side. This is industry-standard Odoo for regulated multi-entity cannabis operations.
 - Do not replace this with internal transfers. The PO/SO pair is the correct commercial record between two legal entities.
 
@@ -3998,6 +3999,17 @@ Work splits into two tracks based on Odoo prerequisites. Track A can start immed
 - [ ] Frontend: SA financial-year selector + month pills, reusing the component already built for Phase 24, wired to a new "Production" or "Compliance" reports tab
 - [ ] Excel export button using the same client-side `xlsx` pattern as the six existing reports — export endpoints return the full range dataset directly (a bounded financial year of data, not "all history"), so no pagination concern applies to exports specifically
 - [ ] Gate behind a permission consistent with existing reports (`reports.export` or a new `production.export` — decide based on who should pull compliance exports vs. day-to-day production permissions)
+
+**13.0.10 — One vault, batch standard enforced at GMP, quarantine on supply — Built 2026-10-11, awaiting live testing**
+
+> Found reviewing how batch names reach Odoo for 8.70's Book In at GMP. Live (read only): of 4,423 batches in Odoo, 604 follow the V6 standard and 276 the BI import standard; 803 are older Bassani-style names (e.g. `BHADIF-210526-M`, no sequence) and 2,740 are outside the standard (mostly `PBC…`/`BBC…-CPR-BM047`-style names, possibly supplier or packing references, to be confirmed with Tristan), with near-duplicates such as `BHADSD-280826-M` / `BHADSD0280826-M`. Batch names are still typed in Odoo by hand, and 8.70's Book In accepted a typed batch name, recreating the drift Phase 13 exists to stop. Product-owner decisions: the vault is the GMP Vault; existing non-standard names stay usable, only new batches must follow the standard.
+
+- [x] **One vault:** `VaultOdooWriter.warehouse_id` resolves the GMP Vault from GMP Supply settings (`supply_service.vault_warehouse()`, refreshed by `resolve_config()` and warmed at server start), falling back to `GACP_WAREHOUSE_ID` only until those settings are saved. The stock-system access probe shows the vault warehouse and where it came from; on-screen "GACP warehouse" wording corrected to "Vault". **Consequence:** the GMP Vault is already visible to the service account, so the original "pending GACP company access" blocker no longer applies to the vault module; live writes (`GACP_ODOO_WRITES=on`) can be enabled once tested against the GMP Vault.
+- [x] **Batch standard at Book In:** `POST /api/supply/book-in` takes `registry_batch_id` (a Batch Registry / S6 Receiving batch whose product is linked to this Odoo product) or `odoo_lot_id` (a batch already in Odoo); free-text batch names are refused. `GET /api/supply/book-in/batches` lists both. A registered batch not yet in Odoo is created as a shared batch (no company), like almost every existing batch, so La Farmacia can see it after dispatch.
+- [x] **Schedule 6 quarantine on supply:** Book In, Dispatch, Receive and Reconcile refuse an imported batch the registry knows about until its S6 receipt is RP-released (`supply_routes.quarantine_blocks()`, same deny-by-default rule as the Vault Logbook). Legacy batches the registry doesn't know are allowed.
+- [x] **Odoo batch-name check:** `GET /api/production/odoo-batch-check` (`production.manage`), "Check Odoo Batch Names" on the Batch Registry page: counts by kind, near-duplicate pairs (same product, one edit apart), names outside the standard, Excel export. Classifier in `services/batch_id.py` (`classify_batch_name`).
+- [ ] Confirm with Tristan what the `PBC…`/`BBC…` and `BM0xx` naming means, then decide whether it becomes a documented family
+- [ ] Next (Track B): Packing Logbook, so finished goods enter GMP stock as the output of a packing run with a generated name and V6 packaging code; Book In then becomes an exception tool
 
 **Definition of Done (13.0 overall)** — code complete 2026-07-24; live checks pending deployment + GACP access:
 - [x] Patricia can be onboarded from the Users page, sees only the Production section, and can record a full day's vault movements without typing a single batch ID

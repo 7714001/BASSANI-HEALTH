@@ -731,6 +731,23 @@ async def initialise_orders_inbox():
     await _run_inbox_startup("orders", "orders_inbox", "orders_inbox")
 
 
+@app.on_event("startup")
+async def warm_vault_warehouse():
+    """GMP Vault is the one vault (2026-10-11): resolve it from GMP Supply
+    settings at startup so the Phase 13 vault writer uses it without waiting
+    for someone to open the GMP Supply page. Best-effort."""
+    try:
+        from fastapi.concurrency import run_in_threadpool
+        from services import supply_service
+        from odoo_client import get_odoo_client
+        from database import col
+        doc = await col("portal_settings").find_one({"_id": "supply_settings"}, {"_id": 0})
+        if doc:
+            await run_in_threadpool(supply_service.resolve_config, get_odoo_client(), doc)
+    except Exception as e:
+        logger.warning("vault_warehouse_warm_failed", extra={"error": str(e)})
+
+
 @app.get("/health")
 async def health():
     from database import col

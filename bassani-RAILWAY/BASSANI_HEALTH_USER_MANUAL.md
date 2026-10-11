@@ -2092,6 +2092,10 @@ Click any row to see the before/after detail. This is your definitive record of 
 
 ---
 
+**Check Odoo Batch Names** *(production manage permission, on the Batch Registry page)*: a read-only report of every batch name already in Odoo: how many follow the standard, older Bassani-style names, names outside the standard, and near-duplicates (two names for the same product one character apart, usually a typo). Export it to Excel and tidy the names in Odoo. Existing names keep working; only new batches have to follow the standard.
+
+**The vault is the GMP Vault.** The Vault Logbook and GMP Supply both record into the same Odoo warehouse, chosen in GMP Supply settings. "Check stock system access" on the Vault Logbook shows which warehouse that is.
+
 ## GMP Supply (Getting Stock to La Farmacia)
 
 *Found under **Orders → GMP Supply**. Access is granted per person in **Users** under "GMP Supply": View, Request stock from GMP, Book stock in at GMP, Dispatch (and receive / reconcile). Setup needs the settings permission.*
@@ -2111,7 +2115,9 @@ The Work List opens **By customer order**: one row per waiting sales order showi
 
 Switch to **By product (GMP)** to see what GMP needs to make: one row per product with the total needed, and the waiting SO numbers shown as chips you can click. **Export** downloads the list to Excel. Products bought from outside suppliers are listed under **Other suppliers** for visibility.
 
-**Book stock in at GMP** *(Book in permission)*: when finished product is physically at GMP but not yet in Odoo (for example a completed production batch), click **Book In at GMP**, choose the product, choose an existing batch or type a new batch number (with expiry), enter the quantity and a reason. This adds the stock at GMP in Odoo.
+**Book stock in at GMP** *(Book in permission)*: when finished product is physically at GMP but not yet in Odoo (for example a completed production batch), click **Book In at GMP**, choose the product, then choose its batch: either a **registered batch** (generated in Production → Batch Registry, or received through S6 Receiving) or a **batch already in Odoo**. You can't type a new batch number here; new batches come from the Batch Registry so every batch follows the standard. If the product has no registered batch yet, link it under Batch Registry → Manage Products and generate one. Enter the quantity and a reason. This adds the stock at GMP in Odoo.
+
+**Schedule 6 quarantine:** an imported batch still awaiting the Responsible Pharmacist's release (Production → S6 Releases) can't be booked in, dispatched or received until it's released.
 
 **Dispatch to La Farmacia** *(Dispatch permission)*: on **GMP Deliveries**, click **Dispatch** on a delivery. Check the quantities and batches (change a batch or reduce a quantity if needed; anything not sent stays on a GMP backorder), tick that the stock has physically left GMP, and click **Dispatch**. The stock moves into La Farmacia in Odoo, is reserved for waiting customer orders, and any backorders that can now be filled go straight back onto the packing board.
 
