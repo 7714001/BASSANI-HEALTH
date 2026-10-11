@@ -24,6 +24,10 @@ const STATUS = {
   external_on_order: { label: "On order from supplier",      color: "amber",  hint: "On an open purchase order from an outside vendor." },
 };
 
+// Furthest behind first: used to roll an order's items up to one status.
+const STATUS_RANK = { needs_requesting: 0, requested: 1, ready_to_dispatch: 2, in_transit: 3, stock_here: 4 };
+const daysSince = (d) => d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000)) : null;
+
 function StatusBadge({ status }) {
   const s = STATUS[status] || { label: status, color: "gray" };
   return <span title={s.hint}><Badge color={s.color}>{s.label}</Badge></span>;
@@ -72,7 +76,10 @@ export default function SupplyGMP() {
   const [notConfigured, setNotConfigured] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
-  const [groupBy, setGroupBy] = useState("product");
+  // By order is the default: Sales/La Farmacia think in customer orders;
+  // By product is GMP's "what do we need to make" view.
+  const [groupBy, setGroupBy] = useState("order");
+  const [collapsedOrders, setCollapsedOrders] = useState(new Set());
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(new Set());
   const [selected, setSelected] = useState(new Set());
@@ -120,11 +127,27 @@ export default function SupplyGMP() {
     const m = new Map();
     for (const r of rows) for (const o of r.orders) {
       const k = o.sale_order_id || o.order_name;
-      if (!m.has(k)) m.set(k, { ...o, lines: [] });
-      m.get(k).lines.push({ product_name: r.product_name, qty_short: o.qty_short, status: r.status });
+      if (!m.has(k)) m.set(k, { key: k, sale_order_id: o.sale_order_id, order_name: o.order_name, customer_name: o.customer_name,
+                                ticket_id: o.ticket_id, since: o.since, has_backorder: false, lines: [] });
+      const g = m.get(k);
+      if (o.since && (!g.since || o.since < g.since)) g.since = o.since;
+      g.has_backorder = g.has_backorder || o.is_backorder;
+      g.lines.push({ product: r, product_id: r.product_id, product_name: r.product_name, qty_short: o.qty_short,
+                     qty_ordered: o.qty_ordered, status: r.status, picking_name: o.picking_name, is_backorder: o.is_backorder });
     }
-    return [...m.values()].sort((a, b) => (a.since || "").localeCompare(b.since || ""));
+    // An order is only as ready as its furthest-behind item.
+    return [...m.values()].map(g => {
+      const worst = g.lines.reduce((w, l) => (STATUS_RANK[l.status] ?? 9) < (STATUS_RANK[w] ?? 9) ? l.status : w, g.lines[0].status);
+      const covered = g.lines.filter(l => l.status === "stock_here" || l.status === "in_transit" || l.status === "ready_to_dispatch").length;
+      return { ...g, status: worst, covered, mixed: new Set(g.lines.map(l => l.status)).size > 1 };
+    }).sort((a, b) => (a.since || "").localeCompare(b.since || ""));
   }, [rows]);
+
+  const requestForOrder = (o) => setRequestRows(o.lines.filter(l => l.status === "needs_requesting").map(l => ({
+    ...l.product,
+    uncovered: Math.min(l.qty_short, l.product.uncovered || l.qty_short),
+    orders: [{ order_name: o.order_name }],
+  })));
 
   const toggle = (set, setter, k) => setter(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const selectedRows = (wl?.products || []).filter(r => selected.has(r.product_id));
@@ -208,8 +231,8 @@ export default function SupplyGMP() {
                       ))}
                     </ChipRow>
                     <div className="ml-auto flex items-center gap-2">
-                      <FilterPill label="By product" active={groupBy === "product"} onClick={() => setGroupBy("product")} />
-                      <FilterPill label="By order" active={groupBy === "order"} onClick={() => setGroupBy("order")} />
+                      <FilterPill label="By customer order" active={groupBy === "order"} onClick={() => setGroupBy("order")} />
+                      <FilterPill label="By product (GMP)" active={groupBy === "product"} onClick={() => setGroupBy("product")} />
                       <BtnSecondary size="sm" onClick={exportExcel}><Download size={13} />Export</BtnSecondary>
                       {canRequest && selected.size > 0 && (
                         <BtnPrimary size="sm" onClick={() => setRequestRows(selectedRows)}><Send size={13} />Request from GMP ({selected.size})</BtnPrimary>
@@ -225,7 +248,7 @@ export default function SupplyGMP() {
                         <thead><tr className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-400">
                           <th className="w-8 px-3 py-2.5"></th><th className="text-left px-3 py-2.5">Product</th><th className="text-left px-3 py-2.5">Status</th>
                           <th className="text-right px-3 py-2.5">Needed</th><th className="text-right px-3 py-2.5">Requested</th><th className="text-right px-3 py-2.5">In transit</th>
-                          <th className="text-right px-3 py-2.5">GMP stock</th><th className="text-right px-3 py-2.5">Orders</th><th className="text-left px-3 py-2.5">Waiting since</th><th className="px-3 py-2.5"></th>
+                          <th className="text-right px-3 py-2.5">GMP stock</th><th className="text-left px-3 py-2.5">Customer orders waiting</th><th className="text-left px-3 py-2.5">Waiting since</th><th className="px-3 py-2.5"></th>
                         </tr></thead>
                         <tbody>
                           {rows.map(r => {
@@ -250,7 +273,20 @@ export default function SupplyGMP() {
                                   <td className="px-3 py-2.5 text-right text-gray-600">{qtyFmt(r.requested)}</td>
                                   <td className="px-3 py-2.5 text-right text-gray-600">{qtyFmt(r.in_transit)}</td>
                                   <td className="px-3 py-2.5 text-right text-gray-600">{qtyFmt(r.supplier_free)}</td>
-                                  <td className="px-3 py-2.5 text-right">{r.order_count}</td>
+                                  <td className="px-3 py-2.5">
+                                    <div className="flex flex-wrap gap-1 max-w-[16rem]">
+                                      {[...new Map(r.orders.map(o => [o.sale_order_id || o.order_name, o])).values()].slice(0, 4).map(o => (
+                                        <button key={o.sale_order_id || o.order_name} title={`${o.customer_name}: short ${qtyFmt(o.qty_short)}`}
+                                          onClick={() => o.sale_order_id && navigate(`/orders/${o.sale_order_id}/passport`)}
+                                          className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-bassani-700 hover:bg-bassani-50">
+                                          {o.order_name}
+                                        </button>
+                                      ))}
+                                      {r.order_count > 4 && (
+                                        <button onClick={() => toggle(expanded, setExpanded, r.product_id)} className="text-[11px] text-gray-500 hover:underline">+{r.order_count - 4} more</button>
+                                      )}
+                                    </div>
+                                  </td>
                                   <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(r.oldest_since)}</td>
                                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                                     {r.status === "needs_requesting" && canRequest && <button onClick={() => setRequestRows([r])} className="text-xs text-bassani-700 hover:underline">Request</button>}
@@ -274,19 +310,74 @@ export default function SupplyGMP() {
                       </table>
                     </div>
                   ) : (
-                    <div className="divide-y divide-gray-50">
-                      {byOrder.map(o => (
-                        <div key={o.sale_order_id || o.order_name} className="px-4 py-3">
-                          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                            <button onClick={() => o.sale_order_id && navigate(`/orders/${o.sale_order_id}/passport`)} className="font-mono text-sm font-semibold text-bassani-700 hover:underline">{o.order_name}</button>
-                            <span className="text-sm text-gray-700">{o.customer_name}</span>
-                            <span className="text-xs text-gray-400">waiting since {fmtDate(o.since)}</span>
-                          </div>
-                          <ul className="text-xs space-y-0.5">
-                            {o.lines.map((l, i) => <li key={i} className="flex items-center gap-2"><span className="text-gray-700">{l.product_name}</span><span className="text-gray-500">short {qtyFmt(l.qty_short)}</span><StatusBadge status={l.status} /></li>)}
-                          </ul>
-                        </div>
-                      ))}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[860px]">
+                        <thead><tr className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-400">
+                          <th className="w-8 px-3 py-2.5"></th><th className="text-left px-3 py-2.5">Order / Product</th><th className="text-left px-3 py-2.5">Customer / Delivery</th>
+                          <th className="text-left px-3 py-2.5">Status</th><th className="text-right px-3 py-2.5">Short</th><th className="text-left px-3 py-2.5">Waiting</th><th className="px-3 py-2.5"></th>
+                        </tr></thead>
+                        <tbody>
+                          {byOrder.map(o => {
+                            const open = !collapsedOrders.has(o.key);
+                            const days = daysSince(o.since);
+                            const canRequestOrder = canRequest && o.lines.some(l => l.status === "needs_requesting");
+                            return (
+                              <Fragment key={o.key}>
+                                <tr className="border-t-2 border-gray-100 bg-white hover:bg-gray-50">
+                                  <td className="px-3 py-3">
+                                    <button onClick={() => toggle(collapsedOrders, setCollapsedOrders, o.key)} className="text-gray-400 hover:text-gray-600">
+                                      {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                                    </button>
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <button onClick={() => o.sale_order_id && navigate(`/orders/${o.sale_order_id}/passport`)} className="font-mono font-semibold text-bassani-700 hover:underline">{o.order_name}</button>
+                                    {o.ticket_id && (
+                                      <button onClick={() => navigate("/tickets/sales", { state: { openTicketId: o.ticket_id } })} className="ml-2 text-gray-400 hover:text-gray-600" title="Open Sales ticket">
+                                        <ExternalLink size={12} className="inline" />
+                                      </button>
+                                    )}
+                                    <p className="text-[11px] text-gray-500 mt-0.5">
+                                      {o.lines.length} short item{o.lines.length !== 1 ? "s" : ""} · {o.covered} of {o.lines.length} on the way or in stock
+                                      {o.has_backorder && <span className="text-amber-600"> · backorder</span>}
+                                    </p>
+                                  </td>
+                                  <td className="px-3 py-3 font-medium text-gray-800">{o.customer_name}</td>
+                                  <td className="px-3 py-3">
+                                    <StatusBadge status={o.status} />
+                                    {o.mixed && <p className="text-[10px] text-gray-400 mt-0.5">Furthest-behind item shown</p>}
+                                  </td>
+                                  <td className="px-3 py-3"></td>
+                                  <td className={`px-3 py-3 whitespace-nowrap ${days > 14 ? "text-red-600 font-semibold" : days > 7 ? "text-amber-600 font-medium" : "text-gray-500"}`}>
+                                    {days != null ? `${days} day${days !== 1 ? "s" : ""}` : "—"}
+                                    <p className="text-[10px] text-gray-400 font-normal">since {fmtDate(o.since)}</p>
+                                  </td>
+                                  <td className="px-3 py-3 text-right whitespace-nowrap">
+                                    {canRequestOrder && <BtnSecondary size="sm" onClick={() => requestForOrder(o)}><Send size={12} />Request for this order</BtnSecondary>}
+                                  </td>
+                                </tr>
+                                {open && o.lines.map((l, i) => (
+                                  <tr key={`${o.key}-${l.product_id}-${i}`} className="bg-gray-50/50 hover:bg-gray-50">
+                                    <td></td>
+                                    <td className="px-3 py-2 pl-6 text-gray-800">{l.product_name}</td>
+                                    <td className="px-3 py-2 text-xs text-gray-500">{l.picking_name}{l.is_backorder && <span className="text-amber-600"> (backorder)</span>}</td>
+                                    <td className="px-3 py-2"><StatusBadge status={l.status} /></td>
+                                    <td className="px-3 py-2 text-right font-semibold">{qtyFmt(l.qty_short)}<span className="text-[10px] text-gray-400 font-normal"> of {qtyFmt(l.qty_ordered)}</span></td>
+                                    <td className="px-3 py-2 text-[11px] text-gray-500">{STATUS[l.status]?.hint}</td>
+                                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                                      {l.status === "needs_requesting" && canRequest && <button onClick={() => setRequestRows([{ ...l.product, uncovered: Math.min(l.qty_short, l.product.uncovered || l.qty_short), orders: [{ order_name: o.order_name }] }])} className="text-xs text-bassani-700 hover:underline">Request</button>}
+                                      {l.status === "ready_to_dispatch" && <button onClick={() => setTab("deliveries")} className="text-xs text-teal-700 hover:underline">Dispatch</button>}
+                                      {l.status === "in_transit" && <button onClick={() => setTab("transit")} className="text-xs text-blue-700 hover:underline">Receive</button>}
+                                      {l.status === "requested" && canBookIn && l.product.supplier_free <= 0 && (
+                                        <button onClick={() => setBookIn({ product: { id: l.product_id, name: l.product_name, display_name: l.product_name } })} className="text-xs text-gray-600 hover:underline">Book in</button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>

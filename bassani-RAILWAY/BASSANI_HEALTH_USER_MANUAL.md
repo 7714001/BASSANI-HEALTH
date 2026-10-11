@@ -2107,7 +2107,9 @@ When La Farmacia doesn't have enough stock for a customer order, the missing ite
 - **In transit** — left GMP but not received at La Farmacia. Go to **In Transit** and click **Receive** once it has arrived
 - **In stock, not reserved** — La Farmacia already has it; open the Order Ticket and click **Check Availability**
 
-Switch to **By order** to see each waiting customer order with its short items. **Export** downloads the list to Excel. Products bought from outside suppliers are listed under **Other suppliers** for visibility.
+The Work List opens **By customer order**: one row per waiting sales order showing the customer, how long it has waited (amber after a week, red after two), how many of its short items are already on the way or in stock, and one overall status, which is the item furthest behind (an order is only as ready as its slowest item). The order's short items are listed underneath, each with its own status and action; click the arrow to collapse an order. **Request for this order** requests that order's uncovered items in one go. Click the SO number to open the Order Passport.
+
+Switch to **By product (GMP)** to see what GMP needs to make: one row per product with the total needed, and the waiting SO numbers shown as chips you can click. **Export** downloads the list to Excel. Products bought from outside suppliers are listed under **Other suppliers** for visibility.
 
 **Book stock in at GMP** *(Book in permission)*: when finished product is physically at GMP but not yet in Odoo (for example a completed production batch), click **Book In at GMP**, choose the product, choose an existing batch or type a new batch number (with expiry), enter the quantity and a reason. This adds the stock at GMP in Odoo.
 
