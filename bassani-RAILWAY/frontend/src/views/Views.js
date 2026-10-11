@@ -2,6 +2,7 @@
 // Products view
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
+import DiscountOrdersModal from "../components/DiscountOrdersModal";
 import { useAuth } from "../AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../api";
@@ -4145,14 +4146,16 @@ export function Reports() {
             )}
           </div>
           {loading && <LoadingState />}
-          {!loading && data && <ReportContent type={activeReport} data={data} />}
+          {!loading && data && <ReportContent type={activeReport} data={data} periodParams={getPeriodParams()} />}
         </div>
       </main>
     </div>
   );
 }
 
-function ReportContent({ type, data }) {
+function ReportContent({ type, data, periodParams }) {
+  // Discounts by Product/Customer drill-down (clicked row), see DiscountOrdersModal
+  const [drillRow, setDrillRow] = useState(null);
   if (type === "monthly-turnover") return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -4231,7 +4234,7 @@ function ReportContent({ type, data }) {
           <h3 className="text-sm font-semibold">{byProduct ? "Products with the most discount given" : "Customers given the most discount"}</h3>
           <p className="text-xs text-gray-400 mt-0.5">
             Every discount on confirmed orders in the period, by order date, wherever it was entered. Amounts exclude VAT.
-            "Not via approval" is discount with no approved discount request in the portal behind it.
+            "Not via approval" is discount with no approved discount request in the portal behind it. Click a row to see the orders.
           </p>
           {rows.length > 0 && (
             <p className="text-xs mt-1.5">
@@ -4247,7 +4250,7 @@ function ReportContent({ type, data }) {
           <thead><tr className="bg-gray-50">{["#", byProduct ? "Product" : "Customer", "Orders", "Before Discount", "Discount", "Avg %", "Approved in Portal", "Not via Approval"].map(h=><th key={h} className="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-4 py-3">{h}</th>)}</tr></thead>
           <tbody>
             {rows.map((r,i)=>(
-              <tr key={r.id ?? i} className="border-t border-gray-50 hover:bg-gray-50">
+              <tr key={r.id ?? i} onClick={() => r.id && setDrillRow(r)} title="See the orders" className="border-t border-gray-50 hover:bg-bassani-50 cursor-pointer">
                 <Td><span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i===0?"bg-amber-50 text-amber-700":i===1?"bg-gray-100 text-gray-600":i===2?"bg-bassani-50 text-bassani-700":"bg-gray-50 text-gray-400"}`}>{r.rank}</span></Td>
                 <Td className="font-medium">{r.name}</Td>
                 <Td>{r.order_count}<span className="text-gray-400 text-xs"> ({r.line_count} lines)</span></Td>
@@ -4260,6 +4263,10 @@ function ReportContent({ type, data }) {
             ))}
           </tbody>
         </table></div>
+        )}
+        {drillRow && (
+          <DiscountOrdersModal dimension={byProduct ? "product" : "customer"} row={drillRow}
+            periodParams={periodParams} onClose={() => setDrillRow(null)} />
         )}
       </div>
     );

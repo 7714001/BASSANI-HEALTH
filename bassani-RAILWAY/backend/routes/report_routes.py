@@ -826,6 +826,69 @@ async def discounts_by_customer(
     return {"customers": [{**r, "customer_partner_id": r["id"], "customer_name": r["name"]} for r in rows]}
 
 
+@router.get("/discount-orders")
+async def discount_orders(
+    dimension: str = Query(..., pattern="^(product|customer)$"),
+    id: int = Query(...),
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
+    current_user: dict = Depends(require_admin),
+):
+    """Drill-down behind one row of Discounts by Product/Customer: the
+    confirmed orders in the same period and warehouse that carry that
+    discount, one row per order (Odoo groups server-side, like the reports),
+    with the same Approved in portal / Not via approval split."""
+    _from, _to = _discount_period_bounds(year, month, from_date, to_date)
+    field = "product_id" if dimension == "product" else "commercial_partner_id"
+    domain = _sale_report_domain(_from, _to, current_user.get("active_warehouse_id")) + [(field, "=", id)]
+    groupby = ["order_reference", "name", "commercial_partner_id"]
+    measures = ["discount_amount:sum", "price_subtotal:sum", "nbr:sum", "date:max"]
+    limit = 200
+    try:
+        rows = odoo_execute_kw("sale.report", "read_group", [domain, measures, groupby],
+                               {"lazy": False, "orderby": "discount_amount desc", "limit": limit + 1})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not read orders from Odoo: {e}")
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    approved = {}
+    pairs = await _approved_pairs_domain()
+    if pairs and rows:
+        try:
+            for r in odoo_execute_kw("sale.report", "read_group", [domain + pairs, ["discount_amount:sum"], ["order_reference"]],
+                                     {"lazy": False}):
+                if r.get("order_reference"):
+                    approved[r["order_reference"]] = r.get("discount_amount") or 0
+        except Exception:
+            approved = None
+    out = []
+    for r in rows:
+        ref = r.get("order_reference") or ""
+        disc = round(r.get("discount_amount") or 0, 2)
+        gross = disc + (r.get("price_subtotal") or 0)
+        appr = None if approved is None else round(approved.get(ref, 0), 2)
+        cp = r.get("commercial_partner_id")
+        try:
+            order_id = int(ref.split(",")[1])
+        except (IndexError, ValueError):
+            order_id = None
+        out.append({
+            "order_id": order_id,
+            "order_name": r.get("name"),
+            "date": r.get("date"),
+            "customer_name": cp[1] if cp else None,
+            "gross_before_discount": round(gross, 2),
+            "total_discount": disc,
+            "avg_pct": round(disc / gross * 100, 1) if gross else 0,
+            "line_count": int(r.get("nbr") or r.get("__count") or 0),
+            "approved_in_portal": appr,
+            "not_via_approval": None if appr is None else round(max(disc - appr, 0), 2),
+        })
+    return {"orders": out, "truncated": truncated}
+
+
 # ── Dead Stock ────────────────────────────────────────────────────────────────
 
 @router.get("/dead-stock")
