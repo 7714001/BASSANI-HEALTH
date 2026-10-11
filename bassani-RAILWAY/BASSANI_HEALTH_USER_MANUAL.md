@@ -2092,6 +2092,33 @@ Click any row to see the before/after detail. This is your definitive record of 
 
 ---
 
+## GMP Supply (Getting Stock to La Farmacia)
+
+*Found under **Orders → GMP Supply**. Access is granted per person in **Users** under "GMP Supply": View, Request stock from GMP, Book stock in at GMP, Dispatch (and receive / reconcile). Setup needs the settings permission.*
+
+When La Farmacia doesn't have enough stock for a customer order, the missing items come from GMP. This page shows what's short and lets GMP and La Farmacia move it without opening Odoo.
+
+**First-time setup** *(settings permission)*: click **Settings** and choose the supplying company (GMP) and the receiving warehouse (La Farmacia). The portal reads the rest from Odoo.
+
+**The Work List** shows each product La Farmacia is short of for customer orders: how much is needed, how much is already requested from GMP, in transit, and in GMP's stock, plus the customer orders waiting (click an order to open it). Each product has a status:
+- **Needs requesting** — not covered by any request to GMP. Tick it and click **Request from GMP**, or click **Request** on the row. This creates La Farmacia's purchase order to GMP, and Odoo creates GMP's order automatically
+- **Requested, waiting on GMP** — requested, but GMP has no stock for it in Odoo yet. Once it's made, **Book In** at GMP
+- **Ready to dispatch** — GMP has stock for it. Go to **GMP Deliveries** and click **Dispatch**
+- **In transit** — left GMP but not received at La Farmacia. Go to **In Transit** and click **Receive** once it has arrived
+- **In stock, not reserved** — La Farmacia already has it; open the Order Ticket and click **Check Availability**
+
+Switch to **By order** to see each waiting customer order with its short items. **Export** downloads the list to Excel. Products bought from outside suppliers are listed under **Other suppliers** for visibility.
+
+**Book stock in at GMP** *(Book in permission)*: when finished product is physically at GMP but not yet in Odoo (for example a completed production batch), click **Book In at GMP**, choose the product, choose an existing batch or type a new batch number (with expiry), enter the quantity and a reason. This adds the stock at GMP in Odoo.
+
+**Dispatch to La Farmacia** *(Dispatch permission)*: on **GMP Deliveries**, click **Dispatch** on a delivery. Check the quantities and batches (change a batch or reduce a quantity if needed; anything not sent stays on a GMP backorder), tick that the stock has physically left GMP, and click **Dispatch**. The stock moves into La Farmacia in Odoo, is reserved for waiting customer orders, and any backorders that can now be filled go straight back onto the packing board.
+
+**Reconcile Backlog** *(Dispatch permission)*: clears documents that got stuck in Odoo. Tick only stock that has **physically arrived** at La Farmacia, type **ARRIVED**, and click **Complete**. GMP deliveries with nothing reserved can't be completed here: book the stock in first, or ask whoever manages Odoo to cancel any no longer needed.
+
+**GMP Supply Monitor:** a TV board for the GMP facility showing what La Farmacia needs and how many customer orders are waiting. Generate its link under **Settings → Monitor Displays**, or click **Monitor** on the GMP Supply page.
+
+**Partial shipments:** when an order can't be filled completely, the Order Ticket labels each line **In stock, not reserved** (click **Check Availability**) or **Short: waiting on stock**. Sales then asks the customer what they want and records it on the Sales ticket under Actions: **Record Customer's Choice (Partial Shipment)**: wait for the full order, ship what's available and backorder the rest, or ship what's available and drop the rest. The Orders team sees the choice on the Order Ticket; with "drop the rest", Mark Complete cancels the missing items instead of creating a backorder.
+
 ## Self-Service Customer Registration
 
 **URL:** `portal.bassanihealth.com/apply`  

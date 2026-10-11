@@ -19,7 +19,7 @@
 | 5 | Reliability & Resilience | 🔴 Not Started | — |
 | 6 | Observability & Operations | 🟢 Complete | 6.1–6.4 complete — 2026-06-23 · 6.5 (Cloudflare Pages) deferred |
 | 7 | Missing Commercial Workflows | 🟡 In Progress | 2026-06-24 · 7.7 — 2026-07-01 · 7.4 — 2026-07-01 · 7.8 + 7.9 — 2026-07-02 · 7.10 Balance Payment — 2026-07-04 · 7.11 MOQ — 2026-07-06 · 7.17a/b Customer Finance Workspace (statements PDF/Excel/email, invoice actions from the profile) built 2026-10-11, awaiting live testing; 7.17c/d planned |
-| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX and 8.63 Discount Financial Insight & Reporting, both 2026-09-29, 8.64 Discount Decision Visibility for Sales Staff and 8.65 Discount Integrity on Edit + Resubmission + Filter Bar Alignment, both 2026-09-30, 8.66 Discount Readability: Rand, Percent and Before/After Totals, 2026-10-07, 8.67 Discount Request Full-Page View (trial), 2026-10-07, 8.68 Account Terms and Release on Account, built 2026-10-10, 8.69 Balance Payment Before Collection, planned, 8.71 Release on Account Requests + Token Deposit Guard, built 2026-10-11) |
+| 8 | Order Workflow & Ticketing System | 🟡 In Progress | Sub-deploys 1–17 (8.1–8.22 code complete) — 2026-07-06 · 8.16–8.22 — 2026-07-07 · 8.23 Reseller quote flow — 2026-07-09 · 8.24–8.29 invoice lifecycle + address + payment terms + invoice page — 2026-07-10 · 8.30 Backorders admin view · 8.31 Batch/lot on print docs · 8.32 Manufacturing order visibility · 8.33 Order Passport — 2026-07-11 · 8.34 Reseller traceability across all views — 2026-07-12 · 8.35 Per-line qty packed + packing-time shortfall — 2026-07-13 · 8.36 Ticket linking + inbox integration — 2026-07-13 · (see sub-phase sections below for 8.37 onward, including 8.46 Recurring Orders and 8.47 Deposit Gate reinstatement, both 2026-07-29, 8.49 Ready-for-Collection customer notification, 2026-08-04, 8.61 Line Discounts and Staff Discount Approval, 2026-09-24, 8.62 Discount Workflow Correctness & UX and 8.63 Discount Financial Insight & Reporting, both 2026-09-29, 8.64 Discount Decision Visibility for Sales Staff and 8.65 Discount Integrity on Edit + Resubmission + Filter Bar Alignment, both 2026-09-30, 8.66 Discount Readability: Rand, Percent and Before/After Totals, 2026-10-07, 8.67 Discount Request Full-Page View (trial), 2026-10-07, 8.68 Account Terms and Release on Account, built 2026-10-10, 8.69 Balance Payment Before Collection, planned, 8.70 GMP Supply & Backorder Fulfilment, built 2026-10-11, 8.71 Release on Account Requests + Token Deposit Guard, built 2026-10-11) |
 | 9 | Go-Live Infrastructure | 🟢 Complete | portal.bassanihealth.com live, Resend domain verified, all Railway vars confirmed — 2026-06-29 |
 | 10 | Responsive UI | 🟡 In Progress | 10.0–10.4 complete (login fix, shell overflow, column hiding, form grids, quote builder) — 2026-06-26 · 10.5 large-screen caps pending · 10.6 profile pagination + reseller nav grouping — 2026-07-02 |
 | 11 | Mailbox Integration | 🟢 Live (dual-mailbox) | Graph code built 2026-06-29 · Azure credentials wired 2026-07-05 · IMAP/SMTP live 2026-07-04 · Two-panel inbox UI — 2026-07-05 · 11.C.1 doc progress tracking · 11.C.2 inbox UX hardening · 11.C.3 reseller onboarding ownership gap (three-tier fix) · 11.C.4 save-to-application + approval doc transfer (reference-only, no copy) · 11.C.5 reseller wizard draft/resume flow — 2026-07-05 · 11.D Sales Inbox ingest unification + sync reliability hardening — 2026-08-04 |
@@ -2487,6 +2487,72 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [ ] Mark as Collected refuses an unpaid deposit order. Partial deliveries follow the same rule per delivery invoice.
 - [ ] Timeline order for deposit orders becomes QA/RP → Invoice Raised → Balance Paid → Ready for Collection → Collected. Operations Monitor gains an Awaiting Balance column.
 - [ ] Before deploy: list every order already at Ready for Collection with an unpaid balance, since Mark as Collected will block for them immediately.
+
+#### 8.70 — GMP Supply & Backorder Fulfilment — Built 2026-10-11, awaiting live testing
+
+**Goal:** get stock from GMP to La Farmacia, and backordered customer orders packed, without anyone opening Odoo. Today a short La Farmacia order becomes an Odoo backorder that only clears once stock is booked into La Farmacia, and the GMP-to-La Farmacia paperwork is stalling in Odoo (live 2026-10-11: 111 GMP deliveries to La Farmacia not validated, 41 La Farmacia receipts not received, growing; 3 open customer backorders, 2 of them already Ready; no manufacturing order has ever come from a customer order, so the Manufacturing Orders page/monitor show nothing in practice).
+
+**How the business actually supplies stock (live-checked 2026-10-11):**
+- La Farmacia (company 205) sells; GMP = Bassani Health (Pty) Ltd (company 207) supplies most products; some are imported from external suppliers.
+- Odoo's company-to-company rules are installed and on for both companies: a La Farmacia purchase order to GMP automatically creates the GMP sales order (`sale.order.auto_purchase_order_id`), stock moves GMP/Stock → Inter-company transit → LAF/Stock, and **"Synchronize Deliveries to your Receipts" is on**, so validating GMP's delivery automatically validates La Farmacia's receipt with the same batches/quantities.
+- So the one human step in Odoo is **GMP validating its outgoing delivery** (`GMP/OUT/...`). That's where the backlog sits. La Farmacia's purchase orders to GMP carry no link to the customer orders they serve (`origin` empty).
+
+**Product-owner decisions (2026-10-11):** the portal performs the GMP dispatch itself (fewer Odoo logins, fewer bottlenecks); access is granted by permission to existing users, no new role; on a partial shipment Sales asks the customer (wait / take part now with backorder / take part and drop the rest), decided 2026-10-10; the Orders team never decides.
+
+**Design rules, so Bassani's planned Odoo rework doesn't need code changes:**
+- Discover, never hardcode: supply links are read from Odoo's own relations (purchase order ↔ inter-company sales order, picking ↔ order, the inter-company transit location, each company's `intercompany_*` settings). The supplying company and receiving warehouse are portal settings, not constants.
+- Use only Odoo's public, standard actions (the same `button_validate`, batch/lot assignment and wizards the packing board already uses), and re-read state after every write.
+- Work whether or not Odoo automation does a step: after dispatch, if Odoo already completed La Farmacia's receipt (sync on) the portal just confirms it; if it didn't (sync turned off), the portal validates the receipt itself. Same for the GMP sales order: use Odoo's auto-created one if present, never create a duplicate.
+- Feature-detect fields before relying on them (this Odoo has drifted before; see the 2026-08-11 field audit).
+- Configuration changes (warehouses, company names, switching inter-company sync on or off) need no code change. A different *process* (e.g. merging the companies, or making GMP manufacture to order) is a business change; the portal will show what no longer matches rather than silently misbehave.
+
+**8.70a — Foundation**
+- [x] Portal settings: supplying company (GMP) and receiving warehouse (La Farmacia), validated against Odoo's inter-company configuration on save
+- [x] New permission domain `supply`: `view` (work list and board), `request` (raise stock requests to GMP), `book_in` (stock adjustment at GMP, added during build), `dispatch` (dispatch from GMP, receive in-transit stock, reconcile); off by default; added to `auth.py`, `Users.js` (3 places) and the startup backfill
+- [x] `services/supply_service.py`: demand (La Farmacia delivery lines not fully reserved: open backorders plus short lines on queued/packing orders) matched to supply (GMP stock on hand, open GMP deliveries to La Farmacia, open purchase orders to GMP, external supplier purchase orders), all read live with `read_group` / batched reads
+- [x] **Backlog reconciliation tool** (one-off and repeatable, `supply.dispatch`): lists stalled GMP deliveries to La Farmacia (ready, partly ready, waiting) and receipts left open after their GMP delivery is done, with a preview and confirm step (same pattern as Reconcile Cancelled), so Odoo stock is correct before the rest goes live
+
+**8.70b — GMP Work List (`/supply/gmp`)**
+- [x] One row per product La Farmacia is short of: quantity needed, which customer orders are waiting (each linking to its Order Passport), what's already on the way, GMP stock on hand, and a status: **Needs requesting** / **Requested, waiting on GMP stock** / **Ready to dispatch** / **In transit**
+- [x] Products supplied by external suppliers listed separately, read-only, with the supplier and any open purchase order
+- [x] Group by product (default) or by customer order; search; export to Excel
+
+**8.70c — Request stock from GMP** (`supply.request`)
+- [x] Select shortages on the work list and create La Farmacia's purchase order to GMP in one action, with the waiting customer orders recorded as the purchase order's source. Odoo's inter-company rules then create GMP's sales order automatically; the portal shows the link. Audited
+
+**8.70d — Dispatch to La Farmacia** (`supply.dispatch`)
+- [x] For a GMP delivery that's ready: confirm quantities and batches (reusing the packing board's batch picker, scoped to GMP stock), then validate it in Odoo. Confirm La Farmacia's receipt completed via Odoo's sync, or validate it if not
+- [x] Then automatically run the backorder stock check and the per-line reservation refresh, so waiting customer orders go back onto the packing board, and notify the Orders team and each affected ticket's assignee
+- [x] Partial dispatch supported (Odoo's backorder wizard on the GMP side); every dispatch audited with before/after
+
+**8.70e — GMP board (TV)**
+- [x] Token-gated public monitor on `MonitorKit.js`, product-first like the Manufacturing Monitor: columns Needs requesting / Requested / Ready to dispatch / Dispatched today, with age tiers and the number of customer orders waiting per product; listed in Settings → Monitor Displays
+
+**8.70f — Order Ticket line status and the customer's decision**
+- [x] Per-line stock status on the Order Ticket that says what it really means ("not reserved in Odoo yet" vs "short: waiting on GMP"), replacing the misleading "Backorder" label packers see with stock on the shelf
+- [x] **Check Availability** action on the Order Ticket (re-reads reservation for that order)
+- [x] When an order can only ship in part, Sales records the customer's choice on the Sales ticket (wait / ship part now and backorder the rest / ship part and drop the rest); the Orders team acts on it, never decides it
+
+**Built 2026-10-11 — what differs from the plan, and why:**
+- **Book in at GMP added** (`supply.book_in`, `POST /api/supply/book-in`): live data showed GMP's own Odoo stock is effectively zero (389 of 415 open GMP-to-La Farmacia lines waiting, 9 reserved), so production never reaches GMP stock in Odoo and nothing can be dispatched until it's booked in. An inventory adjustment adding to a batch at GMP's stock location (1,607 of 1,674 sellable products are batch-tracked; new batch numbers create the batch with an optional expiry), with a mandatory reason, audited with before/after.
+- **In Transit tab and Receive** (`POST /api/supply/receive`): 3 La Farmacia receipts (one from August with 96 lines / 10,456 units) already show stock as having left GMP but never received; receiving books it into La Farmacia and reserves it for waiting orders.
+- **Reconciliation** requires typing ARRIVED and nothing is pre-ticked: completing a document books stock in Odoo, so only stock that has physically arrived may be selected. GMP deliveries with nothing reserved are listed for information (book in, or cancel in Odoo), not completed.
+- **Customer demand = sales-order deliveries only**: some La Farmacia outgoing transfers are returns to GMP. **Internal supply = any Bassani company** as vendor (old "(V1)" company records still appear as vendors).
+- **Pre-existing bug fixed in the packing board:** on Odoo 17+ the backorder wizard (`stock.backorder.confirmation`) only validates when it receives the context `button_validate` returns; `_validate_odoo_delivery` created it without that context, so a partly packed delivery was never completed in Odoo (error swallowed). It now passes the context, and re-reads the delivery's state instead of assuming it validated.
+
+**Odoo 19 compatibility (checked live 2026-10-11, safe empty-record probes):** every method used exists (`action_assign`, `button_validate`, `stock.backorder.confirmation.process` / `process_cancel_backorder`, `purchase.order.button_confirm`, `stock.quant.action_apply_inventory`) and every field read or written exists. Three Odoo 19 behaviours handled: (1) `purchase.order` has no `notes` field (its `note` is the printed Terms and Conditions), so a request note is posted to the PO chatter; (2) `action_apply_inventory` completes but its None reply can't be sent over XML-RPC ("cannot marshal None"), so `supply_service._call()` tolerates that and state is re-read; this also fixed the existing Products page **Set stock** (`product_routes.set_stock_level`), which reported a failure after the stock had actually been set; (3) `action_assign` raises "Nothing to check the availability for" when nothing can be reserved, which is now treated as "nothing reserved" in dispatch, receive, reservation and the Order Ticket's Check Availability.
+
+**Files:** `backend/services/supply_service.py`, `backend/routes/supply_routes.py`, `backend/routes/supply_monitor_routes.py`; `frontend/src/views/SupplyGMP.js` (`/supply/gmp`, Orders → GMP Supply), `frontend/src/components/SupplyModals.js`, `frontend/src/views/SupplyMonitor.js` (`/supply-monitor?token=`); Order Ticket line status + Check Availability (`POST /api/packing/check-availability`) in `packing_board_routes.py`/`OrdersTickets.js`; customer partial-shipment choice (`PUT /api/tickets/{id}/partial-decision`) in `ticket_routes.py`/`SalesTickets.js`.
+
+**Not live-tested yet (writes):** request (purchase order create + confirm, relying on Odoo creating GMP's sales order), book-in, dispatch, receive, the packing board's corrected backorder wizard. Reads were verified against live Odoo 19 (work list ~6s for 74 products / 19 orders). Test each write once on a real, small case first.
+
+**Definition of Done (8.70)**
+- [ ] The stalled GMP-to-La Farmacia backlog has been reconciled through the portal, and Odoo stock at La Farmacia matches
+- [ ] A GMP user with `supply.*` access can see what La Farmacia needs, request it, and dispatch it without opening Odoo
+- [ ] Dispatching from GMP books the stock into La Farmacia and puts waiting backorders back on the packing board automatically
+- [ ] Turning Odoo's inter-company receipt sync off still works end to end, with no code change
+- [ ] On a partial shipment, the customer's choice is recorded on the ticket before the Orders team acts
+
 
 #### 8.71 — Release on Account Requests + Token Deposit Guard — Built 2026-10-11, awaiting live testing
 

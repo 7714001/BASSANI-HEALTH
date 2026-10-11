@@ -231,6 +231,18 @@ async def initialise_users():
             {"$set": {"permissions.customers.send_statement": _perms["customers"].get("send_statement", False)}},
         )
 
+    # 8.70 — backfill the new `supply` permission domain (off for every role
+    # and admin; granted per user; super admins bypass permissions).
+    for _role, _perms in ROLE_DEFAULT_PERMISSIONS.items():
+        await col("users").update_many(
+            {"role": _role, "permissions.supply": {"$exists": False}},
+            {"$set": {"permissions.supply": _perms["supply"]}},
+        )
+    await col("users").update_many(
+        {"role": "admin", "permissions.supply": {"$exists": False}},
+        {"$set": {"permissions.supply": DEFAULT_ADMIN_PERMISSIONS["supply"]}},
+    )
+
     # Phase 14 — external API clients and outbound sales channels. key_hash is
     # the lookup on every external API request, so it must be indexed (and
     # unique, so one key can never resolve to two clients).
@@ -807,6 +819,8 @@ from routes.discount_routes           import router as discount_router
 from routes.support_routes            import router as support_router, public_router as support_public_router
 from routes.integration_routes        import router as integration_router
 from routes.external_routes           import router as external_router
+from routes.supply_routes             import router as supply_router
+from routes.supply_monitor_routes     import router as supply_monitor_router
 
 for router in [
     auth_router, user_router, product_router, customer_router, customer_statement_router, order_router,
@@ -824,6 +838,7 @@ for router in [
     places_router, production_router, recurring_order_router, discount_router,
     support_router, support_public_router,
     integration_router, external_router,
+    supply_router, supply_monitor_router,
 ]:
     app.include_router(router)
 

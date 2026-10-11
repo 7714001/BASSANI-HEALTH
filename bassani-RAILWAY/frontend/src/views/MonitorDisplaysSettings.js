@@ -8,7 +8,7 @@
 // Manufacturing Orders / Backorders board) is one new array entry, not a
 // new tab or a new settings file.
 import { useState, useEffect } from "react";
-import { Monitor, ClipboardCheck, Factory, Copy, RefreshCw, CheckCircle } from "lucide-react";
+import { Monitor, ClipboardCheck, Factory, Copy, RefreshCw, CheckCircle, Truck } from "lucide-react";
 import { BtnPrimary, BtnSecondary, Modal } from "../components/UI";
 import api from "../api";
 import toast from "react-hot-toast";
@@ -37,6 +37,14 @@ const MONITORS = [
     icon: Factory,
     tokenPath: "/api/manufacturing-monitor/token",
     displayPath: "/manufacturing-monitor",
+  },
+  {
+    key: "supply",
+    label: "GMP Supply Monitor",
+    description: "A live, read-only board of what La Farmacia needs from GMP and how many customer orders are waiting on it. For a screen at the GMP facility. No login required — access is controlled by the URL token.",
+    icon: Truck,
+    tokenPath: "/api/supply-monitor/token",
+    displayPath: "/supply-monitor",
   },
 ];
 

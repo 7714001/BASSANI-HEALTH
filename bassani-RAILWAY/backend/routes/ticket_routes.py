@@ -2769,6 +2769,69 @@ async def auto_release_on_confirm(ticket_oid, background_tasks: BackgroundTasks)
         return {"released": False}
 
 
+# ── 8.70f — Customer's choice on a partial shipment ──────────────────────────
+# When an order can only ship in part, Sales asks the customer and records the
+# answer here (decided 2026-10-10: the Orders team never decides). The Order
+# Ticket shows it; "ship_partial_drop" makes Mark Complete cancel the unshipped
+# remainder instead of creating a backorder (packing_board_routes).
+
+PARTIAL_CHOICES = {
+    "wait": "Wait for the full order",
+    "ship_partial_backorder": "Ship what's available now, backorder the rest",
+    "ship_partial_drop": "Ship what's available now, drop the rest",
+}
+
+
+class PartialDecisionBody(BaseModel):
+    choice: str
+    note: Optional[str] = ""
+
+
+@router.put("/{ticket_id}/partial-decision")
+async def set_partial_decision(
+    ticket_id: str,
+    body: PartialDecisionBody,
+    current_user: dict = Depends(require_any_permission("tickets.sales", "tickets.manage")),
+):
+    if body.choice not in PARTIAL_CHOICES:
+        raise HTTPException(status_code=400, detail="Unknown choice")
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("exit_status"):
+        raise HTTPException(status_code=400, detail="This ticket is closed")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="This ticket has no order yet")
+    now = datetime.now(timezone.utc)
+    note = (body.note or "").strip() or None
+    decision = {"choice": body.choice, "label": PARTIAL_CHOICES[body.choice], "note": note,
+                "by_id": current_user["id"], "by_name": _actor(current_user), "at": now}
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"partial_decision": decision, "updated_at": now},
+         "$push": {"stage_history": {
+             "status": ticket["status"], "exit_status": None,
+             "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
+             "note": f"Customer's choice on partial shipment: {PARTIAL_CHOICES[body.choice]}" + (f" ({note})" if note else ""),
+         }}},
+    )
+    await audit_log("ticket.partial_decision", "ticket", ticket_id, entity_label=ticket.get("customer_name", ""),
+                    user=current_user, before=ticket.get("partial_decision"), after={"choice": body.choice, "note": note})
+    try:
+        from routes.packing_board_routes import push_update as _pb_push
+        entry = await col("packing_board").find_one({"order_id": str(ticket["order_id"]), "is_backorder": {"$ne": True}}, {"_id": 0})
+        if entry:
+            await _pb_push(entry)
+    except Exception:
+        pass
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    return {"success": True, "partial_decision": {**decision, "at": now.isoformat()}}
+
+
 # ── 8.71 — Release on account requests ───────────────────────────────────────
 # A sales clerk who knows a customer has a payment agreement asks for the order
 # to skip the deposit; someone holding tickets.release_on_account (Finance)

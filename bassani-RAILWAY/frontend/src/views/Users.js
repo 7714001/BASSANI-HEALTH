@@ -200,6 +200,16 @@ const PERMISSION_GROUPS = [
       { key: "quality_review", label: "Investigate and sign off product quality complaints (QA / Responsible Pharmacist)" },
     ],
   },
+  {
+    domain: "supply",
+    label: "GMP Supply",
+    actions: [
+      { key: "view",     label: "View the GMP work list, GMP deliveries and stock in transit" },
+      { key: "request",  label: "Request stock from GMP (creates the purchase order)" },
+      { key: "book_in",  label: "Book stock in at GMP (stock adjustment on a batch)" },
+      { key: "dispatch", label: "Dispatch from GMP to La Farmacia, receive stock in transit, reconcile the backlog" },
+    ],
+  },
 ];
 
 const ROLE_OPTIONS = [
@@ -271,6 +281,7 @@ const DEFAULT_ADMIN_PERMS = {
   discounts:         { approve: false },
   channels:          { manage: false },
   support:           { view: true, respond: false, manage: false, quality_review: false },
+  supply:            { view: false, request: false, book_in: false, dispatch: false },
 };
 
 // Mirrors backend ROLE_DEFAULT_PERMISSIONS — pre-populated when creating a ticket-role account.
@@ -300,6 +311,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: false },
     channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
   orders_clerk: {
     products:   { manage: false },
@@ -322,6 +334,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: false },
     channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
   finance: {
     products:   { manage: false },
@@ -345,6 +358,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: true },
     channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: false },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
   qa_manager: {
     products:   { manage: false },
@@ -367,6 +381,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: false },
     channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: true },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
   responsible_pharmacist: {
     products:   { manage: false },
@@ -390,6 +405,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: false },
     channels:          { manage: false },
     support:           { view: true, respond: true, manage: false, quality_review: true },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
   vault_custodian: {
     products:   { manage: false },
@@ -413,6 +429,7 @@ const ROLE_DEFAULT_PERMS = {
     discounts:         { approve: false },
     channels:          { manage: false },
     support:           { view: false, respond: false, manage: false, quality_review: false },
+    supply:            { view: false, request: false, book_in: false, dispatch: false },
   },
 };
 

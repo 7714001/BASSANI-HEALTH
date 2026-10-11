@@ -1679,6 +1679,28 @@ export default function SalesTickets() {
   // 8.71 — release on account requests
   const openReleaseRequest = () => { setReleaseReqReason(""); setReleaseReqOpen(true); };
 
+  // 8.70f — the customer's choice when an order can only ship in part. Sales
+  // asks the customer and records it; the Orders team acts on it.
+  const [partialOpen, setPartialOpen]     = useState(false);
+  const [partialChoice, setPartialChoice] = useState("ship_partial_backorder");
+  const [partialNote, setPartialNote]     = useState("");
+  const [partialSaving, setPartialSaving] = useState(false);
+  const openPartialDecision = () => {
+    setPartialChoice(detail?.partial_decision?.choice || "ship_partial_backorder");
+    setPartialNote(detail?.partial_decision?.note || "");
+    setPartialOpen(true);
+  };
+  const savePartialDecision = async () => {
+    setPartialSaving(true);
+    try {
+      await api.put(`/api/tickets/${detail.id}/partial-decision`, { choice: partialChoice, note: partialNote.trim() || undefined });
+      toast.success("Customer's choice recorded. The Orders team can see it on the Order Ticket.");
+      setPartialOpen(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save"); }
+    finally { setPartialSaving(false); }
+  };
+
   const submitReleaseRequest = async () => {
     if (!releaseReqReason.trim()) return toast.error("Tell Finance why this order shouldn't need a deposit");
     setReleaseReqSaving(true);
@@ -2016,7 +2038,11 @@ export default function SalesTickets() {
   const showRequestFeedbackBtn = orderIsComplete && canRequestFeedback && detail?.order_id && !orderFeedback?.feedback && nextAction?.key !== "requestFeedback";
   const showFeedbackGroup      = showRequestFeedbackBtn;
 
-  const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount;
+  const orderIsShort = !!packingEntry && ["queued", "packing", "waiting_stock", "ready"].includes(packingEntry.status)
+    && (packingEntry.items || []).some(i => i.is_backordered);
+  const showPartialDecision = !isReseller && !detail?.exit_status && (can("tickets.sales") || can("tickets.manage"))
+    && (orderIsShort || !!detail?.partial_decision);
+  const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount || showPartialDecision;
   const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
@@ -2743,6 +2769,21 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
+                    {/* 8.70f — customer's choice on a partial shipment */}
+                    {!isReseller && detail.partial_decision && !detail.exit_status && (
+                      <div className="text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Partial shipment: {detail.partial_decision.label}</p>
+                        <p className="text-indigo-700 mt-0.5">
+                          {detail.partial_decision.by_name}, {fmtDate(detail.partial_decision.at)}{detail.partial_decision.note && <>: {detail.partial_decision.note}</>}
+                        </p>
+                      </div>
+                    )}
+                    {!isReseller && orderIsShort && !detail.partial_decision && !detail.exit_status && (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Some items are short</p>
+                        <p className="text-amber-700 mt-0.5">Ask the customer whether to wait, take what's available now, or drop the rest, then record their choice under Actions.</p>
+                      </div>
+                    )}
                     {/* 8.71 — release on account request: pending, or declined (while still awaiting a deposit) */}
                     {releaseReqPending && (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
@@ -3322,6 +3363,11 @@ export default function SalesTickets() {
                         {showRequestDiscount && (
                           <button onClick={openDiscountModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left">
                             <Percent size={14} className="text-gray-400 shrink-0" />Request Discount
+                          </button>
+                        )}
+                        {showPartialDecision && (
+                          <button onClick={openPartialDecision} className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors text-left ${detail?.partial_decision ? "text-gray-700 hover:bg-gray-50" : "font-medium text-indigo-700 hover:bg-indigo-50"}`}>
+                            <Package size={14} className="text-indigo-400 shrink-0" />{detail?.partial_decision ? "Change Customer's Choice (Partial Shipment)" : "Record Customer's Choice (Partial Shipment)"}
                           </button>
                         )}
 
@@ -4116,6 +4162,34 @@ export default function SalesTickets() {
                 {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
                 Register in Odoo
               </BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {/* 8.70f — customer's choice on a partial shipment */}
+        {partialOpen && (
+          <Modal title="Customer's choice: partial shipment" onClose={() => setPartialOpen(false)}>
+            <p className="text-xs text-gray-500 mb-3">
+              Part of this order isn't in stock. Record what the customer wants; the Orders team sees it on the Order Ticket and packs accordingly.
+            </p>
+            <div className="space-y-2 mb-3">
+              {[
+                ["wait", "Wait for the full order", "Nothing ships until every line is in stock."],
+                ["ship_partial_backorder", "Ship what's available now, backorder the rest", "The rest follows on a backorder delivery when stock arrives."],
+                ["ship_partial_drop", "Ship what's available now, drop the rest", "The missing items are cancelled when the order is marked complete."],
+              ].map(([value, label, desc]) => (
+                <label key={value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${partialChoice === value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
+                  <input type="radio" name="partial_choice" checked={partialChoice === value} onChange={() => setPartialChoice(value)} className="mt-0.5 accent-bassani-600" />
+                  <span><span className="block text-sm font-semibold text-gray-900">{label}</span><span className="block text-xs text-gray-500">{desc}</span></span>
+                </label>
+              ))}
+            </div>
+            <FormGroup label="Note (optional)">
+              <Input value={partialNote} onChange={e => setPartialNote(e.target.value)} placeholder="e.g. Spoke to Jane on 11 Oct" />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setPartialOpen(false)} disabled={partialSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={savePartialDecision} loading={partialSaving}>Save</BtnPrimary>
             </div>
           </Modal>
         )}

@@ -55,6 +55,8 @@ import RecurringOrders       from "./views/RecurringOrders";
 import DiscountApprovals     from "./views/DiscountApprovals";
 import DiscountRequestView   from "./views/DiscountRequestView";
 import ReleaseRequests       from "./views/ReleaseRequests";
+import SupplyGMP             from "./views/SupplyGMP";
+import SupplyMonitor         from "./views/SupplyMonitor";
 import Support               from "./views/Support";
 import { PublicOrderHelp, PublicCaseHelp } from "./views/PublicSupport";
 import PartnerDirectory      from "./views/PartnerDirectory";
@@ -319,6 +321,9 @@ export default function App() {
         <Route path="/tickets/discounts" element={
           <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountApprovals /></AppLayout></ProtectedRoute>
         } />
+        <Route path="/supply/gmp" element={
+          <ProtectedRoute permission="supply.view"><AppLayout><SupplyGMP /></AppLayout></ProtectedRoute>
+        } />
         <Route path="/tickets/release-requests" element={
           <ProtectedRoute permission="tickets.release_on_account"><AppLayout><ReleaseRequests /></AppLayout></ProtectedRoute>
         } />
@@ -357,6 +362,7 @@ export default function App() {
         <Route path="/onboarding-monitor" element={<OnboardingMonitor />} />
         {/* Public: manufacturing orders monitor (no auth, token in URL) */}
         <Route path="/manufacturing-monitor" element={<ManufacturingMonitor />} />
+        <Route path="/supply-monitor" element={<SupplyMonitor />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

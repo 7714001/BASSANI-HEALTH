@@ -67,6 +67,7 @@ DEFAULT_ADMIN_PERMISSIONS: dict = {
     # change status, self-assign; manage: assign to anyone, close; quality_review:
     # investigate and sign off product quality complaints (QA/RP).
     "support":            {"view": True, "respond": False, "manage": False, "quality_review": False},
+    "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
 }
 
 # Applied to existing admin users during migration — they had full access before.
@@ -95,6 +96,7 @@ FULL_PERMISSIONS: dict = {
     "discounts":          {"approve": True},
     "channels":           {"manage": True},
     "support":            {"view": True, "respond": True, "manage": True, "quality_review": True},
+    "supply":            {"view": True, "request": True, "book_in": True, "dispatch": True},  # 8.70 GMP supply
 }
 
 # Full default permission sets for each staff role.
@@ -128,6 +130,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": False},
         "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
     "orders_clerk": {
         "products":   {"manage": False},
@@ -154,6 +157,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": False},
         "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
     "finance": {
         "products":   {"manage": False},
@@ -181,6 +185,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": True},
         "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": False},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
     "qa_manager": {
         "products":   {"manage": False},
@@ -207,6 +212,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": False},
         "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": True},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
     "responsible_pharmacist": {
         "products":   {"manage": False},
@@ -235,6 +241,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": False},
         "channels":          {"manage": False},
         "support":           {"view": True, "respond": True, "manage": False, "quality_review": True},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
     # Phase 13 — vault custodian (Patricia). Production-side only: generates
     # batch IDs and records vault movements. Sees nothing of the commercial
@@ -264,6 +271,7 @@ ROLE_DEFAULT_PERMISSIONS: dict = {
         "discounts":         {"approve": False},
         "channels":          {"manage": False},
         "support":           {"view": False, "respond": False, "manage": False, "quality_review": False},
+        "supply":            {"view": False, "request": False, "book_in": False, "dispatch": False},  # 8.70 GMP supply
     },
 }
 TICKET_ROLE_PERMISSIONS = ROLE_DEFAULT_PERMISSIONS  # backwards-compat alias

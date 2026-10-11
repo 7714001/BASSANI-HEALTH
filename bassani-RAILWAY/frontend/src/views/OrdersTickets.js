@@ -24,6 +24,22 @@ import {
 } from "../components/UI";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 
+// 8.70f — what an unreserved line really means. Set by the backend's
+// reservation refresh (packing_board_routes._refresh_entry_item_backorder_flags).
+const LINE_STOCK = {
+  available: { text: "In stock, not reserved", cls: "text-blue-700 bg-blue-100",
+               title: "La Farmacia has this stock but Odoo hasn't reserved it for this order yet. Click Check Availability." },
+  short:     { text: "Short: waiting on stock", cls: "text-amber-700 bg-amber-100",
+               title: "Not enough stock at La Farmacia. It's on the GMP Supply work list." },
+};
+const UNKNOWN_LINE = { text: "Not reserved", cls: "text-amber-700 bg-amber-100",
+                       title: "Odoo hasn't reserved this line. Click Check Availability to update." };
+const PARTIAL_DECISION_TEXT = {
+  wait: "Customer will wait for the full order. Don't pack until every line is reserved.",
+  ship_partial_backorder: "Customer takes what's available now; the rest follows on a backorder.",
+  ship_partial_drop: "Customer takes what's available now and drops the rest. Mark Complete cancels the remainder instead of backordering it.",
+};
+
 // canvas → PNG data URL so the barcode survives innerHTML → new window print copy
 function BarcodeImg({ text, style }) {
   const [src, setSrc] = useState("");
@@ -210,6 +226,19 @@ export default function OrdersTickets() {
     const targetOrderId = location.state?.openOrderId;
     if (targetOrderId) openDetail({ order_id: targetOrderId, odoo_picking_id: location.state?.openPickingId });
   }, []); // eslint-disable-line
+
+  // 8.70f — Odoo's Check Availability for this order's delivery
+  const [checkingAvail, setCheckingAvail] = useState(false);
+  const checkAvailability = async () => {
+    setCheckingAvail(true);
+    try {
+      const { data } = await api.post("/api/packing/check-availability", { order_id: detail.order_id, picking_id: detail.odoo_picking_id });
+      setDetail(d => ({ ...d, items: data.items }));
+      if (data.short) toast(`${data.short} line(s) still short of stock`, { icon: "⚠️" });
+      else toast.success("Every line is reserved");
+    } catch (e) { toast.error(e.response?.data?.detail || "Check Availability failed"); }
+    finally { setCheckingAvail(false); }
+  };
 
   const refreshDetail = async (order_id, pickingId = detail?.odoo_picking_id) => {
     try {
@@ -741,6 +770,25 @@ export default function OrdersTickets() {
                       </div>
                     </div>
 
+                    {/* 8.70f — the customer's choice on a partial shipment (recorded by Sales) */}
+                    {detail.partial_decision && !isTerminal && (
+                      <div className="mx-6 mt-4 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                        <span className="font-semibold">Customer's choice: </span>
+                        {PARTIAL_DECISION_TEXT[detail.partial_decision.choice] || detail.partial_decision.label}
+                        {detail.partial_decision.note && <span className="text-indigo-700"> ({detail.partial_decision.note})</span>}
+                        <span className="text-indigo-500"> · {detail.partial_decision.by_name}, {fmtDate(detail.partial_decision.at)}</span>
+                      </div>
+                    )}
+                    {canOrders && !isTerminal && (detail.items || []).some(i => i.is_backordered) && (
+                      <div className="mx-6 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                        <p className="text-xs text-amber-800">
+                          Some lines aren't reserved in Odoo. Check Availability reserves any stock now on the shelf.
+                          {!detail.partial_decision && " If the order can only ship in part, Sales should record the customer's choice on the Sales ticket."}
+                        </p>
+                        <BtnSecondary size="sm" onClick={checkAvailability} loading={checkingAvail}><RefreshCw size={12} />Check Availability</BtnSecondary>
+                      </div>
+                    )}
+
                     {/* Items table */}
                     <div className="overflow-x-auto">
                     <table className="w-full">
@@ -772,9 +820,10 @@ export default function OrdersTickets() {
                               <td className="p-3 pl-6">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-medium text-gray-900">{item.name || item.description || item.sku}</p>
-                                  {isBackordered && (
-                                    <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>
-                                  )}
+                                  {isBackordered && (() => {
+                                    const lbl = LINE_STOCK[item.stock_status] || UNKNOWN_LINE;
+                                    return <span title={lbl.title} className={`text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0 ${lbl.cls}`}>{lbl.text}</span>;
+                                  })()}
                                 </div>
                                 {item.sku && (
                                   <p className="text-[10px] font-mono text-gray-400 mt-0.5">{item.sku}</p>

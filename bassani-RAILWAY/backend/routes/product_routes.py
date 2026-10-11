@@ -1122,7 +1122,14 @@ async def set_stock_level(
             })
 
         # Apply the inventory adjustment (creates the stock move)
-        odoo.execute("stock.quant", "action_apply_inventory", [quant_id])
+        # Odoo 19 applies the adjustment, then can't send its None reply over
+        # XML-RPC ("cannot marshal None", live-confirmed 2026-10-11), which
+        # used to report a failure for a stock change that had been made.
+        try:
+            odoo.execute("stock.quant", "action_apply_inventory", [quant_id])
+        except Exception as _apply_err:
+            if "cannot marshal None" not in str(_apply_err):
+                raise
 
         await audit_log(
             "product.stock_set", "product", variant_id,

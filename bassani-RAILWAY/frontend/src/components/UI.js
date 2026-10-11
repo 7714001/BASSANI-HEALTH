@@ -97,6 +97,7 @@ const NAV = [
   { label: "Orders Tickets",     path: "/tickets/orders",   icon: Ticket, section: "Orders",  permissions: ["tickets.orders", "tickets.qa_approve", "tickets.rp_approve"] },
   { label: "Backorders",         path: "/orders/backorders", icon: Clock,  section: "Orders",  permission: "orders.view" },
   { label: "Manufacturing Orders", path: "/orders/manufacturing-orders", icon: Factory, section: "Orders", permission: "orders.view" },
+  { label: "GMP Supply",         path: "/supply/gmp", icon: Truck, section: "Orders", permission: "supply.view" },
   { label: "Recurring Orders",   path: "/orders/recurring",  icon: Repeat, section: "Orders",  permission: "orders.recurring_manage" },
   { label: "Discount Approvals", path: "/tickets/discounts", icon: Percent, section: "Orders", permission: "discounts.approve" },
   { label: "Release Requests",   path: "/tickets/release-requests", icon: HandCoins, section: "Orders", permission: "tickets.release_on_account" },

@@ -117,6 +117,17 @@ def _with_age(entry: dict) -> dict:
     return entry
 
 
+async def _drop_rest_chosen(entry: dict) -> bool:
+    """True when Sales recorded that the customer takes part now and drops
+    the rest (8.70f): the unshipped remainder is cancelled, not backordered."""
+    try:
+        t = await col("tickets").find_one({"type": "sales", "order_id": int(entry["order_id"])},
+                                          {"partial_decision": 1})
+    except (ValueError, TypeError):
+        return False
+    return ((t or {}).get("partial_decision") or {}).get("choice") == "ship_partial_drop"
+
+
 async def _with_ticket_summary(entry: dict) -> dict:
     """Attach a small set of linked-Sales-ticket fields for the Orders Ticket
     detail page's own "Sales Ticket" reference card (2026-08-27) — a plain
@@ -131,7 +142,7 @@ async def _with_ticket_summary(entry: dict) -> dict:
     try:
         ticket = await col("tickets").find_one(
             {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None},
-            {"source": 1, "assigned_to_name": 1, "stage_history": 1},
+            {"source": 1, "assigned_to_name": 1, "stage_history": 1, "partial_decision": 1},
         )
     except (ValueError, TypeError):
         pass
@@ -139,6 +150,7 @@ async def _with_ticket_summary(entry: dict) -> dict:
     entry["ticket_source"] = ticket.get("source") if ticket else None
     entry["ticket_assigned_to_name"] = ticket.get("assigned_to_name") if ticket else None
     entry["ticket_stage_history"] = (ticket.get("stage_history") or []) if ticket else []
+    entry["partial_decision"] = ticket.get("partial_decision") if ticket else None
     return entry
 
 
@@ -858,7 +870,8 @@ async def rp_approve(
     return {"success": True}
 
 
-def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = None) -> dict:
+def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = None,
+                            cancel_backorder: bool = False) -> dict:
     """Validate all assigned stock.picking records linked to an Odoo sale order.
 
     Normally sets qty_done = reserved quantity by writing it directly onto each
@@ -988,10 +1001,21 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
                     _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": float(ml.get("quantity", 0))}])
             result = _odoo.execute("stock.picking", "button_validate", [pid])
             if isinstance(result, dict) and result.get("res_model") == "stock.backorder.confirmation":
-                # Partial reservation — ask Odoo to auto-create a backorder
+                # Partial reservation — ask Odoo to auto-create a backorder,
+                # unless the customer chose to take part and drop the rest
+                # (8.70f), in which case the remainder is cancelled instead.
+                # The wizard must receive the context button_validate returned
+                # (button_validate_picking_ids etc.): on Odoo 17+ process() /
+                # process_cancel_backorder() validate nothing without it, and
+                # returned quietly here before (found 2026-10-11 building 8.70).
                 try:
-                    wiz_id = _odoo.create("stock.backorder.confirmation", {"pick_ids": [(4, pid)]})
-                    _odoo.execute("stock.backorder.confirmation", "process", [wiz_id])
+                    from odoo_client import odoo as _odoo_call
+                    _wctx = result.get("context") or {}
+                    wiz_id = _odoo_call("stock.backorder.confirmation", "create",
+                                        [{"pick_ids": [(4, pid)]}], {"context": _wctx})
+                    _odoo_call("stock.backorder.confirmation",
+                               "process_cancel_backorder" if cancel_backorder else "process",
+                               [[wiz_id]], {"context": _wctx})
                     # Capture the new backorder picking so we can create a portal entry
                     _bo_picks = _odoo.search_read(
                         "stock.picking",
@@ -1003,8 +1027,14 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
                         backorder_picking_id = _bo_picks[0]["id"]
                         backorder_picking_name = _bo_picks[0]["name"]
                 except Exception:
-                    pass  # backorder wizard failed — picking validated with partial qty_done
-            validated.append(pname)
+                    pass  # wizard failed; the state check below reports it honestly
+            # Re-read rather than assume (2026-10-11): a validate that Odoo
+            # didn't actually complete used to be reported as validated.
+            _state = _odoo.read("stock.picking", [pid], ["state"])
+            if _state and _state[0].get("state") == "done":
+                validated.append(pname)
+            else:
+                errors.append(f"{pname}: not completed in Odoo (state: {(_state or [{}])[0].get('state', 'unknown')})")
         except Exception as e:
             errors.append(f"{pname}: {e}")
 
@@ -1262,7 +1292,8 @@ async def complete_entry(
 
     try:
         odoo_order_id = int(entry["order_id"])
-        delivery_result = _validate_odoo_delivery(odoo_order_id, qty_overrides)
+        delivery_result = _validate_odoo_delivery(odoo_order_id, qty_overrides,
+                                                  cancel_backorder=await _drop_rest_chosen(entry))
     except (ValueError, TypeError) as e:
         delivery_result = {"success": False, "pickings": [], "error": f"Invalid order ID: {e}", **_no_bo}
     except Exception as e:
@@ -1575,7 +1606,8 @@ async def retry_invoice_creation(
             if i.get("product_id") and i.get("qty_packed") is not None
         } or None
         try:
-            _delivery_result = _validate_odoo_delivery(int(entry["order_id"]), _qty_overrides)
+            _delivery_result = _validate_odoo_delivery(int(entry["order_id"]), _qty_overrides,
+                                                       cancel_backorder=await _drop_rest_chosen(entry))
         except (ValueError, TypeError) as e:
             _delivery_result = {"success": False, "error": f"Invalid order ID: {e}"}
         except Exception as e:
@@ -1913,7 +1945,7 @@ async def _refresh_entry_item_backorder_flags(odoo, entry: dict) -> Optional[lis
     if not picking_id:
         return None
     try:
-        pick_rows = odoo.read("stock.picking", [picking_id], fields=["move_ids"])
+        pick_rows = odoo.read("stock.picking", [picking_id], fields=["move_ids", "location_id"])
         if not pick_rows or not pick_rows[0].get("move_ids"):
             return None
         # 'quantity' not 'reserved_availability' — see the field-drift note
@@ -1927,6 +1959,22 @@ async def _refresh_entry_item_backorder_flags(odoo, entry: dict) -> Optional[lis
         return None
 
     by_product = {m["product_id"][0]: m for m in moves if m.get("product_id")}
+
+    # 8.70f — "not reserved" is not the same as "short". Read free stock at
+    # the delivery's own location for the unreserved products so the Order
+    # Ticket can say "In stock, not reserved yet" (Check Availability fixes
+    # it) vs "Short: waiting on stock" (needs stock from GMP/a supplier).
+    free_by_product: dict = {}
+    unreserved = [pid for pid, m in by_product.items()
+                  if float(m.get("quantity", 0)) < float(m.get("product_uom_qty", 0))]
+    loc = pick_rows[0].get("location_id")
+    if unreserved and isinstance(loc, list):
+        try:
+            for r in odoo.read("product.product", unreserved, fields=["free_qty"], context={"location": loc[0]}):
+                free_by_product[r["id"]] = float(r.get("free_qty") or 0)
+        except Exception:
+            free_by_product = {}
+
     items = entry.get("items", [])
     changed = False
     for item in items:
@@ -1936,9 +1984,17 @@ async def _refresh_entry_item_backorder_flags(odoo, entry: dict) -> Optional[lis
         qty_ordered  = float(move.get("product_uom_qty", 0))
         qty_reserved = float(move.get("quantity", 0))
         new_flag = qty_reserved < qty_ordered
-        if item.get("qty_reserved") != qty_reserved or item.get("is_backordered") != new_flag:
+        if not new_flag:
+            status = "reserved"
+        elif free_by_product.get(item.get("product_id"), 0) >= qty_ordered - qty_reserved - 0.0001:
+            status = "available"
+        else:
+            status = "short"
+        if (item.get("qty_reserved") != qty_reserved or item.get("is_backordered") != new_flag
+                or item.get("stock_status") != status):
             item["qty_reserved"] = qty_reserved
             item["is_backordered"] = new_flag
+            item["stock_status"] = status
             changed = True
     return items if changed else None
 
@@ -2444,6 +2500,46 @@ async def adopt_order(
         detail={"customer": partner_name, "units": doc["total_units"]},
     )
     return {"success": True, "order_id": order_id_str}
+
+
+@router.post("/check-availability")
+async def check_availability(
+    body: OrderIdBody,
+    current_user: dict = Depends(require_permission("tickets.orders")),
+):
+    """8.70f — Odoo's "Check Availability" for one order's delivery: reserve
+    whatever stock is now on the shelf, then refresh each line's status."""
+    entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
+    if not entry:
+        raise HTTPException(status_code=404, detail="Order not on board")
+    odoo = get_odoo_client()
+    try:
+        pickings = _entry_active_pickings(odoo, entry["order_id"], entry.get("odoo_picking_id"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not read the delivery from Odoo: {e}")
+    if not pickings:
+        raise HTTPException(status_code=400, detail="This order has no open delivery in Odoo.")
+    for p in pickings:
+        try:
+            odoo.execute("stock.picking", "action_assign", [p["id"]])
+        except Exception as e:
+            # Odoo 19 raises this when there's nothing left to reserve; the
+            # refresh below then reports which lines are still short.
+            if "Nothing to check the availability" not in str(e):
+                raise HTTPException(status_code=502, detail=f"Odoo couldn't check availability: {e}")
+    new_items = await _refresh_entry_item_backorder_flags(odoo, entry)
+    if new_items is not None:
+        await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": {"items": new_items}})
+        entry["items"] = new_items
+    items = entry.get("items", [])
+    await audit_log("packing.check_availability", "packing_board", str(entry["order_id"]),
+                    entity_label=entry.get("customer_name", ""), user=current_user,
+                    detail={"short": sum(1 for i in items if i.get("stock_status") == "short")})
+    entry_out = {k: v for k, v in entry.items() if k != "_id"}
+    await push_update(entry_out)
+    return {"items": items,
+            "short": sum(1 for i in items if i.get("is_backordered")),
+            "reserved": sum(1 for i in items if not i.get("is_backordered"))}
 
 
 @router.put("/mark-packing")
