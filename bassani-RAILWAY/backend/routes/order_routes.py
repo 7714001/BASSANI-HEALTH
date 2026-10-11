@@ -15,7 +15,7 @@ from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
 from support_links import order_help_url
-from account_terms import get_account_terms, is_approved_for_company
+from account_terms import get_account_terms, is_approved_for_company, order_credit_status
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
@@ -1838,16 +1838,13 @@ async def create_order(
     credit_warning = None
     credit_partner_name = ""
     try:
-        partner_rows = odoo.read("res.partner", [effective_partner_id], fields=["name", "credit", "credit_limit"])
-        if partner_rows:
-            credit_partner_name = partner_rows[0].get("name", "")
-            status = credit_status(
-                partner_rows[0].get("credit") or 0,
-                partner_rows[0].get("credit_limit") or 0,
-                additional=order_subtotal,
-            )
-            if status["over_limit"]:
-                credit_warning = status
+        partner_rows = odoo.read("res.partner", [effective_partner_id], fields=["name"])
+        credit_partner_name = partner_rows[0].get("name", "") if partner_rows else ""
+        status = await order_credit_status(
+            odoo, effective_partner_id, get_company_id(odoo, warehouse_id), additional=order_subtotal,
+        )
+        if status["over_limit"]:
+            credit_warning = status
     except Exception:
         pass  # Non-fatal — credit info shouldn't block placing a quotation
 
@@ -2139,25 +2136,26 @@ async def _confirm_order_core(
     # Unlike the warning at order creation, this blocks: confirming commits to
     # an invoice, so it's the point where being over limit actually matters.
     if partner:
-        partner_rows = odoo.read("res.partner", [partner[0]], fields=["credit", "credit_limit"])
-        if partner_rows:
-            status = credit_status(
-                partner_rows[0].get("credit") or 0,
-                partner_rows[0].get("credit_limit") or 0,
-                additional=pre_rows[0].get("amount_total") or 0,
+        # Read in the order's own company on the company record (2026-10-11 fix,
+        # see account_terms.order_credit_status) — previously no company context.
+        status = await order_credit_status(
+            odoo, partner[0], order_company_id, additional=pre_rows[0].get("amount_total") or 0,
+        )
+        if status["over_limit"] and not override_credit:
+            await audit_log("order.credit_block", "order", order_id, entity_label=partner[1],
+                            user=current_user, detail=status)
+            raise HTTPException(
+                status_code=402,
+                detail=f"{partner[1]} would go over their credit limit by R{status['shortfall']:,.2f}: "
+                       f"balance R{status['balance']:,.2f}"
+                       + (f", plus R{status['pending_on_account']:,.2f} released on account and not yet invoiced"
+                          if status.get("pending_on_account") else "")
+                       + f", plus this order, against a R{status['credit_limit']:,.2f} limit. "
+                       "An admin must explicitly override to confirm this order.",
             )
-            if status["over_limit"] and not override_credit:
-                await audit_log("order.credit_block", "order", order_id, entity_label=partner[1],
-                                user=current_user, detail=status)
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"{partner[1]} is over their credit limit by R{status['shortfall']:.2f} "
-                           f"(credit R{status['credit']:.2f} of R{status['credit_limit']:.2f} limit). "
-                           "An admin must explicitly override to confirm this order.",
-                )
-            if status["over_limit"] and override_credit:
-                await audit_log("order.credit_override", "order", order_id, entity_label=partner[1],
-                                user=current_user, detail=status)
+        if status["over_limit"] and override_credit:
+            await audit_log("order.credit_override", "order", order_id, entity_label=partner[1],
+                            user=current_user, detail=status)
 
     # ── Step 1: Confirm (hard fail — nothing else runs if this fails) ──────────
     try:

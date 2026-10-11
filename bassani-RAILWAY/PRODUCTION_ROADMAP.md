@@ -2503,6 +2503,7 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] **Release Requests page** (`/tickets/release-requests`, Orders menu, `tickets.release_on_account`): waiting requests, plus recent decisions; a row opens the Sales ticket to decide. Backed by `GET /api/tickets/release-requests?status=pending|all` (literal route, registered before `GET /{ticket_id}`)
 - [x] **Automatic release at confirm (same day, product-owner decision):** `order_routes._confirm_order_core` calls `ticket_routes.auto_release_on_confirm()` (deferred import) right after the ticket reaches awaiting deposit. A customer with approved account terms who passes the full `evaluate_release()` check is released immediately through `_commit_release()` (`release_type: "auto"`, actor "Automatic (account terms)", audited), with no human step: the standard ERP automatic credit check. Approved but failing (over the limit, suspended, review date passed, company not covered) stays at awaiting deposit with `auto_release_held` (blocks shown on the ticket, Activity Log note, audit `ticket.auto_release_held`), cleared by any later release. Customers without terms are untouched. Applies to every confirm path that uses `_confirm_order_core` (staff, reseller, customer, recurring accept); an order confirmed directly in Odoo and picked up by the ticket auto-sync is not auto-released (Finance releases it with one click)
 - [x] **Sales Next Step at the deposit stage** is now a waiting message ("Waiting for the customer's deposit. Finance registers it once paid.", or the held reason for an account customer), with **Request Release on Account** as a secondary button underneath, instead of the request being the main action for every order
+- [x] **Credit limit reads fixed (same day, found while answering a customer self-confirm question):** the Phase 3.6 credit checks read `res.partner.credit`/`credit_limit` with no company context and on whatever partner was on the order. Both fields are company-dependent on this Odoo and the balance sits on the company record, so the reads under-reported (live: Cannexis read R0 with no context, R162,265.76 in La Farmacia), meaning the quote-time warning and the confirm-time block rarely fired. New `account_terms.order_credit_status()` (commercial partner, order's own company, plus released-but-uninvoiced exposure, same as `evaluate_release()`) now backs both `create_order`'s warning and `_confirm_order_core`'s block, whose message now explains the figures. The customer list's Credit Hold badge and the profile's Credit Limit tile use new `company_credit_summary()`: one read per root trading company per page, hold when over the limit in any company, totals across companies. Branch companies are read through their root only ("Samples @ La Farmacia" is a branch of La Farmacia and returns the identical balance; reading both would double count)
 - [x] Requester and decider emails: `send_release_request_notification` / `send_release_decision_notification`; `release_request_to` added to Settings > Email Notifications > Finance with a Send Test preview
 
 **Definition of Done (8.71)**
@@ -3593,7 +3594,7 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 - [x] `POST /api/gtin-pool/bulk-add` — accepts `{ gtins: [...] }`, validates each via `validate_gtin()` from `gs1.py`, inserts new entries, skips duplicates; returns `{ added, skipped, invalid: [...] }` (`settings.manage`)
 - [x] `GET /api/gtin-pool/{gtin}` — single GTIN lookup, returns pool record or 404 (`require_admin`)
 - [x] `DELETE /api/gtin-pool/{gtin}` — removes from pool; blocked if status is `assigned` (`settings.manage`)
-- [x] `POST /api/gtin-pool/{gtin}/assign` — body `{ odoo_product_id, product_name }`: marks GTIN assigned and writes `product.template.barcode` in Odoo via XML-RPC; audit-logged (`require_admin`)
+- [x] `POST /api/gtin-pool/{gtin}/assign` — body `{ odoo_product_id, product_name }`: marks GTIN assigned and writes the variant's `product.product.barcode` in Odoo via XML-RPC; audit-logged (`require_admin`). **Fixed 2026-10-11:** this (and retry-sync/unassign) wrote to `product.template` using the variant id from the Products list; variant and template ids differ for 1,673 of 1,689 live products, so assignment failed with "Record does not exist or has been deleted" and left the GTIN "Not synced to Odoo". A live check confirmed no GTIN had been written to an unrelated template by an id collision. Existing unsynced GTINs resync with Retry Sync on the GTIN Pool page once deployed
 - [x] `POST /api/gtin-pool/{gtin}/unassign` — clears Odoo barcode field and returns GTIN to `available`; audit-logged (`require_admin`)
 - [x] Route ordering: `/stats` and `/bulk-add` registered before `/{gtin}` to prevent literal strings being captured by the path parameter
 - [x] Registered in `server.py`; MongoDB indexes created on startup
@@ -3709,6 +3710,23 @@ The vault IN endpoint is designed to accept a `linked_batch_id` reference that P
 - [ ] Replacing and re-publishing a certificate changes what the same printed QR shows; the old version stays in the history.
 - [ ] Withdrawing shows the withdrawn notice on the next scan. An unpublished draft is never visible publicly.
 - [ ] The public page shows no prices, images, shop links or claims, carries `noindex`, and is rate-limited. Scan counts appear in the admin screen. All actions are audit-logged.
+
+### 12.10 — GTIN Lifecycle: Relink, Retire, Never Reuse — Built 2026-10-11, awaiting live testing
+
+**Goal:** follow GS1's rule that a GTIN which has identified a product is never given to a different product (healthcare: never reused), while still handling Bassani deleting and recreating products in Odoo, which left assigned GTINs pointing at Odoo records that no longer exist. Same physical product under a new Odoo record keeps its GTIN: that's a relink, not reuse.
+
+- [x] `gtin_pool` gains a `retired` status and a per-GTIN `history[]` (assigned / relinked / retired / released_in_error, with who, when, reason); stats and list filter include retired
+- [x] **Relink** (`POST /api/gtin-pool/{gtin}/relink`, `require_admin`): moves an assigned GTIN to another Odoo variant, clearing it from the old variant if that still exists; refuses a target that already has a pool GTIN; audit `gtin_pool.relinked` with before/after
+- [x] **Deleted-product finder** (`GET /api/gtin-pool/orphans`): assigned GTINs whose variant no longer exists in Odoo (archived counts as existing), each with suggested replacements by product name, ones without a barcode first; **bulk relink** (`POST /api/gtin-pool/relink-bulk`), items independent, no two GTINs to one product
+- [x] **Retire** (`POST /{gtin}/retire`, `settings.manage`, reason required): clears the barcode from the product if it still exists, keeps the GTIN against it permanently; retired GTINs can't be assigned or removed
+- [x] **Return to pool** replaces Unassign (`POST /{gtin}/unassign` now `settings.manage` + reason, framed as "assigned by mistake, never printed"); assign refuses a retired GTIN or a product that already has a pool GTIN
+- [x] GTIN Pool page (`GTINPool.js`): red banner + **Relink** bulk window when GTINs point at deleted products, "Product deleted in Odoo" badge, Retired stat/filter/badge, row actions Relink / Retire / Return to pool, click a GTIN for its history. Products page picker (`GTINPickerModal.js`): Retire / Return to pool replace Unassign; a product without a barcode lists GTINs from deleted products (name matches first) with **Relink here**. Shared windows in `components/GTINActions.js`
+
+**Definition of Done (12.10)**
+- [ ] GTINs left on deleted products are listed with suggestions and can be relinked in bulk
+- [ ] A retired GTIN can't be assigned again or removed; its history shows every change
+- [ ] Returning a GTIN to the pool needs settings.manage and a reason
+
 
 ### Definition of Done
 

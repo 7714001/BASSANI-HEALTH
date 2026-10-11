@@ -1583,11 +1583,19 @@ Go to **Products** to view the full product catalogue. Each product shows:
 
 **Set GTIN / Barcode:** The Barcode column shows either the current barcode value or a **+ Set GTIN** link. Clicking it opens the barcode manager modal, which handles all barcode operations in one place:
 - Current barcode status: green badge if assigned from the pool; amber badge if entered manually
-- Unassign (pool barcodes) or Clear (manual barcodes) buttons with inline confirmation
+- **Retire** or **Return to pool** (pool barcodes), or **Clear** (manual barcodes), each with a confirmation
+- If the product has no barcode, a list of **GTINs from deleted products**, with matching names first: click **Relink here** to give a recreated product back its original GTIN
 - A searchable list of available GTINs from your pool — click Assign to write it to Odoo immediately
 - A custom barcode entry field for non-pool barcodes (any format, including Code 128 or EAN-13)
 
 Assigning a GTIN from the picker writes the barcode field directly to Odoo and marks the code as assigned in the pool. The Products table barcode cell updates immediately. To manage the full GTIN pool (upload codes, view the registry, remove unused codes), go to **Settings → GTIN Pool**.
+
+**A GTIN stays with its product for life.** GS1 doesn't allow a GTIN that has identified one product to be given to a different product, so:
+- **Relink** when it's the same physical product under a new record in Odoo, for example after Bassani deleted and recreated products. The GTIN keeps pointing at the same item. If any GTINs are linked to products that no longer exist in Odoo, the GTIN Pool page shows a red banner: click **Relink** to see them all, each with the matching new product pre-selected where one has the same name, check them, and relink in one go
+- **Retire** when a product is discontinued *(settings permission)*. The GTIN is kept on record against that product and can never be assigned again
+- **Return to pool** only if a GTIN was assigned by mistake and never printed *(settings permission, reason required)*
+
+Click any GTIN on the GTIN Pool page to see its history.
 
 **Global search:** Every internal staff role (not just admins — this was opened up to Sales, Orders, Finance, QA, RP, and the vault custodian in 2026-09-07) sees a search bar in the top-right of the portal header on every page. Press `/` or **Ctrl+K** (**Cmd+K** on Mac) from anywhere to focus it — Ctrl/Cmd+K works even while you're already typing in another field, `/` doesn't (so typing a literal `/` somewhere else is never hijacked).
 

@@ -12,6 +12,7 @@ from database import col, NO_ID
 from credit import credit_status
 from contacts import resolve_company_contacts
 from account_terms import (
+    company_credit_summary,
     commercial_partner_id, trading_companies, payment_terms_catalog,
     read_company_credit, review_overdue,
 )
@@ -144,13 +145,27 @@ def _get_za_country_id(odoo) -> Optional[int]:
         return None
 
 
-def _attach_credit_hold(customers: list) -> None:
-    """Flags each customer with `credit_hold` (over their Odoo credit_limit
-    right now) so it can be shown in the portal without an extra round trip
-    per row — same `credit`/`credit_limit` fields order confirmation checks."""
+def _attach_credit_hold(customers: list, odoo=None) -> None:
+    """Flags each customer with `credit_hold` (over their Odoo credit limit in
+    any trading company right now) and replaces `credit`/`credit_limit` with
+    the totals across companies. One read per trading company for the whole
+    page, not per row. Fixed 2026-10-11: these were read with no company
+    context, so they reflected a single company and often showed R0."""
+    if not customers:
+        return
+    odoo = odoo or get_odoo_client()
+    try:
+        summary = company_credit_summary(odoo, [c["id"] for c in customers if c.get("id")])
+    except Exception:
+        summary = {}
     for c in customers:
-        status = credit_status(c.get("credit") or 0, c.get("credit_limit") or 0)
-        c["credit_hold"] = status["over_limit"]
+        pos = summary.get(c.get("id"))
+        if pos is None:
+            c["credit_hold"] = credit_status(c.get("credit") or 0, c.get("credit_limit") or 0)["over_limit"]
+            continue
+        c["credit"] = pos["credit"]
+        c["credit_limit"] = pos["credit_limit"]
+        c["credit_hold"] = pos["hold"]
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -217,7 +232,7 @@ async def list_customers(
             for k, v in c.items():
                 if v is False and k != "active":
                     c[k] = None
-        _attach_credit_hold(customers)
+        _attach_credit_hold(customers, odoo)
         total = odoo.count("res.partner", domain)
 
         # Overlay ownership data so the admin can see which reseller created each account
@@ -294,7 +309,7 @@ async def customer_profile(
     for k, v in customer.items():
         if v is False and k != "active":
             customer[k] = None
-    _attach_credit_hold([customer])
+    _attach_credit_hold([customer], odoo)
 
     # Orders — every order for this customer, same for resellers and admins
     # once access is granted above (Phase 7.13).
@@ -583,7 +598,7 @@ def get_customer(customer_id: int, current_user: dict = Depends(get_current_user
         records = odoo.read("res.partner", [customer_id], fields=CUSTOMER_FIELDS)
         if not records:
             raise HTTPException(status_code=404, detail="Customer not found")
-        _attach_credit_hold(records)
+        _attach_credit_hold(records, odoo)
         return records[0]
     except HTTPException:
         raise

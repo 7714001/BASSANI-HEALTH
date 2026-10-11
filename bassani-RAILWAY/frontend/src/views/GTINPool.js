@@ -1,26 +1,47 @@
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, Tag, Trash2, Unlink, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, Tag, Trash2, CheckCircle, AlertCircle, RefreshCw, Link2, Archive, Undo2, History } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
+import { useAuth } from "../AuthContext";
 import { BtnPrimary, BtnSecondary, BtnDanger, Modal } from "../components/UI";
+import { RelinkModal, RetireModal, ReleaseModal, GTINHistoryModal, BulkRelinkModal } from "../components/GTINActions";
 
 export default function GTINPool({ embedded }) {
-  const [stats, setStats]         = useState({ total: 0, available: 0, assigned: 0 });
+  const { can } = useAuth();
+  const canManage = can("settings.manage");
+  const [stats, setStats]         = useState({ total: 0, available: 0, assigned: 0, retired: 0 });
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
-  const [statusFilter, setStatusFilter] = useState("all");  // "all" | "available" | "assigned"
+  const [statusFilter, setStatusFilter] = useState("all");  // all | available | assigned | retired
+
+  // 12.10 — GTINs whose Odoo product was deleted (e.g. recreated in Odoo)
+  const [orphans, setOrphans]       = useState([]);
+  const [orphanError, setOrphanError] = useState(null);
+  const [bulkOpen, setBulkOpen]     = useState(false);
 
   // Upload state
   const [uploadText, setUploadText]   = useState("");
   const [uploading, setUploading]     = useState(false);
   const [uploadResult, setUploadResult] = useState(null);  // { added, skipped, invalid }
 
-  // Confirm modals
-  const [deleteConfirm, setDeleteConfirm]     = useState(null);  // gtin string
-  const [unassignConfirm, setUnassignConfirm] = useState(null);  // pool item
-  const [deleting, setDeleting]               = useState(false);
-  const [unassigning, setUnassigning]         = useState(false);
-  const [retrying, setRetrying]               = useState(null);  // gtin string being retried
+  const [deleteConfirm, setDeleteConfirm] = useState(null);  // gtin string
+  const [deleting, setDeleting]           = useState(false);
+  const [retrying, setRetrying]           = useState(null);  // gtin string being retried
+  const [relinkItem, setRelinkItem]       = useState(null);
+  const [retireItem, setRetireItem]       = useState(null);
+  const [releaseItem, setReleaseItem]     = useState(null);
+  const [historyGtin, setHistoryGtin]     = useState(null);
+
+  const loadOrphans = useCallback(async () => {
+    try {
+      const r = await api.get("/api/gtin-pool/orphans");
+      setOrphans(r.data.items || []);
+      setOrphanError(null);
+    } catch (e) {
+      setOrphans([]);
+      setOrphanError(e.response?.data?.detail || "Could not check products in Odoo");
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +61,10 @@ export default function GTINPool({ embedded }) {
   }, [statusFilter]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadOrphans(); }, [loadOrphans]);
+  const reloadAll = () => { load(); loadOrphans(); };
+
+  const orphanSet = new Set(orphans.map(o => o.gtin));
 
   async function upload() {
     const lines = uploadText.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
@@ -78,22 +103,6 @@ export default function GTINPool({ embedded }) {
     }
   }
 
-  async function doUnassign() {
-    const item = unassignConfirm;
-    setUnassignConfirm(null);
-    setUnassigning(true);
-    try {
-      const r = await api.post(`/api/gtin-pool/${item.gtin}/unassign`);
-      if (r.data.warning) toast.error(r.data.warning, { duration: 8000 });
-      else toast.success(`GTIN ${item.gtin} released from ${item.product_name}`);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to unassign GTIN");
-    } finally {
-      setUnassigning(false);
-    }
-  }
-
   async function retrySync(gtin) {
     setRetrying(gtin);
     try {
@@ -114,16 +123,38 @@ export default function GTINPool({ embedded }) {
     </div>
   );
 
+  const actionBtn = "text-xs flex items-center gap-1 transition-colors";
+
   return (
     <div className={embedded ? "flex-1 overflow-auto p-6" : "p-6"}>
       <div className="max-w-4xl mx-auto w-full space-y-6">
 
         {/* Stats */}
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <StatCard label="Total GTINs"  value={stats.total}     color="text-gray-800" />
           <StatCard label="Available"    value={stats.available} color="text-green-600" />
           <StatCard label="Assigned"     value={stats.assigned}  color="text-bassani-600" />
+          <StatCard label="Retired"      value={stats.retired || 0} color="text-gray-500" />
         </div>
+
+        {/* Products deleted in Odoo */}
+        {orphans.length > 0 && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-red-800">
+                {orphans.length} GTIN{orphans.length !== 1 ? "s are" : " is"} linked to products that no longer exist in Odoo
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">
+                Usually because the products were deleted and recreated. Relink each GTIN to its new product record; it's the
+                same physical product, so it keeps the same GTIN.
+              </p>
+            </div>
+            <BtnPrimary onClick={() => setBulkOpen(true)}><Link2 size={14} />Relink</BtnPrimary>
+          </div>
+        )}
+        {orphanError && (
+          <p className="text-xs text-amber-700">Couldn't check for deleted products: {orphanError}</p>
+        )}
 
         {/* Upload */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -172,7 +203,7 @@ export default function GTINPool({ embedded }) {
           <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-800">GTIN Registry</h3>
             <div className="flex gap-1">
-              {["all", "available", "assigned"].map(f => (
+              {["all", "available", "assigned", "retired"].map(f => (
                 <button
                   key={f}
                   onClick={() => setStatusFilter(f)}
@@ -215,73 +246,92 @@ export default function GTINPool({ embedded }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {items.map(item => (
-                    <tr key={item.gtin} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 font-mono text-gray-800">{item.gtin}</td>
-                      <td className="px-5 py-3">
-                        <div className="flex flex-col items-start gap-1">
-                          {item.status === "assigned" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700">
-                              <CheckCircle size={11} /> Assigned
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                              Available
-                            </span>
-                          )}
-                          {item.status === "assigned" && item.odoo_synced === false && (
-                            <span
-                              title={item.sync_error || "Not synced to Odoo"}
-                              className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"
-                            >
-                              <AlertCircle size={11} /> Not synced to Odoo
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-600 max-w-[200px] truncate">
-                        {item.product_name || <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">
-                        {item.assigned_at
-                          ? new Date(item.assigned_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        {item.status === "assigned" ? (
-                          <div className="flex items-center justify-end gap-3">
-                            {item.odoo_synced === false && (
-                              <button
-                                onClick={() => retrySync(item.gtin)}
-                                disabled={retrying === item.gtin}
-                                className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1"
-                              >
-                                {retrying === item.gtin
-                                  ? <Loader2 size={12} className="animate-spin" />
-                                  : <RefreshCw size={12} />}
-                                Retry Sync
-                              </button>
+                  {items.map(item => {
+                    const orphaned = orphanSet.has(item.gtin);
+                    return (
+                      <tr key={item.gtin} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3 font-mono text-gray-800">
+                          <button onClick={() => setHistoryGtin(item.gtin)} title="View history" className="hover:underline">{item.gtin}</button>
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex flex-col items-start gap-1">
+                            {item.status === "assigned" ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-bassani-100 text-bassani-700">
+                                <CheckCircle size={11} /> Assigned
+                              </span>
+                            ) : item.status === "retired" ? (
+                              <span title={item.retired_reason || ""} className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                <Archive size={11} /> Retired
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                Available
+                              </span>
                             )}
-                            <button
-                              onClick={() => setUnassignConfirm(item)}
-                              disabled={unassigning}
-                              className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1"
-                            >
-                              <Unlink size={12} /> Unassign
-                            </button>
+                            {orphaned && (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                                <AlertCircle size={11} /> Product deleted in Odoo
+                              </span>
+                            )}
+                            {item.status === "assigned" && !orphaned && item.odoo_synced === false && (
+                              <span
+                                title={item.sync_error || "Not synced to Odoo"}
+                                className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"
+                              >
+                                <AlertCircle size={11} /> Not synced to Odoo
+                              </span>
+                            )}
                           </div>
-                        ) : (
-                          <button
-                            onClick={() => setDeleteConfirm(item.gtin)}
-                            disabled={deleting}
-                            className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 ml-auto transition-colors"
-                          >
-                            <Trash2 size={12} /> Remove
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-5 py-3 text-gray-600 max-w-[200px] truncate">
+                          {item.product_name || <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">
+                          {item.assigned_at
+                            ? new Date(item.assigned_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" })
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          {item.status === "assigned" ? (
+                            <div className="flex items-center justify-end gap-3 flex-wrap">
+                              {item.odoo_synced === false && !orphaned && (
+                                <button onClick={() => retrySync(item.gtin)} disabled={retrying === item.gtin}
+                                  className={`${actionBtn} text-amber-600 hover:text-amber-700`}>
+                                  {retrying === item.gtin ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                  Retry Sync
+                                </button>
+                              )}
+                              <button onClick={() => setRelinkItem(item)} className={`${actionBtn} text-bassani-700 hover:text-bassani-800`}>
+                                <Link2 size={12} /> Relink
+                              </button>
+                              {canManage && (
+                                <button onClick={() => setRetireItem(item)} className={`${actionBtn} text-gray-500 hover:text-gray-700`}>
+                                  <Archive size={12} /> Retire
+                                </button>
+                              )}
+                              {canManage && (
+                                <button onClick={() => setReleaseItem(item)} className={`${actionBtn} text-orange-600 hover:text-orange-700`}>
+                                  <Undo2 size={12} /> Return to pool
+                                </button>
+                              )}
+                            </div>
+                          ) : item.status === "retired" ? (
+                            <button onClick={() => setHistoryGtin(item.gtin)} className={`${actionBtn} text-gray-400 hover:text-gray-600 ml-auto`}>
+                              <History size={12} /> History
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setDeleteConfirm(item.gtin)}
+                              disabled={deleting}
+                              className={`${actionBtn} text-gray-400 hover:text-red-500 ml-auto`}
+                            >
+                              <Trash2 size={12} /> Remove
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -302,18 +352,11 @@ export default function GTINPool({ embedded }) {
         </Modal>
       )}
 
-      {/* Unassign confirm */}
-      {unassignConfirm && (
-        <Modal title="Unassign GTIN" onClose={() => setUnassignConfirm(null)}>
-          <p className="text-sm text-gray-600 mb-4">
-            Unassign <strong className="font-mono">{unassignConfirm.gtin}</strong> from <strong>{unassignConfirm.product_name}</strong>? This clears the barcode from the product in Odoo and returns the GTIN to the available pool.
-          </p>
-          <div className="flex justify-end gap-2">
-            <BtnSecondary onClick={() => setUnassignConfirm(null)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={doUnassign}>Unassign</BtnDanger>
-          </div>
-        </Modal>
-      )}
+      {relinkItem && <RelinkModal item={relinkItem} onClose={() => setRelinkItem(null)} onDone={reloadAll} />}
+      {retireItem && <RetireModal item={retireItem} onClose={() => setRetireItem(null)} onDone={reloadAll} />}
+      {releaseItem && <ReleaseModal item={releaseItem} onClose={() => setReleaseItem(null)} onDone={reloadAll} />}
+      {historyGtin && <GTINHistoryModal gtin={historyGtin} onClose={() => setHistoryGtin(null)} />}
+      {bulkOpen && <BulkRelinkModal orphans={orphans} onClose={() => setBulkOpen(false)} onDone={reloadAll} />}
     </div>
   );
 }

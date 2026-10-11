@@ -165,6 +165,70 @@ def read_company_credit(odoo, partner_id: int, company_id: Optional[int]) -> dic
     }
 
 
+def company_credit_summary(odoo, partner_ids: list) -> dict:
+    """Credit position per partner across every trading company, for the
+    customer list's Credit Hold badge and the profile's Credit Limit tile.
+    Odoo keeps credit and credit_limit per company, so a read with no company
+    context only ever saw one (2026-10-11 fix). Returns {partner_id:
+    {"credit", "credit_limit", "hold"}}: credit and limit summed across
+    companies, hold true when over the limit in any one company. A company
+    that can't be read is skipped rather than failing the page."""
+    out = {pid: {"credit": 0.0, "credit_limit": 0.0, "hold": False} for pid in partner_ids}
+    if not partner_ids:
+        return out
+    # A branch company shares its parent's books, so reading it as well would
+    # count the same balance twice (live: "Samples @ La Farmacia" is a branch
+    # of La Farmacia and returns the identical balance). Read each root once.
+    trading_ids = [c["id"] for c in trading_companies(odoo)]
+    try:
+        roots = sorted({(r.get("root_id") or [r["id"]])[0]
+                        for r in odoo.read("res.company", trading_ids, fields=["root_id"])})
+    except Exception:
+        roots = trading_ids
+    for root_id in roots:
+        try:
+            rows = odoo.read("res.partner", list(partner_ids), fields=["credit", "credit_limit"],
+                             context=company_context(root_id))
+        except Exception:
+            continue
+        for r in rows:
+            o = out.get(r["id"])
+            if o is None:
+                continue
+            credit, limit = float(r.get("credit") or 0), float(r.get("credit_limit") or 0)
+            o["credit"] += credit
+            o["credit_limit"] += limit
+            if limit and credit > limit:
+                o["hold"] = True
+    for o in out.values():
+        o["credit"] = round(o["credit"], 2)
+        o["credit_limit"] = round(o["credit_limit"], 2)
+    return out
+
+
+async def order_credit_status(odoo, partner_id: int, company_id: Optional[int],
+                              additional: float = 0.0, exclude_ticket_id=None) -> dict:
+    """The credit-limit check used when a quote is created (warning) and when an
+    order is confirmed (hard block unless overridden). Fixed 2026-10-11:
+    order_routes.py used to read res.partner credit/credit_limit with no
+    company context and on whichever partner was on the order. Both fields
+    are company-dependent here, and the receivable balance sits on the
+    company (commercial) partner, so that read under-reported badly (live:
+    Cannexis read R0 with no context, R162,265.76 in La Farmacia). Now reads
+    in the order's own company on the commercial partner, and adds orders
+    released on account but not yet invoiced, the same exposure
+    evaluate_release() counts. Returns credit.credit_status()'s shape plus
+    the extra fields."""
+    from credit import credit_status
+    cid = commercial_partner_id(odoo, partner_id)
+    position = read_company_credit(odoo, cid, company_id)
+    pending = await _uninvoiced_on_account_exposure(cid, company_id, exclude_ticket_id=exclude_ticket_id)
+    status = credit_status(position["credit"] + pending, position["credit_limit"], additional=additional)
+    status.update({"balance": position["credit"], "pending_on_account": pending,
+                   "company_id": company_id, "commercial_partner_id": cid})
+    return status
+
+
 async def evaluate_release(odoo, partner_id: int, company_id: Optional[int],
                            order_total: float, exclude_ticket_id=None) -> dict:
     """Can this order be released on account right now? `blocks` stop release;

@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { Search, CheckCircle, Loader2, Tag, Unlink, X } from "lucide-react";
+import { Search, CheckCircle, Loader2, Tag, X, Archive, Undo2, Link2 } from "lucide-react";
 import api from "../api";
 import toast from "react-hot-toast";
+import { useAuth } from "../AuthContext";
 import { Modal, BtnPrimary, BtnSecondary, BtnDanger } from "./UI";
+import { RetireModal, ReleaseModal } from "./GTINActions";
 
 export default function GTINPickerModal({ product, onClose, onAssigned }) {
   const [available,       setAvailable      ] = useState([]);
@@ -10,8 +12,14 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
   const [loading,         setLoading        ] = useState(true);
   const [search,          setSearch         ] = useState("");
   const [assigning,       setAssigning      ] = useState(null);   // gtin string being assigned from pool
-  const [unassignConfirm, setUnassignConfirm] = useState(false);
-  const [unassigning,     setUnassigning    ] = useState(false);
+  const { can } = useAuth();
+  const canManage = can("settings.manage");
+  // 12.10 — retire / return-to-pool replace the old Unassign; GTINs whose
+  // product was deleted in Odoo can be relinked to this product.
+  const [retireOpen,      setRetireOpen     ] = useState(false);
+  const [releaseOpen,     setReleaseOpen    ] = useState(false);
+  const [orphans,         setOrphans        ] = useState([]);
+  const [relinking,       setRelinking      ] = useState(null);
   const [customGtin,      setCustomGtin     ] = useState("");
   const [savingCustom,    setSavingCustom   ] = useState(false);
   const [clearConfirm,    setClearConfirm   ] = useState(false);
@@ -22,14 +30,19 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
   async function load() {
     setLoading(true);
     try {
-      const [availRes, entryRes] = await Promise.allSettled([
+      const [availRes, entryRes, orphanRes] = await Promise.allSettled([
         api.get("/api/gtin-pool", { params: { status: "available", limit: 500 } }),
         product.barcode
           ? api.get(`/api/gtin-pool/${product.barcode}`)
           : Promise.reject(new Error("no barcode")),
+        product.barcode ? Promise.reject(new Error("has barcode")) : api.get("/api/gtin-pool/orphans"),
       ]);
       setAvailable(availRes.status === "fulfilled" ? availRes.value.data.items : []);
       setPoolEntry(entryRes.status === "fulfilled" ? entryRes.value.data : null);
+      // Suggested matches for this product first
+      const os = orphanRes.status === "fulfilled" ? orphanRes.value.data.items : [];
+      const isMatch = o => (o.candidates || []).some(c => c.id === product.id);
+      setOrphans([...os].sort((a, b) => Number(isMatch(b)) - Number(isMatch(a))).map(o => ({ ...o, suggested: isMatch(o) })));
     } catch {
       setAvailable([]);
       setPoolEntry(null);
@@ -60,20 +73,18 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
     }
   }
 
-  async function unassign() {
-    setUnassigning(true);
-    setUnassignConfirm(false);
+  async function relinkHere(gtin) {
+    setRelinking(gtin);
     try {
-      const r = await api.post(`/api/gtin-pool/${product.barcode}/unassign`);
-      if (r.data.warning) {
-        toast.error(r.data.warning, { duration: 8000 });
-      } else {
-        toast.success("GTIN released back to pool");
-      }
-      onAssigned(null);
+      const r = await api.post(`/api/gtin-pool/${gtin}/relink`, {
+        odoo_product_id: product.id, product_name: product.name, reason: "Product recreated in Odoo",
+      });
+      if (r.data.warning) toast.error(r.data.warning, { duration: 8000 });
+      else toast.success(`GTIN ${gtin} relinked to ${product.name}`);
+      onAssigned(gtin);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to unassign GTIN");
-      setUnassigning(false);
+      toast.error(e.response?.data?.detail || "Relink failed");
+      setRelinking(null);
     }
   }
 
@@ -105,6 +116,7 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
   }
 
   return (
+    <>
     <Modal title="Set GTIN / Barcode" onClose={onClose} width="max-w-xl">
 
       {/* Product context */}
@@ -134,9 +146,16 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
               <p className="font-mono text-sm text-gray-800">{product.barcode}</p>
             </div>
             {isPoolAssigned ? (
-              <BtnDanger onClick={() => setUnassignConfirm(true)} disabled={unassigning} loading={unassigning}>
-                <Unlink size={12} />Unassign
-              </BtnDanger>
+              canManage ? (
+                <div className="flex items-center gap-3 shrink-0">
+                  <button onClick={() => setRetireOpen(true)} className="text-xs text-gray-600 hover:text-gray-800 font-medium flex items-center gap-1">
+                    <Archive size={12} />Retire
+                  </button>
+                  <button onClick={() => setReleaseOpen(true)} className="text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1">
+                    <Undo2 size={12} />Return to pool
+                  </button>
+                </div>
+              ) : null
             ) : (
               <button
                 onClick={() => setClearConfirm(true)}
@@ -150,19 +169,6 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
         </div>
       )}
 
-      {/* Confirm: unassign pool GTIN */}
-      {unassignConfirm && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-800 mb-2">
-            This will clear the barcode from <strong>{product.name}</strong> and return GTIN <strong className="font-mono">{product.barcode}</strong> to the available pool.
-          </p>
-          <div className="flex gap-2 justify-end">
-            <BtnSecondary onClick={() => setUnassignConfirm(false)}>Cancel</BtnSecondary>
-            <BtnDanger onClick={unassign}>Confirm Unassign</BtnDanger>
-          </div>
-        </div>
-      )}
-
       {/* Confirm: clear custom barcode */}
       {clearConfirm && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -172,6 +178,32 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
           <div className="flex gap-2 justify-end">
             <BtnSecondary onClick={() => setClearConfirm(false)}>Cancel</BtnSecondary>
             <BtnDanger onClick={clearBarcode}>Clear barcode</BtnDanger>
+          </div>
+        </div>
+      )}
+
+      {/* 12.10 — GTINs whose product was deleted in Odoo: relink to this product */}
+      {!product.barcode && orphans.length > 0 && (
+        <div className="mb-5">
+          <p className="text-sm font-medium text-gray-700 mb-1">GTINs from deleted products</p>
+          <p className="text-xs text-gray-500 mb-2">
+            If this product was recreated in Odoo, give it back its original GTIN here rather than a new one.
+          </p>
+          <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+            {orphans.map((o, i) => (
+              <div key={o.gtin} className={`flex items-center justify-between gap-2 px-3 py-2 ${i > 0 ? "border-t border-gray-100" : ""} ${o.suggested ? "bg-green-50" : ""}`}>
+                <div className="min-w-0">
+                  <p className="font-mono text-sm text-gray-800">{o.gtin}</p>
+                  <p className="text-[11px] text-gray-500 truncate">
+                    Was {o.product_name || "unknown product"}{o.suggested && <span className="text-green-700 font-medium"> · name matches</span>}
+                  </p>
+                </div>
+                <button onClick={() => relinkHere(o.gtin)} disabled={!!relinking}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-bassani-200 text-bassani-700 hover:bg-bassani-50 disabled:opacity-50 flex items-center gap-1.5 shrink-0">
+                  {relinking === o.gtin ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />}Relink here
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -251,5 +283,12 @@ export default function GTINPickerModal({ product, onClose, onAssigned }) {
         <BtnSecondary onClick={onClose}>Close</BtnSecondary>
       </div>
     </Modal>
+    {retireOpen && poolEntry && (
+      <RetireModal item={{ gtin: poolEntry.gtin, product_name: product.name }} onClose={() => setRetireOpen(false)} onDone={() => onAssigned(null)} />
+    )}
+    {releaseOpen && poolEntry && (
+      <ReleaseModal item={{ gtin: poolEntry.gtin, product_name: product.name }} onClose={() => setReleaseOpen(false)} onDone={() => onAssigned(null)} />
+    )}
+    </>
   );
 }
