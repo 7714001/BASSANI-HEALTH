@@ -1843,10 +1843,14 @@ export default function SalesTickets() {
     && (detail?.payment_confirmed_at || (isOnAccount && hasPayableInvoice));
   const awaitingDepositGate = !detail?.is_sample && detail?.status === "awaiting_deposit"
     && !detail?.payment_confirmed_at && !isOnAccount;
-  // Release on Account is only offered for a customer with account terms on
-  // record (approved, or suspended so the modal can say why not).
-  const showReleaseOption = awaitingDepositGate && canRelease && !!releaseCheck?.terms;
+  // Anyone holding the release permission can release at the deposit stage.
+  // A customer with account terms on record opens the 8.68 release window; one
+  // without opens the same window Finance uses for requests (approve terms and
+  // release, or release this order only) — 8.71.
+  const releaseReqIsPending = awaitingDepositGate && detail?.release_request?.status === "pending";
+  const showReleaseOption = awaitingDepositGate && canRelease && !releaseReqIsPending;
   const releaseFirst      = showReleaseOption && !!releaseCheck?.eligible;
+  const openReleaseFlow   = () => (releaseCheck?.terms ? openReleaseModal() : openDecide());
   useEffect(() => {
     setReleaseCheck(null);
     if (awaitingDepositGate && canRelease && detail?.id) loadReleaseCheck(detail.id);
@@ -1856,8 +1860,9 @@ export default function SalesTickets() {
   const releaseReqPending = awaitingDepositGate && releaseReq?.status === "pending";
   const isOwnReleaseReq   = releaseReqPending && releaseReq?.requested_by_id === user?.id;
   const canDecideRelease  = releaseReqPending && canRelease && !isOwnReleaseReq;
-  const canRequestRelease = awaitingDepositGate && !releaseReqPending && !isReseller
-    && (can("tickets.sales") || canFinance) && !showReleaseOption;
+  // Requests are for people who can't release themselves.
+  const canRequestRelease = awaitingDepositGate && !releaseReqPending
+    && user?.role !== "customer" && !canRelease;
 
   // ── Next Step (2026-08-26) ───────────────────────────────────────────────────
   // Enterprise-pattern single "what do I do now" indicator (Salesforce Path /
@@ -1901,7 +1906,7 @@ export default function SalesTickets() {
       ? { key: "registerDeposit", icon: DollarSign, label: "Register Deposit", onClick: openDepositModal }
       : null;
     const releaseAction = showReleaseOption
-      ? { key: "releaseOnAccount", icon: CreditCard, label: "Release on Account", onClick: openReleaseModal }
+      ? { key: "releaseOnAccount", icon: CreditCard, label: "Release on Account", onClick: openReleaseFlow }
       : null;
     // An eligible account customer leads with Release on Account; everyone
     // else leads with the deposit, with release offered as the alternative.
@@ -1915,11 +1920,6 @@ export default function SalesTickets() {
           ? "A deposit is required before this order can be queued for packing, unless you release it on account."
           : "A deposit is required before this order can be queued for packing.",
       secondary,
-    };
-  } else if (canRequestRelease) {
-    nextAction = {
-      key: "requestRelease", icon: CreditCard, label: "Request Release on Account", onClick: openReleaseRequest,
-      desc: "A deposit is required before packing. If this customer has a payment agreement, ask Finance to release the order on account instead.",
     };
   } else if (!detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
@@ -1963,6 +1963,10 @@ export default function SalesTickets() {
       waitingText = "Deposit registered — waiting for the order to reach the packing board.";
     } else if (releaseReqPending) {
       waitingText = `Release on account requested by ${releaseReq.requested_by_name || "sales"}. Waiting for Finance to decide.`;
+    } else if (awaitingDepositGate && detail.auto_release_held) {
+      waitingText = `Not released automatically on account terms: ${(detail.auto_release_held.blocks || []).join(" ")} Waiting for a deposit, or ask Finance to release it.`;
+    } else if (awaitingDepositGate) {
+      waitingText = "Waiting for the customer's deposit. Finance registers it once paid.";
     } else if (detail.status === "awaiting_deposit" && isOnAccount) {
       waitingText = "Released on account — waiting for the order to reach the packing board.";
     } else {
@@ -1986,7 +1990,9 @@ export default function SalesTickets() {
   const inHero = (key) => nextAction?.key === key || nextAction?.secondary?.key === key;
   const showRegisterDeposit   = awaitingDepositGate && canFinance && !inHero("registerDeposit");
   const showReleaseBtn        = showReleaseOption && !inHero("releaseOnAccount");
-  const showRequestReleaseBtn = canRequestRelease && !inHero("requestRelease");
+  // Shown under the Next Step waiting text when nothing else is actionable;
+  // otherwise (e.g. the user can also register deposits) in the Actions card.
+  const showRequestReleaseBtn = canRequestRelease && !!nextAction;
   const showReviewReleaseBtn  = canDecideRelease && !inHero("reviewRelease");
   const showConfirmPaymentBtn = !detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
   // detailOutstanding > 0 is the direct fix for the bug this round started
@@ -2652,7 +2658,14 @@ export default function SalesTickets() {
                           )}
                         </div>
                       ) : (
-                        <p className="text-sm text-gray-500">{waitingText}</p>
+                        <>
+                          <p className="text-sm text-gray-500">{waitingText}</p>
+                          {canRequestRelease && (
+                            <BtnSecondary onClick={openReleaseRequest} className="w-full justify-center mt-1">
+                              <CreditCard size={14} />Request Release on Account
+                            </BtnSecondary>
+                          )}
+                        </>
                       )}
                     </div>
                   )}
@@ -2731,7 +2744,7 @@ export default function SalesTickets() {
                       </div>
                     )}
                     {/* 8.71 — release on account request: pending, or declined (while still awaiting a deposit) */}
-                    {!isReseller && releaseReqPending && (
+                    {releaseReqPending && (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                         <p className="font-semibold">Release on account requested</p>
                         <p className="text-amber-700 mt-0.5">
@@ -2742,7 +2755,13 @@ export default function SalesTickets() {
                         )}
                       </div>
                     )}
-                    {!isReseller && awaitingDepositGate && releaseReq?.status === "declined" && (
+                    {!isReseller && awaitingDepositGate && detail.auto_release_held && !releaseReqPending && (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Account customer, not released automatically</p>
+                        <p className="text-amber-700 mt-0.5">{(detail.auto_release_held.blocks || []).join(" ")}</p>
+                      </div>
+                    )}
+                    {awaitingDepositGate && releaseReq?.status === "declined" && (
                       <div className="text-xs text-red-800 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">
                         <p className="font-semibold">Release on account declined, deposit required</p>
                         <p className="text-red-700 mt-0.5">
@@ -2754,7 +2773,7 @@ export default function SalesTickets() {
                     {detail.released_on_account_at && (
                       <div className="text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5">
                         <p>
-                          <span className="font-semibold">{detail.release_type === "exception" ? "One-off release, no deposit" : "On account"}</span>
+                          <span className="font-semibold">{detail.release_type === "exception" ? "One-off release, no deposit" : detail.release_type === "auto" ? "On account (released automatically)" : "On account"}</span>
                           {detail.on_account_payment_term?.name && <span className="text-teal-700"> · {detail.on_account_payment_term.name}{detail.release_type === "exception" ? "" : ", no deposit"}</span>}
                         </p>
                         {!isReseller && (
@@ -3340,7 +3359,7 @@ export default function SalesTickets() {
                           </button>
                         )}
                         {showReleaseBtn && (
-                          <button onClick={openReleaseModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
+                          <button onClick={openReleaseFlow} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-teal-500 shrink-0" />Release on Account
                           </button>
                         )}
@@ -4134,13 +4153,20 @@ export default function SalesTickets() {
         )}
 
         {/* 8.71 — Decide a release request (tickets.release_on_account) */}
-        {decideOpen && releaseReq && (
-          <Modal title="Review Release Request" onClose={() => setDecideOpen(false)} width="max-w-2xl">
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-4 text-xs">
-              <p className="font-semibold text-amber-900">{releaseReq.requested_by_name} asked on {fmtDate(releaseReq.requested_at)}</p>
-              <p className="text-amber-800 mt-0.5">{releaseReq.reason}</p>
-              <p className="text-amber-700 mt-1">Order total {fmtR(releaseReq.order_total || detailOrder?.amount_total || 0)}</p>
-            </div>
+        {decideOpen && (
+          <Modal title={releaseReqPending ? "Review Release Request" : "Release on Account"} onClose={() => setDecideOpen(false)} width="max-w-2xl">
+            {releaseReqPending ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-4 text-xs">
+                <p className="font-semibold text-amber-900">{releaseReq.requested_by_name} asked on {fmtDate(releaseReq.requested_at)}</p>
+                <p className="text-amber-800 mt-0.5">{releaseReq.reason}</p>
+                <p className="text-amber-700 mt-1">Order total {fmtR(releaseReq.order_total || detailOrder?.amount_total || 0)}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mb-4">
+                Send this order ({fmtR(detailOrder?.amount_total || 0)}) to the packing board without a deposit. The full invoice
+                is raised at Mark Complete, unpaid. This customer has no account terms yet.
+              </p>
+            )}
             <div className="space-y-2 mb-4">
               {[
                 { value: "terms", label: releaseCheck?.eligible ? "Release on the customer's account terms" : "Approve account terms and release",
@@ -4149,8 +4175,8 @@ export default function SalesTickets() {
                     : "Sets up standing terms for this customer, so future orders won't need a request." },
                 { value: "exception", label: "Release this order only",
                   desc: "A one-off, with no standing terms. Recorded and audited as an exception." },
-                { value: "decline", label: "Decline, deposit required",
-                  desc: "Your note is emailed to the person who asked." },
+                ...(releaseReqPending ? [{ value: "decline", label: "Decline, deposit required",
+                  desc: "Your note is emailed to the person who asked." }] : []),
               ].map(opt => (
                 <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${decision === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
                   <input type="radio" name="release_decision" checked={decision === opt.value} onChange={() => setDecision(opt.value)} className="mt-0.5 accent-bassani-600" />

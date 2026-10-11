@@ -848,6 +848,51 @@ def list_payment_terms(current_user: dict = Depends(require_admin)):
     return {"payment_terms": terms}
 
 
+@router.get("/release-requests")
+async def list_release_requests(
+    status: str = "pending",
+    current_user: dict = Depends(require_permission("tickets.release_on_account")),
+):
+    """8.71 — the Release Requests queue. `status=pending` (default) lists
+    requests waiting for a decision on orders still at awaiting deposit;
+    `status=all` adds the 100 most recently decided ones. Literal route, so
+    it must stay registered before GET /{ticket_id}."""
+    query = {"release_request": {"$exists": True}}
+    if status == "pending":
+        query = {"release_request.status": "pending", "status": "awaiting_deposit", "exit_status": None}
+    rows = await col("tickets").find(query, {
+        "customer_name": 1, "order_id": 1, "order_name": 1, "status": 1, "exit_status": 1,
+        "release_request": 1, "release_type": 1, "released_on_account_at": 1, "assigned_to_name": 1,
+    }).sort("release_request.requested_at", -1).to_list(length=100 if status != "pending" else 500)
+    order_ids = [r["order_id"] for r in rows if r.get("order_id")]
+    names = {}
+    if order_ids:
+        try:
+            odoo = get_odoo_client()
+            for o in odoo.search_read("sale.order", [("id", "in", order_ids)],
+                                      fields=["id", "name", "amount_total"], limit=len(order_ids)):
+                names[o["id"]] = o
+        except Exception:
+            names = {}
+    out = []
+    for r in rows:
+        rr = r.get("release_request") or {}
+        o = names.get(r.get("order_id")) or {}
+        out.append({
+            "ticket_id": str(r["_id"]),
+            "ref": f"TKT-{str(r['_id'])[-8:].upper()}",
+            "customer_name": r.get("customer_name"),
+            "order_id": r.get("order_id"),
+            "order_name": o.get("name") or r.get("order_name"),
+            "order_total": o.get("amount_total", rr.get("order_total")),
+            "ticket_status": r.get("status"),
+            "release_type": r.get("release_type"),
+            **{k: rr.get(k) for k in ("status", "reason", "requested_by_id", "requested_by_name", "requested_at",
+                                      "decided_by_name", "decided_at", "decision_note")},
+        })
+    return {"requests": out}
+
+
 @router.get("/{ticket_id}")
 async def get_ticket(
     ticket_id: str,
@@ -2593,8 +2638,12 @@ async def _commit_release(
 
     now = datetime.now(timezone.utc)
     actor_name = _actor(current_user)
-    label = "One-off release, no deposit" if release_type == "exception" else \
-        f"Released on account ({(effective_term or {}).get('name', 'account terms')}), no deposit"
+    if release_type == "exception":
+        label = "One-off release, no deposit"
+    elif release_type == "auto":
+        label = f"Released automatically on account terms ({(effective_term or {}).get('name', 'account terms')}), no deposit"
+    else:
+        label = f"Released on account ({(effective_term or {}).get('name', 'account terms')}), no deposit"
     await col("tickets").update_one(
         {"_id": oid},
         {
@@ -2610,6 +2659,7 @@ async def _commit_release(
                 "on_account_payment_term": effective_term,
                 "updated_at": now,
             },
+            "$unset": {"auto_release_held": ""},
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": actor_name,
@@ -2618,7 +2668,7 @@ async def _commit_release(
             }},
         },
     )
-    await _close_release_request(oid, ticket, "released" if release_type == "account_terms" else "exception",
+    await _close_release_request(oid, ticket, "exception" if release_type == "exception" else "released",
                                  current_user, note=reason, background_tasks=background_tasks)
     await audit_log(
         "ticket.release_exception" if release_type == "exception" else "ticket.release_on_account",
@@ -2663,6 +2713,60 @@ async def _commit_release(
             f"{packing_board_warning}. Use Admin Override once resolved to retry."
         )
     return resp
+
+
+AUTO_RELEASE_ACTOR = {"id": None, "name": "Automatic (account terms)", "username": "system", "role": "system"}
+
+
+async def auto_release_on_confirm(ticket_oid, background_tasks: BackgroundTasks) -> dict:
+    """8.71 — called by order_routes._confirm_order_core right after an order
+    is confirmed and its ticket moved to awaiting_deposit. A customer approved
+    for account terms who passes the full evaluate_release() check (approved
+    for this company, not suspended, review date not passed, credit terms and
+    a credit limit in Odoo, within the limit) is released straight away, with
+    no human step — the standard ERP automatic credit check. If they're
+    approved but fail, the ticket keeps waiting for a deposit and records why
+    (auto_release_held) so staff can see it and request or release. Customers
+    with no account terms are untouched. Never raises: the order is already
+    confirmed whatever happens here."""
+    ticket_id = str(ticket_oid)
+    try:
+        oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+        if not partner_id or _release_stage_blocks(ticket, order):
+            return {"released": False}
+        terms = await get_account_terms(partner_id)
+        if not terms or terms.get("status") != "approved":
+            return {"released": False}
+        check = await evaluate_release(odoo, partner_id, company_id, float(order.get("amount_total") or 0),
+                                       exclude_ticket_id=oid)
+        if not check["eligible"]:
+            now = datetime.now(timezone.utc)
+            await col("tickets").update_one(
+                {"_id": oid},
+                {"$set": {"auto_release_held": {"at": now, "blocks": check["blocks"]}},
+                 "$push": {"stage_history": {
+                     "status": ticket["status"], "exit_status": None,
+                     "actor_id": None, "actor_name": AUTO_RELEASE_ACTOR["name"], "at": now,
+                     "note": "Not released automatically on account terms: " + " ".join(check["blocks"]),
+                 }}},
+            )
+            await audit_log("ticket.auto_release_held", "ticket", ticket_id,
+                            entity_label=ticket.get("customer_name", ""), user=AUTO_RELEASE_ACTOR,
+                            detail={"blocks": check["blocks"], "order_id": ticket["order_id"]})
+            return {"released": False, "held": check["blocks"]}
+        resp = await _commit_release(
+            oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+            current_user=AUTO_RELEASE_ACTOR,
+            reason=f"Approved account terms ({terms.get('reference') or 'agreement on file'}), within credit limit",
+            background_tasks=background_tasks, release_type="auto", payment_term=check["payment_term"],
+            audit_extra={"credit_limit": check["credit_limit"], "balance": check["balance"],
+                         "pending_on_account": check["pending_on_account"], "total_overdue": check["total_overdue"]},
+            warnings=check["warnings"],
+        )
+        return {"released": True, "warning": resp.get("warning")}
+    except Exception as e:
+        logger.warning("auto_release_on_confirm_failed", extra={"ticket_id": ticket_id, "error": str(e)})
+        return {"released": False}
 
 
 # ── 8.71 — Release on account requests ───────────────────────────────────────
@@ -2715,12 +2819,21 @@ async def request_release_on_account(
     ticket_id: str,
     body: ReleaseRequestBody,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(require_any_permission("tickets.sales", "tickets.finance_confirm")),
+    current_user: dict = Depends(get_current_user),
 ):
+    """Anyone working the order can ask: every internal staff role, and a
+    reseller for a customer it owns. Asking never releases anything; only a
+    tickets.release_on_account holder decides. Customer logins can't ask —
+    a customer wanting credit is a credit application for Finance."""
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=400, detail="Tell Finance why this order shouldn't need a deposit")
+    role = current_user.get("role")
+    if role not in (ADMIN_ROLES | TICKET_ROLES | {"super_admin", "reseller"}):
+        raise HTTPException(status_code=403, detail="Access denied")
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    if role == "reseller":
+        await _assert_reseller_owns_ticket(ticket, await _reseller_id_for_user(current_user))
     blocks = _release_stage_blocks(ticket, order)
     if blocks:
         raise HTTPException(status_code=400, detail=" ".join(blocks))
@@ -2802,11 +2915,15 @@ async def decide_release_request(
     note = (body.note or "").strip()
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
     rr = ticket.get("release_request") or {}
-    if rr.get("status") != "pending":
+    pending = rr.get("status") == "pending"
+    # Without a pending request this is a direct release by someone who holds
+    # the release permission themselves (e.g. Finance acting on their own
+    # knowledge); there is nothing to decline in that case.
+    if not pending and decision == "decline":
         raise HTTPException(status_code=400, detail="There is no pending release request on this ticket")
     # Separation of duties, same rule as discount approvals: nobody decides
     # their own request, super admins included.
-    if rr.get("requested_by_id") == current_user.get("id"):
+    if pending and rr.get("requested_by_id") == current_user.get("id"):
         raise HTTPException(status_code=403, detail="You can't decide a release request you raised yourself")
 
     if decision == "decline":

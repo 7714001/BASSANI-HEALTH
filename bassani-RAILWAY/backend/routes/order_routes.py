@@ -2235,6 +2235,16 @@ async def _confirm_order_core(
             )
         except Exception as e:
             warnings.append(f"Could not advance ticket to awaiting_deposit: {str(e)}")
+        # 8.71 — an approved account-terms customer within their credit limit
+        # skips the deposit step automatically. Deferred import: ticket_routes
+        # imports this module at load time.
+        try:
+            from routes.ticket_routes import auto_release_on_confirm
+            _ar = await auto_release_on_confirm(_sales_ticket["_id"], background_tasks)
+            if _ar.get("warning"):
+                warnings.append(_ar["warning"])
+        except Exception as e:
+            logger.warning("auto_release_call_failed", extra={"order_id": order_id, "error": str(e)})
 
     # ── Commission record ─────────────────────────────────────────────────────
     # Phase 7.13: credited to whichever reseller the order's customer is

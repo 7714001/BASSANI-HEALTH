@@ -54,6 +54,7 @@ import RecurringOrderReview  from "./views/RecurringOrderReview";
 import RecurringOrders       from "./views/RecurringOrders";
 import DiscountApprovals     from "./views/DiscountApprovals";
 import DiscountRequestView   from "./views/DiscountRequestView";
+import ReleaseRequests       from "./views/ReleaseRequests";
 import Support               from "./views/Support";
 import { PublicOrderHelp, PublicCaseHelp } from "./views/PublicSupport";
 import PartnerDirectory      from "./views/PartnerDirectory";
@@ -317,6 +318,9 @@ export default function App() {
         } />
         <Route path="/tickets/discounts" element={
           <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountApprovals /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/tickets/release-requests" element={
+          <ProtectedRoute permission="tickets.release_on_account"><AppLayout><ReleaseRequests /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/discounts/:requestId" element={
           <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountRequestView /></AppLayout></ProtectedRoute>
