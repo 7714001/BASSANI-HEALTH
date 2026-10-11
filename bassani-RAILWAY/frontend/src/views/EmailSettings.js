@@ -269,6 +269,13 @@ const ROUTING_KEYS = [
     placeholder: "finance@bassanihealth.com",
   },
   {
+    key: "release_request_to", group: "finance", icon: Mail,
+    title: "Finance: Release on Account Requested",
+    description: "Triggered when a sales clerk asks for an order to skip the deposit because the customer has a payment agreement. The order stays at Awaiting Deposit until someone with release permission approves account terms and releases it, releases it as a one-off, or declines.",
+    note: "Add whoever holds the Release on Account permission. If this list is empty, the request still shows on the Sales Tickets list, but nobody is emailed about it.",
+    placeholder: "finance@bassanihealth.com",
+  },
+  {
     key: "s6_flag_to", group: "production", icon: Mail,
     title: "Production: Stock Received Without Purchase Order",
     description: "Triggered when imported stock is recorded on the S6 receiving register with no matching purchase order. The batch is held until the flag is investigated and resolved.",

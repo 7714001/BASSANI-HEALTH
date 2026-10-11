@@ -1088,13 +1088,32 @@ To stop new releases (for example because invoices are badly overdue), click **S
 
 **Step 2: release the order** *(requires the "Release orders on account (no deposit)" permission)*
 
-1. Open the Sales Ticket at **Awaiting Deposit** and click **Register Deposit / Release on Account**
-2. Choose **Release on Account**. The window shows the customer's payment terms, credit limit, current balance, orders already released but not yet invoiced, available credit and this order's total, plus any reason the order can't be released
+1. Open the Sales Ticket at **Awaiting Deposit** and click **Release on Account**. This is its own button, separate from **Register Deposit**, and only appears for customers who have account terms set up. For an approved account customer it is the main Next Step button, with Register Deposit underneath in case a deposit is needed after all
+2. The Release on Account window shows the customer's payment terms, credit limit, current balance, orders already released but not yet invoiced, available credit and this order's total, plus any reason the order can't be released
 3. Enter a **reason** (e.g. the agreement reference) and click **Release on Account**
 
 The order goes straight onto the packing board with no deposit. When it's marked complete, the full invoice is created unpaid and emailed to the customer with its due date. When the customer pays, use **Register Payment** on the ticket.
 
 An order can't be released if the customer isn't approved for the order's company, the terms are suspended or past their review date, Odoo has no credit terms or credit limit for them, or this order would take them over their credit limit. Over the limit is always a hard stop: register a deposit instead, or have the credit limit reviewed first. Overdue invoices show as a warning but don't block.
+
+**When Finance hasn't set up terms yet: Request Release on Account** *(sales clerks)*
+
+If you know a customer has a payment agreement but they have no account terms in the portal yet, don't register a token deposit (such as R1). Instead:
+
+1. Open the Sales Ticket at **Awaiting Deposit** and click **Request Release on Account**
+2. Explain why the order shouldn't need a deposit (e.g. "30-day agreement with the owner, confirmed by Dean") and click **Send to Finance**
+3. The ticket shows "Release on account requested" and Finance is emailed. You'll get an email when they decide. You can withdraw the request while it's waiting
+
+**Deciding a request** *(requires the "Release orders on account (no deposit)" permission; you can't decide your own request)*
+
+Open the ticket and click **Review Release Request**. Choose one:
+- **Approve account terms and release** (or **Release on the customer's account terms** if they're already approved): fill in the same account terms form as on the customer profile (needs the account terms permission). The terms are saved for the customer and the order is released. Future orders for this customer won't need a request
+- **Release this order only**: a one-off without standing terms. Give a reason, and optionally choose payment terms for this order so the invoice gets a due date. It's recorded on the ticket as a one-off release and in the audit trail
+- **Decline**: give a reason. It's emailed to the person who asked, and the order still needs a deposit
+
+Either release sends the order to the packing board with no deposit invoice. The full invoice is created unpaid at Mark Complete.
+
+**Small deposits:** if you register a deposit under 10% of the order total, the window warns you and asks for a reason. Token deposits create extra invoices; use Request Release on Account for customers with payment agreements.
 
 **If an account customer should pay a deposit on this order after all,** choose **Register Deposit** as normal. Because they were told no deposit was needed, the window offers **Send Deposit Pro-Forma** so they receive the deposit-due email first.
 

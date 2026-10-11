@@ -36,11 +36,13 @@ from services.notification_service import notify_ticket_assigned
 from services.email_service import (
     send_ticket_assigned, send_pop_uploaded_notification,
     send_quote_email, send_invoice_email,
+    send_release_request_notification, send_release_decision_notification,
 )
+from routes.settings_routes import get_email_routing
 from support_links import order_help_url
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by, get_owning_reseller_id
-from account_terms import evaluate_release, commercial_partner_id
+from account_terms import evaluate_release, commercial_partner_id, get_account_terms, payment_terms_catalog
 from portal_sales_agent import sync_portal_sales_agent
 from discount_requests import cancel_pending_request
 from services.age_tier import ticket_age_fields
@@ -229,6 +231,14 @@ class TicketDepositRegister(BaseModel):
     date: str           # YYYY-MM-DD
     journal_id: int
     note: Optional[str] = ""
+    # 8.71 — required when the deposit is under TOKEN_DEPOSIT_PCT of the order
+    # total. Token deposits (e.g. R1) were being used to get past the gate,
+    # leaving a junk invoice and payment in the books; Request Release on
+    # Account is the proper route for a customer with a payment agreement.
+    small_deposit_reason: Optional[str] = None
+
+
+TOKEN_DEPOSIT_PCT = 10.0
 
 
 class TicketBalancePayment(BaseModel):
@@ -2200,7 +2210,7 @@ async def register_deposit(
     odoo = get_odoo_client()
 
     # Resolve the order's company and validate it is confirmed before running the wizard
-    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name"])
+    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name", "amount_total"])
     if not _order_co:
         raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
     _order_row = _order_co[0]
@@ -2212,6 +2222,19 @@ async def register_deposit(
     _co = _order_row.get("company_id")
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
+
+    # 8.71 — token deposit guard.
+    _order_total = float(_order_row.get("amount_total") or 0)
+    _deposit_amount = body.amount if invoice_type == "fixed" else _order_total * (body.percentage or 0) / 100
+    small_deposit_reason = (body.small_deposit_reason or "").strip() or None
+    is_small_deposit = _order_total > 0 and _deposit_amount < _order_total * TOKEN_DEPOSIT_PCT / 100
+    if is_small_deposit and not small_deposit_reason:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"This deposit is under {TOKEN_DEPOSIT_PCT:g}% of the order total. Token deposits create extra "
+                    "invoices; if the customer has a payment agreement, use Request Release on Account instead. "
+                    "To register it anyway, give a reason."),
+        )
 
     # Defense in depth — /payment-journals already scopes the dropdown to this
     # order's company, but re-check server-side in case the list was fetched
@@ -2362,15 +2385,18 @@ async def register_deposit(
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
                 "at": now,
-                "note": body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}",
+                "note": (body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}")
+                        + (f" (small deposit: {small_deposit_reason})" if is_small_deposit else ""),
             }},
         },
     )
+    await _close_release_request(oid, ticket, "deposit_registered", current_user)
     await audit_log(
         "ticket.register_deposit", "ticket", ticket_id,
         entity_label=ticket.get("customer_name", ""),
         user=current_user,
-        detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date},
+        detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date,
+                "small_deposit": is_small_deposit, "small_deposit_reason": small_deposit_reason},
     )
 
     # Gate enforcement point — nothing reaches the packing board without this.
@@ -2469,7 +2495,7 @@ async def check_release_on_account(
     current_user: dict = Depends(require_any_permission("tickets.release_on_account", "tickets.finance_confirm")),
 ):
     """Read-only: can this order be released on account, and why not. Powers
-    the Register Deposit window's second option. Reads Odoo live."""
+    the Release on Account button and window on the Sales ticket. Reads Odoo live."""
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
     if not partner_id:
         raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
@@ -2520,10 +2546,35 @@ async def release_on_account(
         )
         raise HTTPException(status_code=400, detail=" ".join(check["blocks"]))
 
+    return await _commit_release(
+        oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+        current_user=current_user, reason=reason, background_tasks=background_tasks,
+        release_type="account_terms", payment_term=check["payment_term"],
+        audit_extra={
+            "credit_limit": check["credit_limit"], "balance": check["balance"],
+            "pending_on_account": check["pending_on_account"], "total_overdue": check["total_overdue"],
+        },
+        warnings=check["warnings"],
+    )
+
+
+async def _commit_release(
+    *, oid, ticket, ticket_id, odoo, order, company_id, current_user, reason, background_tasks,
+    release_type: str, payment_term: Optional[dict], audit_extra: Optional[dict] = None,
+    warnings: Optional[list] = None,
+):
+    """Shared end of every release without a deposit (8.68 account terms,
+    8.71 one-off exception): set payment terms on the order if it has none
+    (or only immediate terms), stamp the ticket, close any pending release
+    request, audit, and queue the packing board. No invoice is created here;
+    the full invoice is raised at Mark Complete, unpaid. A one-off exception
+    counts towards the customer's exposure exactly like an account release
+    (_uninvoiced_on_account_exposure reads released_on_account_at)."""
+    order_total = float(order.get("amount_total") or 0)
     # The invoice's due date comes from the sale order's own payment terms. If
-    # the order has none, or only immediate terms, set the customer's approved
-    # terms for this company onto it now — before any invoice exists.
-    term = check["payment_term"]
+    # the order has none, or only immediate terms, set the chosen terms onto
+    # it now — before any invoice exists.
+    term = payment_term
     order_term = order.get("payment_term_id")
     term_note = None
     if term and (not order_term or order_term[0] != term["id"]):
@@ -2542,11 +2593,14 @@ async def release_on_account(
 
     now = datetime.now(timezone.utc)
     actor_name = _actor(current_user)
+    label = "One-off release, no deposit" if release_type == "exception" else \
+        f"Released on account ({(effective_term or {}).get('name', 'account terms')}), no deposit"
     await col("tickets").update_one(
         {"_id": oid},
         {
             "$set": {
                 "payment_arrangement": "on_account",
+                "release_type": release_type,
                 "released_on_account_at": now,
                 "released_on_account_by": current_user["id"],
                 "released_on_account_by_name": actor_name,
@@ -2560,21 +2614,22 @@ async def release_on_account(
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": actor_name,
                 "at": now,
-                "note": f"Released on account ({(effective_term or {}).get('name', 'account terms')}), no deposit: {reason}",
+                "note": f"{label}: {reason}",
             }},
         },
     )
+    await _close_release_request(oid, ticket, "released" if release_type == "account_terms" else "exception",
+                                 current_user, note=reason, background_tasks=background_tasks)
     await audit_log(
-        "ticket.release_on_account", "ticket", ticket_id,
+        "ticket.release_exception" if release_type == "exception" else "ticket.release_on_account",
+        "ticket", ticket_id,
         entity_label=ticket.get("customer_name", ""), user=current_user,
         before={"status": ticket["status"], "payment_arrangement": ticket.get("payment_arrangement")},
-        after={"payment_arrangement": "on_account"},
+        after={"payment_arrangement": "on_account", "release_type": release_type},
         detail={
             "reason": reason, "order_id": ticket["order_id"], "order_total": order_total,
             "company_id": company_id, "payment_term": effective_term, "term_note": term_note,
-            "credit_limit": check["credit_limit"], "balance": check["balance"],
-            "pending_on_account": check["pending_on_account"], "total_overdue": check["total_overdue"],
-            "warnings": check["warnings"],
+            "warnings": warnings or [], **(audit_extra or {}),
         },
     )
 
@@ -2601,13 +2656,224 @@ async def release_on_account(
 
     await broadcast_monitor_refresh()
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
-    resp = {"success": True, "warnings": check["warnings"]}
+    resp = {"success": True, "warnings": warnings or []}
     if packing_board_warning:
         resp["warning"] = (
-            f"Released on account, but the order could not be queued for packing: "
+            f"Released, but the order could not be queued for packing: "
             f"{packing_board_warning}. Use Admin Override once resolved to retry."
         )
     return resp
+
+
+# ── 8.71 — Release on account requests ───────────────────────────────────────
+# A sales clerk who knows a customer has a payment agreement asks for the order
+# to skip the deposit; someone holding tickets.release_on_account (Finance)
+# decides: approve account terms and release (the frontend saves the terms via
+# PUT /api/customers/{id}/account-terms first, then calls decide "release"),
+# release this order only ("exception", audited), or decline. Stored on the
+# ticket as `release_request`; the decision is kept after it closes so the
+# ticket shows the outcome.
+
+class ReleaseRequestBody(BaseModel):
+    reason: str
+
+
+class ReleaseDecisionBody(BaseModel):
+    decision: str                       # "release" | "exception" | "decline"
+    note: Optional[str] = ""
+    payment_term_id: Optional[int] = None   # exception only: terms to set on this order
+
+
+async def _close_release_request(oid, ticket: dict, outcome: str, current_user: dict, note: str = "",
+                                 background_tasks: Optional[BackgroundTasks] = None) -> None:
+    """Close a pending release request because the deposit gate was cleared
+    another way (released, exception, deposit registered). No-op otherwise."""
+    rr = ticket.get("release_request") or {}
+    if rr.get("status") != "pending":
+        return
+    await col("tickets").update_one(
+        {"_id": oid, "release_request.status": "pending"},
+        {"$set": {
+            "release_request.status": outcome,
+            "release_request.decided_by_id": current_user["id"],
+            "release_request.decided_by_name": _actor(current_user),
+            "release_request.decided_at": datetime.now(timezone.utc),
+            "release_request.decision_note": note or None,
+        }},
+    )
+    if outcome in ("released", "exception") and rr.get("requested_by_email") and background_tasks:
+        order_ref = ticket.get("order_name") or f"#{ticket.get('order_id')}"
+        background_tasks.add_task(
+            send_release_decision_notification,
+            rr["requested_by_email"], ticket.get("customer_name", ""), order_ref, outcome,
+            _actor(current_user), note or "", str(oid),
+        )
+
+
+@router.post("/{ticket_id}/release-request")
+async def request_release_on_account(
+    ticket_id: str,
+    body: ReleaseRequestBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.sales", "tickets.finance_confirm")),
+):
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Tell Finance why this order shouldn't need a deposit")
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    blocks = _release_stage_blocks(ticket, order)
+    if blocks:
+        raise HTTPException(status_code=400, detail=" ".join(blocks))
+    if (ticket.get("release_request") or {}).get("status") == "pending":
+        raise HTTPException(status_code=400, detail="A release request is already waiting for a decision")
+
+    terms = await get_account_terms(partner_id) if partner_id else None
+    now = datetime.now(timezone.utc)
+    actor_name = _actor(current_user)
+    order_ref = order.get("name") or f"#{ticket['order_id']}"
+    request_doc = {
+        "status": "pending",
+        "reason": reason,
+        "requested_by_id": current_user["id"],
+        "requested_by_name": actor_name,
+        "requested_by_email": current_user.get("email") or (
+            current_user.get("username") if "@" in (current_user.get("username") or "") else None),
+        "requested_at": now,
+        "order_total": float(order.get("amount_total") or 0),
+    }
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"release_request": request_doc, "updated_at": now},
+         "$push": {"stage_history": {
+             "status": ticket["status"], "exit_status": None,
+             "actor_id": current_user["id"], "actor_name": actor_name, "at": now,
+             "note": f"Release on account requested: {reason}",
+         }}},
+    )
+    await audit_log("ticket.release_requested", "ticket", ticket_id,
+                    entity_label=ticket.get("customer_name", ""), user=current_user,
+                    detail={"reason": reason, "order_id": ticket["order_id"], "has_account_terms": bool(terms)})
+    routing = await get_email_routing()
+    background_tasks.add_task(
+        send_release_request_notification,
+        routing.get("release_request_to", []), ticket.get("customer_name", ""), order_ref,
+        float(order.get("amount_total") or 0), actor_name, reason, ticket_id, bool(terms),
+    )
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    return {"success": True}
+
+
+@router.post("/{ticket_id}/release-request/withdraw")
+async def withdraw_release_request(ticket_id: str, current_user: dict = Depends(get_current_user)):
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    rr = ticket.get("release_request") or {}
+    if rr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="There is no pending release request")
+    perms = current_user.get("permissions") or {}
+    is_decider = current_user.get("role") == "super_admin" or perms.get("tickets", {}).get("release_on_account")
+    if rr.get("requested_by_id") != current_user.get("id") and not is_decider:
+        raise HTTPException(status_code=403, detail="Only the person who asked can withdraw this request")
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {"$set": {"release_request.status": "withdrawn", "release_request.decided_at": now,
+                  "release_request.decided_by_name": _actor(current_user), "updated_at": now},
+         "$push": {"stage_history": {
+             "status": ticket["status"], "exit_status": None,
+             "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
+             "note": "Release on account request withdrawn",
+         }}},
+    )
+    await audit_log("ticket.release_request_withdrawn", "ticket", ticket_id,
+                    entity_label=ticket.get("customer_name", ""), user=current_user)
+    return {"success": True}
+
+
+@router.post("/{ticket_id}/release-request/decide")
+async def decide_release_request(
+    ticket_id: str,
+    body: ReleaseDecisionBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission("tickets.release_on_account")),
+):
+    decision = body.decision
+    if decision not in ("release", "exception", "decline"):
+        raise HTTPException(status_code=400, detail="Unknown decision")
+    note = (body.note or "").strip()
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    rr = ticket.get("release_request") or {}
+    if rr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="There is no pending release request on this ticket")
+    # Separation of duties, same rule as discount approvals: nobody decides
+    # their own request, super admins included.
+    if rr.get("requested_by_id") == current_user.get("id"):
+        raise HTTPException(status_code=403, detail="You can't decide a release request you raised yourself")
+
+    if decision == "decline":
+        if not note:
+            raise HTTPException(status_code=400, detail="Give the sales team a reason (it's emailed to them)")
+        now = datetime.now(timezone.utc)
+        await col("tickets").update_one(
+            {"_id": oid},
+            {"$set": {"release_request.status": "declined", "release_request.decision_note": note,
+                      "release_request.decided_by_id": current_user["id"],
+                      "release_request.decided_by_name": _actor(current_user),
+                      "release_request.decided_at": now, "updated_at": now},
+             "$push": {"stage_history": {
+                 "status": ticket["status"], "exit_status": None,
+                 "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
+                 "note": f"Release on account declined, deposit required: {note}",
+             }}},
+        )
+        await audit_log("ticket.release_request_declined", "ticket", ticket_id,
+                        entity_label=ticket.get("customer_name", ""), user=current_user,
+                        detail={"note": note, "request_reason": rr.get("reason")})
+        if rr.get("requested_by_email"):
+            background_tasks.add_task(
+                send_release_decision_notification, rr["requested_by_email"], ticket.get("customer_name", ""),
+                order.get("name") or f"#{ticket['order_id']}", "declined", _actor(current_user), note, ticket_id,
+            )
+        await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+        return {"success": True}
+
+    blocks = _release_stage_blocks(ticket, order)
+    if blocks:
+        raise HTTPException(status_code=400, detail=" ".join(blocks))
+    if not partner_id:
+        raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
+    reason = note or rr.get("reason") or ""
+
+    if decision == "release":
+        # Account-terms release: the full 8.68 check applies (terms approved
+        # for this company, within the credit limit).
+        check = await evaluate_release(odoo, partner_id, company_id, float(order.get("amount_total") or 0),
+                                       exclude_ticket_id=oid)
+        if not check["eligible"]:
+            raise HTTPException(status_code=400, detail=" ".join(check["blocks"]))
+        return await _commit_release(
+            oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+            current_user=current_user, reason=reason, background_tasks=background_tasks,
+            release_type="account_terms", payment_term=check["payment_term"],
+            audit_extra={"request_reason": rr.get("reason"), "credit_limit": check["credit_limit"],
+                         "balance": check["balance"], "pending_on_account": check["pending_on_account"]},
+            warnings=check["warnings"],
+        )
+
+    # One-off exception: no standing terms, Finance's judgement, mandatory note.
+    if not note:
+        raise HTTPException(status_code=400, detail="A reason is required for a one-off release")
+    term = None
+    if body.payment_term_id:
+        term = next((t for t in payment_terms_catalog(odoo) if t["id"] == body.payment_term_id), None)
+        if not term:
+            raise HTTPException(status_code=400, detail="Payment terms not found")
+        term = {"id": term["id"], "name": term["name"]}
+    return await _commit_release(
+        oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+        current_user=current_user, reason=note, background_tasks=background_tasks,
+        release_type="exception", payment_term=term,
+        audit_extra={"request_reason": rr.get("reason")},
+    )
 
 
 @router.post("/{ticket_id}/send-deposit-proforma")

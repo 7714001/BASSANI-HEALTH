@@ -22,7 +22,7 @@ from services.email_service import (
     send_recurring_order_upcoming, send_order_ready_for_collection_customer,
     send_order_confirmed_partial_customer, send_order_confirmed_account_terms,
     send_pop_uploaded_notification,
-    send_discount_request_notification,
+    send_discount_request_notification, send_release_request_notification,
     send_support_case_new_internal, send_support_case_received, send_support_sla_escalation,
     send_order_feedback_request,
 )
@@ -60,6 +60,11 @@ TEST_EMAIL_SENDERS: dict = {
         reason="Bulk order, first-time customer.",
         lines=[{"product_name": "Test Flower 1G", "requested_pct": 10.0}],
         request_id="000000000000000000000000",
+    ),
+    "release_request_to": lambda to: send_release_request_notification(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999", order_total=12500.0,
+        requested_by="Test Sales Rep", reason="30-day payment agreement agreed with the owner.",
+        ticket_id="000000000000000000000000", has_account_terms=False,
     ),
     # Phase 28 support desk — one list per category, same template for each.
     **{
@@ -197,6 +202,7 @@ class EmailRoutingConfig(BaseModel):
     recurring_order_skipped_to:  List[str] = []  # recurring order occurrence expired with no response
     pop_uploaded_to:             List[str] = []  # customer/reseller uploaded a proof of payment
     discount_request_to:         List[str] = []  # 8.61 — staff requested a discount, needs discounts.approve review
+    release_request_to:          List[str] = []  # 8.71 — sales asked for an order to be released on account (no deposit)
     # Phase 28 — customer support desk. A request with an empty category list
     # falls back to support_general_to, then to the support_email env var, so
     # a customer complaint can never silently reach nobody.
@@ -232,6 +238,7 @@ async def get_email_routing() -> dict:
         "recurring_order_skipped_to":  doc.get("recurring_order_skipped_to", []),
         "pop_uploaded_to":          doc.get("pop_uploaded_to", []),
         "discount_request_to":      doc.get("discount_request_to", []),
+        "release_request_to":       doc.get("release_request_to", []),
         "support_order_to":         doc.get("support_order_to", []),
         "support_invoice_to":       doc.get("support_invoice_to", []),
         "support_quality_to":       doc.get("support_quality_to", []),

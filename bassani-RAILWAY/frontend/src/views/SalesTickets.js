@@ -28,6 +28,7 @@ import ProductLineRow from "../components/ProductLineRow";
 import ProductPickerDrawer from "../components/ProductPickerDrawer";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
 import SendRecipientsModal from "../components/SendRecipientsModal";
+import { AccountTermsFields, defaultTermsForm, termsFormError, termsPayload } from "../components/AccountTermsSection";
 import { StarRating, RATING_WORDS } from "../components/SupportKit";
 import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
@@ -1520,14 +1521,33 @@ export default function SalesTickets() {
   // historical order linked in via Link Existing Order).
   const [existingInvoices, setExistingInvoices] = useState([]);
   const [usingExistingInvoiceId, setUsingExistingInvoiceId] = useState(null);
-  // 8.68 — second option at the deposit gate: release on account (approved
-  // account customer, no deposit, invoiced unpaid at Mark Complete).
-  const [depositMode, setDepositMode]       = useState("deposit"); // "deposit" | "release"
+  // 8.68 — second way through the deposit gate: release on account (approved
+  // account customer, no deposit, invoiced unpaid at Mark Complete). Its own
+  // button and modal, separate from Register Deposit (split 2026-10-11 —
+  // one combined window with a mode toggle read as confusing).
+  const [releaseModal, setReleaseModal]     = useState(false);
   const [releaseCheck, setReleaseCheck]     = useState(null);
   const [releaseCheckLoading, setReleaseCheckLoading] = useState(false);
   const [releaseReason, setReleaseReason]   = useState("");
   const [releaseSaving, setReleaseSaving]   = useState(false);
   const [sendingDepositProforma, setSendingDepositProforma] = useState(false);
+  // 8.71 — token deposit guard: the order total, to warn under 10%.
+  const [depositOrderTotal, setDepositOrderTotal] = useState(0);
+  const [smallDepositReason, setSmallDepositReason] = useState("");
+  // 8.71 — release on account requests: a sales clerk asks, someone with
+  // tickets.release_on_account decides (approve terms and release, release
+  // this order only, or decline).
+  const [releaseReqOpen, setReleaseReqOpen]     = useState(false);
+  const [releaseReqReason, setReleaseReqReason] = useState("");
+  const [releaseReqSaving, setReleaseReqSaving] = useState(false);
+  const [decideOpen, setDecideOpen]             = useState(false);
+  const [decision, setDecision]                 = useState("terms"); // terms | exception | decline
+  const [decideNote, setDecideNote]             = useState("");
+  const [decideTermId, setDecideTermId]         = useState("");
+  const [decideTermsData, setDecideTermsData]   = useState(null);
+  const [decideTermsForm, setDecideTermsForm]   = useState(null);
+  const [decideSaving, setDecideSaving]         = useState(false);
+  const [withdrawReleaseConfirm, setWithdrawReleaseConfirm] = useState(false);
 
   // Opens the modal immediately (2026-08-26, found live — the three parallel
   // fetches below, especially the Odoo payment-journals call, took long
@@ -1541,18 +1561,9 @@ export default function SalesTickets() {
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     setExistingInvoices([]);
     setDepositJournals([]);
-    setDepositMode(canFinance ? "deposit" : "release");
-    setReleaseCheck(null);
-    setReleaseReason("");
+    setDepositOrderTotal(0);
+    setSmallDepositReason("");
     setDepositModal(true);
-    // Release eligibility loads independently of the deposit details, so a
-    // slow Odoo journal fetch never holds up the release option or vice versa.
-    setReleaseCheckLoading(true);
-    api.get(`/api/tickets/${detail.id}/release-on-account/check`)
-      .then(r => setReleaseCheck(r.data))
-      .catch(e => setReleaseCheck({ eligible: false, blocks: [e.response?.data?.detail || "Could not check account terms"], warnings: [] }))
-      .finally(() => setReleaseCheckLoading(false));
-    if (!canFinance) return;  // deposit details need finance permission
     setDepositDetailsLoading(true);
     (async () => {
       try {
@@ -1564,6 +1575,7 @@ export default function SalesTickets() {
         const journals = journalRes.data.journals || [];
         setDepositJournals(journals);
         const orderTotal = orderRes?.data?.amount_total || 0;
+        setDepositOrderTotal(orderTotal);
         setDepositForm(f => ({
           ...f,
           amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
@@ -1580,6 +1592,23 @@ export default function SalesTickets() {
         setDepositDetailsLoading(false);
       }
     })();
+  };
+
+  // Release eligibility. Loaded up front on an awaiting-deposit ticket so the
+  // Release on Account button only appears for customers who actually have
+  // account terms (approved or suspended), and again fresh when its modal opens.
+  const loadReleaseCheck = useCallback((ticketId) => {
+    setReleaseCheckLoading(true);
+    return api.get(`/api/tickets/${ticketId}/release-on-account/check`)
+      .then(r => setReleaseCheck(r.data))
+      .catch(e => setReleaseCheck({ eligible: false, terms: null, blocks: [e.response?.data?.detail || "Could not check account terms"], warnings: [] }))
+      .finally(() => setReleaseCheckLoading(false));
+  }, []);
+
+  const openReleaseModal = () => {
+    setReleaseReason("");
+    setReleaseModal(true);
+    loadReleaseCheck(detail.id);
   };
 
   const linkExistingInvoice = async (invoiceId) => {
@@ -1608,7 +1637,10 @@ export default function SalesTickets() {
       return toast.error("Percentage must be between 1 and 100");
     setDepositSaving(true);
     const tid = detail.id;
-    const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined };
+    if (depositIsSmall && !smallDepositReason.trim())
+      return toast.error("Give a reason for a deposit under 10% of the order, or use Request Release on Account");
+    const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined,
+                   small_deposit_reason: depositIsSmall ? smallDepositReason.trim() : undefined };
     if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
     if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
     try {
@@ -1632,10 +1664,91 @@ export default function SalesTickets() {
       const { data } = await api.post(`/api/tickets/${tid}/release-on-account`, { reason: releaseReason.trim() });
       if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
       else toast.success("Released on account — order queued for packing");
-      setDepositModal(false);
+      setReleaseModal(false);
       refreshDetail(tid);
     } catch (e) { toast.error(e.response?.data?.detail || "Release on account failed"); }
     finally { setReleaseSaving(false); }
+  };
+
+  // 8.71 — token deposit check, same 10% threshold the backend enforces.
+  const depositAmountEntered = depositForm.invoice_type === "fixed"
+    ? parseFloat(depositForm.amount || 0)
+    : depositOrderTotal * parseFloat(depositForm.percentage || 0) / 100;
+  const depositIsSmall = depositOrderTotal > 0 && depositAmountEntered > 0 && depositAmountEntered < depositOrderTotal * 0.10;
+
+  // 8.71 — release on account requests
+  const openReleaseRequest = () => { setReleaseReqReason(""); setReleaseReqOpen(true); };
+
+  const submitReleaseRequest = async () => {
+    if (!releaseReqReason.trim()) return toast.error("Tell Finance why this order shouldn't need a deposit");
+    setReleaseReqSaving(true);
+    try {
+      await api.post(`/api/tickets/${detail.id}/release-request`, { reason: releaseReqReason.trim() });
+      toast.success("Request sent to Finance");
+      setReleaseReqOpen(false);
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send the request"); }
+    finally { setReleaseReqSaving(false); }
+  };
+
+  const doWithdrawReleaseRequest = async () => {
+    setWithdrawReleaseConfirm(false);
+    try {
+      await api.post(`/api/tickets/${detail.id}/release-request/withdraw`);
+      toast.success("Request withdrawn");
+      refreshDetail(detail.id);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not withdraw the request"); }
+  };
+
+  const openDecide = () => {
+    setDecideNote("");
+    setDecideTermId("");
+    setDecideTermsData(null);
+    setDecideTermsForm(null);
+    setDecision("terms");
+    setDecideOpen(true);
+    loadReleaseCheck(detail.id);
+    const pid = detail.customer_company_id || detail.customer_id;
+    api.get(`/api/customers/${pid}/account-terms`)
+      .then(r => { setDecideTermsData(r.data); setDecideTermsForm(defaultTermsForm(r.data.account_terms, r.data)); })
+      .catch(() => setDecideTermsData({ error: true }));
+  };
+
+  const doDecide = async () => {
+    const tid = detail.id;
+    const note = decideNote.trim();
+    if (decision !== "terms" && !note) return toast.error("A note is required");
+    setDecideSaving(true);
+    try {
+      if (decision === "terms") {
+        // Already-eligible terms need no form; otherwise save the terms first
+        // (same endpoint as the customer profile), then release.
+        if (!releaseCheck?.eligible) {
+          const err = termsFormError(decideTermsForm);
+          if (err) { toast.error(err); setDecideSaving(false); return; }
+          const pid = detail.customer_company_id || detail.customer_id;
+          await api.put(`/api/customers/${pid}/account-terms`, termsPayload(decideTermsForm));
+        }
+        const { data } = await api.post(`/api/tickets/${tid}/release-request/decide`, { decision: "release", note });
+        if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+        else toast.success("Released on account — order queued for packing");
+      } else if (decision === "exception") {
+        const { data } = await api.post(`/api/tickets/${tid}/release-request/decide`, {
+          decision: "exception", note, payment_term_id: decideTermId ? parseInt(decideTermId) : undefined,
+        });
+        if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+        else toast.success("Released as a one-off — order queued for packing");
+      } else {
+        await api.post(`/api/tickets/${tid}/release-request/decide`, { decision: "decline", note });
+        toast.success("Request declined — a deposit is still required");
+      }
+      setDecideOpen(false);
+      refreshDetail(tid);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not complete the decision");
+    } finally {
+      setDecideSaving(false);
+    }
   };
 
   const sendDepositProforma = async () => {
@@ -1730,8 +1843,21 @@ export default function SalesTickets() {
     && (detail?.payment_confirmed_at || (isOnAccount && hasPayableInvoice));
   const awaitingDepositGate = !detail?.is_sample && detail?.status === "awaiting_deposit"
     && !detail?.payment_confirmed_at && !isOnAccount;
-  const depositGateLabel = canFinance && canRelease ? "Register Deposit / Release on Account"
-    : canRelease ? "Release on Account" : "Register Deposit";
+  // Release on Account is only offered for a customer with account terms on
+  // record (approved, or suspended so the modal can say why not).
+  const showReleaseOption = awaitingDepositGate && canRelease && !!releaseCheck?.terms;
+  const releaseFirst      = showReleaseOption && !!releaseCheck?.eligible;
+  useEffect(() => {
+    setReleaseCheck(null);
+    if (awaitingDepositGate && canRelease && detail?.id) loadReleaseCheck(detail.id);
+  }, [detail?.id, awaitingDepositGate, canRelease, loadReleaseCheck]);
+  // 8.71 — release requests
+  const releaseReq        = detail?.release_request;
+  const releaseReqPending = awaitingDepositGate && releaseReq?.status === "pending";
+  const isOwnReleaseReq   = releaseReqPending && releaseReq?.requested_by_id === user?.id;
+  const canDecideRelease  = releaseReqPending && canRelease && !isOwnReleaseReq;
+  const canRequestRelease = awaitingDepositGate && !releaseReqPending && !isReseller
+    && (can("tickets.sales") || canFinance) && !showReleaseOption;
 
   // ── Next Step (2026-08-26) ───────────────────────────────────────────────────
   // Enterprise-pattern single "what do I do now" indicator (Salesforce Path /
@@ -1764,13 +1890,36 @@ export default function SalesTickets() {
       desc: "Confirm this order to move it toward a deposit and packing.",
       onClick: () => confirmOrder(), disabled: confirming,
     };
-  } else if (awaitingDepositGate && (canFinance || canRelease)) {
+  } else if (canDecideRelease) {
     nextAction = {
-      key: "registerDeposit", icon: DollarSign, label: depositGateLabel,
-      desc: canRelease
-        ? "A deposit is required before this order can be queued for packing, unless the customer is approved for account terms and you release it on account."
-        : "A deposit is required before this order can be queued for packing.",
-      onClick: openDepositModal,
+      key: "reviewRelease", icon: CreditCard, label: "Review Release Request", onClick: openDecide,
+      desc: `${releaseReq.requested_by_name || "A sales clerk"} asked to release this order without a deposit.`,
+      secondary: canFinance ? { key: "registerDeposit", icon: DollarSign, label: "Register Deposit", onClick: openDepositModal } : null,
+    };
+  } else if (awaitingDepositGate && (canFinance || showReleaseOption)) {
+    const depositAction = canFinance
+      ? { key: "registerDeposit", icon: DollarSign, label: "Register Deposit", onClick: openDepositModal }
+      : null;
+    const releaseAction = showReleaseOption
+      ? { key: "releaseOnAccount", icon: CreditCard, label: "Release on Account", onClick: openReleaseModal }
+      : null;
+    // An eligible account customer leads with Release on Account; everyone
+    // else leads with the deposit, with release offered as the alternative.
+    const primary   = releaseFirst ? releaseAction : (depositAction || releaseAction);
+    const secondary = releaseFirst ? depositAction : (depositAction ? releaseAction : null);
+    nextAction = {
+      ...primary,
+      desc: releaseFirst
+        ? "This customer is approved for account terms. Release the order on account, or register a deposit if one is needed."
+        : showReleaseOption
+          ? "A deposit is required before this order can be queued for packing, unless you release it on account."
+          : "A deposit is required before this order can be queued for packing.",
+      secondary,
+    };
+  } else if (canRequestRelease) {
+    nextAction = {
+      key: "requestRelease", icon: CreditCard, label: "Request Release on Account", onClick: openReleaseRequest,
+      desc: "A deposit is required before packing. If this customer has a payment agreement, ask Finance to release the order on account instead.",
     };
   } else if (!detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
@@ -1812,6 +1961,8 @@ export default function SalesTickets() {
       waitingText = "Order packed and invoiced — awaiting customer collection.";
     } else if (detail.status === "awaiting_deposit" && detail.payment_confirmed_at) {
       waitingText = "Deposit registered — waiting for the order to reach the packing board.";
+    } else if (releaseReqPending) {
+      waitingText = `Release on account requested by ${releaseReq.requested_by_name || "sales"}. Waiting for Finance to decide.`;
     } else if (detail.status === "awaiting_deposit" && isOnAccount) {
       waitingText = "Released on account — waiting for the order to reach the packing board.";
     } else {
@@ -1832,7 +1983,11 @@ export default function SalesTickets() {
   const showEditQuote         = detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive;
   const showSendQuote         = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
   const showConfirmOrderBtn   = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
-  const showRegisterDeposit   = awaitingDepositGate && (canFinance || canRelease) && nextAction?.key !== "registerDeposit";
+  const inHero = (key) => nextAction?.key === key || nextAction?.secondary?.key === key;
+  const showRegisterDeposit   = awaitingDepositGate && canFinance && !inHero("registerDeposit");
+  const showReleaseBtn        = showReleaseOption && !inHero("releaseOnAccount");
+  const showRequestReleaseBtn = canRequestRelease && !inHero("requestRelease");
+  const showReviewReleaseBtn  = canDecideRelease && !inHero("reviewRelease");
   const showConfirmPaymentBtn = !detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
   // detailOutstanding > 0 is the direct fix for the bug this round started
   // from: this button used to show for any ticket with payment_confirmed_at
@@ -1856,7 +2011,7 @@ export default function SalesTickets() {
   const showFeedbackGroup      = showRequestFeedbackBtn;
 
   const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount;
-  const showPaymentGroup   = showRegisterDeposit || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
+  const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
   // ── Quote totals ──────────────────────────────────────────────────────────
@@ -2473,6 +2628,11 @@ export default function SalesTickets() {
                           <BtnPrimary onClick={nextAction.onClick} disabled={nextAction.disabled} className="w-full justify-center mt-1">
                             <nextAction.icon size={14} />{nextAction.label}
                           </BtnPrimary>
+                          {nextAction.secondary && (
+                            <BtnSecondary onClick={nextAction.secondary.onClick} className="w-full justify-center">
+                              <nextAction.secondary.icon size={14} />{nextAction.secondary.label}
+                            </BtnSecondary>
+                          )}
                         </>
                       ) : orderIsComplete && orderFeedback?.feedback ? (
                         <div className="space-y-1.5">
@@ -2570,12 +2730,32 @@ export default function SalesTickets() {
                         </div>
                       </div>
                     )}
+                    {/* 8.71 — release on account request: pending, or declined (while still awaiting a deposit) */}
+                    {!isReseller && releaseReqPending && (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Release on account requested</p>
+                        <p className="text-amber-700 mt-0.5">
+                          {releaseReq.requested_by_name} on {fmtDate(releaseReq.requested_at)}: {releaseReq.reason}
+                        </p>
+                        {(isOwnReleaseReq || canRelease) && (
+                          <button onClick={() => setWithdrawReleaseConfirm(true)} className="mt-1 text-amber-700 underline hover:text-amber-900">Withdraw request</button>
+                        )}
+                      </div>
+                    )}
+                    {!isReseller && awaitingDepositGate && releaseReq?.status === "declined" && (
+                      <div className="text-xs text-red-800 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Release on account declined, deposit required</p>
+                        <p className="text-red-700 mt-0.5">
+                          {releaseReq.decided_by_name} on {fmtDate(releaseReq.decided_at)}{releaseReq.decision_note && <>: {releaseReq.decision_note}</>}
+                        </p>
+                      </div>
+                    )}
                     {/* 8.68 — released on account: who released it and why */}
                     {detail.released_on_account_at && (
                       <div className="text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5">
                         <p>
-                          <span className="font-semibold">On account</span>
-                          {detail.on_account_payment_term?.name && <span className="text-teal-700"> · {detail.on_account_payment_term.name}, no deposit</span>}
+                          <span className="font-semibold">{detail.release_type === "exception" ? "One-off release, no deposit" : "On account"}</span>
+                          {detail.on_account_payment_term?.name && <span className="text-teal-700"> · {detail.on_account_payment_term.name}{detail.release_type === "exception" ? "" : ", no deposit"}</span>}
                         </p>
                         {!isReseller && (
                           <p className="text-teal-600 mt-0.5">
@@ -3156,7 +3336,22 @@ export default function SalesTickets() {
                             or (8.68) an authorised release on account */}
                         {showRegisterDeposit && (
                           <button onClick={openDepositModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 rounded-lg transition-colors text-left">
-                            <DollarSign size={14} className="text-amber-500 shrink-0" />{depositGateLabel}
+                            <DollarSign size={14} className="text-amber-500 shrink-0" />Register Deposit
+                          </button>
+                        )}
+                        {showReleaseBtn && (
+                          <button onClick={openReleaseModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
+                            <CreditCard size={14} className="text-teal-500 shrink-0" />Release on Account
+                          </button>
+                        )}
+                        {showReviewReleaseBtn && (
+                          <button onClick={openDecide} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
+                            <CreditCard size={14} className="text-teal-500 shrink-0" />Review Release Request
+                          </button>
+                        )}
+                        {showRequestReleaseBtn && (
+                          <button onClick={openReleaseRequest} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
+                            <CreditCard size={14} className="text-teal-500 shrink-0" />Request Release on Account
                           </button>
                         )}
 
@@ -3759,99 +3954,7 @@ export default function SalesTickets() {
 
         {/* 8.47 — Deposit registration modal */}
         {depositModal && (
-          <Modal title={depositGateLabel} onClose={() => setDepositModal(false)}>
-            {/* 8.68 — two ways through the deposit gate */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {[
-                { value: "deposit", label: "Register Deposit", desc: "Customer pays a deposit before packing", allowed: canFinance },
-                { value: "release", label: "Release on Account", desc: "Approved account customer, no deposit", allowed: canFinance || canRelease },
-              ].map(opt => (
-                <button key={opt.value} type="button" disabled={!opt.allowed}
-                  onClick={() => setDepositMode(opt.value)}
-                  className={`text-left px-3 py-2.5 rounded-xl border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${depositMode === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-gray-900">{opt.label}</span>
-                    {opt.value === "release" && !releaseCheckLoading && releaseCheck && (
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${releaseCheck.eligible ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                        {releaseCheck.eligible ? "Eligible" : "Not eligible"}
-                      </span>
-                    )}
-                  </span>
-                  <span className="block text-xs text-gray-400 mt-0.5">{opt.desc}</span>
-                </button>
-              ))}
-            </div>
-
-            {depositMode === "release" && (
-              <div>
-                <p className="text-xs text-gray-500 mb-3">
-                  The order goes onto the packing board now with no deposit. The full invoice is raised at Mark Complete,
-                  unpaid, and is due according to the customer's payment terms.
-                </p>
-                {releaseCheckLoading || !releaseCheck ? (
-                  <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 flex items-center gap-2">
-                    <Loader2 size={13} className="animate-spin text-gray-400 shrink-0" />
-                    <p className="text-xs text-gray-500">Checking account terms and credit limit…</p>
-                  </div>
-                ) : (
-                  <>
-                    {releaseCheck.terms && (
-                      <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                        {[
-                          ["Company", releaseCheck.company_name || "Not known"],
-                          ["Payment terms", releaseCheck.payment_term?.name || "None set"],
-                          ["Credit limit", fmtR(releaseCheck.credit_limit || 0)],
-                          ["Current balance", fmtR(releaseCheck.balance || 0)],
-                          ["Released, not yet invoiced", fmtR(releaseCheck.pending_on_account || 0)],
-                          ["Available credit", fmtR(Math.max(releaseCheck.available_credit || 0, 0))],
-                          ["This order", fmtR(releaseCheck.order_total || 0)],
-                          ["Agreement", releaseCheck.terms.reference || "Not recorded"],
-                        ].map(([k, v]) => (
-                          <div key={k}>
-                            <p className="text-gray-400">{k}</p>
-                            <p className="font-medium text-gray-800">{v}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {(releaseCheck.blocks || []).length > 0 && (
-                      <div className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
-                        <p className="text-xs font-semibold text-red-800 mb-1">This order can't be released on account</p>
-                        <ul className="list-disc pl-4 space-y-0.5">
-                          {releaseCheck.blocks.map((b, i) => <li key={i} className="text-xs text-red-700">{b}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {(releaseCheck.warnings || []).length > 0 && (
-                      <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
-                        {releaseCheck.warnings.map((w, i) => <p key={i} className="text-xs text-amber-800">{w}</p>)}
-                      </div>
-                    )}
-                    {releaseCheck.eligible && !canRelease && (
-                      <p className="mb-3 text-xs text-gray-500">
-                        You don't have permission to release orders on account. Ask someone who does, or register a deposit instead.
-                      </p>
-                    )}
-                    {releaseCheck.eligible && canRelease && (
-                      <FormGroup label="Reason" required>
-                        <Input value={releaseReason} onChange={e => setReleaseReason(e.target.value)}
-                          placeholder="e.g. 30-day account per agreement ACC-0042" autoFocus />
-                      </FormGroup>
-                    )}
-                  </>
-                )}
-                <div className="flex justify-end gap-2 mt-4">
-                  <BtnSecondary onClick={() => setDepositModal(false)} disabled={releaseSaving}>Cancel</BtnSecondary>
-                  <BtnPrimary onClick={releaseOnAccount}
-                    disabled={releaseSaving || releaseCheckLoading || !releaseCheck?.eligible || !canRelease || !releaseReason.trim()}>
-                    {releaseSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                    Release on Account
-                  </BtnPrimary>
-                </div>
-              </div>
-            )}
-
-            {depositMode === "deposit" && (<>
+          <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
             <p className="text-xs text-gray-500 mb-4">
               Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds.
             </p>
@@ -3953,6 +4056,17 @@ export default function SalesTickets() {
                   placeholder="e.g. 50" />
               </FormGroup>
             )}
+            {depositIsSmall && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <p className="text-xs font-semibold text-amber-800">This is under 10% of the order total ({fmtR(depositOrderTotal)})</p>
+                <p className="text-xs text-amber-700 mt-0.5 mb-2">
+                  Token deposits create extra invoices in the books. If this customer has a payment agreement,
+                  close this and use Request Release on Account instead. To register this deposit anyway, give a reason.
+                </p>
+                <Input value={smallDepositReason} onChange={e => setSmallDepositReason(e.target.value)}
+                  placeholder="e.g. Customer paid a small amount upfront by agreement" />
+              </div>
+            )}
             <FormGroup label="Payment Date" required>
               <Input type="date" value={depositForm.date}
                 onChange={e => setDepositForm(f => ({ ...f, date: e.target.value }))} />
@@ -3984,7 +4098,194 @@ export default function SalesTickets() {
                 Register in Odoo
               </BtnPrimary>
             </div>
-            </>)}
+          </Modal>
+        )}
+
+        {/* 8.71 — Request release on account (sales) */}
+        {releaseReqOpen && (
+          <Modal title="Request Release on Account" onClose={() => setReleaseReqOpen(false)}>
+            <p className="text-xs text-gray-500 mb-3">
+              Ask Finance to let this order go onto the packing board without a deposit. The final invoice is raised
+              at Mark Complete, unpaid. Finance can approve account terms for the customer, release just this order,
+              or decline. Nothing changes until they decide.
+            </p>
+            <FormGroup label="Why doesn't this order need a deposit?" required>
+              <Textarea rows={3} value={releaseReqReason} onChange={e => setReleaseReqReason(e.target.value)}
+                placeholder="e.g. 30-day payment agreement with the owner, confirmed by Dean" autoFocus />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setReleaseReqOpen(false)} disabled={releaseReqSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={submitReleaseRequest} disabled={releaseReqSaving || !releaseReqReason.trim()}>
+                {releaseReqSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                Send to Finance
+              </BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
+        {withdrawReleaseConfirm && (
+          <Modal title="Withdraw release request?" onClose={() => setWithdrawReleaseConfirm(false)}>
+            <p className="text-sm text-gray-600">The order stays at Awaiting Deposit. You can ask again later.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setWithdrawReleaseConfirm(false)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={doWithdrawReleaseRequest}>Withdraw</BtnDanger>
+            </div>
+          </Modal>
+        )}
+
+        {/* 8.71 — Decide a release request (tickets.release_on_account) */}
+        {decideOpen && releaseReq && (
+          <Modal title="Review Release Request" onClose={() => setDecideOpen(false)} width="max-w-2xl">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-4 text-xs">
+              <p className="font-semibold text-amber-900">{releaseReq.requested_by_name} asked on {fmtDate(releaseReq.requested_at)}</p>
+              <p className="text-amber-800 mt-0.5">{releaseReq.reason}</p>
+              <p className="text-amber-700 mt-1">Order total {fmtR(releaseReq.order_total || detailOrder?.amount_total || 0)}</p>
+            </div>
+            <div className="space-y-2 mb-4">
+              {[
+                { value: "terms", label: releaseCheck?.eligible ? "Release on the customer's account terms" : "Approve account terms and release",
+                  desc: releaseCheck?.eligible
+                    ? "The customer is already approved and within their credit limit."
+                    : "Sets up standing terms for this customer, so future orders won't need a request." },
+                { value: "exception", label: "Release this order only",
+                  desc: "A one-off, with no standing terms. Recorded and audited as an exception." },
+                { value: "decline", label: "Decline, deposit required",
+                  desc: "Your note is emailed to the person who asked." },
+              ].map(opt => (
+                <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${decision === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
+                  <input type="radio" name="release_decision" checked={decision === opt.value} onChange={() => setDecision(opt.value)} className="mt-0.5 accent-bassani-600" />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">{opt.label}</span>
+                    <span className="block text-xs text-gray-500">{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {decision === "terms" && (
+              releaseCheckLoading || !releaseCheck || !decideTermsData ? (
+                <div className="mb-3 flex items-center gap-2 text-xs text-gray-500"><Loader2 size={13} className="animate-spin" />Checking the customer's account…</div>
+              ) : releaseCheck.eligible ? (
+                <p className="mb-3 text-xs text-gray-600">
+                  {releaseCheck.payment_term?.name || "Account terms"}, credit limit {fmtR(releaseCheck.credit_limit || 0)}, available {fmtR(Math.max(releaseCheck.available_credit || 0, 0))}.
+                </p>
+              ) : !can("customers.account_terms") ? (
+                <p className="mb-3 text-xs text-red-700">
+                  Approving account terms needs the "Approve &amp; suspend customer account terms" permission. Choose Release this order only, or ask someone who has it.
+                </p>
+              ) : decideTermsData.error ? (
+                <p className="mb-3 text-xs text-red-700">Could not load the customer's account details.</p>
+              ) : (
+                <div className="mb-1">
+                  {(releaseCheck.blocks || []).length > 0 && releaseCheck.terms && (
+                    <div className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2">
+                      {releaseCheck.blocks.map((b, i) => <p key={i} className="text-xs text-red-700">{b}</p>)}
+                      <p className="text-xs text-red-700 mt-1">Update the terms below to resolve this, then release.</p>
+                    </div>
+                  )}
+                  {decideTermsForm && <AccountTermsFields form={decideTermsForm} setForm={setDecideTermsForm} data={decideTermsData} />}
+                </div>
+              )
+            )}
+
+            {decision === "exception" && (
+              <FormGroup label="Payment terms for this order (optional)">
+                <Select value={decideTermId} onChange={e => setDecideTermId(e.target.value)}>
+                  <option value="">None (invoice due when raised)</option>
+                  {(decideTermsData?.payment_terms || []).filter(t => t.is_credit).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </Select>
+              </FormGroup>
+            )}
+
+            <FormGroup label={decision === "terms" ? "Note (optional)" : decision === "exception" ? "Why release this order without terms?" : "Reason for declining"}
+              required={decision !== "terms"}>
+              <Input value={decideNote} onChange={e => setDecideNote(e.target.value)}
+                placeholder={decision === "decline" ? "e.g. No signed agreement yet, please take a deposit" : "e.g. Owner confirmed 30-day payment, agreement to follow"} />
+            </FormGroup>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setDecideOpen(false)} disabled={decideSaving}>Cancel</BtnSecondary>
+              {decision === "decline" ? (
+                <BtnDanger onClick={doDecide} disabled={decideSaving || !decideNote.trim()}>Decline</BtnDanger>
+              ) : (
+                <BtnPrimary onClick={doDecide}
+                  disabled={decideSaving || (decision === "exception" && !decideNote.trim())
+                    || (decision === "terms" && (releaseCheckLoading || !releaseCheck || (!releaseCheck.eligible && (!can("customers.account_terms") || !decideTermsForm))))}>
+                  {decideSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                  {decision === "terms" ? (releaseCheck?.eligible ? "Release on Account" : "Approve Terms and Release") : "Release This Order"}
+                </BtnPrimary>
+              )}
+            </div>
+          </Modal>
+        )}
+
+        {/* 8.68 — Release on account modal (its own window since 2026-10-11) */}
+        {releaseModal && (
+          <Modal title="Release on Account" onClose={() => setReleaseModal(false)}>
+            <p className="text-xs text-gray-500 mb-3">
+              The order goes onto the packing board now with no deposit. The full invoice is raised at Mark Complete,
+              unpaid, and is due according to the customer's payment terms.
+            </p>
+            {releaseCheckLoading || !releaseCheck ? (
+              <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 flex items-center gap-2">
+                <Loader2 size={13} className="animate-spin text-gray-400 shrink-0" />
+                <p className="text-xs text-gray-500">Checking account terms and credit limit…</p>
+              </div>
+            ) : (
+              <>
+                {releaseCheck.terms && (
+                  <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    {[
+                      ["Company", releaseCheck.company_name || "Not known"],
+                      ["Payment terms", releaseCheck.payment_term?.name || "None set"],
+                      ["Credit limit", fmtR(releaseCheck.credit_limit || 0)],
+                      ["Current balance", fmtR(releaseCheck.balance || 0)],
+                      ["Released, not yet invoiced", fmtR(releaseCheck.pending_on_account || 0)],
+                      ["Available credit", fmtR(Math.max(releaseCheck.available_credit || 0, 0))],
+                      ["This order", fmtR(releaseCheck.order_total || 0)],
+                      ["Agreement", releaseCheck.terms.reference || "Not recorded"],
+                    ].map(([k, v]) => (
+                      <div key={k}>
+                        <p className="text-gray-400">{k}</p>
+                        <p className="font-medium text-gray-800">{v}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {(releaseCheck.blocks || []).length > 0 && (
+                  <div className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-red-800 mb-1">This order can't be released on account</p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {releaseCheck.blocks.map((b, i) => <li key={i} className="text-xs text-red-700">{b}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {(releaseCheck.warnings || []).length > 0 && (
+                  <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
+                    {releaseCheck.warnings.map((w, i) => <p key={i} className="text-xs text-amber-800">{w}</p>)}
+                  </div>
+                )}
+                {releaseCheck.eligible && !canRelease && (
+                  <p className="mb-3 text-xs text-gray-500">
+                    You don't have permission to release orders on account. Ask someone who does, or register a deposit instead.
+                  </p>
+                )}
+                {releaseCheck.eligible && canRelease && (
+                  <FormGroup label="Reason" required>
+                    <Input value={releaseReason} onChange={e => setReleaseReason(e.target.value)}
+                      placeholder="e.g. 30-day account per agreement ACC-0042" autoFocus />
+                  </FormGroup>
+                )}
+              </>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setReleaseModal(false)} disabled={releaseSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={releaseOnAccount}
+                disabled={releaseSaving || releaseCheckLoading || !releaseCheck?.eligible || !canRelease || !releaseReason.trim()}>
+                {releaseSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                Release on Account
+              </BtnPrimary>
+            </div>
           </Modal>
         )}
 
@@ -4804,6 +5105,9 @@ export default function SalesTickets() {
                   )}
                   {t.discount_status === "pending" && (
                     <Badge color="amber"><Percent size={9} className="inline mr-0.5" />Discount Pending</Badge>
+                  )}
+                  {t.release_request?.status === "pending" && t.status === "awaiting_deposit" && (
+                    <Badge color="amber"><CreditCard size={9} className="inline mr-0.5" />Release Requested</Badge>
                   )}
                   {/* 8.64 — same color-coded status as the ticket detail's
                       decision banner and the Approvals page, so a sales rep

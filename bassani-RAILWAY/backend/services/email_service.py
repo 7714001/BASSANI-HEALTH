@@ -792,6 +792,80 @@ def send_discount_request_notification(
     _send(to_emails, f"Discount Request: {order_ref} ({customer_name})", _wrap(body))
 
 
+def send_release_request_notification(
+    to_emails: "list[str]",
+    customer_name: str,
+    order_ref: str,
+    order_total: float,
+    requested_by: str,
+    reason: str,
+    ticket_id: str,
+    has_account_terms: bool = False,
+) -> None:
+    """8.71 — a sales clerk asked for an order to be released on account (no
+    deposit). Sent to the release_request_to routing list. The decision is
+    always made in the portal, never from the email."""
+    if not to_emails:
+        return
+    terms_line = (
+        "This customer already has account terms on record."
+        if has_account_terms else
+        "This customer has no account terms set up yet. You can approve terms and release, "
+        "release this order only, or decline and ask for a deposit."
+    )
+    body = (
+        _h1("Release on account requested")
+        + _p(f"{requested_by} has asked for an order to go onto the packing board without a deposit.")
+        + _info_box([
+            ("Customer", f"<strong>{customer_name}</strong>"),
+            ("Order", order_ref),
+            ("Order total", f"R{order_total:,.2f}"),
+            ("Requested by", requested_by),
+            ("Reason", reason),
+        ])
+        + _p(terms_line)
+        + _button("Review request", f"{settings.portal_url}/tickets/sales?ticket={ticket_id}")
+        + _divider()
+        + _p("The order stays at Awaiting Deposit until someone with release permission decides.", muted=True)
+    )
+    _send(to_emails, f"Release on Account Requested: {customer_name}", _wrap(body))
+
+
+def send_release_decision_notification(
+    to_email: str,
+    customer_name: str,
+    order_ref: str,
+    decision: str,
+    decided_by: str,
+    note: str,
+    ticket_id: str,
+) -> None:
+    """8.71 — tells the requester how their release request was decided.
+    decision: "released" (on account terms), "exception" (this order only)
+    or "declined" (deposit required)."""
+    if not to_email:
+        return
+    headline, line = {
+        "released": ("Order released on account",
+                     "The order has been released on the customer's account terms and is on its way to the packing board."),
+        "exception": ("Order released as a one-off",
+                      "The order has been released without a deposit as a one-off exception and is on its way to the packing board."),
+        "declined": ("Release on account declined",
+                     "A deposit is still needed before this order can be packed."),
+    }.get(decision, ("Release request decided", ""))
+    body = (
+        _h1(headline)
+        + _p(line)
+        + _info_box([
+            ("Customer", f"<strong>{customer_name}</strong>"),
+            ("Order", order_ref),
+            ("Decided by", decided_by),
+        ] + ([("Note", note)] if note else []))
+        + _button("Open ticket", f"{settings.portal_url}/tickets/sales?ticket={ticket_id}")
+    )
+    _send(to_email, f"{headline}: {customer_name}", _wrap(body))
+
+
 def send_discount_decision_notification(
     to_email: str,
     order_ref: str,

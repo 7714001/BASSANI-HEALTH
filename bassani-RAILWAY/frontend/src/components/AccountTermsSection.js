@@ -19,6 +19,82 @@ function oneYearFromToday() {
   return d.toISOString().split("T")[0];
 }
 
+// Shared form pieces (8.71) — also used by the Sales ticket's release request
+// decision window, so terms approved there are captured exactly as here.
+export function defaultTermsForm(terms, data) {
+  return {
+    payment_term_id: terms?.payment_term_id ? String(terms.payment_term_id) : "",
+    credit_limit:    terms?.credit_limit ? String(terms.credit_limit) : "",
+    company_ids:     terms?.company_ids?.length ? terms.company_ids : (data?.trading_companies || []).map(c => c.id),
+    reference:       terms?.reference || "",
+    review_date:     terms && !terms.review_overdue && terms.review_date ? terms.review_date : oneYearFromToday(),
+    note:            terms?.note || "",
+  };
+}
+
+export function termsFormError(form) {
+  if (!form.payment_term_id) return "Choose payment terms";
+  if (!(parseFloat(form.credit_limit) > 0)) return "Enter a credit limit above zero";
+  if (!form.company_ids.length) return "Select at least one company";
+  if (!form.reference.trim()) return "Enter the agreement reference";
+  if (!form.review_date) return "Choose a review date";
+  return null;
+}
+
+export function termsPayload(form) {
+  return {
+    payment_term_id: parseInt(form.payment_term_id),
+    credit_limit:    parseFloat(form.credit_limit),
+    company_ids:     form.company_ids,
+    reference:       form.reference.trim(),
+    review_date:     form.review_date,
+    note:            form.note.trim() || undefined,
+  };
+}
+
+export function AccountTermsFields({ form, setForm, data }) {
+  const creditTerms = (data?.payment_terms || []).filter(t => t.is_credit);
+  const toggleCompany = (id) => setForm(f => ({
+    ...f,
+    company_ids: f.company_ids.includes(id) ? f.company_ids.filter(c => c !== id) : [...f.company_ids, id],
+  }));
+  return (
+    <>
+      <FormGroup label="Payment terms" required>
+        <Select value={form.payment_term_id} onChange={e => setForm(f => ({ ...f, payment_term_id: e.target.value }))}>
+          <option value="">— Select —</option>
+          {creditTerms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </Select>
+      </FormGroup>
+      <FormGroup label="Credit limit (ZAR)" required>
+        <Input type="number" step="0.01" min="0.01" value={form.credit_limit}
+          onChange={e => setForm(f => ({ ...f, credit_limit: e.target.value }))} placeholder="e.g. 50000.00" />
+      </FormGroup>
+      <FormGroup label="Applies to" required>
+        <div className="space-y-1.5">
+          {(data?.trading_companies || []).map(co => (
+            <label key={co.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={form.company_ids.includes(co.id)} onChange={() => toggleCompany(co.id)}
+                className="accent-bassani-600" />
+              {co.name}
+            </label>
+          ))}
+        </div>
+      </FormGroup>
+      <FormGroup label="Agreement reference" required>
+        <Input value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+          placeholder="e.g. Signed credit application ACC-0042" />
+      </FormGroup>
+      <FormGroup label="Review date" required>
+        <Input type="date" value={form.review_date} onChange={e => setForm(f => ({ ...f, review_date: e.target.value }))} />
+      </FormGroup>
+      <FormGroup label="Note">
+        <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="Optional" />
+      </FormGroup>
+    </>
+  );
+}
+
 export default function AccountTermsSection({ customerId, customerName, canManage, onChanged }) {
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(true);
@@ -43,41 +119,18 @@ export default function AccountTermsSection({ customerId, customerName, canManag
   useEffect(() => { load(); }, [load]);
 
   const terms = data?.account_terms;
-  const creditTerms = (data?.payment_terms || []).filter(t => t.is_credit);
 
   const openApprove = () => {
-    setForm({
-      payment_term_id: terms?.payment_term_id ? String(terms.payment_term_id) : "",
-      credit_limit:    terms?.credit_limit ? String(terms.credit_limit) : "",
-      company_ids:     terms?.company_ids?.length ? terms.company_ids : (data?.trading_companies || []).map(c => c.id),
-      reference:       terms?.reference || "",
-      review_date:     terms && !terms.review_overdue && terms.review_date ? terms.review_date : oneYearFromToday(),
-      note:            terms?.note || "",
-    });
+    setForm(defaultTermsForm(terms, data));
     setApproveOpen(true);
   };
 
-  const toggleCompany = (id) => setForm(f => ({
-    ...f,
-    company_ids: f.company_ids.includes(id) ? f.company_ids.filter(c => c !== id) : [...f.company_ids, id],
-  }));
-
   const approve = async () => {
-    if (!form.payment_term_id) return toast.error("Choose payment terms");
-    if (!(parseFloat(form.credit_limit) > 0)) return toast.error("Enter a credit limit above zero");
-    if (!form.company_ids.length) return toast.error("Select at least one company");
-    if (!form.reference.trim()) return toast.error("Enter the agreement reference");
-    if (!form.review_date) return toast.error("Choose a review date");
+    const err = termsFormError(form);
+    if (err) return toast.error(err);
     setSaving(true);
     try {
-      await api.put(`/api/customers/${customerId}/account-terms`, {
-        payment_term_id: parseInt(form.payment_term_id),
-        credit_limit:    parseFloat(form.credit_limit),
-        company_ids:     form.company_ids,
-        reference:       form.reference.trim(),
-        review_date:     form.review_date,
-        note:            form.note.trim() || undefined,
-      });
+      await api.put(`/api/customers/${customerId}/account-terms`, termsPayload(form));
       toast.success("Account terms approved");
       setApproveOpen(false);
       await load();
@@ -217,37 +270,7 @@ export default function AccountTermsSection({ customerId, customerName, canManag
             Approves <strong>{customerName}</strong> for account terms. The payment terms and credit limit are saved
             to the customer's account for each company selected below.
           </p>
-          <FormGroup label="Payment terms" required>
-            <Select value={form.payment_term_id} onChange={e => setForm(f => ({ ...f, payment_term_id: e.target.value }))}>
-              <option value="">— Select —</option>
-              {creditTerms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </Select>
-          </FormGroup>
-          <FormGroup label="Credit limit (ZAR)" required>
-            <Input type="number" step="0.01" min="0.01" value={form.credit_limit}
-              onChange={e => setForm(f => ({ ...f, credit_limit: e.target.value }))} placeholder="e.g. 50000.00" />
-          </FormGroup>
-          <FormGroup label="Applies to" required>
-            <div className="space-y-1.5">
-              {(data?.trading_companies || []).map(co => (
-                <label key={co.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input type="checkbox" checked={form.company_ids.includes(co.id)} onChange={() => toggleCompany(co.id)}
-                    className="accent-bassani-600" />
-                  {co.name}
-                </label>
-              ))}
-            </div>
-          </FormGroup>
-          <FormGroup label="Agreement reference" required>
-            <Input value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
-              placeholder="e.g. Signed credit application ACC-0042" />
-          </FormGroup>
-          <FormGroup label="Review date" required>
-            <Input type="date" value={form.review_date} onChange={e => setForm(f => ({ ...f, review_date: e.target.value }))} />
-          </FormGroup>
-          <FormGroup label="Note">
-            <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="Optional" />
-          </FormGroup>
+          <AccountTermsFields form={form} setForm={setForm} data={data} />
           <p className="text-[11px] text-gray-400 -mt-1 mb-2">
             Upload the signed agreement under Documents on this page so it's kept with the customer's record.
           </p>
