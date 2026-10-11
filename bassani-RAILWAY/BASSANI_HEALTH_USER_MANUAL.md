@@ -2106,6 +2106,8 @@ When La Farmacia doesn't have enough stock for a customer order, the missing ite
 
 **First-time setup** *(settings permission)*: click **Settings** and choose the supplying company (GMP) and the receiving warehouse (La Farmacia). The portal reads the rest from Odoo.
 
+**Automatic requests:** when a customer order's deposit is registered (or it's released on account) and La Farmacia can't cover part of it, the portal requests the missing stock from GMP straight away. It doesn't request anything already requested, on its way, or in stock at La Farmacia, and it leaves products bought from outside suppliers for you to order. The request appears as a note in the Sales ticket's Activity Log, and GMP's order carries the customer's SO number. Nothing is requested before the deposit, so GMP never makes stock for an order the customer hasn't committed to. To switch this off, untick **Request short stock from GMP automatically** in Settings.
+
 **The Work List** shows each product La Farmacia is short of for customer orders: how much is needed, how much is already requested from GMP, in transit, and in GMP's stock, plus the customer orders waiting (click an order to open it). Each product has a status:
 - **Needs requesting** — not covered by any request to GMP. Tick it and click **Request from GMP**, or click **Request** on the row. This creates La Farmacia's purchase order to GMP, and Odoo creates GMP's order automatically
 - **Requested, waiting on GMP** — requested, but GMP has no stock for it in Odoo yet. Once it's made, **Book In** at GMP

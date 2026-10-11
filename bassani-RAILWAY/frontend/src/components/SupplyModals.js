@@ -13,7 +13,7 @@ const qtyFmt = (n) => Number(n || 0).toLocaleString("en-ZA", { maximumFractionDi
 // ── Settings ──────────────────────────────────────────────────────────────────
 export function SupplySettingsModal({ onClose, onSaved }) {
   const [data, setData] = useState(null);
-  const [form, setForm] = useState({ supplier_company_id: "", receiving_warehouse_id: "", supplier_warehouse_id: "" });
+  const [form, setForm] = useState({ supplier_company_id: "", receiving_warehouse_id: "", supplier_warehouse_id: "", auto_request_on_deposit: true });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -24,6 +24,7 @@ export function SupplySettingsModal({ onClose, onSaved }) {
         supplier_company_id: String(s.supplier_company_id || sug.supplier_company_id || ""),
         receiving_warehouse_id: String(s.receiving_warehouse_id || sug.receiving_warehouse_id || ""),
         supplier_warehouse_id: String(s.supplier_warehouse_id || ""),
+        auto_request_on_deposit: s.auto_request_on_deposit !== false,
       });
     }).catch(e => { toast.error(e.response?.data?.detail || "Could not load supply settings"); onClose(); });
   }, []); // eslint-disable-line
@@ -36,6 +37,7 @@ export function SupplySettingsModal({ onClose, onSaved }) {
         supplier_company_id: parseInt(form.supplier_company_id),
         receiving_warehouse_id: parseInt(form.receiving_warehouse_id),
         supplier_warehouse_id: form.supplier_warehouse_id ? parseInt(form.supplier_warehouse_id) : null,
+        auto_request_on_deposit: form.auto_request_on_deposit,
       });
       (r.warnings || []).forEach(w => toast(w, { icon: "⚠️", duration: 9000 }));
       toast.success("Supply settings saved");
@@ -75,6 +77,18 @@ export function SupplySettingsModal({ onClose, onSaved }) {
               {opts.warehouses.map(w => <option key={w.id} value={w.id}>{w.name} ({w.company_name})</option>)}
             </Select>
           </FormGroup>
+          <label className="flex items-start gap-2 text-sm text-gray-700 mb-4 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={form.auto_request_on_deposit}
+              onChange={e => setForm(f => ({ ...f, auto_request_on_deposit: e.target.checked }))} />
+            <span>
+              Request short stock from GMP automatically
+              <span className="block text-xs text-gray-500">
+                When a customer order's deposit is registered (or it's released on account), anything La Farmacia can't cover is
+                requested from GMP straight away, unless it's already requested or on its way. Products bought from outside
+                suppliers are left for you to order.
+              </span>
+            </span>
+          </label>
           {data.config && (
             <div className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2 space-y-0.5">
               <p>Current: <strong>{data.config.supplier_warehouse_name}</strong> ({data.config.supplier_company_name}) supplies <strong>{data.config.receiving_warehouse_name}</strong>.</p>

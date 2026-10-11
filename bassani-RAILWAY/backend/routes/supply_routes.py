@@ -123,6 +123,9 @@ class SupplySettingsBody(BaseModel):
     supplier_company_id: int
     receiving_warehouse_id: int
     supplier_warehouse_id: Optional[int] = None
+    # Raise the GMP request automatically once a customer order clears the
+    # deposit gate (deposit registered or released on account), 2026-10-11.
+    auto_request_on_deposit: bool = True
 
 
 @router.get("/settings")
@@ -224,6 +227,57 @@ async def request_stock(body: RequestBody, current_user: dict = Depends(require_
                     user=current_user, detail={"lines": lines, "origin_orders": body.origin_orders,
                                                "supplier_sale_order": res["supplier_sale_order"]})
     return {"success": True, **res}
+
+
+# ── Automatic request once an order clears the deposit gate ──────────────────
+
+SYSTEM_ACTOR = {"id": None, "username": "system", "name": "System (automatic GMP request)", "role": "system"}
+
+
+async def auto_request_for_order(order_id: int) -> Optional[dict]:
+    """Run as a background task from order_routes._queue_packing_board, i.e.
+    once the order has a registered deposit or was released on account
+    (product owner, 2026-10-11: GMP only makes stock for committed orders).
+    Requests the order's uncovered shortfall from GMP through the same
+    purchase-order path as the Request from GMP button, so Odoo's inter-company
+    rules create GMP's sales order. Never raises: a failure only leaves the
+    product on the GMP Work List as Needs requesting, as before."""
+    try:
+        settings = await _settings()
+        if settings.get("auto_request_on_deposit") is False:
+            return None
+        odoo = get_odoo_client()
+        try:
+            cfg = await run_in_threadpool(svc.resolve_config, odoo, settings)
+        except svc.SupplyNotConfigured:
+            return None
+        plan = await run_in_threadpool(svc.order_request_plan, odoo, cfg, int(order_id))
+        if not plan["lines"]:
+            return {"requested": False, **plan}
+        res = await run_in_threadpool(
+            svc.request_from_supplier, odoo, cfg,
+            [{"product_id": l["product_id"], "qty": l["qty"]} for l in plan["lines"]],
+            [plan["order_name"]], "Raised automatically when the customer order cleared the deposit stage.",
+        )
+        await audit_log("supply.auto_requested", "supply", res["purchase_order"], entity_label=res["purchase_order"],
+                        user=SYSTEM_ACTOR, detail={"order_id": str(order_id), "order_name": plan["order_name"],
+                                                   "lines": plan["lines"], "external": plan["external"],
+                                                   "supplier_sale_order": res["supplier_sale_order"]})
+        summary = ", ".join(f"{l['product_name']} x {l['qty']:g}" for l in plan["lines"])
+        note = f"Stock requested from {cfg['supplier_company_name']} automatically ({res['purchase_order']}): {summary}"
+        if plan["external"]:
+            note += ". Not requested (bought from outside suppliers): " + ", ".join(e["product_name"] for e in plan["external"])
+        await col("tickets").update_one(
+            {"type": "sales", "order_id": {"$in": [int(order_id), str(order_id)]}, "exit_status": None},
+            {"$push": {"stage_history": {
+                "status": None, "exit_status": None, "actor_id": None, "actor_name": SYSTEM_ACTOR["name"],
+                "at": datetime.now(timezone.utc), "note": note,
+            }}},
+        )
+        return {"requested": True, **plan, **res}
+    except Exception as e:
+        logger.warning("supply_auto_request_failed", extra={"order_id": order_id, "error": str(e)})
+        return None
 
 
 # ── Book in at GMP ────────────────────────────────────────────────────────────

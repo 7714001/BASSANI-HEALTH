@@ -407,6 +407,67 @@ def work_list(odoo, cfg: dict) -> dict:
     }
 
 
+def order_request_plan(odoo, cfg: dict, sale_order_id: int) -> dict:
+    """What to request from the supplier for one customer order (automatic
+    request at deposit, 2026-10-11). Per product, request the order's own
+    shortfall, capped by what nobody has covered yet across all waiting orders
+    (free stock here, open purchase orders to the supplier, stock in transit),
+    so a product already requested by hand or for another order is never
+    requested twice. Products bought from external suppliers are left to staff."""
+    so = odoo.read("sale.order", [sale_order_id], fields=["name"])
+    order_name = so[0]["name"] if so else f"#{sale_order_id}"
+    mine = odoo.search_read("stock.move", [
+        ("picking_id.picking_type_code", "=", "outgoing"),
+        ("picking_id.picking_type_id.warehouse_id", "=", cfg["receiving_warehouse_id"]),
+        ("picking_id.sale_id", "=", sale_order_id),
+        ("picking_id.state", "not in", ["draft", "done", "cancel"]),
+        ("state", "in", DEMAND_MOVE_STATES),
+    ], fields=["product_id", "product_uom_qty", "quantity"], limit=500)
+    order_short: dict = defaultdict(float)
+    names: dict = {}
+    for m in mine:
+        short = _f(m["product_uom_qty"]) - _f(m["quantity"])
+        if short > 0.0001:
+            pid = _id(m["product_id"])
+            order_short[pid] += short
+            names[pid] = _name(m["product_id"])
+    out = {"order_name": order_name, "lines": [], "external": [], "covered": []}
+    if not order_short:
+        return out
+    pids = sorted(order_short)
+    demand = odoo.search_read("stock.move", [
+        ("picking_id.picking_type_code", "=", "outgoing"),
+        ("picking_id.picking_type_id.warehouse_id", "=", cfg["receiving_warehouse_id"]),
+        ("picking_id.sale_id", "!=", False),
+        ("picking_id.state", "not in", ["draft", "done", "cancel"]),
+        ("state", "in", DEMAND_MOVE_STATES),
+        ("product_id", "in", pids),
+    ], fields=["product_id", "product_uom_qty", "quantity"], limit=3000)
+    needed: dict = defaultdict(float)
+    for m in demand:
+        needed[_id(m["product_id"])] += max(_f(m["product_uom_qty"]) - _f(m["quantity"]), 0.0)
+    here = _product_stock(odoo, pids, cfg["receiving_warehouse_id"])
+    po = _po_outstanding(odoo, cfg, pids)
+    transit: dict = defaultdict(float)
+    for m in _in_transit_moves(odoo, cfg, pids):
+        transit[_id(m["product_id"])] += _f(m["product_uom_qty"])
+    external = _external_products(odoo, cfg, pids)
+    for pid in pids:
+        entry = {"product_id": pid, "product_name": names.get(pid), "order_short": round(order_short[pid], 3)}
+        if pid in external:
+            out["external"].append({**entry, "vendor": external[pid]})
+            continue
+        total = max(needed[pid], order_short[pid])
+        uncovered = total - min(max(here.get(pid, {}).get("free", 0.0), 0.0), total) \
+            - po.get(pid, {}).get("from_supplier", 0.0) - transit[pid]
+        qty = round(min(order_short[pid], max(uncovered, 0.0)), 3)
+        if qty > 0:
+            out["lines"].append({**entry, "qty": qty})
+        else:
+            out["covered"].append(entry)
+    return out
+
+
 def supplier_deliveries(odoo, cfg: dict, include_waiting: bool = True) -> list:
     """Open supplier deliveries to the receiving company, with their lines,
     reserved quantities and batches, and the purchase order behind each."""

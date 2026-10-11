@@ -2584,6 +2584,13 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
                 cc=_cust_cc or None,
             )
 
+    # ── Ask GMP for what's short (2026-10-11) ────────────────────────────────
+    # Only now, once the deposit is registered or the order released on
+    # account, so GMP never makes stock for an order nobody has committed to.
+    if is_partial:
+        from routes.supply_routes import auto_request_for_order  # deferred: supply_routes imports packing_board_routes
+        background_tasks.add_task(auto_request_for_order, order_id)
+
     if is_partial and _routing.get("order_to"):
         background_tasks.add_task(
             send_backorder_alert_internal,
